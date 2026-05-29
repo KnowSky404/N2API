@@ -215,7 +215,9 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
 		return err
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); err == nil {
+		return errors.New("request body must contain a single JSON value")
+	} else if err != io.EOF {
 		return err
 	}
 	return nil

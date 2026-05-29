@@ -407,6 +407,18 @@ func TestAdminJSONWithTrailingGarbageReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestAdminJSONWithSecondValueReturnsBadRequest(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	recorder := httptest.NewRecorder()
+	body := strings.NewReader(`{"username":"admin","password":"secret"} {}`)
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", body))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
 func TestUnknownAdminPathReturnsJSONNotFound(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
 	recorder := httptest.NewRecorder()
