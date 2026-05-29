@@ -9,6 +9,14 @@
 - Use Context7 MCP whenever answering or implementing details about libraries, frameworks, SDKs, APIs, CLI tools, or cloud services.
 - Start with `resolve-library-id` unless the user provides an exact `/org/project` Context7 library ID.
 - Prefer Context7 over web search for library documentation.
+- When web search is still needed, use it only after Context7 cannot answer the library/framework/API/CLI documentation question or when the user explicitly asks for broader web research.
+
+## Development Workflow
+- Prefer relevant Superpowers skills for planning, design, debugging, implementation, verification, review, and branch finishing.
+- Before implementing non-trivial behavior, use the appropriate Superpowers planning/design workflow.
+- Before fixing bugs or failed checks, use the Superpowers systematic debugging workflow.
+- Before claiming work is complete, use the Superpowers verification-before-completion workflow and report the exact commands that passed.
+- Keep work scoped and incremental. Avoid bundling unrelated refactors into feature or bugfix changes.
 
 ## Project Direction
 - N2API is a personal AI API/account gateway inspired by sub2api's user experience, not a fork of sub2api.
@@ -33,6 +41,7 @@
 
 ## Frontend Constraints
 - Follow the root `DESIGN.md` for all N2API UI design, styling, layout, and component decisions.
+- Treat `DESIGN.md` as the source of truth for UI visual style. Do not introduce a competing design system unless the user explicitly approves replacing it.
 - Use Bun for frontend dependency install and script execution.
 - Build the SvelteKit admin UI as static assets that can be served by the Go backend.
 - Use Tailwind CSS for styling.
@@ -48,3 +57,7 @@
 - Keep generated dependencies and build outputs out of git.
 - Use `.env.example` for documented configuration and never commit real secrets.
 - Before editing files, inspect existing contents and preserve unrelated user changes.
+- After each completed change, create an atomic git commit unless the user explicitly asks not to commit.
+- Each commit should contain one coherent change only: for example, one feature, one fix, one refactor, one docs update, or one test update.
+- Use Conventional Commits for commit messages, such as `feat: add provider health check`, `fix: preserve streaming response headers`, `docs: update deployment guide`, `test: cover token refresh`, or `chore: update tooling`.
+- Do not commit generated build artifacts, dependency directories, local caches, or real environment files.
