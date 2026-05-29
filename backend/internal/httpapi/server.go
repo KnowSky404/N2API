@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -101,10 +102,12 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService) htt
 			return
 		}
 
-		token, _ := readSessionCookie(r)
-		if err := admins.Logout(r.Context(), token); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
+		token, ok := readSessionCookie(r)
+		if ok {
+			if err := admins.Logout(r.Context(), token); err != nil {
+				writeError(w, http.StatusInternalServerError, "internal_error")
+				return
+			}
 		}
 		clearSessionCookie(w, secureCookie)
 		w.WriteHeader(http.StatusNoContent)
@@ -188,8 +191,12 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService) htt
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		writeJSON(w, http.StatusOK, key)
+		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
 	}))
+
+	mux.HandleFunc("/api/admin/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found")
+	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -204,7 +211,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(value)
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return err
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

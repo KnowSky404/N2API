@@ -25,7 +25,9 @@ func (h staticHealth) Ping(ctx context.Context) error {
 }
 
 type fakeAdminService struct {
-	keys []admin.APIKey
+	keys               []admin.APIKey
+	errorOnEmptyLogout bool
+	logoutTokens       []string
 }
 
 func newFakeAdminService() *fakeAdminService {
@@ -43,7 +45,11 @@ func (s *fakeAdminService) Login(_ context.Context, username, password string) (
 	return admin.Session{Token: "valid-session", AdminID: 1, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
-func (s *fakeAdminService) Logout(_ context.Context, _ string) error {
+func (s *fakeAdminService) Logout(_ context.Context, token string) error {
+	s.logoutTokens = append(s.logoutTokens, token)
+	if s.errorOnEmptyLogout && token == "" {
+		return errors.New("empty logout token")
+	}
 	return nil
 }
 
@@ -280,6 +286,29 @@ func TestAdminLogoutClearsSessionCookie(t *testing.T) {
 	}
 }
 
+func TestAdminLogoutWithoutSessionClearsCookieWithoutRevoking(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.errorOnEmptyLogout = true
+	server := NewServer(config.Config{}, staticHealth{}, admins)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/logout", nil))
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", recorder.Code)
+	}
+	if len(admins.logoutTokens) != 0 {
+		t.Fatalf("logout tokens = %+v, want no logout call", admins.logoutTokens)
+	}
+	cookies := recorder.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	if cookie := cookies[0]; cookie.Name != "n2api_admin_session" || cookie.Value != "" || cookie.MaxAge >= 0 {
+		t.Fatalf("cleared cookie = %+v", cookie)
+	}
+}
+
 func TestListAPIKeysRequiresSessionAndReturnsKeys(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
 	recorder := httptest.NewRecorder()
@@ -344,11 +373,13 @@ func TestRevokeAPIKeyParsesIDAndReturnsRevokedKey(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
-	var body admin.APIKey
+	var body struct {
+		Key admin.APIKey `json:"key"`
+	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.ID != 7 || body.RevokedAt == nil {
+	if body.Key.ID != 7 || body.Key.RevokedAt == nil {
 		t.Fatalf("revoked key = %+v, want revoked key 7", body)
 	}
 }
@@ -361,5 +392,52 @@ func TestBadAdminJSONReturnsBadRequest(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
+func TestAdminJSONWithTrailingGarbageReturnsBadRequest(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	recorder := httptest.NewRecorder()
+	body := strings.NewReader(`{"username":"admin","password":"secret"} garbage`)
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", body))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
+func TestUnknownAdminPathReturnsJSONNotFound(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/missing", nil))
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", recorder.Code)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content-type = %q, want application/json", got)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "not_found" {
+		t.Fatalf("error = %q, want not_found", body["error"])
+	}
+}
+
+func TestWrongMethodAdminPathDoesNotReturnRootFallback(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/login", nil))
+
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("status = 200, want non-200")
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content-type = %q, want application/json", got)
 	}
 }
