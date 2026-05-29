@@ -618,7 +618,7 @@ Expected: all backend tests pass.
 **Files:**
 - Modify: `frontend/src/routes/+page.svelte`
 
-- [ ] **Step 1: Add unauthenticated and authenticated state**
+- [x] **Step 1: Add unauthenticated and authenticated state**
 
 Use Svelte 5 runes consistent with current code and Context7-confirmed syntax:
 
@@ -649,7 +649,7 @@ let apiKeys = $state({
 const activeKeys = $derived(apiKeys.items.filter((key) => !key.revokedAt));
 ```
 
-- [ ] **Step 2: Add API helpers**
+- [x] **Step 2: Add API helpers**
 
 Add helpers near the top of the component:
 
@@ -673,7 +673,7 @@ async function requestJSON(path, options = {}) {
 }
 ```
 
-- [ ] **Step 3: Add login/session/key actions**
+- [x] **Step 3: Add login/session/key actions**
 
 Implement:
 
@@ -761,7 +761,7 @@ async function revokeKey(id) {
 }
 ```
 
-- [ ] **Step 4: Replace markup with login and key management views**
+- [x] **Step 4: Replace markup with login and key management views**
 
 Keep the existing health panels, but render login when `!session.authenticated`:
 
@@ -853,7 +853,7 @@ In the authenticated view, include:
 - table or stacked rows for keys
 - disabled revoke button for revoked keys
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run from `frontend`:
 
