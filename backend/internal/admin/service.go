@@ -29,7 +29,7 @@ type Config struct {
 type Admin struct {
 	ID           int64
 	Username     string
-	PasswordHash string
+	PasswordHash string `json:"-"`
 }
 
 type Session struct {
@@ -157,7 +157,13 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
 	}
-	return s.repo.RevokeSession(ctx, secret.HashAPIKey(token))
+	if err := s.repo.RevokeSession(ctx, secret.HashAPIKey(token)); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *Service) CreateAPIKey(ctx context.Context, name string) (CreatedAPIKey, error) {
@@ -203,6 +209,9 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (APIKey
 		return APIKey{}, ErrUnauthorized
 	}
 	if err := s.repo.TouchAPIKey(ctx, key.ID, time.Now()); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return APIKey{}, ErrUnauthorized
+		}
 		return APIKey{}, err
 	}
 

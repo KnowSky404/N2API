@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -46,6 +47,16 @@ func TestLoginCreatesSessionAndValidateSessionReturnsAdmin(t *testing.T) {
 	}
 }
 
+func TestAdminJSONOmitsPasswordHash(t *testing.T) {
+	payload, err := json.Marshal(Admin{ID: 1, Username: "admin", PasswordHash: "secret-hash"})
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	if strings.Contains(string(payload), "secret-hash") {
+		t.Fatalf("json payload contains password hash: %s", payload)
+	}
+}
+
 func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -77,6 +88,9 @@ func TestLogoutRevokesSession(t *testing.T) {
 	if err := service.Logout(context.Background(), ""); err != nil {
 		t.Fatalf("Logout empty token returned error: %v", err)
 	}
+	if err := service.Logout(context.Background(), "unknown-token"); err != nil {
+		t.Fatalf("Logout unknown token returned error: %v", err)
+	}
 }
 
 func TestCreateAPIKeyReturnsSecretOnceAndAuthenticateRejectsRevoked(t *testing.T) {
@@ -98,6 +112,20 @@ func TestCreateAPIKeyReturnsSecretOnceAndAuthenticateRejectsRevoked(t *testing.T
 	if _, err := service.RevokeAPIKey(context.Background(), result.Key.ID); err != nil {
 		t.Fatalf("RevokeAPIKey returned error: %v", err)
 	}
+	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("AuthenticateAPIKey error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestAuthenticateAPIKeyMapsTouchNotFoundToUnauthorized(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	repo.touchErr = ErrNotFound
+
 	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("AuthenticateAPIKey error = %v, want ErrUnauthorized", err)
 	}
@@ -150,6 +178,7 @@ type memoryRepo struct {
 	sessions     map[string]memorySession
 	keys         map[int64]memoryAPIKey
 	nextAPIKeyID int64
+	touchErr     error
 }
 
 type memorySession struct {
@@ -253,6 +282,9 @@ func (r *memoryRepo) FindAPIKeyByHash(_ context.Context, hash string, _ time.Tim
 }
 
 func (r *memoryRepo) TouchAPIKey(_ context.Context, id int64, usedAt time.Time) error {
+	if r.touchErr != nil {
+		return r.touchErr
+	}
 	key, ok := r.keys[id]
 	if !ok {
 		return ErrNotFound
