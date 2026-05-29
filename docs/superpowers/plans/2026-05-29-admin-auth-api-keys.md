@@ -497,7 +497,7 @@ Expected: all backend tests pass.
 - Modify: `backend/internal/httpapi/server.go`
 - Modify: `backend/internal/httpapi/server_test.go`
 
-- [ ] **Step 1: Write failing HTTP tests**
+- [x] **Step 1: Write failing HTTP tests**
 
 Add tests using a fake admin service:
 
@@ -553,7 +553,7 @@ func TestCreateAPIKeyReturnsOneTimeSecret(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run:
 
@@ -563,7 +563,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/httpapi
 
 Expected: compile failure because `NewServer` does not accept an admin service and routes do not exist.
 
-- [ ] **Step 3: Add admin service interface to HTTP package**
+- [x] **Step 3: Add admin service interface to HTTP package**
 
 Define a narrow interface in `server.go` so tests can fake it:
 
@@ -584,7 +584,7 @@ Change constructor:
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService) http.Handler
 ```
 
-- [ ] **Step 4: Implement routes and helpers**
+- [x] **Step 4: Implement routes and helpers**
 
 Add:
 - bounded JSON decoding with `http.MaxBytesReader(w, r.Body, 1<<20)`
@@ -601,7 +601,7 @@ Route behavior:
 - `POST /api/admin/keys`: requires session, creates key, returns 201 with public key and one-time secret.
 - `POST /api/admin/keys/{id}/revoke`: requires session, parses id, revokes idempotently.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
