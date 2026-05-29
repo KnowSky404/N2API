@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
 	"github.com/KnowSky404/N2API/backend/internal/store"
@@ -29,6 +30,13 @@ func main() {
 
 	if err := store.RunMigrations(ctx, pool); err != nil {
 		slog.Error("database migration failed", "error", err)
+		os.Exit(1)
+	}
+
+	adminRepo := store.NewAdminRepository(pool)
+	adminService := admin.NewService(adminRepo, admin.Config{SessionTTL: 7 * 24 * time.Hour})
+	if err := adminService.BootstrapAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+		slog.Error("admin bootstrap failed", "error", err)
 		os.Exit(1)
 	}
 
