@@ -194,6 +194,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService) htt
 		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
 	}))
 
+	mux.HandleFunc("/api/admin", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found")
+	})
+
 	mux.HandleFunc("/api/admin/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 	})

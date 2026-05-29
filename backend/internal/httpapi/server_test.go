@@ -440,6 +440,30 @@ func TestUnknownAdminPathReturnsJSONNotFound(t *testing.T) {
 	}
 }
 
+func TestAdminRootPathReturnsJSONNotFoundWithoutRedirect(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin", nil))
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", recorder.Code)
+	}
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("Location = %q, want empty", got)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("content-type = %q, want application/json", got)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "not_found" {
+		t.Fatalf("error = %q, want not_found", body["error"])
+	}
+}
+
 func TestWrongMethodAdminPathDoesNotReturnRootFallback(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
 	recorder := httptest.NewRecorder()
