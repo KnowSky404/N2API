@@ -1,0 +1,31 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Go
+bin/
+coverage.out
+*.test
+
+# Frontend
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+frontend/dist/
+frontend/.vite/
+frontend/bun.lockb
+
+# Logs
+*.log
+logs/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# Docker/local data
+.cache/
+.data/
+tmp/
