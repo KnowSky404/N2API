@@ -871,7 +871,7 @@ Expected: Svelte diagnostics report `0 errors and 0 warnings`; build exits 0.
 **Files:**
 - Review repository state.
 
-- [ ] **Step 1: Run backend tests**
+- [x] **Step 1: Run backend tests**
 
 Run from `backend`:
 
@@ -881,7 +881,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...
 
 Expected: all backend packages pass.
 
-- [ ] **Step 2: Run frontend checks**
+- [x] **Step 2: Run frontend checks**
 
 Run from `frontend`:
 
@@ -892,7 +892,7 @@ bun run build
 
 Expected: Svelte diagnostics report `0 errors and 0 warnings`; build exits 0.
 
-- [ ] **Step 3: Validate Docker Compose config**
+- [x] **Step 3: Validate Docker Compose config**
 
 Run from repository root:
 
@@ -902,7 +902,7 @@ docker compose -f deploy/compose.yaml --env-file .env.example config
 
 Expected: config renders with `n2api` and `postgres` services and no errors.
 
-- [ ] **Step 4: Confirm repository status**
+- [x] **Step 4: Confirm repository status**
 
 Run:
 
