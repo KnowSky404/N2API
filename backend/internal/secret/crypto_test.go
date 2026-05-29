@@ -1,6 +1,10 @@
 package secret
 
 import (
+	"crypto/pbkdf2"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -38,6 +42,30 @@ func TestPasswordHashVerifiesOriginalPassword(t *testing.T) {
 	}
 }
 
+func TestVerifyPasswordRejectsUnexpectedIterationCount(t *testing.T) {
+	hash := passwordHashForTest(t, "owner-password", []byte("1234567890abcdef"), passwordIterations-1, passwordKeyBytes)
+
+	if VerifyPassword(hash, "owner-password") {
+		t.Fatal("VerifyPassword returned true for unexpected iteration count")
+	}
+}
+
+func TestVerifyPasswordRejectsUnexpectedSaltLength(t *testing.T) {
+	hash := passwordHashForTest(t, "owner-password", []byte("short-salt-1234"), passwordIterations, passwordKeyBytes)
+
+	if VerifyPassword(hash, "owner-password") {
+		t.Fatal("VerifyPassword returned true for unexpected salt length")
+	}
+}
+
+func TestVerifyPasswordRejectsUnexpectedKeyLength(t *testing.T) {
+	hash := passwordHashForTest(t, "owner-password", []byte("1234567890abcdef"), passwordIterations, passwordKeyBytes-1)
+
+	if VerifyPassword(hash, "owner-password") {
+		t.Fatal("VerifyPassword returned true for unexpected key length")
+	}
+}
+
 func TestGenerateTokenUsesPrefixAndRandomSecret(t *testing.T) {
 	first, err := GenerateToken("n2api")
 	if err != nil {
@@ -52,6 +80,21 @@ func TestGenerateTokenUsesPrefixAndRandomSecret(t *testing.T) {
 	}
 	if first == second {
 		t.Fatal("GenerateToken returned duplicate tokens")
+	}
+
+	secret := strings.TrimPrefix(first, "n2api_")
+	if len(secret) != 43 {
+		t.Fatalf("secret length = %d, want 43", len(secret))
+	}
+	if strings.Contains(secret, "=") {
+		t.Fatalf("secret = %q, want no padding", secret)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(secret)
+	if err != nil {
+		t.Fatalf("secret did not decode as raw URL base64: %v", err)
+	}
+	if len(decoded) != 32 {
+		t.Fatalf("decoded secret length = %d, want 32", len(decoded))
 	}
 }
 
@@ -108,4 +151,21 @@ func TestDecryptRejectsWrongSecret(t *testing.T) {
 	if _, err := DecryptString("different-secret", encrypted); err == nil {
 		t.Fatal("DecryptString returned nil error for wrong secret")
 	}
+}
+
+func passwordHashForTest(t *testing.T, password string, salt []byte, iterations, keyBytes int) string {
+	t.Helper()
+
+	key, err := pbkdf2.Key(sha256.New, password, salt, iterations, keyBytes)
+	if err != nil {
+		t.Fatalf("pbkdf2.Key returned error: %v", err)
+	}
+
+	return fmt.Sprintf(
+		"%s$%d$%s$%s",
+		passwordHashVersion,
+		iterations,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key),
+	)
 }

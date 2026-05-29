@@ -59,21 +59,21 @@ func VerifyPassword(hash, password string) bool {
 	}
 
 	iterations, err := strconv.Atoi(parts[1])
-	if err != nil || iterations <= 0 {
+	if err != nil || iterations != passwordIterations {
 		return false
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[2])
-	if err != nil {
+	if err != nil || len(salt) != passwordSaltBytes {
 		return false
 	}
 
 	expected, err := base64.RawStdEncoding.DecodeString(parts[3])
-	if err != nil {
+	if err != nil || len(expected) != passwordKeyBytes {
 		return false
 	}
 
-	candidate, err := pbkdf2.Key(sha256.New, password, salt, iterations, len(expected))
+	candidate, err := pbkdf2.Key(sha256.New, password, salt, iterations, passwordKeyBytes)
 	if err != nil {
 		return false
 	}
