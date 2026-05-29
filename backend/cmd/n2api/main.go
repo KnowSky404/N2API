@@ -1,47 +1,46 @@
 package main
 
 import (
-	"fmt"
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/KnowSky404/N2API/backend/internal/config"
+	"github.com/KnowSky404/N2API/backend/internal/httpapi"
+	"github.com/KnowSky404/N2API/backend/internal/store"
 )
 
 func main() {
-	host := env("N2API_HOST", "0.0.0.0")
-	port := env("N2API_PORT", "3000")
-	addr := fmt.Sprintf("%s:%s", host, port)
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		slog.Error("invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("N2API bootstrap server\n"))
-	})
+	ctx := context.Background()
+	pool, err := store.OpenPool(ctx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("database unavailable", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	if err := store.RunMigrations(ctx, pool); err != nil {
+		slog.Error("database migration failed", "error", err)
+		os.Exit(1)
+	}
 
 	server := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
+		Addr:              cfg.Addr(),
+		Handler:           httpapi.NewServer(cfg, pool),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	slog.Info("starting n2api", "addr", addr)
+	slog.Info("starting n2api", "addr", cfg.Addr())
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
-}
-
-func env(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value
 }
