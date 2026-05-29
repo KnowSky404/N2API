@@ -1,6 +1,9 @@
 package secret
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestHashAPIKeyVerifiesOriginalKey(t *testing.T) {
 	hash := HashAPIKey("n2_live_secret")
@@ -16,6 +19,62 @@ func TestHashAPIKeyVerifiesOriginalKey(t *testing.T) {
 	}
 	if VerifyAPIKey(hash, "different") {
 		t.Fatal("VerifyAPIKey returned true for different API key")
+	}
+}
+
+func TestPasswordHashVerifiesOriginalPassword(t *testing.T) {
+	hash, err := HashPassword("owner-password")
+	if err != nil {
+		t.Fatalf("HashPassword returned error: %v", err)
+	}
+	if hash == "" || hash == "owner-password" {
+		t.Fatalf("HashPassword returned unsafe hash %q", hash)
+	}
+	if !VerifyPassword(hash, "owner-password") {
+		t.Fatal("VerifyPassword returned false for original password")
+	}
+	if VerifyPassword(hash, "wrong-password") {
+		t.Fatal("VerifyPassword returned true for wrong password")
+	}
+}
+
+func TestGenerateTokenUsesPrefixAndRandomSecret(t *testing.T) {
+	first, err := GenerateToken("n2api")
+	if err != nil {
+		t.Fatalf("GenerateToken returned error: %v", err)
+	}
+	second, err := GenerateToken("n2api")
+	if err != nil {
+		t.Fatalf("GenerateToken returned error: %v", err)
+	}
+	if !strings.HasPrefix(first, "n2api_") {
+		t.Fatalf("token = %q, want n2api_ prefix", first)
+	}
+	if first == second {
+		t.Fatal("GenerateToken returned duplicate tokens")
+	}
+}
+
+func TestGeneratedTokenCanReuseAPIKeyHashVerification(t *testing.T) {
+	token, err := GenerateToken("n2api")
+	if err != nil {
+		t.Fatalf("GenerateToken returned error: %v", err)
+	}
+
+	hash := HashAPIKey(token)
+
+	if !VerifyAPIKey(hash, token) {
+		t.Fatal("VerifyAPIKey returned false for generated token")
+	}
+	if VerifyAPIKey(hash, token+"x") {
+		t.Fatal("VerifyAPIKey returned true for modified generated token")
+	}
+}
+
+func TestTokenPrefixReturnsDisplayPrefix(t *testing.T) {
+	prefix := TokenPrefix("n2api_abcdefghijklmnopqrstuvwxyz")
+	if prefix != "n2api_abcdefgh" {
+		t.Fatalf("TokenPrefix = %q, want n2api_abcdefgh", prefix)
 	}
 }
 
