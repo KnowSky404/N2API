@@ -42,12 +42,15 @@ func TestAdminSessionsMigrationIsEmbedded(t *testing.T) {
 	for _, want := range []string{
 		"CREATE TABLE IF NOT EXISTS admin_sessions",
 		"admin_id BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE",
-		"token_hash TEXT NOT NULL UNIQUE",
-		"admin_sessions_token_hash_idx",
+		"token_hash TEXT NOT NULL",
+		"CONSTRAINT admin_sessions_token_hash_idx UNIQUE (token_hash)",
 		"admin_sessions_expires_at_idx",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("migration missing %q", want)
 		}
+	}
+	if strings.Contains(sql, "CREATE INDEX IF NOT EXISTS admin_sessions_token_hash_idx") {
+		t.Fatal("migration should not create a duplicate non-unique token_hash index")
 	}
 }
