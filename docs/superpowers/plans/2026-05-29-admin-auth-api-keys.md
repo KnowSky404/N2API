@@ -37,7 +37,7 @@
 - Modify: `backend/internal/secret/crypto.go`
 - Modify: `backend/internal/secret/crypto_test.go`
 
-- [ ] **Step 1: Write failing secret tests**
+- [x] **Step 1: Write failing secret tests**
 
 Add tests for password hash verification, random token format, key prefix extraction, and token hash reuse:
 
@@ -83,7 +83,7 @@ func TestTokenPrefixReturnsDisplayPrefix(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run from `backend`:
 
@@ -93,7 +93,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/secret
 
 Expected: compile failure for missing `HashPassword`, `VerifyPassword`, `GenerateToken`, and `TokenPrefix`.
 
-- [ ] **Step 3: Implement minimal secret helpers**
+- [x] **Step 3: Implement minimal secret helpers**
 
 Add helpers using standard library only. Use `crypto/pbkdf2` with SHA-256 so no new dependency is needed:
 
@@ -158,7 +158,7 @@ func TokenPrefix(token string) string {
 }
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
