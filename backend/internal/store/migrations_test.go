@@ -33,3 +33,21 @@ func TestInitialMigrationHasDownSection(t *testing.T) {
 		t.Fatal("initial migration missing goose down section")
 	}
 }
+
+func TestAdminSessionsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00002_admin_sessions.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS admin_sessions",
+		"admin_id BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE",
+		"token_hash TEXT NOT NULL UNIQUE",
+		"admin_sessions_token_hash_idx",
+		"admin_sessions_expires_at_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
