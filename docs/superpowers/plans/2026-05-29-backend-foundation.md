@@ -16,15 +16,15 @@
 - Create: `backend/internal/config/config.go`
 - Create: `backend/internal/config/config_test.go`
 
-- [ ] **Step 1: Write failing config tests**
+- [x] **Step 1: Write failing config tests**
 
 Cover defaults, required `DATABASE_URL`, required `N2API_ENCRYPTION_SECRET`, default host/port, and invalid port rejection.
 
-- [ ] **Step 2: Implement config loader**
+- [x] **Step 2: Implement config loader**
 
 Expose `Load(lookup func(string) string) (Config, error)` and keep environment parsing isolated from `main`.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, then commit as `feat: add backend config loader`.
 
@@ -34,15 +34,15 @@ Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, t
 - Create: `backend/internal/secret/crypto.go`
 - Create: `backend/internal/secret/crypto_test.go`
 
-- [ ] **Step 1: Write failing secret tests**
+- [x] **Step 1: Write failing secret tests**
 
 Cover API key hashing/verification and AES-GCM encrypt/decrypt for OAuth token payloads.
 
-- [ ] **Step 2: Implement secret utilities**
+- [x] **Step 2: Implement secret utilities**
 
 Use SHA-256 for API key hashes and AES-GCM with a SHA-256-derived key for reversible token encryption.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, then commit as `feat: add backend secret utilities`.
 
@@ -55,19 +55,19 @@ Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, t
 - Create: `backend/internal/store/migrations_test.go`
 - Modify: `backend/go.mod`
 
-- [ ] **Step 1: Write failing migration tests**
+- [x] **Step 1: Write failing migration tests**
 
 Use testcontainers only if already practical; otherwise unit-test embedded migration discovery and keep live database verification to Docker Compose. The migration file must include `admins`, `oauth_accounts`, `client_api_keys`, `settings`, and `request_logs`.
 
-- [ ] **Step 2: Add pgx and goose dependencies**
+- [x] **Step 2: Add pgx and goose dependencies**
 
 Use `github.com/jackc/pgx/v5/pgxpool`, `github.com/jackc/pgx/v5/stdlib`, and `github.com/pressly/goose/v3`.
 
-- [ ] **Step 3: Implement pool and migration helpers**
+- [x] **Step 3: Implement pool and migration helpers**
 
 Expose `OpenPool(ctx, databaseURL)` and `RunMigrations(ctx, pool)`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, then commit as `feat: add postgres migrations`.
 
@@ -78,19 +78,19 @@ Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, t
 - Create: `backend/internal/httpapi/server_test.go`
 - Modify: `backend/cmd/n2api/main.go`
 
-- [ ] **Step 1: Write failing HTTP tests**
+- [x] **Step 1: Write failing HTTP tests**
 
 Cover `GET /healthz`, `GET /api/admin/health`, `GET /api/admin/bootstrap`, JSON content type, and DB health status behavior.
 
-- [ ] **Step 2: Implement HTTP server package**
+- [x] **Step 2: Implement HTTP server package**
 
 Move route setup out of `main`; inject config and optional store health checker.
 
-- [ ] **Step 3: Wire main**
+- [x] **Step 3: Wire main**
 
 Load config, open PostgreSQL pool, run migrations, and start the HTTP server.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, then commit as `feat: add backend health APIs`.
 
@@ -99,11 +99,11 @@ Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`, t
 **Files:**
 - Modify: `frontend/src/routes/+page.svelte`
 
-- [ ] **Step 1: Add health state fetch**
+- [x] **Step 1: Add health state fetch**
 
 Use Svelte `onMount` to fetch `/api/admin/health`, show loading, connected, and error states.
 
-- [ ] **Step 2: Verify and commit**
+- [x] **Step 2: Verify and commit**
 
 Run `bun run check` and `bun run build` from `frontend`, then commit as `feat: show backend health in admin UI`.
 
@@ -112,14 +112,14 @@ Run `bun run check` and `bun run build` from `frontend`, then commit as `feat: s
 **Files:**
 - Review repository state.
 
-- [ ] **Step 1: Run backend tests**
+- [x] **Step 1: Run backend tests**
 
 Run `GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...` from `backend`.
 
-- [ ] **Step 2: Run frontend checks**
+- [x] **Step 2: Run frontend checks**
 
 Run `bun run check` and `bun run build` from `frontend`.
 
-- [ ] **Step 3: Validate Docker Compose config**
+- [x] **Step 3: Validate Docker Compose config**
 
 Run `docker compose -f deploy/compose.yaml --env-file .env.example config` from the repository root.
