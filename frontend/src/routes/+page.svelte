@@ -19,6 +19,7 @@
   });
 
   let session = $state({ loading: true, authenticated: false, username: '', error: '' });
+  let sessionVersion = $state(0);
   let loginForm = $state({ username: '', password: '', submitting: false, error: '' });
   let canCopySecret = $state(false);
   /** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
@@ -67,7 +68,31 @@
 
   async function copySecret() {
     if (!apiKeys.oneTimeSecret || !navigator.clipboard) return;
-    await navigator.clipboard.writeText(apiKeys.oneTimeSecret);
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    try {
+      await navigator.clipboard.writeText(apiKeys.oneTimeSecret);
+    } catch {
+      if (!isCurrentAuthenticated(version)) return;
+      apiKeys.error = 'Copy failed';
+    }
+  }
+
+  function clearAPIKeys() {
+    apiKeys = {
+      loading: false,
+      creating: false,
+      error: '',
+      items: [],
+      newKeyName: '',
+      oneTimeSecret: ''
+    };
+  }
+
+  /** @param {number} version */
+  function isCurrentAuthenticated(version) {
+    return version === sessionVersion && session.authenticated;
   }
 
   async function loadHealth() {
@@ -94,13 +119,18 @@
   }
 
   async function loadSession() {
+    const version = sessionVersion;
     session.loading = true;
     session.error = '';
 
     try {
       const response = await fetch('/api/admin/me');
+      if (version !== sessionVersion) return;
+
       if (response.status === 401) {
+        sessionVersion += 1;
         session = { loading: false, authenticated: false, username: '', error: '' };
+        clearAPIKeys();
         return;
       }
       if (!response.ok) {
@@ -109,6 +139,9 @@
       }
 
       const payload = await response.json();
+      if (version !== sessionVersion) return;
+
+      sessionVersion += 1;
       session = {
         loading: false,
         authenticated: true,
@@ -117,12 +150,16 @@
       };
       await loadKeys();
     } catch (error) {
+      if (version !== sessionVersion) return;
+
+      sessionVersion += 1;
       session = {
         loading: false,
         authenticated: false,
         username: '',
         error: error instanceof Error ? error.message : 'Session check failed'
       };
+      clearAPIKeys();
     }
   }
 
@@ -138,6 +175,7 @@
         body: JSON.stringify({ username: loginForm.username, password: loginForm.password })
       });
       loginForm.password = '';
+      sessionVersion += 1;
       await loadSession();
     } catch (error) {
       loginForm.error = error instanceof Error ? error.message : 'Login failed';
@@ -147,29 +185,29 @@
   }
 
   async function logout() {
+    sessionVersion += 1;
     await requestJSON('/api/admin/logout', { method: 'POST' }).catch(() => null);
     session = { loading: false, authenticated: false, username: '', error: '' };
-    apiKeys = {
-      loading: false,
-      creating: false,
-      error: '',
-      items: [],
-      newKeyName: '',
-      oneTimeSecret: ''
-    };
+    clearAPIKeys();
     loginForm.password = '';
   }
 
   async function loadKeys() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
     apiKeys.loading = true;
     apiKeys.error = '';
 
     try {
       const payload = await requestJSON('/api/admin/keys');
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.items = payload.keys ?? [];
     } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.error = error instanceof Error ? error.message : 'Failed to load API keys';
     } finally {
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.loading = false;
     }
   }
@@ -177,6 +215,9 @@
   /** @param {SubmitEvent} event */
   async function createKey(event) {
     event.preventDefault();
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
     apiKeys.creating = true;
     apiKeys.error = '';
     apiKeys.oneTimeSecret = '';
@@ -186,24 +227,32 @@
         method: 'POST',
         body: JSON.stringify({ name: apiKeys.newKeyName })
       });
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.items = [payload.key, ...apiKeys.items];
       apiKeys.oneTimeSecret = payload.secret;
       apiKeys.newKeyName = '';
     } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.error = error instanceof Error ? error.message : 'Failed to create API key';
     } finally {
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.creating = false;
     }
   }
 
   /** @param {number} id */
   async function revokeKey(id) {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
     apiKeys.error = '';
 
     try {
       const payload = await requestJSON(`/api/admin/keys/${id}/revoke`, { method: 'POST' });
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.items = apiKeys.items.map((key) => (key.id === id ? payload.key : key));
     } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
       apiKeys.error = error instanceof Error ? error.message : 'Failed to revoke API key';
     }
   }
