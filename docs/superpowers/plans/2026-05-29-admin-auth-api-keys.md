@@ -418,7 +418,7 @@ Expected: all backend tests pass.
 - Create: `backend/internal/store/admin.go`
 - Modify: `backend/cmd/n2api/main.go`
 
-- [ ] **Step 1: Write compile-focused repository test**
+- [x] **Step 1: Write compile-focused repository test**
 
 Add a small test in `backend/internal/store/admin_test.go` to ensure the repository satisfies the admin interface:
 
@@ -428,7 +428,7 @@ func TestAdminRepositoryImplementsInterface(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
 
 Run:
 
@@ -438,7 +438,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/store
 
 Expected: compile failure because `AdminRepository` does not exist.
 
-- [ ] **Step 3: Implement PostgreSQL repository**
+- [x] **Step 3: Implement PostgreSQL repository**
 
 Create constructor and methods:
 
@@ -464,7 +464,7 @@ SQL behavior:
 - `FindAPIKeyByHash`: select only where `revoked_at IS NULL`.
 - `TouchAPIKey`: update `last_used_at`.
 
-- [ ] **Step 4: Wire startup bootstrap**
+- [x] **Step 4: Wire startup bootstrap**
 
 In `backend/cmd/n2api/main.go`, after migrations:
 
@@ -479,7 +479,7 @@ if err := adminService.BootstrapAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword)
 
 Pass `adminService` to `httpapi.NewServer`.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
