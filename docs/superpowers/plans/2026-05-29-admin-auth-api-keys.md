@@ -254,7 +254,7 @@ Expected: all backend tests pass.
 - Create: `backend/internal/admin/service.go`
 - Create: `backend/internal/admin/service_test.go`
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 Cover bootstrap preservation, login, session validation, logout, API key creation/list/revoke/authentication with an in-memory fake repository:
 
@@ -321,7 +321,7 @@ func TestCreateAPIKeyReturnsSecretOnceAndAuthenticateRejectsRevoked(t *testing.T
 }
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run:
 
@@ -331,7 +331,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/admin
 
 Expected: compile failure because the package does not exist.
 
-- [ ] **Step 3: Implement service types and rules**
+- [x] **Step 3: Implement service types and rules**
 
 Create `service.go` with these public shapes:
 
@@ -400,7 +400,7 @@ Implementation rules:
 - `CreateAPIKey` trims and validates name, generates `n2api` token, stores hash and `secret.TokenPrefix(token)`.
 - `AuthenticateAPIKey` rejects empty, unknown, or revoked keys and touches `last_used_at` on success.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
