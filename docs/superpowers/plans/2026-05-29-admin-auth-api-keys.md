@@ -176,7 +176,7 @@ Expected: all backend tests pass.
 - Create: `backend/internal/store/migrations/00002_admin_sessions.sql`
 - Modify: `backend/internal/store/migrations_test.go`
 
-- [ ] **Step 1: Write failing migration discovery test**
+- [x] **Step 1: Write failing migration discovery test**
 
 Add a test that reads `00002_admin_sessions.sql` and checks the table and indexes:
 
@@ -200,7 +200,7 @@ func TestAdminSessionsMigrationIsEmbedded(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
 
 Run from `backend`:
 
@@ -210,7 +210,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/store
 
 Expected: failure because `00002_admin_sessions.sql` does not exist.
 
-- [ ] **Step 3: Add migration**
+- [x] **Step 3: Add migration**
 
 Create:
 
@@ -236,7 +236,7 @@ DROP TABLE IF EXISTS admin_sessions;
 -- +goose StatementEnd
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
