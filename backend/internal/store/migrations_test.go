@@ -54,3 +54,22 @@ func TestAdminSessionsMigrationIsEmbedded(t *testing.T) {
 		t.Fatal("migration should not create a duplicate non-unique token_hash index")
 	}
 }
+
+func TestOAuthStatesMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00003_oauth_states.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS oauth_states",
+		"provider TEXT NOT NULL",
+		"state_hash TEXT NOT NULL UNIQUE",
+		"redirect_after TEXT NOT NULL DEFAULT '/'",
+		"oauth_states_state_hash_idx",
+		"oauth_states_expires_at_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
