@@ -2,8 +2,11 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -86,10 +89,40 @@ type OAuthClient interface {
 	RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error)
 }
 
+type HTTPClient struct {
+	client *http.Client
+}
+
 type Service struct {
 	repo   Repository
 	client OAuthClient
 	cfg    Config
+}
+
+func NewHTTPClient(client *http.Client) *HTTPClient {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return &HTTPClient{client: client}
+}
+
+func (c *HTTPClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
+	values := url.Values{}
+	values.Set("grant_type", "authorization_code")
+	values.Set("code", code)
+	values.Set("client_id", cfg.ClientID)
+	values.Set("client_secret", cfg.ClientSecret)
+	values.Set("redirect_uri", cfg.RedirectURL)
+	return c.postToken(ctx, cfg.TokenURL, values)
+}
+
+func (c *HTTPClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
+	values := url.Values{}
+	values.Set("grant_type", "refresh_token")
+	values.Set("refresh_token", refreshToken)
+	values.Set("client_id", cfg.ClientID)
+	values.Set("client_secret", cfg.ClientSecret)
+	return c.postToken(ctx, cfg.TokenURL, values)
 }
 
 func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
@@ -103,6 +136,44 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		cfg.RefreshWindow = defaultRefreshWindow
 	}
 	return &Service{repo: repo, client: client, cfg: cfg}
+}
+
+func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.Values) (TokenResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
+	if err != nil {
+		return TokenResponse{}, fmt.Errorf("create oauth token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return TokenResponse{}, fmt.Errorf("send oauth token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return TokenResponse{}, fmt.Errorf("oauth token endpoint returned status %d", resp.StatusCode)
+	}
+
+	var payload struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Subject      string `json:"subject"`
+		DisplayName  string `json:"display_name"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return TokenResponse{}, fmt.Errorf("decode oauth token response: %w", err)
+	}
+	return TokenResponse{
+		AccessToken:  payload.AccessToken,
+		RefreshToken: payload.RefreshToken,
+		ExpiresIn:    payload.ExpiresIn,
+		Subject:      payload.Subject,
+		DisplayName:  payload.DisplayName,
+	}, nil
 }
 
 func (s *Service) Configured() bool {
