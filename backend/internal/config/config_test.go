@@ -26,6 +26,29 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	}
 }
 
+func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
+	env := map[string]string{
+		"DATABASE_URL":                "postgres://example",
+		"N2API_ENCRYPTION_SECRET":     "encryption-secret",
+		"N2API_ADMIN_PASSWORD":        "admin-password",
+		"OPENAI_OAUTH_CLIENT_ID":      "client-id",
+		"OPENAI_OAUTH_CLIENT_SECRET":  "client-secret",
+		"OPENAI_OAUTH_REDIRECT_URL":   "http://localhost:3000/oauth/openai/callback",
+		"OPENAI_OAUTH_AUTH_URL":       "https://auth.example.test/authorize",
+		"OPENAI_OAUTH_TOKEN_URL":      "https://auth.example.test/token",
+	}
+	cfg, err := Load(func(key string) string { return env[key] })
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.OpenAIOAuthAuthURL != "https://auth.example.test/authorize" {
+		t.Fatalf("OpenAIOAuthAuthURL = %q", cfg.OpenAIOAuthAuthURL)
+	}
+	if cfg.OpenAIOAuthTokenURL != "https://auth.example.test/token" {
+		t.Fatalf("OpenAIOAuthTokenURL = %q", cfg.OpenAIOAuthTokenURL)
+	}
+}
+
 func TestLoadRequiresDatabaseURL(t *testing.T) {
 	_, err := Load(mapLookup(map[string]string{
 		"N2API_ENCRYPTION_SECRET": "a-long-enough-secret",
