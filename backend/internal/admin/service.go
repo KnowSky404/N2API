@@ -47,6 +47,19 @@ type APIKey struct {
 	RevokedAt  *time.Time `json:"revokedAt"`
 }
 
+type RequestLog struct {
+	ID         int64     `json:"id"`
+	RequestID  string    `json:"requestId"`
+	ClientKey  string    `json:"clientKey"`
+	Provider   string    `json:"provider"`
+	Route      string    `json:"route"`
+	Method     string    `json:"method"`
+	StatusCode int       `json:"statusCode"`
+	LatencyMS  int       `json:"latencyMs"`
+	Error      string    `json:"error"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
 type CreatedAPIKey struct {
 	Key    APIKey
 	Secret string
@@ -65,6 +78,7 @@ type Repository interface {
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
+	ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error)
 }
 
 type Service struct {
@@ -222,4 +236,14 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (APIKey
 	}
 
 	return key, nil
+}
+
+func (s *Service) ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	return s.repo.ListRequestLogs(ctx, limit)
 }

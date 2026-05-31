@@ -233,3 +233,51 @@ func (r *AdminRepository) TouchAPIKey(ctx context.Context, id int64, usedAt time
 	}
 	return nil
 }
+
+func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]admin.RequestLog, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			l.id,
+			l.request_id,
+			COALESCE(k.name || ' (' || k.prefix || ')', ''),
+			l.provider,
+			l.route,
+			l.method,
+			l.status_code,
+			l.latency_ms,
+			l.error,
+			l.created_at
+		FROM request_logs l
+		LEFT JOIN client_api_keys k ON k.id = l.client_key_id
+		ORDER BY l.created_at DESC, l.id DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []admin.RequestLog
+	for rows.Next() {
+		var log admin.RequestLog
+		if err := rows.Scan(
+			&log.ID,
+			&log.RequestID,
+			&log.ClientKey,
+			&log.Provider,
+			&log.Route,
+			&log.Method,
+			&log.StatusCode,
+			&log.LatencyMS,
+			&log.Error,
+			&log.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		logs = append(logs, log)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return logs, nil
+}

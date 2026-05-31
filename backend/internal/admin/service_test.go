@@ -195,6 +195,33 @@ func TestListAPIKeysReturnsRepositoryKeys(t *testing.T) {
 	}
 }
 
+func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	repo.logs = []RequestLog{
+		{ID: 2, RequestID: "req_2", Route: "/v1/chat/completions", StatusCode: 200},
+		{ID: 1, RequestID: "req_1", Route: "/v1/models", StatusCode: 503},
+	}
+
+	logs, err := service.ListRequestLogs(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("ListRequestLogs returned error: %v", err)
+	}
+	if repo.lastLogLimit != 50 {
+		t.Fatalf("repository limit = %d, want default 50", repo.lastLogLimit)
+	}
+	if len(logs) != 2 || logs[0].RequestID != "req_2" {
+		t.Fatalf("logs = %+v", logs)
+	}
+
+	if _, err := service.ListRequestLogs(context.Background(), 500); err != nil {
+		t.Fatalf("ListRequestLogs returned error: %v", err)
+	}
+	if repo.lastLogLimit != 200 {
+		t.Fatalf("repository limit = %d, want max 200", repo.lastLogLimit)
+	}
+}
+
 func requireBootstrap(t *testing.T, service *Service, username, password string) {
 	t.Helper()
 
@@ -210,6 +237,8 @@ type memoryRepo struct {
 	keys         map[int64]memoryAPIKey
 	nextAPIKeyID int64
 	touchErr     error
+	logs         []RequestLog
+	lastLogLimit int
 }
 
 type memorySession struct {
@@ -338,4 +367,12 @@ func (r *memoryRepo) TouchAPIKey(_ context.Context, id int64, usedAt time.Time) 
 	key.LastUsedAt = &usedAt
 	r.keys[id] = key
 	return nil
+}
+
+func (r *memoryRepo) ListRequestLogs(_ context.Context, limit int) ([]RequestLog, error) {
+	r.lastLogLimit = limit
+	if limit > len(r.logs) {
+		limit = len(r.logs)
+	}
+	return append([]RequestLog(nil), r.logs[:limit]...), nil
 }

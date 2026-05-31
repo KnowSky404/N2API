@@ -28,6 +28,7 @@ type AdminService interface {
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
 	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
+	ListRequestLogs(ctx context.Context, limit int) ([]admin.RequestLog, error)
 }
 
 type ProviderService interface {
@@ -200,6 +201,24 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
+	}))
+
+	mux.HandleFunc("GET /api/admin/request-logs", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		limit := 0
+		if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+			parsed, err := strconv.Atoi(rawLimit)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "bad_request")
+				return
+			}
+			limit = parsed
+		}
+		logs, err := admins.ListRequestLogs(r.Context(), limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
 	}))
 
 	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

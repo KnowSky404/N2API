@@ -27,6 +27,7 @@ func (h staticHealth) Ping(ctx context.Context) error {
 
 type fakeAdminService struct {
 	keys               []admin.APIKey
+	logs               []admin.RequestLog
 	errorOnEmptyLogout bool
 	logoutTokens       []string
 }
@@ -53,6 +54,9 @@ func newFakeAdminService() *fakeAdminService {
 	return &fakeAdminService{
 		keys: []admin.APIKey{
 			{ID: 7, Name: "codex laptop", Prefix: "n2api_abc", CreatedAt: time.Unix(1000, 0).UTC()},
+		},
+		logs: []admin.RequestLog{
+			{ID: 3, RequestID: "req_3", ClientKey: "codex laptop (n2api_abc)", Provider: "openai", Route: "/v1/models", Method: http.MethodGet, StatusCode: 200, LatencyMS: 12, CreatedAt: time.Unix(4000, 0).UTC()},
 		},
 	}
 }
@@ -100,6 +104,13 @@ func (s *fakeAdminService) RevokeAPIKey(_ context.Context, id int64) (admin.APIK
 		}
 	}
 	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) ListRequestLogs(_ context.Context, limit int) ([]admin.RequestLog, error) {
+	if limit > len(s.logs) {
+		limit = len(s.logs)
+	}
+	return s.logs[:limit], nil
 }
 
 func newFakeProviderService() *fakeProviderService {
@@ -550,6 +561,36 @@ func TestProviderCallbackRedirectsToConnectedOrError(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Location"); got != "/?provider=openai&status=error" {
 		t.Fatalf("Location = %q, want error redirect", got)
+	}
+}
+
+func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/request-logs", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body struct {
+		Logs []admin.RequestLog `json:"logs"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Logs) != 1 || body.Logs[0].RequestID != "req_3" {
+		t.Fatalf("logs = %+v", body.Logs)
 	}
 }
 
