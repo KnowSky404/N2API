@@ -21,6 +21,20 @@
    * @property {string | null} lastRefreshAt
    */
 
+  /**
+   * @typedef {object} RequestLog
+   * @property {number} id
+   * @property {string} requestId
+   * @property {string} clientKey
+   * @property {string} provider
+   * @property {string} route
+   * @property {string} method
+   * @property {number} statusCode
+   * @property {number} latencyMs
+   * @property {string} error
+   * @property {string} createdAt
+   */
+
   let health = $state({
     loading: true,
     error: '',
@@ -48,6 +62,12 @@
     items: [],
     newKeyName: '',
     oneTimeSecret: ''
+  });
+  /** @type {{ loading: boolean, error: string, items: RequestLog[] }} */
+  let requestLogs = $state({
+    loading: false,
+    error: '',
+    items: []
   });
 
   const providerStateLabel = $derived(
@@ -118,6 +138,14 @@
     };
   }
 
+  function clearRequestLogs() {
+    requestLogs = {
+      loading: false,
+      error: '',
+      items: []
+    };
+  }
+
   function clearProvider() {
     provider = {
       loading: false,
@@ -170,6 +198,7 @@
         session = { loading: false, authenticated: false, username: '', error: '' };
         clearProvider();
         clearAPIKeys();
+        clearRequestLogs();
         return;
       }
       if (!response.ok) {
@@ -189,6 +218,7 @@
       };
       await loadProvider();
       await loadKeys();
+      await loadRequestLogs();
     } catch (error) {
       if (version !== sessionVersion) return;
 
@@ -201,6 +231,7 @@
       };
       clearProvider();
       clearAPIKeys();
+      clearRequestLogs();
     }
   }
 
@@ -231,6 +262,7 @@
     session = { loading: false, authenticated: false, username: '', error: '' };
     clearProvider();
     clearAPIKeys();
+    clearRequestLogs();
     loginForm.password = '';
   }
 
@@ -314,6 +346,26 @@
     }
   }
 
+  async function loadRequestLogs() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    requestLogs.loading = true;
+    requestLogs.error = '';
+
+    try {
+      const payload = await requestJSON('/api/admin/request-logs?limit=50');
+      if (!isCurrentAuthenticated(version)) return;
+      requestLogs.items = payload.logs ?? [];
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      requestLogs.error = error instanceof Error ? error.message : 'Failed to load request logs';
+    } finally {
+      if (!isCurrentAuthenticated(version)) return;
+      requestLogs.loading = false;
+    }
+  }
+
   /** @param {SubmitEvent} event */
   async function createKey(event) {
     event.preventDefault();
@@ -333,6 +385,7 @@
       apiKeys.items = [payload.key, ...apiKeys.items];
       apiKeys.oneTimeSecret = payload.secret;
       apiKeys.newKeyName = '';
+      await loadRequestLogs();
     } catch (error) {
       if (!isCurrentAuthenticated(version)) return;
       apiKeys.error = error instanceof Error ? error.message : 'Failed to create API key';
@@ -353,6 +406,7 @@
       const payload = await requestJSON(`/api/admin/keys/${id}/revoke`, { method: 'POST' });
       if (!isCurrentAuthenticated(version)) return;
       apiKeys.items = apiKeys.items.map((key) => (key.id === id ? payload.key : key));
+      await loadRequestLogs();
     } catch (error) {
       if (!isCurrentAuthenticated(version)) return;
       apiKeys.error = error instanceof Error ? error.message : 'Failed to revoke API key';
@@ -647,6 +701,85 @@
                         Revoke
                       </button>
                     </td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="rounded-lg border border-[#ededed] bg-white p-6">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Request logs</h2>
+            <p class="mt-1 text-sm text-[#6e6e6e]">
+              Recent OpenAI-compatible gateway requests.
+            </p>
+          </div>
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={requestLogs.loading}
+            onclick={loadRequestLogs}
+          >
+            {requestLogs.loading ? 'Refreshing' : 'Refresh'}
+          </button>
+        </div>
+
+        {#if requestLogs.error}
+          <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {requestLogs.error}
+          </p>
+        {/if}
+
+        <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+          <table class="w-full min-w-[900px] text-left text-sm">
+            <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+              <tr>
+                <th class="px-4 py-3 font-medium">Time</th>
+                <th class="px-4 py-3 font-medium">Key</th>
+                <th class="px-4 py-3 font-medium">Route</th>
+                <th class="px-4 py-3 font-medium">Method</th>
+                <th class="px-4 py-3 font-medium">Status</th>
+                <th class="px-4 py-3 font-medium">Latency</th>
+                <th class="px-4 py-3 font-medium">Error</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#ededed]">
+              {#if requestLogs.loading}
+                <tr>
+                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading request logs...</td>
+                </tr>
+              {:else if requestLogs.items.length === 0}
+                <tr>
+                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No gateway requests yet.</td>
+                </tr>
+              {:else}
+                {#each requestLogs.items as log}
+                  <tr class="bg-white">
+                    <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(log.createdAt)}</td>
+                    <td class="px-4 py-3 text-[#3c3c3c]">{log.clientKey || 'Unknown'}</td>
+                    <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{log.route}</td>
+                    <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.method}</td>
+                    <td class="px-4 py-3">
+                      <span
+                        class={[
+                          'inline-flex rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
+                          log.statusCode >= 500
+                            ? 'bg-red-50 text-red-700'
+                            : log.statusCode >= 400
+                              ? 'bg-amber-50 text-amber-700'
+                              : 'bg-[#e8f5f0] text-[#0a7a5e]'
+                        ]}
+                      >
+                        {log.statusCode}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
+                      {log.latencyMs}ms
+                    </td>
+                    <td class="px-4 py-3 text-[#3c3c3c]">{log.error || '-'}</td>
                   </tr>
                 {/each}
               {/if}
