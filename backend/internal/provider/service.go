@@ -81,7 +81,8 @@ type Repository interface {
 	SaveAccount(ctx context.Context, account Account) error
 	DeleteAccount(ctx context.Context, provider string) error
 	CreateState(ctx context.Context, state OAuthState) error
-	ConsumeState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
+	FindState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
+	ConsumeState(ctx context.Context, provider, stateHash string, now time.Time) error
 }
 
 type OAuthClient interface {
@@ -252,7 +253,8 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 		return Account{}, ErrNotConfigured
 	}
 
-	if _, err := s.repo.ConsumeState(ctx, s.cfg.Provider, secret.HashAPIKey(state), time.Now()); err != nil {
+	stateHash := secret.HashAPIKey(state)
+	if _, err := s.repo.FindState(ctx, s.cfg.Provider, stateHash, time.Now()); err != nil {
 		if errors.Is(err, ErrInvalidState) {
 			return Account{}, ErrInvalidState
 		}
@@ -263,7 +265,17 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 	if err != nil {
 		return Account{}, err
 	}
-	return s.storeTokenResponse(ctx, tokens, nil)
+	account, err := s.storeTokenResponse(ctx, tokens, nil)
+	if err != nil {
+		return Account{}, err
+	}
+	if err := s.repo.ConsumeState(ctx, s.cfg.Provider, stateHash, time.Now()); err != nil {
+		if errors.Is(err, ErrInvalidState) {
+			return Account{}, ErrInvalidState
+		}
+		return Account{}, err
+	}
+	return account, nil
 }
 
 func (s *Service) Disconnect(ctx context.Context) error {

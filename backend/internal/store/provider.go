@@ -83,7 +83,32 @@ func (r *ProviderRepository) CreateState(ctx context.Context, state provider.OAu
 	return err
 }
 
-func (r *ProviderRepository) ConsumeState(ctx context.Context, providerName, stateHash string, now time.Time) (provider.OAuthState, error) {
+func (r *ProviderRepository) FindState(ctx context.Context, providerName, stateHash string, now time.Time) (provider.OAuthState, error) {
+	var state provider.OAuthState
+	err := r.pool.QueryRow(ctx, `
+		SELECT provider, state_hash, redirect_after, expires_at, consumed_at
+		FROM oauth_states
+		WHERE provider = $1
+			AND state_hash = $2
+			AND expires_at > $3
+			AND consumed_at IS NULL
+	`, providerName, stateHash, now).Scan(
+		&state.Provider,
+		&state.StateHash,
+		&state.RedirectAfter,
+		&state.ExpiresAt,
+		&state.ConsumedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.OAuthState{}, provider.ErrInvalidState
+	}
+	if err != nil {
+		return provider.OAuthState{}, err
+	}
+	return state, nil
+}
+
+func (r *ProviderRepository) ConsumeState(ctx context.Context, providerName, stateHash string, now time.Time) error {
 	var state provider.OAuthState
 	err := r.pool.QueryRow(ctx, `
 		UPDATE oauth_states
@@ -101,10 +126,10 @@ func (r *ProviderRepository) ConsumeState(ctx context.Context, providerName, sta
 		&state.ConsumedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return provider.OAuthState{}, provider.ErrInvalidState
+		return provider.ErrInvalidState
 	}
 	if err != nil {
-		return provider.OAuthState{}, err
+		return err
 	}
-	return state, nil
+	return nil
 }

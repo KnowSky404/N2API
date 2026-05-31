@@ -120,6 +120,23 @@ func TestCompleteCallbackStoresEncryptedTokensAndConsumesState(t *testing.T) {
 	}
 }
 
+func TestCompleteCallbackDoesNotConsumeStateWhenTokenExchangeFails(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{exchangeErr: errors.New("token endpoint unavailable")})
+
+	started, err := service.StartConnect(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	state := mustQuery(t, started.AuthorizationURL, "state")
+	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err == nil {
+		t.Fatal("CompleteCallback returned nil error, want token exchange error")
+	}
+	if repo.states[0].ConsumedAt != nil {
+		t.Fatal("state was consumed even though token exchange failed")
+	}
+}
+
 func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
 	repo := newMemoryRepo()
 	expiresAt := time.Now().Add(time.Hour)
@@ -209,7 +226,18 @@ func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
 	return nil
 }
 
-func (r *memoryRepo) ConsumeState(ctx context.Context, providerName, stateHash string, now time.Time) (OAuthState, error) {
+func (r *memoryRepo) FindState(ctx context.Context, providerName, stateHash string, now time.Time) (OAuthState, error) {
+	for i := range r.states {
+		state := &r.states[i]
+		if state.Provider != providerName || state.StateHash != stateHash || state.ConsumedAt != nil || !state.ExpiresAt.After(now) {
+			continue
+		}
+		return *state, nil
+	}
+	return OAuthState{}, ErrInvalidState
+}
+
+func (r *memoryRepo) ConsumeState(ctx context.Context, providerName, stateHash string, now time.Time) error {
 	for i := range r.states {
 		state := &r.states[i]
 		if state.Provider != providerName || state.StateHash != stateHash || state.ConsumedAt != nil || !state.ExpiresAt.After(now) {
@@ -217,17 +245,21 @@ func (r *memoryRepo) ConsumeState(ctx context.Context, providerName, stateHash s
 		}
 		consumedAt := now
 		state.ConsumedAt = &consumedAt
-		return *state, nil
+		return nil
 	}
-	return OAuthState{}, ErrInvalidState
+	return ErrInvalidState
 }
 
 type fakeOAuthClient struct {
-	exchange TokenResponse
-	refresh  TokenResponse
+	exchange    TokenResponse
+	exchangeErr error
+	refresh     TokenResponse
 }
 
 func (c fakeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
+	if c.exchangeErr != nil {
+		return TokenResponse{}, c.exchangeErr
+	}
 	return c.exchange, nil
 }
 
