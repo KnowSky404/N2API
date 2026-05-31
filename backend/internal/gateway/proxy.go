@@ -170,7 +170,21 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, accessToken string) (*http.R
 
 func isSupportedRoute(r *http.Request) bool {
 	return (r.Method == http.MethodGet && r.URL.Path == "/v1/models") ||
-		(r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions")
+		(r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions") ||
+		(r.Method == http.MethodPost && r.URL.Path == "/v1/responses") ||
+		(r.Method == http.MethodGet && isResponsesSubroute(r.URL.Path))
+}
+
+func isResponsesSubroute(path string) bool {
+	if !strings.HasPrefix(path, "/v1/responses/") {
+		return false
+	}
+	rest := strings.TrimPrefix(path, "/v1/responses/")
+	if rest == "" || strings.Contains(rest, "//") {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	return len(parts) == 1 || (len(parts) == 2 && parts[1] == "input_items")
 }
 
 func bearerToken(header string) (string, bool) {

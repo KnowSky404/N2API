@@ -145,6 +145,92 @@ func TestProxyStreamsChatCompletionsResponse(t *testing.T) {
 	}
 }
 
+func TestProxyForwardsResponsesCreateWithStreaming(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Fatalf("path = %q, want /v1/responses", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer upstream-token" {
+			t.Fatalf("upstream Authorization = %q", r.Header.Get("Authorization"))
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if !strings.Contains(string(body), `"stream":true`) {
+			t.Fatalf("body = %q, want stream request body", string(body))
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\"}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+		UpstreamBaseURL: upstream.URL,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi","stream":true}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", got)
+	}
+	if recorder.Body.String() != "data: {\"type\":\"response.output_text.delta\"}\n\ndata: [DONE]\n\n" {
+		t.Fatalf("stream body = %q", recorder.Body.String())
+	}
+}
+
+func TestProxyForwardsResponsesRetrieveAndInputItems(t *testing.T) {
+	var gotPaths []string
+	var gotQueries []string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		gotQueries = append(gotQueries, r.URL.RawQuery)
+		if r.Header.Get("Authorization") != "Bearer upstream-token" {
+			t.Fatalf("upstream Authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_123"}`))
+	}))
+	defer upstream.Close()
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+		UpstreamBaseURL: upstream.URL,
+	})
+
+	for _, path := range []string{
+		"/v1/responses/resp_123?include[]=message.output_text.logprobs",
+		"/v1/responses/resp_123/input_items?limit=20",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer n2api_client_secret")
+		recorder := httptest.NewRecorder()
+
+		proxy.ServeHTTP(recorder, req)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200; body=%s", path, recorder.Code, recorder.Body.String())
+		}
+	}
+
+	if strings.Join(gotPaths, ",") != "/v1/responses/resp_123,/v1/responses/resp_123/input_items" {
+		t.Fatalf("paths = %+v", gotPaths)
+	}
+	if gotQueries[0] != "include[]=message.output_text.logprobs" || gotQueries[1] != "limit=20" {
+		t.Fatalf("queries = %+v", gotQueries)
+	}
+}
+
 func TestProxyReportsMissingProviderAccount(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{err: provider.ErrNotConnected}, Config{
 		UpstreamBaseURL: "https://api.example.test",
