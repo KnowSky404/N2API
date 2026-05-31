@@ -38,6 +38,17 @@ type fakeProviderService struct {
 	disconnected bool
 }
 
+type fakeGatewayHandler struct {
+	called bool
+}
+
+func (h *fakeGatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.called = true
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+}
+
 func newFakeAdminService() *fakeAdminService {
 	return &fakeAdminService{
 		keys: []admin.APIKey{
@@ -539,6 +550,24 @@ func TestProviderCallbackRedirectsToConnectedOrError(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Location"); got != "/?provider=openai&status=error" {
 		t.Fatalf("Location = %q, want error redirect", got)
+	}
+}
+
+func TestV1RoutesUseGatewayHandler(t *testing.T) {
+	gateway := &fakeGatewayHandler{}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService(), gateway)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if !gateway.called {
+		t.Fatal("gateway handler was not called")
+	}
+	if recorder.Body.String() != `{"object":"list","data":[]}` {
+		t.Fatalf("body = %q", recorder.Body.String())
 	}
 }
 

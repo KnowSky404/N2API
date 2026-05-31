@@ -19,6 +19,7 @@ type Config struct {
 	OpenAIOAuthRedirectURL string
 	OpenAIOAuthAuthURL     string
 	OpenAIOAuthTokenURL    string
+	OpenAIAPIBaseURL       string
 }
 
 func Load(lookup func(string) string) (Config, error) {
@@ -35,6 +36,7 @@ func Load(lookup func(string) string) (Config, error) {
 		OpenAIOAuthRedirectURL: lookup("OPENAI_OAUTH_REDIRECT_URL"),
 		OpenAIOAuthAuthURL:     lookup("OPENAI_OAUTH_AUTH_URL"),
 		OpenAIOAuthTokenURL:    lookup("OPENAI_OAUTH_TOKEN_URL"),
+		OpenAIAPIBaseURL:       valueOrDefault(lookup("OPENAI_API_BASE_URL"), "https://api.openai.com"),
 	}
 
 	port, err := parsePort(valueOrDefault(lookup("N2API_PORT"), "3000"))

@@ -36,6 +36,7 @@ cp .env.example .env
 ```
 
 Edit `.env` and set real secrets before running the full stack.
+`OPENAI_API_BASE_URL` defaults to `https://api.openai.com` and can be changed for compatible upstreams.
 
 Backend:
 
@@ -62,4 +63,4 @@ docker compose -f deploy/compose.yaml --env-file .env up --build
 
 ## Current Status
 
-This repository is in bootstrap stage. The first implementation milestone is a minimal Go service, PostgreSQL-backed configuration, and static SvelteKit admin shell.
+The backend includes admin API key management, OpenAI/Codex OAuth account connection, and an initial OpenAI-compatible gateway for `/v1/models` and `/v1/chat/completions`.

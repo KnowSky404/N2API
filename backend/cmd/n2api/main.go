@@ -9,6 +9,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
+	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/store"
@@ -51,10 +52,13 @@ func main() {
 		TokenURL:     cfg.OpenAIOAuthTokenURL,
 		Secret:       cfg.EncryptionSecret,
 	})
+	gatewayProxy := gateway.NewProxy(adminService, providerService, gateway.Config{
+		UpstreamBaseURL: cfg.OpenAIAPIBaseURL,
+	})
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

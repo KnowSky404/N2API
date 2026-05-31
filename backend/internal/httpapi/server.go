@@ -37,7 +37,7 @@ type ProviderService interface {
 	Disconnect(ctx context.Context) error
 }
 
-func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService) http.Handler {
+func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, gateways ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
 
@@ -257,6 +257,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 		http.Redirect(w, r, "/?provider=openai&status=connected", http.StatusFound)
 	})
+
+	if len(gateways) > 0 && gateways[0] != nil {
+		mux.Handle("/v1/", gateways[0])
+	}
 
 	mux.HandleFunc("/api/admin", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")

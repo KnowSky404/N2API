@@ -28,14 +28,14 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 
 func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
 	env := map[string]string{
-		"DATABASE_URL":                "postgres://example",
-		"N2API_ENCRYPTION_SECRET":     "encryption-secret",
-		"N2API_ADMIN_PASSWORD":        "admin-password",
-		"OPENAI_OAUTH_CLIENT_ID":      "client-id",
-		"OPENAI_OAUTH_CLIENT_SECRET":  "client-secret",
-		"OPENAI_OAUTH_REDIRECT_URL":   "http://localhost:3000/oauth/openai/callback",
-		"OPENAI_OAUTH_AUTH_URL":       "https://auth.example.test/authorize",
-		"OPENAI_OAUTH_TOKEN_URL":      "https://auth.example.test/token",
+		"DATABASE_URL":               "postgres://example",
+		"N2API_ENCRYPTION_SECRET":    "encryption-secret",
+		"N2API_ADMIN_PASSWORD":       "admin-password",
+		"OPENAI_OAUTH_CLIENT_ID":     "client-id",
+		"OPENAI_OAUTH_CLIENT_SECRET": "client-secret",
+		"OPENAI_OAUTH_REDIRECT_URL":  "http://localhost:3000/oauth/openai/callback",
+		"OPENAI_OAUTH_AUTH_URL":      "https://auth.example.test/authorize",
+		"OPENAI_OAUTH_TOKEN_URL":     "https://auth.example.test/token",
 	}
 	cfg, err := Load(func(key string) string { return env[key] })
 	if err != nil {
@@ -46,6 +46,23 @@ func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
 	}
 	if cfg.OpenAIOAuthTokenURL != "https://auth.example.test/token" {
 		t.Fatalf("OpenAIOAuthTokenURL = %q", cfg.OpenAIOAuthTokenURL)
+	}
+}
+
+func TestLoadOpenAIAPIBaseURLConfig(t *testing.T) {
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":              "postgres://example",
+		"N2API_ENCRYPTION_SECRET":   "encryption-secret",
+		"N2API_ADMIN_PASSWORD":      "admin-password",
+		"OPENAI_API_BASE_URL":       "https://api.example.test",
+		"OPENAI_OAUTH_CLIENT_ID":    "client-id",
+		"OPENAI_OAUTH_REDIRECT_URL": "http://localhost:3000/oauth/openai/callback",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.OpenAIAPIBaseURL != "https://api.example.test" {
+		t.Fatalf("OpenAIAPIBaseURL = %q", cfg.OpenAIAPIBaseURL)
 	}
 }
 
