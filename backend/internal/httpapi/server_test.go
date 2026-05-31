@@ -12,6 +12,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
+	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
 
 var errHealth = errors.New("database unavailable")
@@ -28,6 +29,13 @@ type fakeAdminService struct {
 	keys               []admin.APIKey
 	errorOnEmptyLogout bool
 	logoutTokens       []string
+}
+
+type fakeProviderService struct {
+	status       provider.Status
+	connect      provider.ConnectResult
+	callbackErr  error
+	disconnected bool
 }
 
 func newFakeAdminService() *fakeAdminService {
@@ -83,8 +91,43 @@ func (s *fakeAdminService) RevokeAPIKey(_ context.Context, id int64) (admin.APIK
 	return admin.APIKey{}, admin.ErrNotFound
 }
 
+func newFakeProviderService() *fakeProviderService {
+	return &fakeProviderService{
+		status: provider.Status{
+			Provider:    "openai",
+			Configured:  true,
+			Connected:   true,
+			DisplayName: "Codex Account",
+		},
+		connect: provider.ConnectResult{AuthorizationURL: "https://auth.example.test/authorize?state=oauth_state"},
+	}
+}
+
+func (s *fakeProviderService) Status(_ context.Context) (provider.Status, error) {
+	return s.status, nil
+}
+
+func (s *fakeProviderService) StartConnect(_ context.Context, redirectAfter string) (provider.ConnectResult, error) {
+	if !s.status.Configured {
+		return provider.ConnectResult{}, provider.ErrNotConfigured
+	}
+	return s.connect, nil
+}
+
+func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state string) (provider.Account, error) {
+	if s.callbackErr != nil {
+		return provider.Account{}, s.callbackErr
+	}
+	return provider.Account{Provider: "openai", DisplayName: "Codex Account"}, nil
+}
+
+func (s *fakeProviderService) Disconnect(_ context.Context) error {
+	s.disconnected = true
+	return nil
+}
+
 func TestHealthzReturnsOK(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{err: nil}, nil)
+	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -105,7 +148,7 @@ func TestHealthzReturnsOK(t *testing.T) {
 }
 
 func TestAdminHealthIncludesDatabaseStatus(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{err: nil}, nil)
+	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
@@ -129,7 +172,7 @@ func TestAdminHealthIncludesDatabaseStatus(t *testing.T) {
 }
 
 func TestAdminHealthReportsDatabaseError(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{err: errHealth}, nil)
+	server := NewServer(config.Config{}, staticHealth{err: errHealth}, nil, nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
@@ -157,7 +200,7 @@ func TestBootstrapReturnsPublicConfiguration(t *testing.T) {
 		PublicURL:     "https://n2api.example.com",
 		AdminUsername: "owner",
 	}
-	server := NewServer(cfg, staticHealth{err: nil}, nil)
+	server := NewServer(cfg, staticHealth{err: nil}, nil, nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/bootstrap", nil))
@@ -182,7 +225,7 @@ func TestBootstrapReturnsPublicConfiguration(t *testing.T) {
 
 func TestAdminLoginSetsSessionCookie(t *testing.T) {
 	admins := newFakeAdminService()
-	server := NewServer(config.Config{PublicURL: "http://localhost:3000"}, staticHealth{}, admins)
+	server := NewServer(config.Config{PublicURL: "http://localhost:3000"}, staticHealth{}, admins, nil)
 	recorder := httptest.NewRecorder()
 	body := strings.NewReader(`{"username":"admin","password":"secret"}`)
 
@@ -201,7 +244,7 @@ func TestAdminLoginSetsSessionCookie(t *testing.T) {
 }
 
 func TestAdminLoginSetsSecureCookieForHTTPSPublicURL(t *testing.T) {
-	server := NewServer(config.Config{PublicURL: "https://n2api.example.com"}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{PublicURL: "https://n2api.example.com"}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"secret"}`)))
@@ -215,7 +258,7 @@ func TestAdminLoginSetsSecureCookieForHTTPSPublicURL(t *testing.T) {
 }
 
 func TestInvalidAdminLoginReturnsUnauthorized(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"wrong"}`)))
@@ -233,7 +276,7 @@ func TestInvalidAdminLoginReturnsUnauthorized(t *testing.T) {
 }
 
 func TestAdminMeRequiresSession(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/me", nil))
@@ -244,7 +287,7 @@ func TestAdminMeRequiresSession(t *testing.T) {
 }
 
 func TestAdminMeReturnsUsernameWithoutPasswordHash(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
@@ -267,7 +310,7 @@ func TestAdminMeReturnsUsernameWithoutPasswordHash(t *testing.T) {
 }
 
 func TestAdminLogoutClearsSessionCookie(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/logout", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
@@ -289,7 +332,7 @@ func TestAdminLogoutClearsSessionCookie(t *testing.T) {
 func TestAdminLogoutWithoutSessionClearsCookieWithoutRevoking(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.errorOnEmptyLogout = true
-	server := NewServer(config.Config{}, staticHealth{}, admins)
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/logout", nil))
@@ -310,7 +353,7 @@ func TestAdminLogoutWithoutSessionClearsCookieWithoutRevoking(t *testing.T) {
 }
 
 func TestListAPIKeysRequiresSessionAndReturnsKeys(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/keys", nil))
@@ -341,7 +384,7 @@ func TestListAPIKeysRequiresSessionAndReturnsKeys(t *testing.T) {
 
 func TestCreateAPIKeyReturnsOneTimeSecret(t *testing.T) {
 	admins := newFakeAdminService()
-	server := NewServer(config.Config{}, staticHealth{}, admins)
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/keys", strings.NewReader(`{"name":"codex laptop"}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
@@ -363,7 +406,7 @@ func TestCreateAPIKeyReturnsOneTimeSecret(t *testing.T) {
 }
 
 func TestRevokeAPIKeyParsesIDAndReturnsRevokedKey(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/keys/7/revoke", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
@@ -384,8 +427,123 @@ func TestRevokeAPIKeyParsesIDAndReturnsRevokedKey(t *testing.T) {
 	}
 }
 
+func TestProviderStatusRequiresSessionAndReturnsStatus(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body provider.Status
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !body.Configured || !body.Connected || body.DisplayName != "Codex Account" {
+		t.Fatalf("provider status = %+v", body)
+	}
+}
+
+func TestProviderConnectReturnsAuthorizationURL(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body struct {
+		AuthorizationURL string `json:"authorizationUrl"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.AuthorizationURL == "" {
+		t.Fatal("authorizationUrl is empty")
+	}
+}
+
+func TestProviderConnectReturnsConflictWhenUnconfigured(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.status.Configured = false
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "provider_not_configured" {
+		t.Fatalf("error = %q, want provider_not_configured", body["error"])
+	}
+}
+
+func TestProviderDisconnectReturnsNoContent(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/disconnect", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", recorder.Code)
+	}
+	if !providers.disconnected {
+		t.Fatal("provider service was not disconnected")
+	}
+}
+
+func TestProviderCallbackRedirectsToConnectedOrError(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/oauth/openai/callback?code=abc&state=state", nil))
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", recorder.Code)
+	}
+	if got := recorder.Header().Get("Location"); got != "/?provider=openai&status=connected" {
+		t.Fatalf("Location = %q, want connected redirect", got)
+	}
+
+	providers.callbackErr = provider.ErrInvalidState
+	recorder = httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/oauth/openai/callback?code=abc&state=bad", nil))
+
+	if recorder.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", recorder.Code)
+	}
+	if got := recorder.Header().Get("Location"); got != "/?provider=openai&status=error" {
+		t.Fatalf("Location = %q, want error redirect", got)
+	}
+}
+
 func TestBadAdminJSONReturnsBadRequest(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{`)))
@@ -396,7 +554,7 @@ func TestBadAdminJSONReturnsBadRequest(t *testing.T) {
 }
 
 func TestAdminJSONWithTrailingGarbageReturnsBadRequest(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 	body := strings.NewReader(`{"username":"admin","password":"secret"} garbage`)
 
@@ -408,7 +566,7 @@ func TestAdminJSONWithTrailingGarbageReturnsBadRequest(t *testing.T) {
 }
 
 func TestAdminJSONWithSecondValueReturnsBadRequest(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 	body := strings.NewReader(`{"username":"admin","password":"secret"} {}`)
 
@@ -420,7 +578,7 @@ func TestAdminJSONWithSecondValueReturnsBadRequest(t *testing.T) {
 }
 
 func TestUnknownAdminPathReturnsJSONNotFound(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/missing", nil))
@@ -441,7 +599,7 @@ func TestUnknownAdminPathReturnsJSONNotFound(t *testing.T) {
 }
 
 func TestAdminRootPathReturnsJSONNotFoundWithoutRedirect(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin", nil))
@@ -465,7 +623,7 @@ func TestAdminRootPathReturnsJSONNotFoundWithoutRedirect(t *testing.T) {
 }
 
 func TestWrongMethodAdminPathDoesNotReturnRootFallback(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService())
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/login", nil))

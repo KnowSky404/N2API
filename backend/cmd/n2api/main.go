@@ -10,6 +10,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
+	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/store"
 )
 
@@ -40,9 +41,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	providerRepo := store.NewProviderRepository(pool)
+	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
+		Provider:     "openai",
+		ClientID:     cfg.OpenAIOAuthClientID,
+		ClientSecret: cfg.OpenAIOAuthSecret,
+		RedirectURL:  cfg.OpenAIOAuthRedirectURL,
+		AuthURL:      cfg.OpenAIOAuthAuthURL,
+		TokenURL:     cfg.OpenAIOAuthTokenURL,
+		Secret:       cfg.EncryptionSecret,
+	})
+
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

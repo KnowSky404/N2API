@@ -12,6 +12,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
+	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
 
 const adminSessionCookieName = "n2api_admin_session"
@@ -29,7 +30,14 @@ type AdminService interface {
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 }
 
-func NewServer(cfg config.Config, health HealthChecker, admins AdminService) http.Handler {
+type ProviderService interface {
+	Status(ctx context.Context) (provider.Status, error)
+	StartConnect(ctx context.Context, redirectAfter string) (provider.ConnectResult, error)
+	CompleteCallback(ctx context.Context, code, state string) (provider.Account, error)
+	Disconnect(ctx context.Context) error
+}
+
+func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService) http.Handler {
 	mux := http.NewServeMux()
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
 
@@ -193,6 +201,62 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService) htt
 		}
 		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
 	}))
+
+	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		status, err := providers.Status(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	}))
+
+	mux.HandleFunc("POST /api/admin/providers/openai/connect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		result, err := providers.StartConnect(r.Context(), "/")
+		if err != nil {
+			if errors.Is(err, provider.ErrNotConfigured) {
+				writeError(w, http.StatusConflict, "provider_not_configured")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": result.AuthorizationURL})
+	}))
+
+	mux.HandleFunc("POST /api/admin/providers/openai/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		if err := providers.Disconnect(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	mux.HandleFunc("GET /oauth/openai/callback", func(w http.ResponseWriter, r *http.Request) {
+		if providers == nil {
+			http.Redirect(w, r, "/?provider=openai&status=error", http.StatusFound)
+			return
+		}
+		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+		if _, err := providers.CompleteCallback(r.Context(), code, state); err != nil {
+			http.Redirect(w, r, "/?provider=openai&status=error", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, "/?provider=openai&status=connected", http.StatusFound)
+	})
 
 	mux.HandleFunc("/api/admin", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
