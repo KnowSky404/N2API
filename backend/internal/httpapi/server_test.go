@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
@@ -609,6 +610,33 @@ func TestV1RoutesUseGatewayHandler(t *testing.T) {
 	}
 	if recorder.Body.String() != `{"object":"list","data":[]}` {
 		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
+func TestServesStaticFrontendAndSPAFallback(t *testing.T) {
+	web := fstest.MapFS{
+		"index.html":            {Data: []byte("<!doctype html><title>N2API</title><main>index</main>")},
+		"200.html":              {Data: []byte("<!doctype html><title>N2API</title><main>fallback</main>")},
+		"_app/immutable/app.js": {Data: []byte("console.log('app')")},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService(), nil, web)
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: "/", want: "index"},
+		{path: "/settings/provider", want: "fallback"},
+		{path: "/_app/immutable/app.js", want: "console.log('app')"},
+	} {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", tc.path, recorder.Code)
+		}
+		if !strings.Contains(recorder.Body.String(), tc.want) {
+			t.Fatalf("%s body = %q, want %q", tc.path, recorder.Body.String(), tc.want)
+		}
 	}
 }
 

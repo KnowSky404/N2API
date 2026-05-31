@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -38,9 +40,10 @@ type ProviderService interface {
 	Disconnect(ctx context.Context) error
 }
 
-func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, gateways ...http.Handler) http.Handler {
+func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
 	mux := http.NewServeMux()
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
+	gateway, webFS := parseServerOptions(options...)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -277,8 +280,8 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		http.Redirect(w, r, "/?provider=openai&status=connected", http.StatusFound)
 	})
 
-	if len(gateways) > 0 && gateways[0] != nil {
-		mux.Handle("/v1/", gateways[0])
+	if gateway != nil {
+		mux.Handle("/v1/", gateway)
 	}
 
 	mux.HandleFunc("/api/admin", func(w http.ResponseWriter, r *http.Request) {
@@ -290,12 +293,56 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if serveWeb(w, r, webFS) {
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("N2API bootstrap server\n"))
 	})
 
 	return mux
+}
+
+func parseServerOptions(options ...any) (http.Handler, fs.FS) {
+	var gateway http.Handler
+	var webFS fs.FS
+	for _, option := range options {
+		switch value := option.(type) {
+		case http.Handler:
+			if gateway == nil {
+				gateway = value
+			}
+		case fs.FS:
+			if webFS == nil {
+				webFS = value
+			}
+		}
+	}
+	return gateway, webFS
+}
+
+func serveWeb(w http.ResponseWriter, r *http.Request, webFS fs.FS) bool {
+	if webFS == nil || r.Method != http.MethodGet {
+		return false
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/v1/") || strings.HasPrefix(r.URL.Path, "/oauth/") {
+		return false
+	}
+
+	cleanPath := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+	if cleanPath == "." || cleanPath == "" {
+		cleanPath = "index.html"
+	}
+	if info, err := fs.Stat(webFS, cleanPath); err == nil && !info.IsDir() {
+		http.ServeFileFS(w, r, webFS, cleanPath)
+		return true
+	}
+	if _, err := fs.Stat(webFS, "200.html"); err == nil {
+		http.ServeFileFS(w, r, webFS, "200.html")
+		return true
+	}
+	return false
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
