@@ -40,7 +40,7 @@
 - Modify: `backend/internal/config/config_test.go`
 - Modify: `.env.example`
 
-- [ ] **Step 1: Write failing config tests**
+- [x] **Step 1: Write failing config tests**
 
 Add this test in `backend/internal/config/config_test.go`:
 
@@ -69,7 +69,7 @@ func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
 
 Run from `backend`:
 
@@ -79,7 +79,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/config
 
 Expected: compile failure because `OpenAIOAuthAuthURL` and `OpenAIOAuthTokenURL` do not exist.
 
-- [ ] **Step 3: Implement config fields**
+- [x] **Step 3: Implement config fields**
 
 Update `backend/internal/config/config.go`:
 
@@ -107,7 +107,7 @@ OpenAIOAuthAuthURL:  lookup("OPENAI_OAUTH_AUTH_URL"),
 OpenAIOAuthTokenURL: lookup("OPENAI_OAUTH_TOKEN_URL"),
 ```
 
-- [ ] **Step 4: Update `.env.example`**
+- [x] **Step 4: Update `.env.example`**
 
 Append endpoint placeholders:
 
@@ -116,7 +116,7 @@ OPENAI_OAUTH_AUTH_URL=
 OPENAI_OAUTH_TOKEN_URL=
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
@@ -136,7 +136,7 @@ Expected: backend tests pass and one commit is created.
 - Create: `backend/internal/store/migrations/00003_oauth_states.sql`
 - Modify: `backend/internal/store/migrations_test.go`
 
-- [ ] **Step 1: Write failing migration test**
+- [x] **Step 1: Write failing migration test**
 
 Add to `backend/internal/store/migrations_test.go`:
 
@@ -161,7 +161,7 @@ func TestOAuthStatesMigrationIsEmbedded(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
 
 Run from `backend`:
 
@@ -171,7 +171,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/store
 
 Expected: failure because `00003_oauth_states.sql` is missing.
 
-- [ ] **Step 3: Add migration**
+- [x] **Step 3: Add migration**
 
 Create `backend/internal/store/migrations/00003_oauth_states.sql`:
 
@@ -198,7 +198,7 @@ DROP TABLE IF EXISTS oauth_states;
 -- +goose StatementEnd
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -218,7 +218,7 @@ Expected: backend tests pass and one commit is created.
 - Create: `backend/internal/provider/service.go`
 - Create: `backend/internal/provider/service_test.go`
 
-- [ ] **Step 1: Write provider service tests**
+- [x] **Step 1: Write provider service tests**
 
 Create `backend/internal/provider/service_test.go` with tests for configuration, connect URL creation, callback, disconnect, token lookup, and refresh. Use in-memory fakes for the repository and OAuth client. The full file starts with:
 
@@ -473,7 +473,7 @@ func mustQuery(t *testing.T, rawURL, key string) string {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run from `backend`:
 
@@ -483,7 +483,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/provider
 
 Expected: compile failure because the provider package does not exist.
 
-- [ ] **Step 3: Implement provider service**
+- [x] **Step 3: Implement provider service**
 
 Create `backend/internal/provider/service.go` with:
 
@@ -617,7 +617,7 @@ func (s *Service) Configured() bool {
 
 Use `secret.GenerateToken("oauth_state")`, `secret.HashAPIKey`, `secret.EncryptString`, and `secret.DecryptString`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -637,7 +637,7 @@ Expected: backend tests pass and one commit is created.
 - Create: `backend/internal/store/provider.go`
 - Create or modify: `backend/internal/store/provider_test.go`
 
-- [ ] **Step 1: Add repository compile test**
+- [x] **Step 1: Add repository compile test**
 
 Create `backend/internal/store/provider_test.go`:
 
@@ -655,7 +655,7 @@ func TestProviderRepositoryImplementsInterface(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
 
 Run from `backend`:
 
@@ -665,7 +665,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/store
 
 Expected: compile failure because `ProviderRepository` does not exist.
 
-- [ ] **Step 3: Implement provider repository**
+- [x] **Step 3: Implement provider repository**
 
 Create `backend/internal/store/provider.go` with methods:
 
@@ -725,7 +725,7 @@ WHERE provider = $1
 RETURNING provider, state_hash, redirect_after, expires_at, consumed_at
 ```
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -745,7 +745,7 @@ Expected: backend tests pass and one commit is created.
 - Modify: `backend/internal/provider/service.go`
 - Create: `backend/internal/provider/http_client_test.go`
 
-- [ ] **Step 1: Add OAuth client tests**
+- [x] **Step 1: Add OAuth client tests**
 
 Create `backend/internal/provider/http_client_test.go` using `httptest.Server`:
 
@@ -838,7 +838,7 @@ func TestHTTPClientRefreshTokenPostsRefreshGrant(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run from `backend`:
 
@@ -848,7 +848,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/provider
 
 Expected: compile failure because `NewHTTPClient` does not exist.
 
-- [ ] **Step 3: Implement HTTP OAuth client**
+- [x] **Step 3: Implement HTTP OAuth client**
 
 In `backend/internal/provider/service.go`, add `net/http`, `encoding/json`, and `io` imports, then add:
 
@@ -867,7 +867,7 @@ func NewHTTPClient(client *http.Client) *HTTPClient {
 
 Implement `ExchangeCode` and `RefreshToken` with `application/x-www-form-urlencoded` POST requests to `cfg.TokenURL`, bounded response body reads, and JSON decoding for `access_token`, `refresh_token`, `expires_in`, `subject`, and `display_name`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -888,7 +888,7 @@ Expected: backend tests pass and one commit is created.
 - Modify: `backend/internal/httpapi/server_test.go`
 - Modify: `backend/cmd/n2api/main.go`
 
-- [ ] **Step 1: Add HTTP tests**
+- [x] **Step 1: Add HTTP tests**
 
 Add tests in `backend/internal/httpapi/server_test.go` for:
 - `GET /api/admin/providers/openai` returns `401` without session.
@@ -899,7 +899,7 @@ Add tests in `backend/internal/httpapi/server_test.go` for:
 
 Extend the existing fake admin service setup with a fake provider service.
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run from `backend`:
 
@@ -909,7 +909,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./internal/httpapi
 
 Expected: compile failure because `NewServer` has no provider dependency and routes are missing.
 
-- [ ] **Step 3: Add provider HTTP interface and routes**
+- [x] **Step 3: Add provider HTTP interface and routes**
 
 In `backend/internal/httpapi/server.go`, add:
 
@@ -948,7 +948,7 @@ if _, err := providers.CompleteCallback(r.Context(), code, state); err != nil {
 http.Redirect(w, r, "/?provider=openai&status=connected", http.StatusFound)
 ```
 
-- [ ] **Step 4: Wire main**
+- [x] **Step 4: Wire main**
 
 In `backend/cmd/n2api/main.go`, create:
 
@@ -967,7 +967,7 @@ providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http
 
 Then pass `providerService` to `httpapi.NewServer`.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
@@ -986,7 +986,7 @@ Expected: backend tests pass and one commit is created.
 **Files:**
 - Modify: `frontend/src/routes/+page.svelte`
 
-- [ ] **Step 1: Add provider state and request functions**
+- [x] **Step 1: Add provider state and request functions**
 
 In `frontend/src/routes/+page.svelte`, add provider state:
 
@@ -1002,15 +1002,15 @@ let provider = $state({
 
 Add `loadProvider`, `connectProvider`, and `disconnectProvider` functions using the existing `requestJSON` helper.
 
-- [ ] **Step 2: Add provider panel markup**
+- [x] **Step 2: Add provider panel markup**
 
 Render the provider panel only when `session.authenticated` is true. Place it above the API keys section. The panel should show OpenAI/Codex, configured/connected status, display name, token expiry, last refresh, and connect/disconnect buttons.
 
-- [ ] **Step 3: Ensure session changes clear provider state**
+- [x] **Step 3: Ensure session changes clear provider state**
 
 When `clearAPIKeys()` runs on logout or unauthenticated state, also clear provider state. After successful `loadSession`, call `loadProvider()` before or alongside `loadKeys()`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -1030,7 +1030,7 @@ Expected: frontend checks pass and one commit is created.
 **Files:**
 - Review repository state and documentation.
 
-- [ ] **Step 1: Run backend tests**
+- [x] **Step 1: Run backend tests**
 
 Run:
 
@@ -1041,7 +1041,7 @@ GOCACHE=/root/Clouds/N2API/.cache/go-build go test ./...
 
 Expected: all backend packages pass.
 
-- [ ] **Step 2: Run frontend checks**
+- [x] **Step 2: Run frontend checks**
 
 Run:
 
@@ -1053,7 +1053,7 @@ bun run build
 
 Expected: Svelte validation and production build pass.
 
-- [ ] **Step 3: Check repository status**
+- [x] **Step 3: Check repository status**
 
 Run:
 
