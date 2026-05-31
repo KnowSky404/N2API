@@ -137,6 +137,31 @@ func TestCompleteCallbackDoesNotConsumeStateWhenTokenExchangeFails(t *testing.T)
 	}
 }
 
+func TestCompleteCallbackUsesValidationTimeWhenConsumingState(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.rejectConsumeAfterFindNow = true
+	client := fakeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			ExpiresIn:    3600,
+		},
+	}
+	service := newConfiguredService(repo, client)
+
+	started, err := service.StartConnect(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	state := mustQuery(t, started.AuthorizationURL, "state")
+	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if repo.states[0].ConsumedAt == nil {
+		t.Fatal("state was not consumed")
+	}
+}
+
 func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
 	repo := newMemoryRepo()
 	expiresAt := time.Now().Add(time.Hour)
@@ -191,9 +216,11 @@ func TestAccessTokenRefreshesExpiredToken(t *testing.T) {
 }
 
 type memoryRepo struct {
-	account    Account
-	hasAccount bool
-	states     []OAuthState
+	account                   Account
+	hasAccount                bool
+	states                    []OAuthState
+	rejectConsumeAfterFindNow bool
+	lastFindNow               time.Time
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -227,6 +254,7 @@ func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
 }
 
 func (r *memoryRepo) FindState(ctx context.Context, providerName, stateHash string, now time.Time) (OAuthState, error) {
+	r.lastFindNow = now
 	for i := range r.states {
 		state := &r.states[i]
 		if state.Provider != providerName || state.StateHash != stateHash || state.ConsumedAt != nil || !state.ExpiresAt.After(now) {
@@ -238,6 +266,9 @@ func (r *memoryRepo) FindState(ctx context.Context, providerName, stateHash stri
 }
 
 func (r *memoryRepo) ConsumeState(ctx context.Context, providerName, stateHash string, now time.Time) error {
+	if r.rejectConsumeAfterFindNow && now.After(r.lastFindNow) {
+		return ErrInvalidState
+	}
 	for i := range r.states {
 		state := &r.states[i]
 		if state.Provider != providerName || state.StateHash != stateHash || state.ConsumedAt != nil || !state.ExpiresAt.After(now) {

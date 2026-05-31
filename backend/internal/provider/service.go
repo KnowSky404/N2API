@@ -254,7 +254,8 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 	}
 
 	stateHash := secret.HashAPIKey(state)
-	if _, err := s.repo.FindState(ctx, s.cfg.Provider, stateHash, time.Now()); err != nil {
+	validatedAt := time.Now()
+	if _, err := s.repo.FindState(ctx, s.cfg.Provider, stateHash, validatedAt); err != nil {
 		if errors.Is(err, ErrInvalidState) {
 			return Account{}, ErrInvalidState
 		}
@@ -269,7 +270,7 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 	if err != nil {
 		return Account{}, err
 	}
-	if err := s.repo.ConsumeState(ctx, s.cfg.Provider, stateHash, time.Now()); err != nil {
+	if err := s.repo.ConsumeState(ctx, s.cfg.Provider, stateHash, validatedAt); err != nil {
 		if errors.Is(err, ErrInvalidState) {
 			return Account{}, ErrInvalidState
 		}
