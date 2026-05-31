@@ -11,6 +11,16 @@
    * @property {string | null} revokedAt
    */
 
+  /**
+   * @typedef {object} ProviderStatus
+   * @property {string} provider
+   * @property {boolean} configured
+   * @property {boolean} connected
+   * @property {string} displayName
+   * @property {string | null} accessTokenExpiresAt
+   * @property {string | null} lastRefreshAt
+   */
+
   let health = $state({
     loading: true,
     error: '',
@@ -22,6 +32,14 @@
   let sessionVersion = $state(0);
   let loginForm = $state({ username: '', password: '', submitting: false, error: '' });
   let canCopySecret = $state(false);
+  /** @type {{ loading: boolean, connecting: boolean, disconnecting: boolean, error: string, data: ProviderStatus | null }} */
+  let provider = $state({
+    loading: false,
+    connecting: false,
+    disconnecting: false,
+    error: '',
+    data: null
+  });
   /** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
   let apiKeys = $state({
     loading: false,
@@ -32,10 +50,20 @@
     oneTimeSecret: ''
   });
 
+  const providerStateLabel = $derived(
+    provider.data?.configured
+      ? provider.data.connected
+        ? 'connected'
+        : 'not connected'
+      : 'not configured'
+  );
   const statusItems = $derived([
     { label: 'Backend', value: health.status },
     { label: 'Database', value: health.database },
-    { label: 'Provider', value: 'Codex/OpenAI OAuth planned' }
+    {
+      label: 'Provider',
+      value: session.authenticated ? (provider.data ? providerStateLabel : 'checking') : 'login required'
+    }
   ]);
   const activeKeys = $derived(apiKeys.items.filter((key) => !key.revokedAt));
 
@@ -90,6 +118,16 @@
     };
   }
 
+  function clearProvider() {
+    provider = {
+      loading: false,
+      connecting: false,
+      disconnecting: false,
+      error: '',
+      data: null
+    };
+  }
+
   /** @param {number} version */
   function isCurrentAuthenticated(version) {
     return version === sessionVersion && session.authenticated;
@@ -130,6 +168,7 @@
       if (response.status === 401) {
         sessionVersion += 1;
         session = { loading: false, authenticated: false, username: '', error: '' };
+        clearProvider();
         clearAPIKeys();
         return;
       }
@@ -148,6 +187,7 @@
         username: payload.username ?? '',
         error: ''
       };
+      await loadProvider();
       await loadKeys();
     } catch (error) {
       if (version !== sessionVersion) return;
@@ -159,6 +199,7 @@
         username: '',
         error: error instanceof Error ? error.message : 'Session check failed'
       };
+      clearProvider();
       clearAPIKeys();
     }
   }
@@ -188,8 +229,69 @@
     sessionVersion += 1;
     await requestJSON('/api/admin/logout', { method: 'POST' }).catch(() => null);
     session = { loading: false, authenticated: false, username: '', error: '' };
+    clearProvider();
     clearAPIKeys();
     loginForm.password = '';
+  }
+
+  async function loadProvider() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    provider.loading = true;
+    provider.error = '';
+
+    try {
+      const payload = await requestJSON('/api/admin/providers/openai');
+      if (!isCurrentAuthenticated(version)) return;
+      provider.data = payload;
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.error = error instanceof Error ? error.message : 'Failed to load provider status';
+    } finally {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.loading = false;
+    }
+  }
+
+  async function connectProvider() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    provider.connecting = true;
+    provider.error = '';
+
+    try {
+      const payload = await requestJSON('/api/admin/providers/openai/connect', { method: 'POST' });
+      if (!isCurrentAuthenticated(version)) return;
+      window.location.href = payload.authorizationUrl;
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.error = error instanceof Error ? error.message : 'Failed to start provider connection';
+    } finally {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.connecting = false;
+    }
+  }
+
+  async function disconnectProvider() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    provider.disconnecting = true;
+    provider.error = '';
+
+    try {
+      await requestJSON('/api/admin/providers/openai/disconnect', { method: 'POST' });
+      if (!isCurrentAuthenticated(version)) return;
+      await loadProvider();
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.error = error instanceof Error ? error.message : 'Failed to disconnect provider';
+    } finally {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.disconnecting = false;
+    }
   }
 
   async function loadKeys() {
@@ -356,6 +458,78 @@
         </form>
       </section>
     {:else}
+      <section class="rounded-lg border border-[#ededed] bg-white p-6">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Provider</h2>
+            <p class="mt-1 text-sm text-[#6e6e6e]">OpenAI/Codex account connection</p>
+          </div>
+          <span
+            class={[
+              'inline-flex rounded-full px-2.5 py-1 text-xs font-medium capitalize',
+              provider.data?.connected
+                ? 'bg-[#e8f5f0] text-[#0a7a5e]'
+                : provider.data?.configured
+                  ? 'bg-[#f5f5f5] text-[#3c3c3c]'
+                  : 'bg-red-50 text-red-700'
+            ]}
+          >
+            {provider.loading ? 'Checking' : providerStateLabel}
+          </span>
+        </div>
+
+        <div class="mt-5 grid gap-4 md:grid-cols-3">
+          <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <p class="text-sm font-medium text-[#6e6e6e]">Configuration</p>
+            <p class="mt-2 text-base font-semibold text-[#0d0d0d]">
+              {provider.data?.configured ? 'Ready' : 'Missing'}
+            </p>
+          </article>
+          <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <p class="text-sm font-medium text-[#6e6e6e]">Account</p>
+            <p class="mt-2 text-base font-semibold text-[#0d0d0d]">
+              {provider.data?.displayName || (provider.data?.connected ? 'Connected' : 'None')}
+            </p>
+          </article>
+          <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <p class="text-sm font-medium text-[#6e6e6e]">Token expiry</p>
+            <p class="mt-2 text-base font-semibold text-[#0d0d0d]">
+              {formatDate(provider.data?.accessTokenExpiresAt)}
+            </p>
+          </article>
+        </div>
+
+        <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm text-[#6e6e6e]">
+            Last refresh: {formatDate(provider.data?.lastRefreshAt)}
+          </p>
+          <div class="flex flex-wrap gap-2">
+            <button
+              class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              disabled={!provider.data?.configured || provider.connecting}
+              onclick={connectProvider}
+            >
+              {provider.connecting ? 'Connecting' : provider.data?.connected ? 'Reconnect' : 'Connect'}
+            </button>
+            <button
+              class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={!provider.data?.connected || provider.disconnecting}
+              onclick={disconnectProvider}
+            >
+              {provider.disconnecting ? 'Disconnecting' : 'Disconnect'}
+            </button>
+          </div>
+        </div>
+
+        {#if provider.error}
+          <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {provider.error}
+          </p>
+        {/if}
+      </section>
+
       <section class="rounded-lg border border-[#ededed] bg-white p-6">
         <div class="flex flex-wrap items-center justify-between gap-4">
           <div>
