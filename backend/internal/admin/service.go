@@ -53,8 +53,10 @@ type CreatedAPIKey struct {
 }
 
 type Repository interface {
+	FindBootstrapAdmin(ctx context.Context) (Admin, error)
 	FindAdminByUsername(ctx context.Context, username string) (Admin, error)
 	CreateAdmin(ctx context.Context, username, passwordHash string) (Admin, error)
+	UpdateAdminUsername(ctx context.Context, id int64, username string) (Admin, error)
 	CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
 	RevokeSession(ctx context.Context, tokenHash string) error
@@ -89,9 +91,13 @@ func (s *Service) BootstrapAdmin(ctx context.Context, username, password string)
 		return ErrInvalidInput
 	}
 
-	_, err := s.repo.FindAdminByUsername(ctx, username)
+	existing, err := s.repo.FindBootstrapAdmin(ctx)
 	if err == nil {
-		return nil
+		if existing.Username == username {
+			return nil
+		}
+		_, err = s.repo.UpdateAdminUsername(ctx, existing.ID, username)
+		return err
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return err

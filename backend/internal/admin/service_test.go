@@ -26,6 +26,37 @@ func TestBootstrapCreatesAdminOnceAndPreservesExistingHash(t *testing.T) {
 	}
 }
 
+func TestBootstrapRenamesExistingAdminAndPreservesPasswordHash(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: 7 * 24 * time.Hour})
+
+	if err := service.BootstrapAdmin(context.Background(), "admin", "first-password"); err != nil {
+		t.Fatalf("BootstrapAdmin returned error: %v", err)
+	}
+	firstID := repo.admin.ID
+	firstHash := repo.admin.PasswordHash
+
+	if err := service.BootstrapAdmin(context.Background(), "owner", "second-password"); err != nil {
+		t.Fatalf("BootstrapAdmin returned error: %v", err)
+	}
+
+	if repo.admin.ID != firstID {
+		t.Fatalf("admin ID = %d, want existing ID %d", repo.admin.ID, firstID)
+	}
+	if repo.admin.Username != "owner" {
+		t.Fatalf("admin username = %q, want owner", repo.admin.Username)
+	}
+	if repo.admin.PasswordHash != firstHash {
+		t.Fatal("BootstrapAdmin changed existing password hash")
+	}
+	if _, err := service.Login(context.Background(), "admin", "first-password"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("old username login error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := service.Login(context.Background(), "owner", "first-password"); err != nil {
+		t.Fatalf("new username login returned error: %v", err)
+	}
+}
+
 func TestLoginCreatesSessionAndValidateSessionReturnsAdmin(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -208,9 +239,24 @@ func (r *memoryRepo) FindAdminByUsername(_ context.Context, username string) (Ad
 	return r.admin, nil
 }
 
+func (r *memoryRepo) FindBootstrapAdmin(_ context.Context) (Admin, error) {
+	if r.admin.ID == 0 {
+		return Admin{}, ErrNotFound
+	}
+	return r.admin, nil
+}
+
 func (r *memoryRepo) CreateAdmin(_ context.Context, username, passwordHash string) (Admin, error) {
 	r.admin = Admin{ID: r.nextAdminID, Username: username, PasswordHash: passwordHash}
 	r.nextAdminID++
+	return r.admin, nil
+}
+
+func (r *memoryRepo) UpdateAdminUsername(_ context.Context, id int64, username string) (Admin, error) {
+	if r.admin.ID != id {
+		return Admin{}, ErrNotFound
+	}
+	r.admin.Username = username
 	return r.admin, nil
 }
 

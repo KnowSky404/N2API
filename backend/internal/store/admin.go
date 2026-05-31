@@ -18,6 +18,23 @@ func NewAdminRepository(pool *pgxpool.Pool) *AdminRepository {
 	return &AdminRepository{pool: pool}
 }
 
+func (r *AdminRepository) FindBootstrapAdmin(ctx context.Context) (admin.Admin, error) {
+	var found admin.Admin
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, username, password_hash
+		FROM admins
+		ORDER BY id ASC
+		LIMIT 1
+	`).Scan(&found.ID, &found.Username, &found.PasswordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.Admin{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.Admin{}, err
+	}
+	return found, nil
+}
+
 func (r *AdminRepository) FindAdminByUsername(ctx context.Context, username string) (admin.Admin, error) {
 	var found admin.Admin
 	err := r.pool.QueryRow(ctx, `
@@ -45,6 +62,23 @@ func (r *AdminRepository) CreateAdmin(ctx context.Context, username, passwordHas
 		return admin.Admin{}, err
 	}
 	return created, nil
+}
+
+func (r *AdminRepository) UpdateAdminUsername(ctx context.Context, id int64, username string) (admin.Admin, error) {
+	var updated admin.Admin
+	err := r.pool.QueryRow(ctx, `
+		UPDATE admins
+		SET username = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING id, username, password_hash
+	`, id, username).Scan(&updated.ID, &updated.Username, &updated.PasswordHash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.Admin{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.Admin{}, err
+	}
+	return updated, nil
 }
 
 func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error {
