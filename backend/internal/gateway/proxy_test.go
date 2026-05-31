@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
@@ -22,7 +23,7 @@ func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey s
 	if a.err != nil {
 		return admin.APIKey{}, a.err
 	}
-	return admin.APIKey{ID: 1, Name: "test key"}, nil
+	return admin.APIKey{ID: 42, Name: "test key"}, nil
 }
 
 type fakeAccessTokenProvider struct {
@@ -35,6 +36,15 @@ func (p fakeAccessTokenProvider) AccessToken(_ context.Context) (string, error) 
 		return "", p.err
 	}
 	return p.token, nil
+}
+
+type fakeRequestLogger struct {
+	entries []RequestLog
+}
+
+func (l *fakeRequestLogger) CreateRequestLog(_ context.Context, entry RequestLog) error {
+	l.entries = append(l.entries, entry)
+	return nil
 }
 
 func TestProxyRequiresBearerAPIKey(t *testing.T) {
@@ -150,5 +160,61 @@ func TestProxyReportsMissingProviderAccount(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "provider_not_connected") {
 		t.Fatalf("body = %q, want provider_not_connected", recorder.Body.String())
+	}
+}
+
+func TestProxyLogsAuthenticatedRequests(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer upstream.Close()
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+		UpstreamBaseURL: upstream.URL,
+		Logger:          logger,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.RequestID == "" {
+		t.Fatal("RequestID is empty")
+	}
+	if entry.ClientKeyID != 42 || entry.Provider != "openai" || entry.Route != "/v1/models" || entry.Method != http.MethodGet {
+		t.Fatalf("log entry = %+v", entry)
+	}
+	if entry.StatusCode != http.StatusOK || entry.Error != "" {
+		t.Fatalf("log status/error = %d/%q, want 200/empty", entry.StatusCode, entry.Error)
+	}
+	if entry.Latency < 0 || entry.CreatedAt.After(time.Now().Add(time.Second)) {
+		t.Fatalf("log timing = latency:%s created:%s", entry.Latency, entry.CreatedAt)
+	}
+}
+
+func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{err: provider.ErrNotConnected}, Config{
+		UpstreamBaseURL: "https://api.example.test",
+		Logger:          logger,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.StatusCode != http.StatusServiceUnavailable || entry.Error != "provider_not_connected" {
+		t.Fatalf("log entry = %+v, want provider_not_connected 503", entry)
 	}
 }

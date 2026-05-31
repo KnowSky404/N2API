@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/secret"
 )
 
 const defaultUpstreamBaseURL = "https://api.openai.com"
@@ -24,8 +26,25 @@ type AccessTokenProvider interface {
 	AccessToken(ctx context.Context) (string, error)
 }
 
+type RequestLogger interface {
+	CreateRequestLog(ctx context.Context, entry RequestLog) error
+}
+
+type RequestLog struct {
+	RequestID   string
+	ClientKeyID int64
+	Provider    string
+	Route       string
+	Method      string
+	StatusCode  int
+	Latency     time.Duration
+	Error       string
+	CreatedAt   time.Time
+}
+
 type Config struct {
 	UpstreamBaseURL string
+	Logger          RequestLogger
 }
 
 type Proxy struct {
@@ -33,6 +52,7 @@ type Proxy struct {
 	tokens          AccessTokenProvider
 	client          *http.Client
 	upstreamBaseURL string
+	logger          RequestLogger
 }
 
 func NewProxy(auth APIKeyAuthenticator, tokens AccessTokenProvider, cfg Config) *Proxy {
@@ -52,6 +72,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, tokens AccessTokenProvider, cf
 		tokens:          tokens,
 		client:          client,
 		upstreamBaseURL: upstreamBaseURL,
+		logger:          cfg.Logger,
 	}
 }
 
@@ -70,7 +91,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 		return
 	}
-	if _, err := p.auth.AuthenticateAPIKey(r.Context(), apiKey); err != nil {
+	key, err := p.auth.AuthenticateAPIKey(r.Context(), apiKey)
+	if err != nil {
 		if errors.Is(err, admin.ErrUnauthorized) {
 			writeOpenAIError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
 			return
@@ -78,36 +100,57 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "api key authentication failed")
 		return
 	}
+	recorder := &statusRecorder{ResponseWriter: w}
+	startedAt := time.Now()
+	errorCode := ""
+	defer func() {
+		p.logRequest(r.Context(), RequestLog{
+			RequestID:   newRequestID(),
+			ClientKeyID: key.ID,
+			Provider:    "openai",
+			Route:       r.URL.Path,
+			Method:      r.Method,
+			StatusCode:  recorder.statusCode(),
+			Latency:     time.Since(startedAt),
+			Error:       errorCode,
+			CreatedAt:   startedAt,
+		})
+	}()
 
 	accessToken, err := p.tokens.AccessToken(r.Context())
 	if err != nil {
 		if errors.Is(err, provider.ErrNotConnected) {
-			writeOpenAIError(w, http.StatusServiceUnavailable, "provider_not_connected", "provider account is not connected")
+			errorCode = "provider_not_connected"
+			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "provider account is not connected")
 			return
 		}
 		if errors.Is(err, provider.ErrNotConfigured) {
-			writeOpenAIError(w, http.StatusServiceUnavailable, "provider_not_configured", "provider account is not configured")
+			errorCode = "provider_not_configured"
+			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "provider account is not configured")
 			return
 		}
-		writeOpenAIError(w, http.StatusBadGateway, "upstream_token_error", "provider token lookup failed")
+		errorCode = "upstream_token_error"
+		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "provider token lookup failed")
 		return
 	}
 
 	upstreamReq, err := p.newUpstreamRequest(r, accessToken)
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "upstream_request_error", "could not create upstream request")
+		errorCode = "upstream_request_error"
+		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
 		return
 	}
 	upstreamResp, err := p.client.Do(upstreamReq)
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "upstream_unavailable", "upstream request failed")
+		errorCode = "upstream_unavailable"
+		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 		return
 	}
 	defer upstreamResp.Body.Close()
 
-	copyResponseHeaders(w.Header(), upstreamResp.Header)
-	w.WriteHeader(upstreamResp.StatusCode)
-	_, _ = io.Copy(flushWriter{ResponseWriter: w}, upstreamResp.Body)
+	copyResponseHeaders(recorder.Header(), upstreamResp.Header)
+	recorder.WriteHeader(upstreamResp.StatusCode)
+	_, _ = io.Copy(flushWriter{ResponseWriter: recorder}, upstreamResp.Body)
 }
 
 func (p *Proxy) newUpstreamRequest(r *http.Request, accessToken string) (*http.Request, error) {
@@ -179,6 +222,54 @@ func writeOpenAIError(w http.ResponseWriter, status int, code, message string) {
 			"code":    code,
 		},
 	})
+}
+
+func (p *Proxy) logRequest(ctx context.Context, entry RequestLog) {
+	if p.logger == nil {
+		return
+	}
+	if entry.StatusCode == 0 {
+		entry.StatusCode = http.StatusOK
+	}
+	_ = p.logger.CreateRequestLog(ctx, entry)
+}
+
+func newRequestID() string {
+	token, err := secret.GenerateToken("req")
+	if err != nil {
+		return fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+	return token
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+func (r *statusRecorder) Write(data []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(data)
+}
+
+func (r *statusRecorder) statusCode() int {
+	if r.status == 0 {
+		return http.StatusOK
+	}
+	return r.status
+}
+
+func (r *statusRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 type flushWriter struct {

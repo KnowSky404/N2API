@@ -54,6 +54,7 @@ func main() {
 	})
 	gatewayProxy := gateway.NewProxy(adminService, providerService, gateway.Config{
 		UpstreamBaseURL: cfg.OpenAIAPIBaseURL,
+		Logger:          store.NewGatewayRepository(pool),
 	})
 
 	server := &http.Server{
