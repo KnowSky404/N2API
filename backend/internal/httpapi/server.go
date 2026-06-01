@@ -31,6 +31,8 @@ type AdminService interface {
 	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 	ListRequestLogs(ctx context.Context, limit int) ([]admin.RequestLog, error)
+	GetModelSettings(ctx context.Context) (admin.ModelSettings, error)
+	UpdateModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error)
 }
 
 type ProviderService interface {
@@ -222,6 +224,33 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
+	}))
+
+	mux.HandleFunc("GET /api/admin/model-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		settings, err := admins.GetModelSettings(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+	}))
+
+	mux.HandleFunc("PUT /api/admin/model-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		var req admin.ModelSettings
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		settings, err := admins.UpdateModelSettings(r.Context(), req)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
 	}))
 
 	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

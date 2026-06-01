@@ -14,6 +14,9 @@ const (
 	defaultSessionTTL = 7 * 24 * time.Hour
 	sessionTokenName  = "admin_session"
 	apiKeyTokenName   = "n2api"
+	defaultModel      = "gpt-4.1"
+	maxModels         = 100
+	maxModelNameLen   = 128
 )
 
 var (
@@ -60,6 +63,11 @@ type RequestLog struct {
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
+type ModelSettings struct {
+	DefaultModel  string   `json:"defaultModel"`
+	AllowedModels []string `json:"allowedModels"`
+}
+
 type CreatedAPIKey struct {
 	Key    APIKey
 	Secret string
@@ -79,6 +87,8 @@ type Repository interface {
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error)
+	GetModelSettings(ctx context.Context) (ModelSettings, error)
+	SaveModelSettings(ctx context.Context, settings ModelSettings) (ModelSettings, error)
 }
 
 type Service struct {
@@ -246,4 +256,71 @@ func (s *Service) ListRequestLogs(ctx context.Context, limit int) ([]RequestLog,
 		limit = 200
 	}
 	return s.repo.ListRequestLogs(ctx, limit)
+}
+
+func (s *Service) GetModelSettings(ctx context.Context) (ModelSettings, error) {
+	settings, err := s.repo.GetModelSettings(ctx)
+	if err == nil {
+		return normalizeModelSettings(settings)
+	}
+	if errors.Is(err, ErrNotFound) {
+		return defaultModelSettings(), nil
+	}
+	return ModelSettings{}, err
+}
+
+func (s *Service) UpdateModelSettings(ctx context.Context, settings ModelSettings) (ModelSettings, error) {
+	normalized, err := normalizeModelSettings(settings)
+	if err != nil {
+		return ModelSettings{}, err
+	}
+	return s.repo.SaveModelSettings(ctx, normalized)
+}
+
+func defaultModelSettings() ModelSettings {
+	return ModelSettings{
+		DefaultModel: defaultModel,
+		AllowedModels: []string{
+			defaultModel,
+			"gpt-4.1-mini",
+			"gpt-4o",
+			"gpt-4o-mini",
+		},
+	}
+}
+
+func normalizeModelSettings(settings ModelSettings) (ModelSettings, error) {
+	defaultName := strings.TrimSpace(settings.DefaultModel)
+	if defaultName == "" {
+		return ModelSettings{}, ErrInvalidInput
+	}
+
+	seen := map[string]struct{}{}
+	allowed := make([]string, 0, len(settings.AllowedModels))
+	defaultAllowed := false
+	for _, raw := range settings.AllowedModels {
+		model := strings.TrimSpace(raw)
+		if model == "" {
+			continue
+		}
+		if len(model) > maxModelNameLen {
+			return ModelSettings{}, ErrInvalidInput
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		allowed = append(allowed, model)
+		if len(allowed) > maxModels {
+			return ModelSettings{}, ErrInvalidInput
+		}
+		if model == defaultName {
+			defaultAllowed = true
+		}
+	}
+	if len(allowed) == 0 || len(defaultName) > maxModelNameLen || !defaultAllowed {
+		return ModelSettings{}, ErrInvalidInput
+	}
+
+	return ModelSettings{DefaultModel: defaultName, AllowedModels: allowed}, nil
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 type AdminRepository struct {
 	pool *pgxpool.Pool
 }
+
+const modelSettingsKey = "model_settings"
 
 func NewAdminRepository(pool *pgxpool.Pool) *AdminRepository {
 	return &AdminRepository{pool: pool}
@@ -280,4 +283,43 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 		return nil, err
 	}
 	return logs, nil
+}
+
+func (r *AdminRepository) GetModelSettings(ctx context.Context) (admin.ModelSettings, error) {
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `
+		SELECT value
+		FROM settings
+		WHERE key = $1
+	`, modelSettingsKey).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.ModelSettings{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.ModelSettings{}, err
+	}
+
+	var settings admin.ModelSettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return admin.ModelSettings{}, err
+	}
+	return settings, nil
+}
+
+func (r *AdminRepository) SaveModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error) {
+	value, err := json.Marshal(settings)
+	if err != nil {
+		return admin.ModelSettings{}, err
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE
+		SET value = EXCLUDED.value,
+			updated_at = now()
+	`, modelSettingsKey, value)
+	if err != nil {
+		return admin.ModelSettings{}, err
+	}
+	return settings, nil
 }

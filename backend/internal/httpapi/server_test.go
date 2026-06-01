@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -31,6 +32,7 @@ type fakeAdminService struct {
 	logs               []admin.RequestLog
 	errorOnEmptyLogout bool
 	logoutTokens       []string
+	modelSettings      admin.ModelSettings
 }
 
 type fakeProviderService struct {
@@ -58,6 +60,10 @@ func newFakeAdminService() *fakeAdminService {
 		},
 		logs: []admin.RequestLog{
 			{ID: 3, RequestID: "req_3", ClientKey: "codex laptop (n2api_abc)", Provider: "openai", Route: "/v1/models", Method: http.MethodGet, StatusCode: 200, LatencyMS: 12, CreatedAt: time.Unix(4000, 0).UTC()},
+		},
+		modelSettings: admin.ModelSettings{
+			DefaultModel:  "gpt-4.1",
+			AllowedModels: []string{"gpt-4.1", "gpt-4.1-mini"},
 		},
 	}
 }
@@ -112,6 +118,29 @@ func (s *fakeAdminService) ListRequestLogs(_ context.Context, limit int) ([]admi
 		limit = len(s.logs)
 	}
 	return s.logs[:limit], nil
+}
+
+func (s *fakeAdminService) GetModelSettings(_ context.Context) (admin.ModelSettings, error) {
+	return s.modelSettings, nil
+}
+
+func (s *fakeAdminService) UpdateModelSettings(_ context.Context, settings admin.ModelSettings) (admin.ModelSettings, error) {
+	defaultModel := strings.TrimSpace(settings.DefaultModel)
+	if defaultModel == "" {
+		return admin.ModelSettings{}, admin.ErrInvalidInput
+	}
+	defaultAllowed := false
+	for _, model := range settings.AllowedModels {
+		if strings.TrimSpace(model) == defaultModel {
+			defaultAllowed = true
+			break
+		}
+	}
+	if !defaultAllowed {
+		return admin.ModelSettings{}, admin.ErrInvalidInput
+	}
+	s.modelSettings = settings
+	return s.modelSettings, nil
 }
 
 func newFakeProviderService() *fakeProviderService {
@@ -592,6 +621,75 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if len(body.Logs) != 1 || body.Logs[0].RequestID != "req_3" {
 		t.Fatalf("logs = %+v", body.Logs)
+	}
+}
+
+func TestModelSettingsRequiresSessionAndReturnsSettings(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/model-settings", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-settings", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body admin.ModelSettings
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.DefaultModel != "gpt-4.1" || len(body.AllowedModels) != 2 {
+		t.Fatalf("model settings = %+v", body)
+	}
+}
+
+func TestUpdateModelSettingsReturnsSavedSettings(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/model-settings", strings.NewReader(`{"defaultModel":"gpt-5","allowedModels":["gpt-5","gpt-5-mini"]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body admin.ModelSettings
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.DefaultModel != "gpt-5" || !slices.Equal(body.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+		t.Fatalf("model settings = %+v", body)
+	}
+}
+
+func TestUpdateModelSettingsReturnsBadRequestForInvalidInput(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/model-settings", strings.NewReader(`{"defaultModel":"gpt-5","allowedModels":["gpt-5-mini"]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "invalid_input" {
+		t.Fatalf("error = %q, want invalid_input", body["error"])
 	}
 }
 

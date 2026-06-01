@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -222,6 +223,66 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 }
 
+func TestModelSettingsDefaultAndUpdate(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	settings, err := service.GetModelSettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetModelSettings returned error: %v", err)
+	}
+	if settings.DefaultModel != "gpt-4.1" {
+		t.Fatalf("DefaultModel = %q, want gpt-4.1", settings.DefaultModel)
+	}
+	if len(settings.AllowedModels) == 0 {
+		t.Fatal("AllowedModels is empty")
+	}
+
+	updated, err := service.UpdateModelSettings(context.Background(), ModelSettings{
+		DefaultModel:  " gpt-5 ",
+		AllowedModels: []string{" gpt-5 ", "", "gpt-5-mini", "gpt-5"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateModelSettings returned error: %v", err)
+	}
+	if updated.DefaultModel != "gpt-5" {
+		t.Fatalf("DefaultModel = %q, want gpt-5", updated.DefaultModel)
+	}
+	if !slices.Equal(updated.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+		t.Fatalf("AllowedModels = %+v, want normalized unique list", updated.AllowedModels)
+	}
+}
+
+func TestUpdateModelSettingsRejectsInvalidInput(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	for _, tc := range []struct {
+		name     string
+		settings ModelSettings
+	}{
+		{name: "empty default", settings: ModelSettings{DefaultModel: " ", AllowedModels: []string{"gpt-5"}}},
+		{name: "default not allowed", settings: ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5-mini"}}},
+		{name: "empty allowed", settings: ModelSettings{DefaultModel: "gpt-5"}},
+		{name: "model name too long", settings: ModelSettings{DefaultModel: strings.Repeat("a", 129), AllowedModels: []string{strings.Repeat("a", 129)}}},
+		{name: "too many models", settings: ModelSettings{DefaultModel: "model-0", AllowedModels: buildModelNames(101)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := service.UpdateModelSettings(context.Background(), tc.settings); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("UpdateModelSettings error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
+func buildModelNames(count int) []string {
+	names := make([]string, 0, count)
+	for i := range count {
+		names = append(names, "model-"+strconv.Itoa(i))
+	}
+	return names
+}
+
 func requireBootstrap(t *testing.T, service *Service, username, password string) {
 	t.Helper()
 
@@ -231,14 +292,15 @@ func requireBootstrap(t *testing.T, service *Service, username, password string)
 }
 
 type memoryRepo struct {
-	admin        Admin
-	nextAdminID  int64
-	sessions     map[string]memorySession
-	keys         map[int64]memoryAPIKey
-	nextAPIKeyID int64
-	touchErr     error
-	logs         []RequestLog
-	lastLogLimit int
+	admin         Admin
+	nextAdminID   int64
+	sessions      map[string]memorySession
+	keys          map[int64]memoryAPIKey
+	nextAPIKeyID  int64
+	touchErr      error
+	logs          []RequestLog
+	lastLogLimit  int
+	modelSettings ModelSettings
 }
 
 type memorySession struct {
@@ -375,4 +437,16 @@ func (r *memoryRepo) ListRequestLogs(_ context.Context, limit int) ([]RequestLog
 		limit = len(r.logs)
 	}
 	return append([]RequestLog(nil), r.logs[:limit]...), nil
+}
+
+func (r *memoryRepo) GetModelSettings(_ context.Context) (ModelSettings, error) {
+	if r.modelSettings.DefaultModel == "" {
+		return ModelSettings{}, ErrNotFound
+	}
+	return r.modelSettings, nil
+}
+
+func (r *memoryRepo) SaveModelSettings(_ context.Context, settings ModelSettings) (ModelSettings, error) {
+	r.modelSettings = settings
+	return settings, nil
 }
