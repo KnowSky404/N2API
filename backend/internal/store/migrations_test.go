@@ -1,8 +1,11 @@
 package store
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
+
+	"github.com/pressly/goose/v3"
 )
 
 func TestInitialMigrationDefinesRequiredTables(t *testing.T) {
@@ -71,5 +74,23 @@ func TestOAuthStatesMigrationIsEmbedded(t *testing.T) {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("migration missing %q", want)
 		}
+	}
+}
+
+func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
+	migrations, err := migrationDirFS()
+	if err != nil {
+		t.Fatalf("migrationDirFS returned error: %v", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, &sql.DB{}, migrations)
+	if err != nil {
+		t.Fatalf("NewProvider returned error: %v", err)
+	}
+	sources := provider.ListSources()
+	if len(sources) != 3 {
+		t.Fatalf("migration sources = %d, want 3", len(sources))
+	}
+	if sources[0].Path != "00001_init.sql" || sources[2].Path != "00003_oauth_states.sql" {
+		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

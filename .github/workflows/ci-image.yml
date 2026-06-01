@@ -1,0 +1,165 @@
+name: CI Image
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Test backend
+        working-directory: backend
+        run: go test ./...
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Check frontend
+        working-directory: frontend
+        run: bun run check
+
+      - name: Build frontend
+        working-directory: frontend
+        run: bun run build
+
+  image:
+    name: Build and smoke test image
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Normalize image name
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+
+      - name: Build image for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          load: true
+          tags: n2api:ci
+
+      - name: Start PostgreSQL for smoke test
+        run: |
+          docker network create n2api-ci
+          docker run -d --name n2api-ci-postgres \
+            --network n2api-ci \
+            -e POSTGRES_DB=n2api \
+            -e POSTGRES_USER=n2api \
+            -e POSTGRES_PASSWORD=ci-postgres-password \
+            --health-cmd "pg_isready -U n2api -d n2api" \
+            --health-interval 5s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            postgres:18-alpine
+          for attempt in $(seq 1 30); do
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' n2api-ci-postgres)" = "healthy" ]; then
+              exit 0
+            fi
+            if [ "$attempt" = "30" ]; then
+              docker logs n2api-ci-postgres
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Run image
+        run: |
+          docker run -d --name n2api-ci \
+            --network n2api-ci \
+            -e N2API_HOST=127.0.0.1 \
+            -e N2API_PORT=3000 \
+            -e N2API_PUBLIC_URL=http://127.0.0.1:3000 \
+            -e DATABASE_URL=postgres://n2api:ci-postgres-password@n2api-ci-postgres:5432/n2api?sslmode=disable \
+            -e N2API_ADMIN_USERNAME=admin \
+            -e N2API_ADMIN_PASSWORD=ci-admin-password \
+            -e N2API_ENCRYPTION_SECRET=ci-encryption-secret-with-enough-length \
+            -e OPENAI_API_BASE_URL=https://api.openai.com \
+            n2api:ci
+
+      - name: Smoke test image
+        run: |
+          for attempt in $(seq 1 30); do
+            if docker exec n2api-ci wget -qO /tmp/health.json http://127.0.0.1:3000/healthz; then
+              break
+            fi
+            if [ "$attempt" = "30" ]; then
+              docker logs n2api-ci
+              exit 1
+            fi
+            sleep 1
+          done
+          docker cp n2api-ci:/tmp/health.json /tmp/health.json
+          grep '"status":"ok"' /tmp/health.json
+          docker exec n2api-ci wget -qO /tmp/bootstrap.json http://127.0.0.1:3000/api/admin/bootstrap
+          docker cp n2api-ci:/tmp/bootstrap.json /tmp/bootstrap.json
+          grep '"adminUsername":"admin"' /tmp/bootstrap.json
+          docker exec n2api-ci wget -qO /tmp/index.html http://127.0.0.1:3000/
+          docker cp n2api-ci:/tmp/index.html /tmp/index.html
+          grep 'N2API' /tmp/index.html
+
+      - name: Stop smoke test container
+        if: always()
+        run: |
+          docker rm -f n2api-ci n2api-ci-postgres || true
+          docker network rm n2api-ci || true
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

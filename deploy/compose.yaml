@@ -20,7 +20,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-n2api}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
-      - n2api-postgres:/var/lib/postgresql/data
+      - n2api-postgres:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n2api} -d ${POSTGRES_DB:-n2api}"]
       interval: 5s

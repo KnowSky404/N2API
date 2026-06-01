@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"io/fs"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -29,10 +30,14 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 func runMigrations(ctx context.Context, db *sql.DB) error {
+	migrations, err := migrationDirFS()
+	if err != nil {
+		return err
+	}
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
 		db,
-		migrationFS,
+		migrations,
 		goose.WithTableName("schema_migrations"),
 		goose.WithDisableGlobalRegistry(true),
 	)
@@ -43,4 +48,12 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return nil
+}
+
+func migrationDirFS() (fs.FS, error) {
+	migrations, err := fs.Sub(migrationFS, "migrations")
+	if err != nil {
+		return nil, fmt.Errorf("open migration directory: %w", err)
+	}
+	return migrations, nil
 }

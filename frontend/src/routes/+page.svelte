@@ -35,6 +35,12 @@
    * @property {string} createdAt
    */
 
+  /**
+   * @typedef {object} ModelSettingsData
+   * @property {string} defaultModel
+   * @property {string[]} allowedModels
+   */
+
   let health = $state({
     loading: true,
     error: '',
@@ -68,6 +74,15 @@
     loading: false,
     error: '',
     items: []
+  });
+  /** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, defaultModel: string, allowedModelsText: string }} */
+  let modelSettings = $state({
+    loading: false,
+    saving: false,
+    error: '',
+    saved: false,
+    defaultModel: '',
+    allowedModelsText: ''
   });
 
   const providerStateLabel = $derived(
@@ -146,6 +161,17 @@
     };
   }
 
+  function clearModelSettings() {
+    modelSettings = {
+      loading: false,
+      saving: false,
+      error: '',
+      saved: false,
+      defaultModel: '',
+      allowedModelsText: ''
+    };
+  }
+
   function clearProvider() {
     provider = {
       loading: false,
@@ -198,6 +224,7 @@
         session = { loading: false, authenticated: false, username: '', error: '' };
         clearProvider();
         clearAPIKeys();
+        clearModelSettings();
         clearRequestLogs();
         return;
       }
@@ -217,6 +244,7 @@
         error: ''
       };
       await loadProvider();
+      await loadModelSettings();
       await loadKeys();
       await loadRequestLogs();
     } catch (error) {
@@ -231,6 +259,7 @@
       };
       clearProvider();
       clearAPIKeys();
+      clearModelSettings();
       clearRequestLogs();
     }
   }
@@ -262,6 +291,7 @@
     session = { loading: false, authenticated: false, username: '', error: '' };
     clearProvider();
     clearAPIKeys();
+    clearModelSettings();
     clearRequestLogs();
     loginForm.password = '';
   }
@@ -343,6 +373,64 @@
     } finally {
       if (!isCurrentAuthenticated(version)) return;
       apiKeys.loading = false;
+    }
+  }
+
+  async function loadModelSettings() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    modelSettings.loading = true;
+    modelSettings.error = '';
+    modelSettings.saved = false;
+
+    try {
+      const payload = await requestJSON('/api/admin/model-settings');
+      if (!isCurrentAuthenticated(version)) return;
+      modelSettings.defaultModel = payload.defaultModel ?? '';
+      modelSettings.allowedModelsText = (payload.allowedModels ?? []).join('\n');
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      modelSettings.error = error instanceof Error ? error.message : 'Failed to load model settings';
+    } finally {
+      if (!isCurrentAuthenticated(version)) return;
+      modelSettings.loading = false;
+    }
+  }
+
+  /** @param {SubmitEvent} event */
+  async function saveModelSettings(event) {
+    event.preventDefault();
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    modelSettings.saving = true;
+    modelSettings.error = '';
+    modelSettings.saved = false;
+
+    const allowedModels = modelSettings.allowedModelsText
+      .split('\n')
+      .map((model) => model.trim())
+      .filter(Boolean);
+
+    try {
+      const payload = await requestJSON('/api/admin/model-settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          defaultModel: modelSettings.defaultModel,
+          allowedModels
+        })
+      });
+      if (!isCurrentAuthenticated(version)) return;
+      modelSettings.defaultModel = payload.defaultModel ?? '';
+      modelSettings.allowedModelsText = (payload.allowedModels ?? []).join('\n');
+      modelSettings.saved = true;
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      modelSettings.error = error instanceof Error ? error.message : 'Failed to save model settings';
+    } finally {
+      if (!isCurrentAuthenticated(version)) return;
+      modelSettings.saving = false;
     }
   }
 
@@ -580,6 +668,72 @@
         {#if provider.error}
           <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
             {provider.error}
+          </p>
+        {/if}
+      </section>
+
+      <section class="rounded-lg border border-[#ededed] bg-white p-6">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Model settings</h2>
+            <p class="mt-1 text-sm text-[#6e6e6e]">
+              Default model and allowed model names for this gateway.
+            </p>
+          </div>
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={modelSettings.loading}
+            onclick={loadModelSettings}
+          >
+            {modelSettings.loading ? 'Refreshing' : 'Refresh'}
+          </button>
+        </div>
+
+        <form class="mt-6 grid gap-4 lg:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]" onsubmit={saveModelSettings}>
+          <label class="block text-sm font-medium text-[#3c3c3c]">
+            Default model
+            <input
+              class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelSettings.defaultModel}
+              maxlength="128"
+              placeholder="gpt-4.1"
+              required
+            />
+          </label>
+
+          <label class="block text-sm font-medium text-[#3c3c3c]">
+            Allowed models
+            <textarea
+              class="mt-2 min-h-36 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelSettings.allowedModelsText}
+              placeholder={'gpt-4.1\ngpt-4.1-mini'}
+              required
+            ></textarea>
+          </label>
+
+          <div class="lg:col-span-2 flex flex-wrap items-center justify-between gap-3">
+            <p class="text-sm text-[#6e6e6e]">
+              Put one model name per line. The default model must also appear in the allowed list.
+            </p>
+            <button
+              class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={modelSettings.loading || modelSettings.saving}
+            >
+              {modelSettings.saving ? 'Saving' : 'Save settings'}
+            </button>
+          </div>
+        </form>
+
+        {#if modelSettings.saved}
+          <p class="mt-4 rounded-md border border-[#cbe7dd] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">
+            Model settings saved.
+          </p>
+        {/if}
+
+        {#if modelSettings.error}
+          <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {modelSettings.error}
           </p>
         {/if}
       </section>
