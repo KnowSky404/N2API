@@ -138,7 +138,8 @@ jobs:
           grep '"adminUsername":"admin"' /tmp/bootstrap.json
           docker exec n2api-ci wget -qO /tmp/index.html http://127.0.0.1:3000/
           docker cp n2api-ci:/tmp/index.html /tmp/index.html
-          grep 'N2API' /tmp/index.html
+          grep '<!doctype html>' /tmp/index.html
+          grep '/_app/immutable/entry/app' /tmp/index.html
 
       - name: Stop smoke test container
         if: always()
