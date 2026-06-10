@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,13 +18,19 @@ import (
 )
 
 const defaultUpstreamBaseURL = "https://api.openai.com"
+const maxReplayableRequestBody = 1 << 20
 
 type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (admin.APIKey, error)
 }
 
+type SelectedToken struct {
+	AccountID int64
+	Token     string
+}
+
 type AccessTokenProvider interface {
-	AccessToken(ctx context.Context) (string, error)
+	SelectAccessToken(ctx context.Context) (SelectedToken, error)
 }
 
 type RequestLogger interface {
@@ -117,55 +124,78 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	accessToken, err := p.tokens.AccessToken(r.Context())
-	if err != nil {
-		if errors.Is(err, provider.ErrNotConnected) {
-			errorCode = "provider_not_connected"
-			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "provider account is not connected")
-			return
-		}
-		if errors.Is(err, provider.ErrNotConfigured) {
-			errorCode = "provider_not_configured"
-			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "provider account is not configured")
-			return
-		}
-		errorCode = "upstream_token_error"
-		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "provider token lookup failed")
-		return
-	}
-
-	upstreamReq, err := p.newUpstreamRequest(r, accessToken)
+	bodyFactory, maxAttempts, err := requestBodyFactory(r)
 	if err != nil {
 		errorCode = "upstream_request_error"
-		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
+		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not read upstream request")
 		return
 	}
-	upstreamResp, err := p.client.Do(upstreamReq)
-	if err != nil {
-		errorCode = "upstream_unavailable"
-		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
-		return
-	}
-	defer upstreamResp.Body.Close()
 
-	copyResponseHeaders(recorder.Header(), upstreamResp.Header)
-	recorder.WriteHeader(upstreamResp.StatusCode)
-	_, _ = io.Copy(flushWriter{ResponseWriter: recorder}, upstreamResp.Body)
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		selected, err := p.tokens.SelectAccessToken(r.Context())
+		if err != nil {
+			errorCode = providerErrorCode(err)
+			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
+			return
+		}
+		_ = selected.AccountID
+
+		upstreamReq, err := p.newUpstreamRequest(r, selected.Token, bodyFactory())
+		if err != nil {
+			errorCode = "upstream_request_error"
+			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
+			return
+		}
+		upstreamResp, err := p.client.Do(upstreamReq)
+		if err != nil {
+			if attempt+1 < maxAttempts {
+				continue
+			}
+			errorCode = "upstream_unavailable"
+			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
+			return
+		}
+		defer upstreamResp.Body.Close()
+
+		copyResponseHeaders(recorder.Header(), upstreamResp.Header)
+		recorder.WriteHeader(upstreamResp.StatusCode)
+		_, _ = io.Copy(flushWriter{ResponseWriter: recorder}, upstreamResp.Body)
+		return
+	}
 }
 
-func (p *Proxy) newUpstreamRequest(r *http.Request, accessToken string) (*http.Request, error) {
+func (p *Proxy) newUpstreamRequest(r *http.Request, accessToken string, body io.ReadCloser) (*http.Request, error) {
 	upstreamURL, err := url.Parse(p.upstreamBaseURL + r.URL.Path)
 	if err != nil {
 		return nil, fmt.Errorf("parse upstream url: %w", err)
 	}
 	upstreamURL.RawQuery = r.URL.RawQuery
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), r.Body)
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
 	copyRequestHeaders(req.Header, r.Header)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	return req, nil
+}
+
+func requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, error) {
+	if r.Method != http.MethodPost || r.Body == nil {
+		return func() io.ReadCloser { return nil }, 2, nil
+	}
+
+	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, maxReplayableRequestBody+1))
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(limitedBody) > maxReplayableRequestBody {
+		body := io.NopCloser(io.MultiReader(bytes.NewReader(limitedBody), r.Body))
+		return func() io.ReadCloser { return body }, 1, nil
+	}
+	_ = r.Body.Close()
+	return func() io.ReadCloser {
+		return io.NopCloser(bytes.NewReader(limitedBody))
+	}, 2, nil
 }
 
 func isSupportedRoute(r *http.Request) bool {
@@ -223,6 +253,36 @@ func isHopByHopHeader(key string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func providerErrorCode(err error) string {
+	switch {
+	case errors.Is(err, provider.ErrNotConnected):
+		return "provider_not_connected"
+	case errors.Is(err, provider.ErrNotConfigured):
+		return "provider_not_configured"
+	case errors.Is(err, provider.ErrAccountsDisabled):
+		return "provider_accounts_disabled"
+	case errors.Is(err, provider.ErrAccountsUnavailable):
+		return "provider_accounts_unavailable"
+	default:
+		return "upstream_token_error"
+	}
+}
+
+func providerErrorMessage(code string) string {
+	switch code {
+	case "provider_not_connected":
+		return "provider account is not connected"
+	case "provider_not_configured":
+		return "provider account is not configured"
+	case "provider_accounts_disabled":
+		return "provider accounts are disabled"
+	case "provider_accounts_unavailable":
+		return "provider accounts are unavailable"
+	default:
+		return "provider token lookup failed"
 	}
 }
 

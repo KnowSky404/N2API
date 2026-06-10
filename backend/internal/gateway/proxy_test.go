@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,16 +27,22 @@ func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey s
 	return admin.APIKey{ID: 42, Name: "test key"}, nil
 }
 
-type fakeAccessTokenProvider struct {
-	token string
-	err   error
+type fakeSelectedTokenProvider struct {
+	tokens []SelectedToken
+	errs   []error
+	calls  int
 }
 
-func (p fakeAccessTokenProvider) AccessToken(_ context.Context) (string, error) {
-	if p.err != nil {
-		return "", p.err
+func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context) (SelectedToken, error) {
+	i := p.calls
+	p.calls++
+	if i < len(p.errs) && p.errs[i] != nil {
+		return SelectedToken{}, p.errs[i]
 	}
-	return p.token, nil
+	if i < len(p.tokens) {
+		return p.tokens[i], nil
+	}
+	return SelectedToken{}, provider.ErrAccountsUnavailable
 }
 
 type fakeRequestLogger struct {
@@ -52,7 +59,7 @@ func TestProxyRequiresBearerAPIKey(t *testing.T) {
 		t.Fatal("upstream should not be called without client API key")
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 	recorder := httptest.NewRecorder()
@@ -80,7 +87,7 @@ func TestProxyForwardsModelsWithProviderBearerToken(t *testing.T) {
 	}))
 	defer upstream.Close()
 	auth := &fakeAPIKeyAuthenticator{}
-	proxy := NewProxy(auth, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+	proxy := NewProxy(auth, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -124,7 +131,7 @@ func TestProxyStreamsChatCompletionsResponse(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[],"stream":true}`))
@@ -169,7 +176,7 @@ func TestProxyForwardsResponsesCreateWithStreaming(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi","stream":true}`))
@@ -204,7 +211,10 @@ func TestProxyForwardsResponsesRetrieveAndInputItems(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"resp_123"}`))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{
+		{AccountID: 1, Token: "upstream-token"},
+		{AccountID: 1, Token: "upstream-token"},
+	}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 
@@ -232,7 +242,7 @@ func TestProxyForwardsResponsesRetrieveAndInputItems(t *testing.T) {
 }
 
 func TestProxyReportsMissingProviderAccount(t *testing.T) {
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{err: provider.ErrNotConnected}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{errs: []error{provider.ErrNotConnected}}, Config{
 		UpstreamBaseURL: "https://api.example.test",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
@@ -256,7 +266,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{token: "upstream-token"}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 		Logger:          logger,
 	})
@@ -286,7 +296,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 
 func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, fakeAccessTokenProvider{err: provider.ErrNotConnected}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{errs: []error{provider.ErrNotConnected}}, Config{
 		UpstreamBaseURL: "https://api.example.test",
 		Logger:          logger,
 	})
@@ -302,5 +312,85 @@ func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 	entry := logger.entries[0]
 	if entry.StatusCode != http.StatusServiceUnavailable || entry.Error != "provider_not_connected" {
 		t.Fatalf("log entry = %+v, want provider_not_connected 503", entry)
+	}
+}
+
+func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
+	attempt := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt++
+		if attempt == 1 {
+			panic(http.ErrAbortHandler)
+		}
+		if r.Header.Get("Authorization") != "Bearer second-token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: upstream.URL})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 2 {
+		t.Fatalf("token calls = %d, want 2", tokens.calls)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+type brokenReader struct {
+	sent bool
+}
+
+func (r *brokenReader) Read(p []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(p, "data: partial\n\n"), nil
+	}
+	return 0, errors.New("stream broke")
+}
+
+func (r *brokenReader) Close() error {
+	return nil
+}
+
+func TestProxyDoesNotRetryAfterStreamingBegins(t *testing.T) {
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       &brokenReader{},
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"stream":true}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if tokens.calls != 1 {
+		t.Fatalf("token calls = %d, want 1", tokens.calls)
+	}
+	if !strings.Contains(recorder.Body.String(), "data: partial") {
+		t.Fatalf("body = %q", recorder.Body.String())
 	}
 }

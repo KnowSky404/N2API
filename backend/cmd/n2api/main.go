@@ -15,6 +15,21 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/store"
 )
 
+type gatewayTokenProvider struct {
+	service *provider.Service
+}
+
+func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context) (gateway.SelectedToken, error) {
+	selected, err := p.service.SelectAccessToken(ctx)
+	if err != nil {
+		return gateway.SelectedToken{}, err
+	}
+	return gateway.SelectedToken{
+		AccountID: selected.AccountID,
+		Token:     selected.Token,
+	}, nil
+}
+
 func main() {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -52,7 +67,7 @@ func main() {
 		TokenURL:     cfg.OpenAIOAuthTokenURL,
 		Secret:       cfg.EncryptionSecret,
 	})
-	gatewayProxy := gateway.NewProxy(adminService, providerService, gateway.Config{
+	gatewayProxy := gateway.NewProxy(adminService, gatewayTokenProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL: cfg.OpenAIAPIBaseURL,
 		Logger:          store.NewGatewayRepository(pool),
 	})
