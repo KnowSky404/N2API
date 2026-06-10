@@ -30,7 +30,7 @@ type SelectedToken struct {
 }
 
 type AccessTokenProvider interface {
-	SelectAccessToken(ctx context.Context) (SelectedToken, error)
+	SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error)
 }
 
 type RequestLogger interface {
@@ -133,7 +133,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var firstAccountID int64
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		selected, err := p.tokens.SelectAccessToken(r.Context())
+		var excluded []int64
+		if attempt > 0 && firstAccountID > 0 {
+			excluded = append(excluded, firstAccountID)
+		}
+		selected, err := p.tokens.SelectAccessToken(r.Context(), excluded...)
 		if err != nil {
 			errorCode = providerErrorCode(err)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))

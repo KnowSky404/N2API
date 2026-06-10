@@ -19,8 +19,8 @@ type gatewayTokenProvider struct {
 	service *provider.Service
 }
 
-func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context) (gateway.SelectedToken, error) {
-	selected, err := p.service.SelectAccessToken(ctx)
+func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (gateway.SelectedToken, error) {
+	selected, err := p.service.SelectAccessToken(ctx, excludedAccountIDs...)
 	if err != nil {
 		return gateway.SelectedToken{}, err
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
@@ -121,9 +122,11 @@ type HTTPClient struct {
 }
 
 type Service struct {
-	repo   Repository
-	client OAuthClient
-	cfg    Config
+	repo         Repository
+	client       OAuthClient
+	cfg          Config
+	refreshMu    sync.Mutex
+	refreshLocks map[int64]*sync.Mutex
 }
 
 func NewHTTPClient(client *http.Client) *HTTPClient {
@@ -162,7 +165,12 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 	if cfg.RefreshWindow <= 0 {
 		cfg.RefreshWindow = defaultRefreshWindow
 	}
-	return &Service{repo: repo, client: client, cfg: cfg}
+	return &Service{
+		repo:         repo,
+		client:       client,
+		cfg:          cfg,
+		refreshLocks: make(map[int64]*sync.Mutex),
+	}
 }
 
 func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.Values) (TokenResponse, error) {
@@ -341,6 +349,20 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 		return secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
 	}
 
+	if account.ID > 0 {
+		unlock := s.lockAccountRefresh(account.ID)
+		defer unlock()
+
+		latest, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
+		if err != nil {
+			return "", err
+		}
+		if latest.AccessTokenExpiresAt == nil || latest.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
+			return secret.DecryptString(s.cfg.Secret, latest.EncryptedAccessToken)
+		}
+		account = latest
+	}
+
 	refreshToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedRefreshToken)
 	if err != nil {
 		return "", err
@@ -356,7 +378,7 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 	return secret.DecryptString(s.cfg.Secret, refreshed.EncryptedAccessToken)
 }
 
-func (s *Service) SelectAccessToken(ctx context.Context) (SelectedToken, error) {
+func (s *Service) SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error) {
 	if !s.Configured() {
 		return SelectedToken{}, ErrNotConfigured
 	}
@@ -369,12 +391,22 @@ func (s *Service) SelectAccessToken(ctx context.Context) (SelectedToken, error) 
 		return SelectedToken{}, ErrNotConnected
 	}
 
+	excluded := make(map[int64]struct{}, len(excludedAccountIDs))
+	for _, id := range excludedAccountIDs {
+		if id > 0 {
+			excluded[id] = struct{}{}
+		}
+	}
+
 	hasEnabled := false
 	for _, account := range accounts {
 		if !account.Enabled {
 			continue
 		}
 		hasEnabled = true
+		if _, ok := excluded[account.ID]; ok {
+			continue
+		}
 		token, err := s.AccessTokenForAccount(ctx, account)
 		if err != nil {
 			if markErr := s.repo.MarkAccountError(ctx, s.cfg.Provider, account.ID, err.Error(), time.Now()); markErr != nil {
@@ -391,6 +423,19 @@ func (s *Service) SelectAccessToken(ctx context.Context) (SelectedToken, error) 
 		return SelectedToken{}, ErrAccountsDisabled
 	}
 	return SelectedToken{}, ErrAccountsUnavailable
+}
+
+func (s *Service) lockAccountRefresh(accountID int64) func() {
+	s.refreshMu.Lock()
+	lock := s.refreshLocks[accountID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.refreshLocks[accountID] = lock
+	}
+	s.refreshMu.Unlock()
+
+	lock.Lock()
+	return lock.Unlock
 }
 
 func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, previous *Account) (Account, error) {
@@ -411,6 +456,13 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 				return Account{}, err
 			}
 		}
+	}
+	if strings.TrimSpace(subject) == "" {
+		generatedSubject, err := secret.GenerateToken("local_acct")
+		if err != nil {
+			return Account{}, fmt.Errorf("generate local account subject: %w", err)
+		}
+		subject = generatedSubject
 	}
 	if strings.TrimSpace(refreshToken) == "" {
 		return Account{}, errors.New("oauth token response missing refresh token")

@@ -28,14 +28,16 @@ func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey s
 }
 
 type fakeSelectedTokenProvider struct {
-	tokens []SelectedToken
-	errs   []error
-	calls  int
+	tokens     []SelectedToken
+	errs       []error
+	calls      int
+	exclusions [][]int64
 }
 
-func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context) (SelectedToken, error) {
+func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error) {
 	i := p.calls
 	p.calls++
+	p.exclusions = append(p.exclusions, append([]int64(nil), excludedAccountIDs...))
 	if i < len(p.errs) && p.errs[i] != nil {
 		return SelectedToken{}, p.errs[i]
 	}
@@ -346,6 +348,9 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	if tokens.calls != 2 {
 		t.Fatalf("token calls = %d, want 2", tokens.calls)
 	}
+	if len(tokens.exclusions) != 2 || len(tokens.exclusions[1]) != 1 || tokens.exclusions[1][0] != 1 {
+		t.Fatalf("exclusions = %+v, want second call excluding account 1", tokens.exclusions)
+	}
 	if transportCalls != 2 {
 		t.Fatalf("transport calls = %d, want 2", transportCalls)
 	}
@@ -373,6 +378,9 @@ func TestProxyDoesNotRetrySameAccountBeforeStreaming(t *testing.T) {
 	}
 	if tokens.calls != 2 {
 		t.Fatalf("token calls = %d, want 2", tokens.calls)
+	}
+	if len(tokens.exclusions) != 2 || len(tokens.exclusions[1]) != 1 || tokens.exclusions[1][0] != 1 {
+		t.Fatalf("exclusions = %+v, want second call excluding account 1", tokens.exclusions)
 	}
 	if transportCalls != 1 {
 		t.Fatalf("transport calls = %d, want 1", transportCalls)

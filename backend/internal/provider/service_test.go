@@ -166,6 +166,37 @@ func TestCompleteCallbackClaimsStateBeforeSavingTokens(t *testing.T) {
 	}
 }
 
+func TestCompleteCallbackGeneratesLocalSubjectsForBlankTokenSubject(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{
+		exchanges: []TokenResponse{
+			{AccessToken: "access-token-1", RefreshToken: "refresh-token-1", ExpiresIn: 3600},
+			{AccessToken: "access-token-2", RefreshToken: "refresh-token-2", ExpiresIn: 3600},
+		},
+	})
+
+	for i := 0; i < 2; i++ {
+		started, err := service.StartConnect(context.Background(), "/")
+		if err != nil {
+			t.Fatalf("StartConnect %d returned error: %v", i, err)
+		}
+		state := mustQuery(t, started.AuthorizationURL, "state")
+		if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err != nil {
+			t.Fatalf("CompleteCallback %d returned error: %v", i, err)
+		}
+	}
+
+	if len(repo.accounts) != 2 {
+		t.Fatalf("account count = %d, want 2", len(repo.accounts))
+	}
+	if strings.TrimSpace(repo.accounts[0].Subject) == "" || strings.TrimSpace(repo.accounts[1].Subject) == "" {
+		t.Fatalf("subjects = %q/%q, want non-empty local subjects", repo.accounts[0].Subject, repo.accounts[1].Subject)
+	}
+	if repo.accounts[0].Subject == repo.accounts[1].Subject {
+		t.Fatalf("subjects matched: %q", repo.accounts[0].Subject)
+	}
+}
+
 func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
 	repo := newMemoryRepo()
 	expiresAt := time.Now().Add(time.Hour)
@@ -260,6 +291,54 @@ func TestAccessTokenForAccountRefreshPreservesExistingIdentityAndRefreshToken(t 
 	}
 }
 
+func TestAccessTokenForAccountSerializesConcurrentRefresh(t *testing.T) {
+	repo := newMemoryRepo()
+	expired := time.Now().Add(-time.Minute)
+	repo.accounts = []Account{
+		testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired),
+	}
+	client := &blockingOAuthClient{
+		refresh: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+		},
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	service := newConfiguredService(repo, client)
+
+	errs := make(chan error, 2)
+	tokens := make(chan string, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			token, err := service.AccessTokenForAccount(context.Background(), repo.accounts[0])
+			if err != nil {
+				errs <- err
+				return
+			}
+			tokens <- token
+			errs <- nil
+		}()
+	}
+
+	<-client.entered
+	client.release <- struct{}{}
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("AccessTokenForAccount returned error: %v", err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if token := <-tokens; token != "new-access" {
+			t.Fatalf("token = %q, want new-access", token)
+		}
+	}
+	if client.calls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", client.calls)
+	}
+}
+
 func TestSelectAccessTokenSkipsDisabledAndUsesPriority(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -291,6 +370,35 @@ func TestSelectAccessTokenUsesPriorityOrder(t *testing.T) {
 	}
 	if selected.AccountID != 2 || selected.Token != "high-priority-token" {
 		t.Fatalf("selected = %+v", selected)
+	}
+}
+
+func TestSelectAccessTokenSkipsExcludedAccount(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 2, "fallback-token"),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.Token != "fallback-token" {
+		t.Fatalf("selected = %+v, want account 2 fallback-token", selected)
+	}
+}
+
+func TestSelectAccessTokenReturnsUnavailableWhenAllEnabledAccountsExcluded(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "only-token"),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccessToken(context.Background(), 1); !errors.Is(err, ErrAccountsUnavailable) {
+		t.Fatalf("SelectAccessToken error = %v, want accounts unavailable", err)
 	}
 }
 
@@ -528,6 +636,7 @@ func (r *memoryRepo) ClaimState(ctx context.Context, providerName, stateHash str
 
 type fakeOAuthClient struct {
 	exchange    TokenResponse
+	exchanges   []TokenResponse
 	exchangeErr error
 	refresh     TokenResponse
 	refreshErr  error
@@ -537,12 +646,35 @@ func (c fakeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code stri
 	if c.exchangeErr != nil {
 		return TokenResponse{}, c.exchangeErr
 	}
+	if len(c.exchanges) > 0 {
+		return c.exchanges[0], nil
+	}
 	return c.exchange, nil
 }
 
 func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
 	if c.refreshErr != nil {
 		return TokenResponse{}, c.refreshErr
+	}
+	return c.refresh, nil
+}
+
+type blockingOAuthClient struct {
+	refresh TokenResponse
+	entered chan struct{}
+	release chan struct{}
+	calls   int
+}
+
+func (c *blockingOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
+	return TokenResponse{}, errors.New("unexpected exchange")
+}
+
+func (c *blockingOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
+	c.calls++
+	if c.calls == 1 {
+		c.entered <- struct{}{}
+		<-c.release
 	}
 	return c.refresh, nil
 }
