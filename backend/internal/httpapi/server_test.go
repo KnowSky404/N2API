@@ -185,6 +185,12 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 	if s.updateErr != nil {
 		return provider.Account{}, s.updateErr
 	}
+	if update.Enabled == nil && update.Priority == nil {
+		return provider.Account{}, provider.ErrInvalidInput
+	}
+	if update.Priority != nil && *update.Priority < 0 {
+		return provider.Account{}, provider.ErrInvalidInput
+	}
 	for i, account := range s.accounts {
 		if account.ID == id {
 			if update.Enabled != nil {
@@ -621,6 +627,30 @@ func TestAdminProviderAccountsRequireSession(t *testing.T) {
 	}
 }
 
+func TestAdminProviderAccountMutationsRequireSession(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "patch", method: http.MethodPatch, path: "/api/admin/providers/openai/accounts/7", body: `{"enabled":true}`},
+		{name: "disconnect", method: http.MethodPost, path: "/api/admin/providers/openai/accounts/7/disconnect"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", recorder.Code)
+			}
+		})
+	}
+}
+
 func TestAdminCanListProviderAccounts(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
@@ -680,6 +710,68 @@ func TestAdminUpdateProviderAccountRejectsEmptyPatch(t *testing.T) {
 	}
 	if body["error"] != "invalid_input" {
 		t.Fatalf("error = %q, want invalid_input", body["error"])
+	}
+}
+
+func TestAdminUpdateProviderAccountRejectsInvalidID(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/providers/openai/accounts/not-an-id", strings.NewReader(`{"priority":1}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "bad_request" {
+		t.Fatalf("error = %q, want bad_request", body["error"])
+	}
+}
+
+func TestAdminUpdateProviderAccountRejectsNegativePriority(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/providers/openai/accounts/7", strings.NewReader(`{"priority":-1}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "invalid_input" {
+		t.Fatalf("error = %q, want invalid_input", body["error"])
+	}
+}
+
+func TestAdminUpdateProviderAccountRejectsUnknownJSONField(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/providers/openai/accounts/7", strings.NewReader(`{"priority":1,"extra":true}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "bad_request" {
+		t.Fatalf("error = %q, want bad_request", body["error"])
 	}
 }
 

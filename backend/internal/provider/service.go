@@ -308,6 +308,9 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
+	if update.Enabled == nil && update.Priority == nil {
+		return Account{}, ErrInvalidInput
+	}
 	if update.Priority != nil && *update.Priority < 0 {
 		return Account{}, ErrInvalidInput
 	}
