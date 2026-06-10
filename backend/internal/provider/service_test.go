@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,7 @@ func TestStatusReportsConfigurationAndConnection(t *testing.T) {
 	}
 
 	expiresAt := time.Now().Add(time.Hour).UTC()
-	if err := repo.SaveAccount(context.Background(), Account{
+	if _, err := repo.SaveAccount(context.Background(), Account{
 		Provider:              "openai",
 		Subject:               "acct_1",
 		DisplayName:           "Codex Account",
@@ -112,7 +113,7 @@ func TestCompleteCallbackStoresEncryptedTokensAndConsumesState(t *testing.T) {
 	if account.DisplayName != "Codex Account" {
 		t.Fatalf("DisplayName = %q", account.DisplayName)
 	}
-	if repo.account.EncryptedAccessToken == "access-token" || repo.account.EncryptedRefreshToken == "refresh-token" {
+	if repo.accounts[0].EncryptedAccessToken == "access-token" || repo.accounts[0].EncryptedRefreshToken == "refresh-token" {
 		t.Fatal("repository stored cleartext tokens")
 	}
 	if repo.states[0].ConsumedAt == nil {
@@ -120,7 +121,7 @@ func TestCompleteCallbackStoresEncryptedTokensAndConsumesState(t *testing.T) {
 	}
 }
 
-func TestCompleteCallbackDoesNotConsumeStateWhenTokenExchangeFails(t *testing.T) {
+func TestCompleteCallbackConsumesStateWhenTokenExchangeFails(t *testing.T) {
 	repo := newMemoryRepo()
 	service := newConfiguredService(repo, fakeOAuthClient{exchangeErr: errors.New("token endpoint unavailable")})
 
@@ -132,19 +133,19 @@ func TestCompleteCallbackDoesNotConsumeStateWhenTokenExchangeFails(t *testing.T)
 	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err == nil {
 		t.Fatal("CompleteCallback returned nil error, want token exchange error")
 	}
-	if repo.states[0].ConsumedAt != nil {
-		t.Fatal("state was consumed even though token exchange failed")
+	if repo.states[0].ConsumedAt == nil {
+		t.Fatal("state was not consumed")
 	}
 }
 
-func TestCompleteCallbackUsesValidationTimeWhenConsumingState(t *testing.T) {
+func TestCompleteCallbackClaimsStateBeforeSavingTokens(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.rejectConsumeAfterFindNow = true
 	client := fakeOAuthClient{
 		exchange: TokenResponse{
 			AccessToken:  "access-token",
 			RefreshToken: "refresh-token",
 			ExpiresIn:    3600,
+			Subject:      "acct_1",
 		},
 	}
 	service := newConfiguredService(repo, client)
@@ -157,16 +158,20 @@ func TestCompleteCallbackUsesValidationTimeWhenConsumingState(t *testing.T) {
 	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err != nil {
 		t.Fatalf("CompleteCallback returned error: %v", err)
 	}
-	if repo.states[0].ConsumedAt == nil {
-		t.Fatal("state was not consumed")
+	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); !errors.Is(err, ErrInvalidState) {
+		t.Fatalf("replay error = %v, want ErrInvalidState", err)
+	}
+	if repo.saveCount != 1 {
+		t.Fatalf("saveCount = %d, want 1", repo.saveCount)
 	}
 }
 
 func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
 	repo := newMemoryRepo()
 	expiresAt := time.Now().Add(time.Hour)
-	if err := repo.SaveAccount(context.Background(), Account{
+	if _, err := repo.SaveAccount(context.Background(), Account{
 		Provider:              "openai",
+		Subject:               "acct_1",
 		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "access-token"),
 		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "refresh-token"),
 		AccessTokenExpiresAt:  &expiresAt,
@@ -187,8 +192,9 @@ func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
 func TestAccessTokenRefreshesExpiredToken(t *testing.T) {
 	repo := newMemoryRepo()
 	expired := time.Now().Add(-time.Minute)
-	if err := repo.SaveAccount(context.Background(), Account{
+	if _, err := repo.SaveAccount(context.Background(), Account{
 		Provider:              "openai",
+		Subject:               "acct_1",
 		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
 		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "refresh-token"),
 		AccessTokenExpiresAt:  &expired,
@@ -210,42 +216,296 @@ func TestAccessTokenRefreshesExpiredToken(t *testing.T) {
 	if token != "new-access" {
 		t.Fatalf("token = %q, want new-access", token)
 	}
-	if repo.account.LastRefreshAt == nil {
+	if repo.accounts[0].LastRefreshAt == nil {
 		t.Fatal("LastRefreshAt was not updated")
 	}
 }
 
+func TestAccessTokenForAccountRefreshPreservesExistingIdentityAndRefreshToken(t *testing.T) {
+	repo := newMemoryRepo()
+	expired := time.Now().Add(-time.Minute)
+	repo.accounts = []Account{
+		testExpiredAccount(t, 7, false, 3, "old-access", "old-refresh", expired),
+	}
+	repo.accounts[0].Subject = "acct_original"
+	service := newConfiguredService(repo, fakeOAuthClient{
+		refresh: TokenResponse{
+			AccessToken: "new-access",
+			ExpiresIn:   3600,
+			Subject:     "acct_changed",
+			DisplayName: "Updated Name",
+		},
+	})
+
+	token, err := service.AccessTokenForAccount(context.Background(), repo.accounts[0])
+	if err != nil {
+		t.Fatalf("AccessTokenForAccount returned error: %v", err)
+	}
+	if token != "new-access" {
+		t.Fatalf("token = %q, want new-access", token)
+	}
+	if len(repo.accounts) != 1 {
+		t.Fatalf("account count = %d, want 1", len(repo.accounts))
+	}
+	account := repo.accounts[0]
+	if account.ID != 7 || account.Subject != "acct_original" || account.Enabled || account.Priority != 3 {
+		t.Fatalf("account = %+v, want original id/subject/enabled/priority preserved", account)
+	}
+	refreshToken, err := secret.DecryptString("encryption-secret", account.EncryptedRefreshToken)
+	if err != nil {
+		t.Fatalf("DecryptString returned error: %v", err)
+	}
+	if refreshToken != "old-refresh" {
+		t.Fatalf("refreshToken = %q, want old-refresh", refreshToken)
+	}
+}
+
+func TestSelectAccessTokenSkipsDisabledAndUsesPriority(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, false, 1, "disabled-token"),
+		testAccount(t, 2, true, 10, "enabled-token"),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.Token != "enabled-token" {
+		t.Fatalf("selected = %+v", selected)
+	}
+}
+
+func TestSelectAccessTokenUsesPriorityOrder(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 10, "low-priority-token"),
+		testAccount(t, 2, true, 1, "high-priority-token"),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.Token != "high-priority-token" {
+		t.Fatalf("selected = %+v", selected)
+	}
+}
+
+func TestSelectAccessTokenFallsBackWhenRefreshFails(t *testing.T) {
+	repo := newMemoryRepo()
+	expired := time.Now().Add(-time.Minute)
+	repo.accounts = []Account{
+		testExpiredAccount(t, 1, true, 1, "old-token", "bad-refresh", expired),
+		testAccount(t, 2, true, 2, "fallback-token"),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
+
+	selected, err := service.SelectAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.Token != "fallback-token" {
+		t.Fatalf("selected = %+v", selected)
+	}
+	if repo.accounts[0].LastError == "" {
+		t.Fatal("first account error was not marked")
+	}
+}
+
+func TestSelectAccessTokenReturnsMarkAccountErrorFailure(t *testing.T) {
+	repo := newMemoryRepo()
+	expired := time.Now().Add(-time.Minute)
+	repo.accounts = []Account{
+		testExpiredAccount(t, 1, true, 1, "old-token", "bad-refresh", expired),
+		testAccount(t, 2, true, 2, "fallback-token"),
+	}
+	repo.markAccountErrorErr = errors.New("mark account error failed")
+	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
+
+	if _, err := service.SelectAccessToken(context.Background()); !errors.Is(err, repo.markAccountErrorErr) {
+		t.Fatalf("SelectAccessToken error = %v, want mark account error failure", err)
+	}
+}
+
+func TestSelectAccessTokenReturnsMarkAccountUsedFailure(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "access-token"),
+	}
+	repo.markAccountUsedErr = errors.New("mark account used failed")
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccessToken(context.Background()); !errors.Is(err, repo.markAccountUsedErr) {
+		t.Fatalf("SelectAccessToken error = %v, want mark account used failure", err)
+	}
+}
+
 type memoryRepo struct {
-	account                   Account
-	hasAccount                bool
-	states                    []OAuthState
-	rejectConsumeAfterFindNow bool
-	lastFindNow               time.Time
+	accounts []Account
+	states   []OAuthState
+
+	saveCount           int
+	nextID              int64
+	markAccountErrorErr error
+	markAccountUsedErr  error
 }
 
 func newMemoryRepo() *memoryRepo {
-	return &memoryRepo{}
+	return &memoryRepo{nextID: 1}
+}
+
+func (r *memoryRepo) ListAccounts(ctx context.Context, providerName string) ([]Account, error) {
+	var accounts []Account
+	for _, account := range r.accounts {
+		if account.Provider == providerName {
+			accounts = append(accounts, account)
+		}
+	}
+	sort.SliceStable(accounts, func(i, j int) bool {
+		if accounts[i].Priority != accounts[j].Priority {
+			return accounts[i].Priority < accounts[j].Priority
+		}
+		iHasError := accounts[i].LastErrorAt != nil
+		jHasError := accounts[j].LastErrorAt != nil
+		if iHasError != jHasError {
+			return !iHasError
+		}
+		if accounts[i].LastUsedAt == nil && accounts[j].LastUsedAt != nil {
+			return true
+		}
+		if accounts[i].LastUsedAt != nil && accounts[j].LastUsedAt == nil {
+			return false
+		}
+		if accounts[i].LastUsedAt != nil && accounts[j].LastUsedAt != nil && !accounts[i].LastUsedAt.Equal(*accounts[j].LastUsedAt) {
+			return accounts[i].LastUsedAt.Before(*accounts[j].LastUsedAt)
+		}
+		return accounts[i].ID < accounts[j].ID
+	})
+	return accounts, nil
 }
 
 func (r *memoryRepo) FindAccount(ctx context.Context, providerName string) (Account, error) {
-	if !r.hasAccount || r.account.Provider != providerName {
+	accounts, err := r.ListAccounts(ctx, providerName)
+	if err != nil {
+		return Account{}, err
+	}
+	if len(accounts) == 0 {
 		return Account{}, ErrNotConnected
 	}
-	return r.account, nil
+	return accounts[0], nil
 }
 
-func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) error {
-	r.account = account
-	r.hasAccount = true
-	return nil
-}
-
-func (r *memoryRepo) DeleteAccount(ctx context.Context, providerName string) error {
-	if r.hasAccount && r.account.Provider == providerName {
-		r.account = Account{}
-		r.hasAccount = false
+func (r *memoryRepo) FindAccountByID(ctx context.Context, providerName string, id int64) (Account, error) {
+	for _, account := range r.accounts {
+		if account.Provider == providerName && account.ID == id {
+			return account, nil
+		}
 	}
+	return Account{}, ErrNotConnected
+}
+
+func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account, error) {
+	r.saveCount++
+	now := time.Now()
+	for i := range r.accounts {
+		if r.accounts[i].Provider == account.Provider && r.accounts[i].Subject == account.Subject {
+			account.ID = valueOrDefaultInt64(account.ID, r.accounts[i].ID)
+			if !account.Enabled {
+				account.Enabled = r.accounts[i].Enabled
+			}
+			if account.Priority == 0 {
+				account.Priority = r.accounts[i].Priority
+			}
+			account.CreatedAt = r.accounts[i].CreatedAt
+			account.UpdatedAt = now
+			r.accounts[i] = account
+			return account, nil
+		}
+	}
+	if account.ID == 0 {
+		account.ID = r.nextID
+		r.nextID++
+	}
+	if !account.Enabled {
+		account.Enabled = true
+	}
+	if account.Priority == 0 {
+		account.Priority = 100
+	}
+	account.CreatedAt = now
+	account.UpdatedAt = now
+	r.accounts = append(r.accounts, account)
+	return account, nil
+}
+
+func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id int64, update AccountUpdate) (Account, error) {
+	for i := range r.accounts {
+		if r.accounts[i].Provider != providerName || r.accounts[i].ID != id {
+			continue
+		}
+		if update.Enabled != nil {
+			r.accounts[i].Enabled = *update.Enabled
+		}
+		if update.Priority != nil {
+			r.accounts[i].Priority = *update.Priority
+		}
+		r.accounts[i].UpdatedAt = time.Now()
+		return r.accounts[i], nil
+	}
+	return Account{}, ErrNotConnected
+}
+
+func (r *memoryRepo) DeleteAccount(ctx context.Context, providerName string, id int64) error {
+	for i := range r.accounts {
+		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
+			r.accounts = append(r.accounts[:i], r.accounts[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotConnected
+}
+
+func (r *memoryRepo) DeleteAccounts(ctx context.Context, providerName string) error {
+	kept := r.accounts[:0]
+	for _, account := range r.accounts {
+		if account.Provider != providerName {
+			kept = append(kept, account)
+		}
+	}
+	r.accounts = kept
 	return nil
+}
+
+func (r *memoryRepo) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {
+	if r.markAccountUsedErr != nil {
+		return r.markAccountUsedErr
+	}
+	for i := range r.accounts {
+		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
+			r.accounts[i].LastUsedAt = &usedAt
+			r.accounts[i].LastError = ""
+			r.accounts[i].LastErrorAt = nil
+			return nil
+		}
+	}
+	return ErrNotConnected
+}
+
+func (r *memoryRepo) MarkAccountError(ctx context.Context, providerName string, id int64, message string, at time.Time) error {
+	if r.markAccountErrorErr != nil {
+		return r.markAccountErrorErr
+	}
+	for i := range r.accounts {
+		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
+			r.accounts[i].LastError = message
+			r.accounts[i].LastErrorAt = &at
+			return nil
+		}
+	}
+	return ErrNotConnected
 }
 
 func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
@@ -253,22 +513,7 @@ func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
 	return nil
 }
 
-func (r *memoryRepo) FindState(ctx context.Context, providerName, stateHash string, now time.Time) (OAuthState, error) {
-	r.lastFindNow = now
-	for i := range r.states {
-		state := &r.states[i]
-		if state.Provider != providerName || state.StateHash != stateHash || state.ConsumedAt != nil || !state.ExpiresAt.After(now) {
-			continue
-		}
-		return *state, nil
-	}
-	return OAuthState{}, ErrInvalidState
-}
-
-func (r *memoryRepo) ConsumeState(ctx context.Context, providerName, stateHash string, now time.Time) error {
-	if r.rejectConsumeAfterFindNow && now.After(r.lastFindNow) {
-		return ErrInvalidState
-	}
+func (r *memoryRepo) ClaimState(ctx context.Context, providerName, stateHash string, now time.Time) (OAuthState, error) {
 	for i := range r.states {
 		state := &r.states[i]
 		if state.Provider != providerName || state.StateHash != stateHash || state.ConsumedAt != nil || !state.ExpiresAt.After(now) {
@@ -276,15 +521,16 @@ func (r *memoryRepo) ConsumeState(ctx context.Context, providerName, stateHash s
 		}
 		consumedAt := now
 		state.ConsumedAt = &consumedAt
-		return nil
+		return *state, nil
 	}
-	return ErrInvalidState
+	return OAuthState{}, ErrInvalidState
 }
 
 type fakeOAuthClient struct {
 	exchange    TokenResponse
 	exchangeErr error
 	refresh     TokenResponse
+	refreshErr  error
 }
 
 func (c fakeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
@@ -295,6 +541,9 @@ func (c fakeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code stri
 }
 
 func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
+	if c.refreshErr != nil {
+		return TokenResponse{}, c.refreshErr
+	}
 	return c.refresh, nil
 }
 
@@ -326,4 +575,35 @@ func mustQuery(t *testing.T, rawURL, key string) string {
 		t.Fatalf("url.Parse returned error: %v", err)
 	}
 	return parsed.Query().Get(key)
+}
+
+func testAccount(t *testing.T, id int64, enabled bool, priority int, accessToken string) Account {
+	t.Helper()
+	expiresAt := time.Now().Add(time.Hour)
+	return testExpiredAccount(t, id, enabled, priority, accessToken, "refresh-token", expiresAt)
+}
+
+func testExpiredAccount(t *testing.T, id int64, enabled bool, priority int, accessToken, refreshToken string, expiresAt time.Time) Account {
+	t.Helper()
+	now := time.Now()
+	return Account{
+		ID:                    id,
+		Provider:              "openai",
+		Subject:               "acct_" + string(rune('0'+id)),
+		DisplayName:           "Account",
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", accessToken),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", refreshToken),
+		AccessTokenExpiresAt:  &expiresAt,
+		Enabled:               enabled,
+		Priority:              priority,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+}
+
+func valueOrDefaultInt64(value, fallback int64) int64 {
+	if value == 0 {
+		return fallback
+	}
+	return value
 }

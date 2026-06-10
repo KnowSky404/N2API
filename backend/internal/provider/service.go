@@ -20,9 +20,11 @@ const (
 )
 
 var (
-	ErrNotConfigured = errors.New("provider not configured")
-	ErrNotConnected  = errors.New("provider not connected")
-	ErrInvalidState  = errors.New("invalid oauth state")
+	ErrNotConfigured       = errors.New("provider not configured")
+	ErrNotConnected        = errors.New("provider not connected")
+	ErrInvalidState        = errors.New("invalid oauth state")
+	ErrAccountsDisabled    = errors.New("provider accounts disabled")
+	ErrAccountsUnavailable = errors.New("provider accounts unavailable")
 )
 
 type Config struct {
@@ -277,13 +279,14 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 	}
 
 	stateHash := secret.HashAPIKey(state)
-	validatedAt := time.Now()
-	if _, err := s.repo.FindState(ctx, s.cfg.Provider, stateHash, validatedAt); err != nil {
+	claimed, err := s.repo.ClaimState(ctx, s.cfg.Provider, stateHash, time.Now())
+	if err != nil {
 		if errors.Is(err, ErrInvalidState) {
 			return Account{}, ErrInvalidState
 		}
 		return Account{}, err
 	}
+	_ = claimed
 
 	tokens, err := s.client.ExchangeCode(ctx, s.cfg, code)
 	if err != nil {
@@ -293,32 +296,22 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 	if err != nil {
 		return Account{}, err
 	}
-	if err := s.repo.ConsumeState(ctx, s.cfg.Provider, stateHash, validatedAt); err != nil {
-		if errors.Is(err, ErrInvalidState) {
-			return Account{}, ErrInvalidState
-		}
-		return Account{}, err
-	}
 	return account, nil
 }
 
 func (s *Service) Disconnect(ctx context.Context) error {
-	return s.repo.DeleteAccount(ctx, s.cfg.Provider)
+	return s.repo.DeleteAccounts(ctx, s.cfg.Provider)
 }
 
 func (s *Service) AccessToken(ctx context.Context) (string, error) {
-	if !s.Configured() {
-		return "", ErrNotConfigured
-	}
-
-	account, err := s.repo.FindAccount(ctx, s.cfg.Provider)
+	selected, err := s.SelectAccessToken(ctx)
 	if err != nil {
-		if errors.Is(err, ErrNotConnected) {
-			return "", ErrNotConnected
-		}
 		return "", err
 	}
+	return selected.Token, nil
+}
 
+func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (string, error) {
 	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
 		return secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
 	}
@@ -338,6 +331,43 @@ func (s *Service) AccessToken(ctx context.Context) (string, error) {
 	return secret.DecryptString(s.cfg.Secret, refreshed.EncryptedAccessToken)
 }
 
+func (s *Service) SelectAccessToken(ctx context.Context) (SelectedToken, error) {
+	if !s.Configured() {
+		return SelectedToken{}, ErrNotConfigured
+	}
+
+	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
+	if err != nil {
+		return SelectedToken{}, err
+	}
+	if len(accounts) == 0 {
+		return SelectedToken{}, ErrNotConnected
+	}
+
+	hasEnabled := false
+	for _, account := range accounts {
+		if !account.Enabled {
+			continue
+		}
+		hasEnabled = true
+		token, err := s.AccessTokenForAccount(ctx, account)
+		if err != nil {
+			if markErr := s.repo.MarkAccountError(ctx, s.cfg.Provider, account.ID, err.Error(), time.Now()); markErr != nil {
+				return SelectedToken{}, fmt.Errorf("mark provider account error: %w", markErr)
+			}
+			continue
+		}
+		if err := s.repo.MarkAccountUsed(ctx, s.cfg.Provider, account.ID, time.Now()); err != nil {
+			return SelectedToken{}, fmt.Errorf("mark provider account used: %w", err)
+		}
+		return SelectedToken{AccountID: account.ID, Token: token}, nil
+	}
+	if !hasEnabled {
+		return SelectedToken{}, ErrAccountsDisabled
+	}
+	return SelectedToken{}, ErrAccountsUnavailable
+}
+
 func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, previous *Account) (Account, error) {
 	if strings.TrimSpace(tokens.AccessToken) == "" {
 		return Account{}, errors.New("oauth token response missing access token")
@@ -347,7 +377,7 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 	subject := tokens.Subject
 	displayName := tokens.DisplayName
 	if previous != nil {
-		subject = valueOrDefault(subject, previous.Subject)
+		subject = previous.Subject
 		displayName = valueOrDefault(displayName, previous.DisplayName)
 		if refreshToken == "" {
 			var err error
@@ -382,6 +412,7 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 	}
 
 	account := Account{
+		ID:                    previousID(previous),
 		Provider:              s.cfg.Provider,
 		Subject:               subject,
 		DisplayName:           displayName,
@@ -389,11 +420,14 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 		EncryptedRefreshToken: encryptedRefreshToken,
 		AccessTokenExpiresAt:  expiresAt,
 		LastRefreshAt:         lastRefreshAt,
+		Enabled:               previousEnabled(previous),
+		Priority:              previousPriority(previous),
 	}
-	if err := s.repo.SaveAccount(ctx, account); err != nil {
+	saved, err := s.repo.SaveAccount(ctx, account)
+	if err != nil {
 		return Account{}, err
 	}
-	return account, nil
+	return saved, nil
 }
 
 func valueOrDefault(value, fallback string) string {
@@ -401,4 +435,25 @@ func valueOrDefault(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func previousID(previous *Account) int64 {
+	if previous == nil {
+		return 0
+	}
+	return previous.ID
+}
+
+func previousEnabled(previous *Account) bool {
+	if previous == nil {
+		return true
+	}
+	return previous.Enabled
+}
+
+func previousPriority(previous *Account) int {
+	if previous == nil {
+		return 100
+	}
+	return previous.Priority
 }
