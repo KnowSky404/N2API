@@ -36,10 +36,14 @@ type fakeAdminService struct {
 }
 
 type fakeProviderService struct {
-	status       provider.Status
-	connect      provider.ConnectResult
-	callbackErr  error
-	disconnected bool
+	status                provider.Status
+	connect               provider.ConnectResult
+	accounts              []provider.Account
+	updateErr             error
+	disconnectErr         error
+	callbackErr           error
+	disconnected          bool
+	disconnectedAccountID int64
 }
 
 type fakeGatewayHandler struct {
@@ -166,11 +170,48 @@ func (s *fakeProviderService) StartConnect(_ context.Context, redirectAfter stri
 	return s.connect, nil
 }
 
+func (s *fakeProviderService) ListAccounts(_ context.Context) ([]provider.Account, error) {
+	return s.accounts, nil
+}
+
 func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state string) (provider.Account, error) {
 	if s.callbackErr != nil {
 		return provider.Account{}, s.callbackErr
 	}
 	return provider.Account{Provider: "openai", DisplayName: "Codex Account"}, nil
+}
+
+func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update provider.AccountUpdate) (provider.Account, error) {
+	if s.updateErr != nil {
+		return provider.Account{}, s.updateErr
+	}
+	for i, account := range s.accounts {
+		if account.ID == id {
+			if update.Enabled != nil {
+				account.Enabled = *update.Enabled
+			}
+			if update.Priority != nil {
+				account.Priority = *update.Priority
+			}
+			s.accounts[i] = account
+			return account, nil
+		}
+	}
+	return provider.Account{}, provider.ErrNotConnected
+}
+
+func (s *fakeProviderService) DisconnectAccount(_ context.Context, id int64) error {
+	if s.disconnectErr != nil {
+		return s.disconnectErr
+	}
+	for i, account := range s.accounts {
+		if account.ID == id {
+			s.disconnectedAccountID = id
+			s.accounts = append(s.accounts[:i], s.accounts[i+1:]...)
+			return nil
+		}
+	}
+	return provider.ErrNotConnected
 }
 
 func (s *fakeProviderService) Disconnect(_ context.Context) error {
@@ -565,6 +606,166 @@ func TestProviderDisconnectReturnsNoContent(t *testing.T) {
 	}
 	if !providers.disconnected {
 		t.Fatal("provider service was not disconnected")
+	}
+}
+
+func TestAdminProviderAccountsRequireSession(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai/accounts", nil)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+}
+
+func TestAdminCanListProviderAccounts(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai/accounts", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"id":7`) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestAdminCanUpdateProviderAccount(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/providers/openai/accounts/7", strings.NewReader(`{"enabled":false,"priority":2}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.ID != 7 || body.Account.Enabled || body.Account.Priority != 2 {
+		t.Fatalf("account = %+v, want disabled account 7 priority 2", body.Account)
+	}
+}
+
+func TestAdminUpdateProviderAccountRejectsEmptyPatch(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/providers/openai/accounts/7", strings.NewReader(`{}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "invalid_input" {
+		t.Fatalf("error = %q, want invalid_input", body["error"])
+	}
+}
+
+func TestAdminUpdateProviderAccountMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+		code string
+	}{
+		{name: "invalid input", err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "not found", err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.updateErr = tc.err
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPatch, "/api/admin/providers/openai/accounts/7", strings.NewReader(`{"priority":1}`))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.want)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != tc.code {
+				t.Fatalf("error = %q, want %s", body["error"], tc.code)
+			}
+		})
+	}
+}
+
+func TestAdminCanDisconnectProviderAccount(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/accounts/7/disconnect", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if providers.disconnectedAccountID != 7 {
+		t.Fatalf("disconnectedAccountID = %d, want 7", providers.disconnectedAccountID)
+	}
+}
+
+func TestAdminDisconnectProviderAccountMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+		code string
+	}{
+		{name: "invalid input", err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "not found", err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.disconnectErr = tc.err
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/accounts/7/disconnect", nil)
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.want)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != tc.code {
+				t.Fatalf("error = %q, want %s", body["error"], tc.code)
+			}
+		})
 	}
 }
 

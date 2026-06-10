@@ -23,6 +23,7 @@ var (
 	ErrNotConfigured       = errors.New("provider not configured")
 	ErrNotConnected        = errors.New("provider not connected")
 	ErrInvalidState        = errors.New("invalid oauth state")
+	ErrInvalidInput        = errors.New("invalid provider input")
 	ErrAccountsDisabled    = errors.New("provider accounts disabled")
 	ErrAccountsUnavailable = errors.New("provider accounts unavailable")
 )
@@ -297,6 +298,27 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 		return Account{}, err
 	}
 	return account, nil
+}
+
+func (s *Service) ListAccounts(ctx context.Context) ([]Account, error) {
+	return s.repo.ListAccounts(ctx, s.cfg.Provider)
+}
+
+func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpdate) (Account, error) {
+	if id <= 0 {
+		return Account{}, ErrInvalidInput
+	}
+	if update.Priority != nil && *update.Priority < 0 {
+		return Account{}, ErrInvalidInput
+	}
+	return s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
+}
+
+func (s *Service) DisconnectAccount(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrInvalidInput
+	}
+	return s.repo.DeleteAccount(ctx, s.cfg.Provider, id)
 }
 
 func (s *Service) Disconnect(ctx context.Context) error {

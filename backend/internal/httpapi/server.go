@@ -37,8 +37,11 @@ type AdminService interface {
 
 type ProviderService interface {
 	Status(ctx context.Context) (provider.Status, error)
+	ListAccounts(ctx context.Context) ([]provider.Account, error)
 	StartConnect(ctx context.Context, redirectAfter string) (provider.ConnectResult, error)
 	CompleteCallback(ctx context.Context, code, state string) (provider.Account, error)
+	UpdateAccount(ctx context.Context, id int64, update provider.AccountUpdate) (provider.Account, error)
+	DisconnectAccount(ctx context.Context, id int64) error
 	Disconnect(ctx context.Context) error
 }
 
@@ -289,6 +292,88 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		if err := providers.Disconnect(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	mux.HandleFunc("GET /api/admin/providers/openai/accounts", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		accounts, err := providers.ListAccounts(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+	}))
+
+	mux.HandleFunc("PATCH /api/admin/providers/openai/accounts/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		var req struct {
+			Enabled  *bool `json:"enabled"`
+			Priority *int  `json:"priority"`
+		}
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		if req.Enabled == nil && req.Priority == nil {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+
+		account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
+			Enabled:  req.Enabled,
+			Priority: req.Priority,
+		})
+		if err != nil {
+			if errors.Is(err, provider.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, provider.ErrNotConnected) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+	}))
+
+	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		if err := providers.DisconnectAccount(r.Context(), id); err != nil {
+			if errors.Is(err, provider.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, provider.ErrNotConnected) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
