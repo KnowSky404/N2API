@@ -67,11 +67,10 @@
   let sessionVersion = $state(0);
   let loginForm = $state({ username: '', password: '', submitting: false, error: '' });
   let canCopySecret = $state(false);
-  /** @type {{ loading: boolean, connecting: boolean, disconnecting: boolean, error: string, data: ProviderStatus | null }} */
+  /** @type {{ loading: boolean, connecting: boolean, error: string, data: ProviderStatus | null }} */
   let provider = $state({
     loading: false,
     connecting: false,
-    disconnecting: false,
     error: '',
     data: null
   });
@@ -193,7 +192,6 @@
     provider = {
       loading: false,
       connecting: false,
-      disconnecting: false,
       error: '',
       data: null
     };
@@ -372,26 +370,6 @@
     }
   }
 
-  async function disconnectProvider() {
-    const version = sessionVersion;
-    if (!isCurrentAuthenticated(version)) return;
-
-    provider.disconnecting = true;
-    provider.error = '';
-
-    try {
-      await requestJSON('/api/admin/providers/openai/disconnect', { method: 'POST' });
-      if (!isCurrentAuthenticated(version)) return;
-      await loadProvider();
-    } catch (error) {
-      if (!isCurrentAuthenticated(version)) return;
-      provider.error = error instanceof Error ? error.message : 'Failed to disconnect provider';
-    } finally {
-      if (!isCurrentAuthenticated(version)) return;
-      provider.disconnecting = false;
-    }
-  }
-
   /**
    * @param {ProviderAccount} account
    * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority'>>} patch
@@ -413,6 +391,23 @@
     } finally {
       if (isCurrentAuthenticated(version)) providerAccounts.saving = 0;
     }
+  }
+
+  /**
+   * @param {ProviderAccount} account
+   * @param {Event & { currentTarget: HTMLInputElement }} event
+   */
+  async function updateProviderAccountPriority(account, event) {
+    const rawValue = event.currentTarget.value.trim();
+    const priority = Number(rawValue);
+
+    if (rawValue === '' || !Number.isInteger(priority) || priority < 0) {
+      providerAccounts.error = 'Priority must be a non-negative whole number';
+      event.currentTarget.value = String(account.priority);
+      return;
+    }
+
+    await updateProviderAccount(account, { priority });
   }
 
   /** @param {ProviderAccount} account */
@@ -736,7 +731,7 @@
             <button
               class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               type="button"
-              disabled={!provider.data?.configured || provider.connecting}
+              disabled={provider.loading || !provider.data?.configured || provider.connecting}
               onclick={connectProvider}
             >
               {provider.connecting ? 'Connecting' : 'Connect account'}
@@ -820,12 +815,11 @@
                         id={`provider-account-priority-${account.id}`}
                         class="w-24 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
                         type="number"
+                        min="0"
+                        step="1"
                         value={account.priority}
                         disabled={providerAccounts.saving === account.id}
-                        onchange={(event) =>
-                          updateProviderAccount(account, {
-                            priority: Number(event.currentTarget.value)
-                          })}
+                        onchange={(event) => updateProviderAccountPriority(account, event)}
                       />
                     </td>
                     <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
