@@ -22,6 +22,21 @@
    */
 
   /**
+   * @typedef {object} ProviderAccount
+   * @property {number} id
+   * @property {string} provider
+   * @property {string} subject
+   * @property {string} displayName
+   * @property {boolean} enabled
+   * @property {number} priority
+   * @property {string | null} accessTokenExpiresAt
+   * @property {string | null} lastRefreshAt
+   * @property {string | null} lastUsedAt
+   * @property {string} lastError
+   * @property {string | null} lastErrorAt
+   */
+
+  /**
    * @typedef {object} RequestLog
    * @property {number} id
    * @property {string} requestId
@@ -60,6 +75,8 @@
     error: '',
     data: null
   });
+  /** @type {{ loading: boolean, saving: number, error: string, items: ProviderAccount[] }} */
+  let providerAccounts = $state({ loading: false, saving: 0, error: '', items: [] });
   /** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
   let apiKeys = $state({
     loading: false,
@@ -180,6 +197,7 @@
       error: '',
       data: null
     };
+    providerAccounts = { loading: false, saving: 0, error: '', items: [] };
   }
 
   /** @param {number} version */
@@ -244,6 +262,7 @@
         error: ''
       };
       await loadProvider();
+      await loadProviderAccounts();
       await loadModelSettings();
       await loadKeys();
       await loadRequestLogs();
@@ -316,6 +335,23 @@
     }
   }
 
+  async function loadProviderAccounts() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.loading = true;
+    providerAccounts.error = '';
+    try {
+      const payload = await requestJSON('/api/admin/providers/openai/accounts');
+      if (!isCurrentAuthenticated(version)) return;
+      providerAccounts.items = payload.accounts ?? [];
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      providerAccounts.error = error instanceof Error ? error.message : 'Account load failed';
+    } finally {
+      if (isCurrentAuthenticated(version)) providerAccounts.loading = false;
+    }
+  }
+
   async function connectProvider() {
     const version = sessionVersion;
     if (!isCurrentAuthenticated(version)) return;
@@ -353,6 +389,49 @@
     } finally {
       if (!isCurrentAuthenticated(version)) return;
       provider.disconnecting = false;
+    }
+  }
+
+  /**
+   * @param {ProviderAccount} account
+   * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority'>>} patch
+   */
+  async function updateProviderAccount(account, patch) {
+    const version = sessionVersion;
+    providerAccounts.saving = account.id;
+    providerAccounts.error = '';
+    try {
+      await requestJSON(`/api/admin/providers/openai/accounts/${account.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch)
+      });
+      if (!isCurrentAuthenticated(version)) return;
+      await loadProviderAccounts();
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      providerAccounts.error = error instanceof Error ? error.message : 'Account update failed';
+    } finally {
+      if (isCurrentAuthenticated(version)) providerAccounts.saving = 0;
+    }
+  }
+
+  /** @param {ProviderAccount} account */
+  async function disconnectProviderAccount(account) {
+    const version = sessionVersion;
+    providerAccounts.saving = account.id;
+    providerAccounts.error = '';
+    try {
+      await requestJSON(`/api/admin/providers/openai/accounts/${account.id}/disconnect`, {
+        method: 'POST'
+      });
+      if (!isCurrentAuthenticated(version)) return;
+      await loadProvider();
+      await loadProviderAccounts();
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      providerAccounts.error = error instanceof Error ? error.message : 'Account disconnect failed';
+    } finally {
+      if (isCurrentAuthenticated(version)) providerAccounts.saving = 0;
     }
   }
 
@@ -603,8 +682,8 @@
       <section class="rounded-lg border border-[#ededed] bg-white p-6">
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Provider</h2>
-            <p class="mt-1 text-sm text-[#6e6e6e]">OpenAI/Codex account connection</p>
+            <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Provider accounts</h2>
+            <p class="mt-1 text-sm text-[#6e6e6e]">OpenAI/Codex account pool</p>
           </div>
           <span
             class={[
@@ -628,15 +707,15 @@
             </p>
           </article>
           <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-            <p class="text-sm font-medium text-[#6e6e6e]">Account</p>
+            <p class="text-sm font-medium text-[#6e6e6e]">Accounts</p>
             <p class="mt-2 text-base font-semibold text-[#0d0d0d]">
-              {provider.data?.displayName || (provider.data?.connected ? 'Connected' : 'None')}
+              {providerAccounts.loading ? 'Loading' : providerAccounts.items.length}
             </p>
           </article>
           <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-            <p class="text-sm font-medium text-[#6e6e6e]">Token expiry</p>
+            <p class="text-sm font-medium text-[#6e6e6e]">Enabled</p>
             <p class="mt-2 text-base font-semibold text-[#0d0d0d]">
-              {formatDate(provider.data?.accessTokenExpiresAt)}
+              {providerAccounts.items.filter((account) => account.enabled).length}
             </p>
           </article>
         </div>
@@ -647,20 +726,20 @@
           </p>
           <div class="flex flex-wrap gap-2">
             <button
+              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={providerAccounts.loading}
+              onclick={loadProviderAccounts}
+            >
+              {providerAccounts.loading ? 'Refreshing' : 'Refresh'}
+            </button>
+            <button
               class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               type="button"
               disabled={!provider.data?.configured || provider.connecting}
               onclick={connectProvider}
             >
-              {provider.connecting ? 'Connecting' : provider.data?.connected ? 'Reconnect' : 'Connect'}
-            </button>
-            <button
-              class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-              type="button"
-              disabled={!provider.data?.connected || provider.disconnecting}
-              onclick={disconnectProvider}
-            >
-              {provider.disconnecting ? 'Disconnecting' : 'Disconnect'}
+              {provider.connecting ? 'Connecting' : 'Connect account'}
             </button>
           </div>
         </div>
@@ -670,6 +749,104 @@
             {provider.error}
           </p>
         {/if}
+
+        {#if providerAccounts.error}
+          <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {providerAccounts.error}
+          </p>
+        {/if}
+
+        <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+          <table class="w-full min-w-[980px] text-left text-sm">
+            <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+              <tr>
+                <th class="px-4 py-3 font-medium">Account</th>
+                <th class="px-4 py-3 font-medium">Enabled</th>
+                <th class="px-4 py-3 font-medium">Priority</th>
+                <th class="px-4 py-3 font-medium">Token expiry</th>
+                <th class="px-4 py-3 font-medium">Last refresh</th>
+                <th class="px-4 py-3 font-medium">Last used</th>
+                <th class="px-4 py-3 text-right font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#ededed]">
+              {#if providerAccounts.loading}
+                <tr>
+                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading provider accounts...</td>
+                </tr>
+              {:else if providerAccounts.items.length === 0}
+                <tr>
+                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No provider accounts connected yet.</td>
+                </tr>
+              {:else}
+                {#each providerAccounts.items as account}
+                  <tr class="bg-white align-top">
+                    <td class="px-4 py-3">
+                      <p class="font-medium text-[#0d0d0d]">
+                        {account.displayName || account.subject || account.provider}
+                      </p>
+                      <p class="mt-1 font-mono text-[13px] text-[#6e6e6e]">
+                        {account.subject || account.provider}
+                      </p>
+                      {#if account.lastError}
+                        <p class="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
+                          {account.lastError}
+                          {#if account.lastErrorAt}
+                            <span class="text-red-600"> - {formatDate(account.lastErrorAt)}</span>
+                          {/if}
+                        </p>
+                      {/if}
+                    </td>
+                    <td class="px-4 py-3">
+                      <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
+                        <input
+                          class="size-4 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
+                          type="checkbox"
+                          checked={account.enabled}
+                          disabled={providerAccounts.saving === account.id}
+                          onchange={(event) =>
+                            updateProviderAccount(account, {
+                              enabled: event.currentTarget.checked
+                            })}
+                        />
+                        {account.enabled ? 'Enabled' : 'Disabled'}
+                      </label>
+                    </td>
+                    <td class="px-4 py-3">
+                      <label class="sr-only" for={`provider-account-priority-${account.id}`}>
+                        Priority for {account.displayName || account.subject || account.provider}
+                      </label>
+                      <input
+                        id={`provider-account-priority-${account.id}`}
+                        class="w-24 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                        type="number"
+                        value={account.priority}
+                        disabled={providerAccounts.saving === account.id}
+                        onchange={(event) =>
+                          updateProviderAccount(account, {
+                            priority: Number(event.currentTarget.value)
+                          })}
+                      />
+                    </td>
+                    <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
+                    <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
+                    <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
+                    <td class="px-4 py-3 text-right">
+                      <button
+                        class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                        type="button"
+                        disabled={providerAccounts.saving === account.id}
+                        onclick={() => disconnectProviderAccount(account)}
+                      >
+                        {providerAccounts.saving === account.id ? 'Saving' : 'Disconnect'}
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section class="rounded-lg border border-[#ededed] bg-white p-6">
