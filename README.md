@@ -63,4 +63,4 @@ docker compose -f deploy/compose.yaml --env-file .env up --build
 
 ## Current Status
 
-The backend includes admin API key management, OpenAI/Codex OAuth account connection, request logs, static admin UI serving, and an initial OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes.
+The backend includes admin API key management, OpenAI/Codex OAuth account pool management, request logs, static admin UI serving, and an OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes. The gateway selects enabled OpenAI/Codex accounts by priority and recent use, and can fall back before response streaming begins.
