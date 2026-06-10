@@ -59,13 +59,31 @@ type OAuthState struct {
 }
 
 type Account struct {
-	Provider              string
-	Subject               string
-	DisplayName           string
-	EncryptedAccessToken  string
-	EncryptedRefreshToken string
-	AccessTokenExpiresAt  *time.Time
-	LastRefreshAt         *time.Time
+	ID                    int64      `json:"id"`
+	Provider              string     `json:"provider"`
+	Subject               string     `json:"subject"`
+	DisplayName           string     `json:"displayName"`
+	EncryptedAccessToken  string     `json:"-"`
+	EncryptedRefreshToken string     `json:"-"`
+	AccessTokenExpiresAt  *time.Time `json:"accessTokenExpiresAt"`
+	LastRefreshAt         *time.Time `json:"lastRefreshAt"`
+	Enabled               bool       `json:"enabled"`
+	Priority              int        `json:"priority"`
+	LastUsedAt            *time.Time `json:"lastUsedAt"`
+	LastError             string     `json:"lastError"`
+	LastErrorAt           *time.Time `json:"lastErrorAt"`
+	CreatedAt             time.Time  `json:"createdAt"`
+	UpdatedAt             time.Time  `json:"updatedAt"`
+}
+
+type AccountUpdate struct {
+	Enabled  *bool
+	Priority *int
+}
+
+type SelectedToken struct {
+	AccountID int64
+	Token     string
 }
 
 type TokenResponse struct {
@@ -77,12 +95,17 @@ type TokenResponse struct {
 }
 
 type Repository interface {
+	ListAccounts(ctx context.Context, provider string) ([]Account, error)
 	FindAccount(ctx context.Context, provider string) (Account, error)
-	SaveAccount(ctx context.Context, account Account) error
-	DeleteAccount(ctx context.Context, provider string) error
+	FindAccountByID(ctx context.Context, provider string, id int64) (Account, error)
+	SaveAccount(ctx context.Context, account Account) (Account, error)
+	UpdateAccount(ctx context.Context, provider string, id int64, update AccountUpdate) (Account, error)
+	DeleteAccount(ctx context.Context, provider string, id int64) error
+	DeleteAccounts(ctx context.Context, provider string) error
+	MarkAccountUsed(ctx context.Context, provider string, id int64, usedAt time.Time) error
+	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error
 	CreateState(ctx context.Context, state OAuthState) error
-	FindState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
-	ConsumeState(ctx context.Context, provider, stateHash string, now time.Time) error
+	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
 }
 
 type OAuthClient interface {
