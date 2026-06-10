@@ -131,6 +131,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var firstAccountID int64
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		selected, err := p.tokens.SelectAccessToken(r.Context())
 		if err != nil {
@@ -138,7 +139,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
 			return
 		}
-		_ = selected.AccountID
+		if attempt == 0 {
+			firstAccountID = selected.AccountID
+		} else if selected.AccountID != 0 && selected.AccountID == firstAccountID {
+			errorCode = "upstream_unavailable"
+			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
+			return
+		}
 
 		upstreamReq, err := p.newUpstreamRequest(r, selected.Token, bodyFactory())
 		if err != nil {

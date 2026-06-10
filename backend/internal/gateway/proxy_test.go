@@ -316,21 +316,24 @@ func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 }
 
 func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
-	attempt := 0
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempt++
-		if attempt == 1 {
-			panic(http.ErrAbortHandler)
+	transportCalls := 0
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls == 1 {
+			return nil, errors.New("upstream unavailable")
 		}
 		if r.Header.Get("Authorization") != "Bearer second-token" {
 			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer upstream.Close()
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: upstream.URL})
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
@@ -342,6 +345,109 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	}
 	if tokens.calls != 2 {
 		t.Fatalf("token calls = %d, want 2", tokens.calls)
+	}
+	if transportCalls != 2 {
+		t.Fatalf("transport calls = %d, want 2", transportCalls)
+	}
+}
+
+func TestProxyDoesNotRetrySameAccountBeforeStreaming(t *testing.T) {
+	transportCalls := 0
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 1, Token: "same-account-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		return nil, errors.New("upstream unavailable")
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "upstream_unavailable") {
+		t.Fatalf("body = %q, want upstream_unavailable", recorder.Body.String())
+	}
+	if tokens.calls != 2 {
+		t.Fatalf("token calls = %d, want 2", tokens.calls)
+	}
+	if transportCalls != 1 {
+		t.Fatalf("transport calls = %d, want 1", transportCalls)
+	}
+}
+
+func TestProxyReplaysSmallPOSTBodyOnFallback(t *testing.T) {
+	const requestBody = `{"model":"gpt-5","messages":[],"stream":false}`
+	transportCalls := 0
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls == 1 {
+			return nil, errors.New("upstream unavailable")
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if string(body) != requestBody {
+			t.Fatalf("body = %q, want %q", string(body), requestBody)
+		}
+		if r.Header.Get("Authorization") != "Bearer second-token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 2 {
+		t.Fatalf("token calls = %d, want 2", tokens.calls)
+	}
+	if transportCalls != 2 {
+		t.Fatalf("transport calls = %d, want 2", transportCalls)
+	}
+}
+
+func TestProxyDoesNotRetryLargePOSTBody(t *testing.T) {
+	transportCalls := 0
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		return nil, errors.New("upstream unavailable")
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(strings.Repeat("a", maxReplayableRequestBody+1)))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "upstream_unavailable") {
+		t.Fatalf("body = %q, want upstream_unavailable", recorder.Body.String())
+	}
+	if tokens.calls != 1 {
+		t.Fatalf("token calls = %d, want 1", tokens.calls)
+	}
+	if transportCalls != 1 {
+		t.Fatalf("transport calls = %d, want 1", transportCalls)
 	}
 }
 
