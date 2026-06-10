@@ -74,8 +74,8 @@
     error: '',
     data: null
   });
-  /** @type {{ loading: boolean, saving: number, error: string, items: ProviderAccount[] }} */
-  let providerAccounts = $state({ loading: false, saving: 0, error: '', items: [] });
+  /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
+  let providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
   /** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
   let apiKeys = $state({
     loading: false,
@@ -195,7 +195,7 @@
       error: '',
       data: null
     };
-    providerAccounts = { loading: false, saving: 0, error: '', items: [] };
+    providerAccounts = { loading: false, saving: false, error: '', items: [] };
   }
 
   /** @param {number} version */
@@ -376,7 +376,7 @@
    */
   async function updateProviderAccount(account, patch) {
     const version = sessionVersion;
-    providerAccounts.saving = account.id;
+    providerAccounts.saving = true;
     providerAccounts.error = '';
     try {
       await requestJSON(`/api/admin/providers/openai/accounts/${account.id}`, {
@@ -387,9 +387,13 @@
       await loadProviderAccounts();
     } catch (error) {
       if (!isCurrentAuthenticated(version)) return;
-      providerAccounts.error = error instanceof Error ? error.message : 'Account update failed';
+      const message = error instanceof Error ? error.message : 'Account update failed';
+      providerAccounts.error = message;
+      await loadProviderAccounts();
+      if (!isCurrentAuthenticated(version)) return;
+      providerAccounts.error = message;
     } finally {
-      if (isCurrentAuthenticated(version)) providerAccounts.saving = 0;
+      if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
     }
   }
 
@@ -401,7 +405,7 @@
     const rawValue = event.currentTarget.value.trim();
     const priority = Number(rawValue);
 
-    if (rawValue === '' || !Number.isInteger(priority) || priority < 0) {
+    if (!/^\d+$/.test(rawValue)) {
       providerAccounts.error = 'Priority must be a non-negative whole number';
       event.currentTarget.value = String(account.priority);
       return;
@@ -413,7 +417,7 @@
   /** @param {ProviderAccount} account */
   async function disconnectProviderAccount(account) {
     const version = sessionVersion;
-    providerAccounts.saving = account.id;
+    providerAccounts.saving = true;
     providerAccounts.error = '';
     try {
       await requestJSON(`/api/admin/providers/openai/accounts/${account.id}/disconnect`, {
@@ -424,9 +428,13 @@
       await loadProviderAccounts();
     } catch (error) {
       if (!isCurrentAuthenticated(version)) return;
-      providerAccounts.error = error instanceof Error ? error.message : 'Account disconnect failed';
+      const message = error instanceof Error ? error.message : 'Account disconnect failed';
+      providerAccounts.error = message;
+      await loadProviderAccounts();
+      if (!isCurrentAuthenticated(version)) return;
+      providerAccounts.error = message;
     } finally {
-      if (isCurrentAuthenticated(version)) providerAccounts.saving = 0;
+      if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
     }
   }
 
@@ -798,7 +806,7 @@
                           class="size-4 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
                           type="checkbox"
                           checked={account.enabled}
-                          disabled={providerAccounts.saving === account.id}
+                          disabled={providerAccounts.saving}
                           onchange={(event) =>
                             updateProviderAccount(account, {
                               enabled: event.currentTarget.checked
@@ -818,7 +826,7 @@
                         min="0"
                         step="1"
                         value={account.priority}
-                        disabled={providerAccounts.saving === account.id}
+                        disabled={providerAccounts.saving}
                         onchange={(event) => updateProviderAccountPriority(account, event)}
                       />
                     </td>
@@ -829,10 +837,10 @@
                       <button
                         class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                         type="button"
-                        disabled={providerAccounts.saving === account.id}
+                        disabled={providerAccounts.saving}
                         onclick={() => disconnectProviderAccount(account)}
                       >
-                        {providerAccounts.saving === account.id ? 'Saving' : 'Disconnect'}
+                        {providerAccounts.saving ? 'Saving' : 'Disconnect'}
                       </button>
                     </td>
                   </tr>
