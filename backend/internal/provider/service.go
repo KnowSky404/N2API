@@ -28,6 +28,7 @@ const (
 	refreshFailureCircuitThreshold = 3
 
 	defaultOpenAIOAuthClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
+	defaultOpenAIOAuthRedirectURL   = "http://localhost:1455/auth/callback"
 	defaultOpenAIOAuthAuthURL       = "https://auth.openai.com/oauth/authorize"
 	defaultOpenAIOAuthTokenURL      = "https://auth.openai.com/oauth/token"
 	defaultOpenAIOAuthScopes        = "openid profile email offline_access"
@@ -268,6 +269,9 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 	}
 	if cfg.ClientID == "" {
 		cfg.ClientID = defaultOpenAIOAuthClientID
+	}
+	if cfg.RedirectURL == "" {
+		cfg.RedirectURL = defaultOpenAIOAuthRedirectURL
 	}
 	if cfg.AuthURL == "" {
 		cfg.AuthURL = defaultOpenAIOAuthAuthURL

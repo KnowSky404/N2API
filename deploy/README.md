@@ -16,6 +16,7 @@ The default app URL is `http://localhost:3000`.
 ## OpenAI/Codex Account Pool
 
 Start the stack, log in as admin, and use the provider section to connect one or more OpenAI/Codex accounts. The default OAuth flow uses the Codex-compatible OpenAI OAuth client with PKCE, so the OAuth client id, client secret, auth URL, and token URL can usually stay blank in `.env`.
+Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback` unless you are using your own registered OpenAI OAuth client. The built-in Codex-compatible client expects that local callback URI; after OpenAI redirects there, copy the browser URL back into N2API's callback field.
 
 - Use the account form to set a display name, priority, and whether the account should be enabled after OAuth login.
 - Use **Refresh** to force a token refresh for one account and clear stale transient state after a successful refresh.

@@ -64,6 +64,9 @@ func TestLoadDefaultsOpenAIOAuthForCodexPKCE(t *testing.T) {
 	if cfg.OpenAIOAuthSecret != "" {
 		t.Fatalf("OpenAIOAuthSecret = %q, want empty public PKCE client secret", cfg.OpenAIOAuthSecret)
 	}
+	if cfg.OpenAIOAuthRedirectURL != "http://localhost:1455/auth/callback" {
+		t.Fatalf("OpenAIOAuthRedirectURL = %q, want Codex callback", cfg.OpenAIOAuthRedirectURL)
+	}
 	if cfg.OpenAIOAuthAuthURL == "" || cfg.OpenAIOAuthTokenURL == "" || cfg.OpenAIOAuthRedirectURL == "" {
 		t.Fatalf("OAuth defaults incomplete: auth=%q token=%q redirect=%q", cfg.OpenAIOAuthAuthURL, cfg.OpenAIOAuthTokenURL, cfg.OpenAIOAuthRedirectURL)
 	}

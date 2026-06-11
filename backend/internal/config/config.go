@@ -24,6 +24,7 @@ type Config struct {
 
 const (
 	defaultOpenAIOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
+	defaultOpenAIOAuthRedirect = "http://localhost:1455/auth/callback"
 	defaultOpenAIOAuthAuthURL  = "https://auth.openai.com/oauth/authorize"
 	defaultOpenAIOAuthTokenURL = "https://auth.openai.com/oauth/token"
 )
@@ -39,7 +40,7 @@ func Load(lookup func(string) string) (Config, error) {
 		EncryptionSecret:       lookup("N2API_ENCRYPTION_SECRET"),
 		OpenAIOAuthClientID:    valueOrDefault(lookup("OPENAI_OAUTH_CLIENT_ID"), defaultOpenAIOAuthClientID),
 		OpenAIOAuthSecret:      lookup("OPENAI_OAUTH_CLIENT_SECRET"),
-		OpenAIOAuthRedirectURL: valueOrDefault(lookup("OPENAI_OAUTH_REDIRECT_URL"), valueOrDefault(lookup("N2API_PUBLIC_URL"), "http://localhost:3000")+"/oauth/openai/callback"),
+		OpenAIOAuthRedirectURL: valueOrDefault(lookup("OPENAI_OAUTH_REDIRECT_URL"), defaultOpenAIOAuthRedirect),
 		OpenAIOAuthAuthURL:     valueOrDefault(lookup("OPENAI_OAUTH_AUTH_URL"), defaultOpenAIOAuthAuthURL),
 		OpenAIOAuthTokenURL:    valueOrDefault(lookup("OPENAI_OAUTH_TOKEN_URL"), defaultOpenAIOAuthTokenURL),
 		OpenAIAPIBaseURL:       valueOrDefault(lookup("OPENAI_API_BASE_URL"), "https://api.openai.com"),

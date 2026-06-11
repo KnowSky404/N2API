@@ -86,9 +86,8 @@ func TestStartConnectStoresHashedStateAndBuildsAuthorizationURL(t *testing.T) {
 func TestStartConnectUsesBuiltInCodexPKCEConfig(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
+		Provider: "openai",
+		Secret:   "encryption-secret",
 	})
 
 	result, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
@@ -102,6 +101,9 @@ func TestStartConnectUsesBuiltInCodexPKCEConfig(t *testing.T) {
 	query := parsed.Query()
 	if query.Get("client_id") == "" {
 		t.Fatal("client_id was empty")
+	}
+	if query.Get("redirect_uri") != "http://localhost:1455/auth/callback" {
+		t.Fatalf("redirect_uri = %q, want Codex callback", query.Get("redirect_uri"))
 	}
 	if query.Get("code_challenge") == "" {
 		t.Fatal("code_challenge was empty")

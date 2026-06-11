@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { copyText } from '$lib/clipboard.js';
 
   /**
    * @typedef {object} APIKey
@@ -71,7 +72,6 @@
   let session = $state({ loading: true, authenticated: false, username: '', error: '' });
   let sessionVersion = $state(0);
   let loginForm = $state({ username: '', password: '', submitting: false, error: '' });
-  let canCopySecret = $state(false);
   /** @type {{ loading: boolean, connecting: boolean, error: string, data: ProviderStatus | null }} */
   let provider = $state({
     loading: false,
@@ -153,29 +153,27 @@
   }
 
   async function copySecret() {
-    if (!apiKeys.oneTimeSecret || !navigator.clipboard) return;
+    if (!apiKeys.oneTimeSecret) return;
     const version = sessionVersion;
     if (!isCurrentAuthenticated(version)) return;
 
-    try {
-      await navigator.clipboard.writeText(apiKeys.oneTimeSecret);
-    } catch {
-      if (!isCurrentAuthenticated(version)) return;
+    const copied = await copyText(apiKeys.oneTimeSecret);
+    if (!isCurrentAuthenticated(version)) return;
+    if (!copied) {
       apiKeys.error = 'Copy failed';
     }
   }
 
   async function copyAuthorizationURL() {
-    if (!providerOAuth.authorizationUrl || !navigator.clipboard) return;
+    if (!providerOAuth.authorizationUrl) return;
     const version = sessionVersion;
     if (!isCurrentAuthenticated(version)) return;
 
-    try {
-      await navigator.clipboard.writeText(providerOAuth.authorizationUrl);
-      if (!isCurrentAuthenticated(version)) return;
+    const copied = await copyText(providerOAuth.authorizationUrl);
+    if (!isCurrentAuthenticated(version)) return;
+    if (copied) {
       providerOAuth.copied = true;
-    } catch {
-      if (!isCurrentAuthenticated(version)) return;
+    } else {
       provider.error = 'Copy failed';
     }
   }
@@ -693,7 +691,6 @@
   }
 
   onMount(() => {
-    canCopySecret = Boolean(navigator.clipboard);
     loadHealth();
     loadSession();
   });
@@ -926,7 +923,7 @@
                 <input
                   class="w-full min-w-0 rounded-lg border border-[#b7d9cd] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#cbe7dd]"
                   type="url"
-                  placeholder="http://localhost:3000/oauth/openai/callback?code=...&state=..."
+                  placeholder="http://localhost:1455/auth/callback?code=...&state=..."
                   bind:value={providerOAuth.callbackUrl}
                   required
                 />
@@ -1200,15 +1197,13 @@
               <p class="text-sm font-medium text-[#0a7a5e]">
                 Copy this key now. It will not be shown again.
               </p>
-              {#if canCopySecret}
-                <button
-                  class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                  type="button"
-                  onclick={copySecret}
-                >
-                  Copy
-                </button>
-              {/if}
+              <button
+                class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                type="button"
+                onclick={copySecret}
+              >
+                Copy
+              </button>
             </div>
             <code
               class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]"
