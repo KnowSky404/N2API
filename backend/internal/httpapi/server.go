@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"io/fs"
 	"net"
@@ -442,17 +443,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /oauth/openai/callback", func(w http.ResponseWriter, r *http.Request) {
-		if providers == nil {
-			http.Redirect(w, r, "/?provider=openai&status=error", http.StatusFound)
-			return
-		}
-		code := r.URL.Query().Get("code")
-		state := r.URL.Query().Get("state")
-		if _, err := providers.CompleteCallback(r.Context(), code, state); err != nil {
-			http.Redirect(w, r, "/?provider=openai&status=error", http.StatusFound)
-			return
-		}
-		http.Redirect(w, r, "/?provider=openai&status=connected", http.StatusFound)
+		writeManualOAuthCallbackPage(w, r)
 	})
 
 	if gateway != nil {
@@ -477,6 +468,55 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	return mux
+}
+
+func writeManualOAuthCallbackPage(w http.ResponseWriter, r *http.Request) {
+	callbackURL := absoluteRequestURL(r)
+	escapedURL := html.EscapeString(callbackURL)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>N2API OAuth Callback</title>
+  <style>
+    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fafafa; color: #0d0d0d; }
+    main { max-width: 760px; margin: 10vh auto; padding: 0 24px; }
+    code { display: block; margin-top: 16px; padding: 14px; overflow-x: auto; border: 1px solid #e5e5e5; border-radius: 8px; background: #fff; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>OAuth callback received</h1>
+    <p>Copy this callback URL into the N2API admin provider form to complete the account connection.</p>
+    <code>`+escapedURL+`</code>
+  </main>
+</body>
+</html>`)
+}
+
+func absoluteRequestURL(r *http.Request) string {
+	if r.URL.IsAbs() {
+		return r.URL.String()
+	}
+	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		return r.URL.RequestURI()
+	}
+	return scheme + "://" + host + r.URL.RequestURI()
 }
 
 func decodeCallbackURL(w http.ResponseWriter, r *http.Request) (string, string, error) {

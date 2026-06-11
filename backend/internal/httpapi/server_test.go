@@ -944,29 +944,25 @@ func TestAdminDisconnectProviderAccountMapsErrors(t *testing.T) {
 	}
 }
 
-func TestProviderCallbackRedirectsToConnectedOrError(t *testing.T) {
+func TestProviderCallbackDoesNotConsumeManualCallback(t *testing.T) {
 	providers := newFakeProviderService()
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	recorder := httptest.NewRecorder()
 
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/oauth/openai/callback?code=abc&state=state", nil))
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:3000/oauth/openai/callback?code=abc&state=state", nil))
 
-	if recorder.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", recorder.Code)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
-	if got := recorder.Header().Get("Location"); got != "/?provider=openai&status=connected" {
-		t.Fatalf("Location = %q, want connected redirect", got)
+	if providers.callbackCode != "" || providers.callbackState != "" {
+		t.Fatalf("callback was called with code %q state %q", providers.callbackCode, providers.callbackState)
 	}
-
-	providers.callbackErr = provider.ErrInvalidState
-	recorder = httptest.NewRecorder()
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/oauth/openai/callback?code=abc&state=bad", nil))
-
-	if recorder.Code != http.StatusFound {
-		t.Fatalf("status = %d, want 302", recorder.Code)
+	body := recorder.Body.String()
+	if !strings.Contains(body, "code=abc") || !strings.Contains(body, "state=state") {
+		t.Fatalf("body did not include callback values: %s", body)
 	}
-	if got := recorder.Header().Get("Location"); got != "/?provider=openai&status=error" {
-		t.Fatalf("Location = %q, want error redirect", got)
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html", got)
 	}
 }
 
