@@ -813,7 +813,7 @@
         </div>
 
         <form
-          class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(220px,1fr)_140px_140px_auto]"
+          class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(220px,1fr)_140px_minmax(170px,auto)_auto]"
           onsubmit={(event) => {
             event.preventDefault();
             connectProvider();
@@ -838,9 +838,9 @@
               bind:value={providerConnectForm.priority}
             />
           </label>
-          <label class="flex items-end gap-2 pb-2 text-sm font-medium text-[#3c3c3c]">
+          <label class="inline-flex h-10 self-end whitespace-nowrap items-center gap-2 text-sm font-medium text-[#3c3c3c]">
             <input
-              class="size-4 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
+              class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
               type="checkbox"
               bind:checked={providerConnectForm.enabled}
             />
