@@ -30,6 +30,10 @@ func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context, excludedAcc
 	}, nil
 }
 
+func (p gatewayTokenProvider) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
+	return p.service.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
+}
+
 func main() {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {

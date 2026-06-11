@@ -241,8 +241,6 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			encrypted_id_token = EXCLUDED.encrypted_id_token,
 			access_token_expires_at = EXCLUDED.access_token_expires_at,
 			last_refresh_at = EXCLUDED.last_refresh_at,
-			enabled = EXCLUDED.enabled,
-			priority = EXCLUDED.priority,
 			last_error = '',
 			last_error_at = NULL,
 			metadata = oauth_accounts.metadata || EXCLUDED.metadata,
