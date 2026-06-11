@@ -819,19 +819,19 @@
             connectProvider();
           }}
         >
-          <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+          <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
             Account name
             <input
-              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
               type="text"
               placeholder="Work Codex"
               bind:value={providerConnectForm.name}
             />
           </label>
-          <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+          <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
             Priority
             <input
-              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
               type="number"
               min="0"
               step="1"
