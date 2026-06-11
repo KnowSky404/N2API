@@ -456,6 +456,30 @@
   }
 
   /** @param {ProviderAccount} account */
+  async function refreshProviderAccount(account) {
+    const version = sessionVersion;
+    providerAccounts.saving = true;
+    providerAccounts.error = '';
+    try {
+      await requestJSON(`/api/admin/providers/openai/accounts/${account.id}/refresh`, {
+        method: 'POST'
+      });
+      if (!isCurrentAuthenticated(version)) return;
+      await loadProvider();
+      await loadProviderAccounts();
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      const message = error instanceof Error ? error.message : 'Account refresh failed';
+      providerAccounts.error = message;
+      await loadProviderAccounts();
+      if (!isCurrentAuthenticated(version)) return;
+      providerAccounts.error = message;
+    } finally {
+      if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+    }
+  }
+
+  /** @param {ProviderAccount} account */
   async function disconnectProviderAccount(account) {
     const version = sessionVersion;
     providerAccounts.saving = true;
@@ -949,19 +973,27 @@
                         <button
                           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                           type="button"
+                          disabled={providerAccounts.saving}
+                          onclick={() => refreshProviderAccount(account)}
+                        >
+                          Refresh
+                        </button>
+                        <button
+                          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                          type="button"
                           disabled={provider.connecting || providerAccounts.saving}
                           onclick={() => connectProvider(account)}
                         >
                           Reauthorize
                         </button>
-                      <button
-                        class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-                        type="button"
-                        disabled={providerAccounts.saving}
-                        onclick={() => disconnectProviderAccount(account)}
-                      >
-                        {providerAccounts.saving ? 'Saving' : 'Disconnect'}
-                      </button>
+                        <button
+                          class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                          type="button"
+                          disabled={providerAccounts.saving}
+                          onclick={() => disconnectProviderAccount(account)}
+                        >
+                          {providerAccounts.saving ? 'Saving' : 'Disconnect'}
+                        </button>
                       </div>
                     </td>
                   </tr>

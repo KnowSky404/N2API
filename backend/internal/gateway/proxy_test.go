@@ -32,6 +32,14 @@ type fakeSelectedTokenProvider struct {
 	errs       []error
 	calls      int
 	exclusions [][]int64
+	failures   []reportedAccountFailure
+}
+
+type reportedAccountFailure struct {
+	accountID  int64
+	statusCode int
+	retryAfter string
+	message    string
 }
 
 func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error) {
@@ -45,6 +53,16 @@ func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context, exclu
 		return p.tokens[i], nil
 	}
 	return SelectedToken{}, provider.ErrAccountsUnavailable
+}
+
+func (p *fakeSelectedTokenProvider) RecordAccountFailure(_ context.Context, accountID int64, statusCode int, retryAfter, message string) error {
+	p.failures = append(p.failures, reportedAccountFailure{
+		accountID:  accountID,
+		statusCode: statusCode,
+		retryAfter: retryAfter,
+		message:    message,
+	})
+	return nil
 }
 
 type fakeRequestLogger struct {
@@ -353,6 +371,117 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	}
 	if transportCalls != 2 {
 		t.Fatalf("transport calls = %d, want 2", transportCalls)
+	}
+}
+
+func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing.T) {
+	transportCalls := 0
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "rate-limited-token"}, {AccountID: 2, Token: "second-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls == 1 {
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Retry-After": []string{"120"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+				Request:    r,
+			}, nil
+		}
+		if r.Header.Get("Authorization") != "Bearer second-token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 2 {
+		t.Fatalf("token calls = %d, want 2", tokens.calls)
+	}
+	if len(tokens.failures) != 1 {
+		t.Fatalf("failures = %+v, want one rate-limit report", tokens.failures)
+	}
+	failure := tokens.failures[0]
+	if failure.accountID != 1 || failure.statusCode != http.StatusTooManyRequests || failure.retryAfter != "120" || !strings.Contains(failure.message, "rate limited") {
+		t.Fatalf("failure = %+v", failure)
+	}
+}
+
+func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *testing.T) {
+	transportCalls := 0
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "expired-token"}, {AccountID: 2, Token: "second-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls == 1 {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
+				Request:    r,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(tokens.failures) != 1 {
+		t.Fatalf("failures = %+v, want one unauthorized report", tokens.failures)
+	}
+	if tokens.failures[0].accountID != 1 || tokens.failures[0].statusCode != http.StatusUnauthorized {
+		t.Fatalf("failure = %+v", tokens.failures[0])
+	}
+}
+
+func TestProxyRecordsCircuitOpenOnUpstreamServerErrorAndReturnsFinalError(t *testing.T) {
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "bad-token"}, {AccountID: 1, Token: "same-account-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"upstream unavailable"}}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if len(tokens.failures) != 1 {
+		t.Fatalf("failures = %+v, want one upstream status report", tokens.failures)
+	}
+	if tokens.failures[0].accountID != 1 || tokens.failures[0].statusCode != http.StatusBadGateway {
+		t.Fatalf("failure = %+v", tokens.failures[0])
 	}
 }
 

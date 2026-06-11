@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -198,6 +199,7 @@ type Repository interface {
 	MarkAccountUsed(ctx context.Context, provider string, id int64, usedAt time.Time) error
 	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error
 	RecordRefreshFailure(ctx context.Context, provider string, id int64, message string, at time.Time, openUntil *time.Time) error
+	RecordAccountStatus(ctx context.Context, provider string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error
 	CreateState(ctx context.Context, state OAuthState) error
 	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
 }
@@ -496,6 +498,61 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	return s.repo.DeleteAccounts(ctx, s.cfg.Provider)
 }
 
+func (s *Service) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
+	if accountID <= 0 {
+		return ErrInvalidInput
+	}
+	now := time.Now()
+	reason := strings.TrimSpace(message)
+	if reason == "" {
+		reason = http.StatusText(statusCode)
+	}
+
+	switch {
+	case statusCode == http.StatusTooManyRequests:
+		until := retryAfterTime(retryAfter, now, time.Minute)
+		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusRateLimited, reason, now, &until, nil)
+	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusExpired, reason, now, nil, nil)
+	case statusCode >= http.StatusInternalServerError:
+		until := now.Add(defaultCircuitOpen)
+		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusCircuitOpen, reason, now, nil, &until)
+	default:
+		return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
+	}
+}
+
+func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error) {
+	if id <= 0 {
+		return Account{}, ErrInvalidInput
+	}
+	unlock := s.lockAccountRefresh(id)
+	defer unlock()
+
+	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
+	if err != nil {
+		return Account{}, err
+	}
+	refreshToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedRefreshToken)
+	if err != nil {
+		return Account{}, err
+	}
+	tokens, err := s.client.RefreshToken(ctx, s.cfg, refreshToken)
+	if err != nil {
+		now := time.Now()
+		var openUntil *time.Time
+		if account.FailureCount+1 >= refreshFailureCircuitThreshold {
+			until := now.Add(defaultCircuitOpen)
+			openUntil = &until
+		}
+		if markErr := s.repo.RecordRefreshFailure(ctx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
+			return Account{}, markErr
+		}
+		return Account{}, err
+	}
+	return s.storeTokenResponse(ctx, tokens, &account)
+}
+
 func (s *Service) AccessToken(ctx context.Context) (string, error) {
 	selected, err := s.SelectAccessToken(ctx)
 	if err != nil {
@@ -742,7 +799,15 @@ func accountSchedulable(account Account, now time.Time) bool {
 	}
 	switch account.Status {
 	case "", AccountStatusActive:
-	case AccountStatusDisabled, AccountStatusRateLimited, AccountStatusCircuitOpen, AccountStatusExpired:
+	case AccountStatusRateLimited:
+		if account.RateLimitedUntil == nil || account.RateLimitedUntil.After(now) {
+			return false
+		}
+	case AccountStatusCircuitOpen:
+		if account.CircuitOpenUntil == nil || account.CircuitOpenUntil.After(now) {
+			return false
+		}
+	case AccountStatusDisabled, AccountStatusExpired:
 		return false
 	default:
 		return false
@@ -754,6 +819,20 @@ func accountSchedulable(account Account, now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+func retryAfterTime(value string, now time.Time, fallback time.Duration) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return now.Add(fallback)
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return now.Add(time.Duration(seconds) * time.Second)
+	}
+	if parsed, err := http.ParseTime(value); err == nil && parsed.After(now) {
+		return parsed
+	}
+	return now.Add(fallback)
 }
 
 func identitiesFromTokenResponse(tokens TokenResponse) AccountIdentities {

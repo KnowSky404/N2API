@@ -396,6 +396,29 @@ func (r *ProviderRepository) RecordRefreshFailure(ctx context.Context, providerN
 	return err
 }
 
+func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerName string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error {
+	var updatedID int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE oauth_accounts
+		SET
+			status = $3,
+			status_reason = $4,
+			last_error = $4,
+			last_error_at = $5,
+			rate_limited_until = $6,
+			circuit_open_until = $7,
+			failure_count = CASE WHEN $3 = 'circuit_open' THEN failure_count + 1 ELSE failure_count END,
+			updated_at = now()
+		WHERE provider = $1
+			AND id = $2
+		RETURNING id
+	`, providerName, id, status, reason, at, rateLimitedUntil, circuitOpenUntil).Scan(&updatedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	return err
+}
+
 func (r *ProviderRepository) CreateState(ctx context.Context, state provider.OAuthState) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO oauth_states (

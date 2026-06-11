@@ -19,6 +19,7 @@ import (
 
 const defaultUpstreamBaseURL = "https://api.openai.com"
 const maxReplayableRequestBody = 1 << 20
+const maxFailureBody = 64 << 10
 
 type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (admin.APIKey, error)
@@ -31,6 +32,10 @@ type SelectedToken struct {
 
 type AccessTokenProvider interface {
 	SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error)
+}
+
+type AccountFailureReporter interface {
+	RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error
 }
 
 type RequestLogger interface {
@@ -159,12 +164,22 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		upstreamResp, err := p.client.Do(upstreamReq)
 		if err != nil {
+			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", err.Error())
 			if attempt+1 < maxAttempts {
 				continue
 			}
 			errorCode = "upstream_unavailable"
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 			return
+		}
+
+		if retryableUpstreamStatus(upstreamResp.StatusCode) {
+			message := captureFailureMessage(upstreamResp)
+			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
+			if attempt+1 < maxAttempts {
+				_ = upstreamResp.Body.Close()
+				continue
+			}
 		}
 		defer upstreamResp.Body.Close()
 
@@ -173,6 +188,52 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(flushWriter{ResponseWriter: recorder}, upstreamResp.Body)
 		return
 	}
+}
+
+func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) {
+	if accountID <= 0 {
+		return
+	}
+	reporter, ok := p.tokens.(AccountFailureReporter)
+	if !ok {
+		return
+	}
+	_ = reporter.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
+}
+
+func retryableUpstreamStatus(statusCode int) bool {
+	return statusCode == http.StatusUnauthorized ||
+		statusCode == http.StatusForbidden ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
+}
+
+func captureFailureMessage(resp *http.Response) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFailureBody+1))
+	if err != nil {
+		return ""
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return http.StatusText(resp.StatusCode)
+	}
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err == nil && strings.TrimSpace(payload.Error.Message) != "" {
+		return strings.TrimSpace(payload.Error.Message)
+	}
+	if len(body) > maxFailureBody {
+		body = body[:maxFailureBody]
+	}
+	return string(body)
 }
 
 func (p *Proxy) newUpstreamRequest(r *http.Request, accessToken string, body io.ReadCloser) (*http.Request, error) {

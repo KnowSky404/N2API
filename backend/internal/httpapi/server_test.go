@@ -41,9 +41,11 @@ type fakeProviderService struct {
 	connectOptions        provider.ConnectOptions
 	accounts              []provider.Account
 	updateErr             error
+	refreshErr            error
 	disconnectErr         error
 	callbackErr           error
 	disconnected          bool
+	refreshedAccountID    int64
 	disconnectedAccountID int64
 }
 
@@ -202,6 +204,24 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 				account.Priority = *update.Priority
 			}
 			s.accounts[i] = account
+			return account, nil
+		}
+	}
+	return provider.Account{}, provider.ErrNotConnected
+}
+
+func (s *fakeProviderService) RefreshAccount(_ context.Context, id int64) (provider.Account, error) {
+	if s.refreshErr != nil {
+		return provider.Account{}, s.refreshErr
+	}
+	for i, account := range s.accounts {
+		if account.ID == id {
+			now := time.Now()
+			account.LastRefreshAt = &now
+			account.Status = provider.AccountStatusActive
+			account.StatusReason = ""
+			s.accounts[i] = account
+			s.refreshedAccountID = id
 			return account, nil
 		}
 	}
@@ -667,6 +687,7 @@ func TestAdminProviderAccountMutationsRequireSession(t *testing.T) {
 		body   string
 	}{
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/providers/openai/accounts/7", body: `{"enabled":true}`},
+		{name: "refresh", method: http.MethodPost, path: "/api/admin/providers/openai/accounts/7/refresh"},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/providers/openai/accounts/7/disconnect"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -837,6 +858,33 @@ func TestAdminUpdateProviderAccountMapsErrors(t *testing.T) {
 				t.Fatalf("error = %q, want %s", body["error"], tc.code)
 			}
 		})
+	}
+}
+
+func TestAdminCanRefreshProviderAccount(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, Status: provider.AccountStatusCircuitOpen}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/accounts/7/refresh", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if providers.refreshedAccountID != 7 {
+		t.Fatalf("refreshedAccountID = %d, want 7", providers.refreshedAccountID)
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastRefreshAt == nil {
+		t.Fatalf("account = %+v, want refreshed active account 7", body.Account)
 	}
 }
 

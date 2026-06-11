@@ -42,6 +42,7 @@ type ProviderService interface {
 	StartConnect(ctx context.Context, options provider.ConnectOptions) (provider.ConnectResult, error)
 	CompleteCallback(ctx context.Context, code, state string) (provider.Account, error)
 	UpdateAccount(ctx context.Context, id int64, update provider.AccountUpdate) (provider.Account, error)
+	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
 	Disconnect(ctx context.Context) error
 }
@@ -345,6 +346,33 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			Enabled:  req.Enabled,
 			Priority: req.Priority,
 		})
+		if err != nil {
+			if errors.Is(err, provider.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, provider.ErrNotConnected) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+	}))
+
+	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		account, err := providers.RefreshAccount(r.Context(), id)
 		if err != nil {
 			if errors.Is(err, provider.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")

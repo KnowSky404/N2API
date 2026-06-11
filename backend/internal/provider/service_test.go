@@ -709,6 +709,35 @@ func TestSelectAccessTokenSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testi
 	}
 }
 
+func TestSelectAccessTokenAllowsExpiredRateLimitAndCircuitWindows(t *testing.T) {
+	repo := newMemoryRepo()
+	past := time.Now().Add(-time.Minute)
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "rate-limited-token"),
+	}
+	repo.accounts[0].Status = AccountStatusRateLimited
+	repo.accounts[0].RateLimitedUntil = &past
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 1 || selected.Token != "rate-limited-token" {
+		t.Fatalf("selected = %+v, want recovered account 1", selected)
+	}
+
+	repo.accounts[0].Status = AccountStatusCircuitOpen
+	repo.accounts[0].CircuitOpenUntil = &past
+	selected, err = service.SelectAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("SelectAccessToken after circuit window returned error: %v", err)
+	}
+	if selected.AccountID != 1 {
+		t.Fatalf("selected = %+v, want recovered circuit account 1", selected)
+	}
+}
+
 func TestAccessTokenForAccountRefreshFailureOpensCircuitAfterThreshold(t *testing.T) {
 	repo := newMemoryRepo()
 	expired := time.Now().Add(-time.Minute)
@@ -727,6 +756,73 @@ func TestAccessTokenForAccountRefreshFailureOpensCircuitAfterThreshold(t *testin
 	}
 	if repo.accounts[0].Status != AccountStatusCircuitOpen {
 		t.Fatalf("Status = %q, want circuit_open", repo.accounts[0].Status)
+	}
+}
+
+func TestRefreshAccountForcesOAuthTokenRefreshAndClearsFailureState(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	repo.accounts = []Account{
+		testAccount(t, 7, true, 3, "old-access"),
+	}
+	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", "refresh-token")
+	repo.accounts[0].AccessTokenExpiresAt = &expiresAt
+	repo.accounts[0].Status = AccountStatusCircuitOpen
+	repo.accounts[0].StatusReason = "previous failure"
+	repo.accounts[0].FailureCount = 3
+	future := time.Now().Add(time.Hour)
+	repo.accounts[0].CircuitOpenUntil = &future
+	service := newConfiguredService(repo, fakeOAuthClient{
+		refresh: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+		},
+	})
+
+	account, err := service.RefreshAccount(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("RefreshAccount returned error: %v", err)
+	}
+	token, err := secret.DecryptString("encryption-secret", account.EncryptedAccessToken)
+	if err != nil {
+		t.Fatalf("DecryptString returned error: %v", err)
+	}
+	if token != "new-access" {
+		t.Fatalf("token = %q, want new-access", token)
+	}
+	if account.Status != AccountStatusActive || account.FailureCount != 0 || account.CircuitOpenUntil != nil || account.LastRefreshAt == nil {
+		t.Fatalf("account after refresh = %+v", account)
+	}
+}
+
+func TestRecordAccountFailureMapsUpstreamStatusesToAccountState(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if err := service.RecordAccountFailure(context.Background(), 7, 429, "120", "rate limited"); err != nil {
+		t.Fatalf("RecordAccountFailure rate limit returned error: %v", err)
+	}
+	if repo.accounts[0].Status != AccountStatusRateLimited || repo.accounts[0].RateLimitedUntil == nil || !repo.accounts[0].RateLimitedUntil.After(time.Now().Add(100*time.Second)) {
+		t.Fatalf("rate limited account = %+v", repo.accounts[0])
+	}
+	if repo.accounts[0].LastError != "rate limited" || repo.accounts[0].LastErrorAt == nil {
+		t.Fatalf("last error not recorded: %+v", repo.accounts[0])
+	}
+
+	if err := service.RecordAccountFailure(context.Background(), 7, 401, "", "invalid token"); err != nil {
+		t.Fatalf("RecordAccountFailure unauthorized returned error: %v", err)
+	}
+	if repo.accounts[0].Status != AccountStatusExpired || repo.accounts[0].StatusReason != "invalid token" {
+		t.Fatalf("expired account = %+v", repo.accounts[0])
+	}
+
+	if err := service.RecordAccountFailure(context.Background(), 7, 502, "", "upstream failed"); err != nil {
+		t.Fatalf("RecordAccountFailure server error returned error: %v", err)
+	}
+	if repo.accounts[0].Status != AccountStatusCircuitOpen || repo.accounts[0].CircuitOpenUntil == nil || !repo.accounts[0].CircuitOpenUntil.After(time.Now()) {
+		t.Fatalf("circuit account = %+v", repo.accounts[0])
 	}
 }
 
@@ -1021,6 +1117,24 @@ func (r *memoryRepo) RecordRefreshFailure(ctx context.Context, providerName stri
 				r.accounts[i].CircuitOpenUntil = openUntil
 				r.accounts[i].Status = AccountStatusCircuitOpen
 				r.accounts[i].StatusReason = message
+			}
+			return nil
+		}
+	}
+	return ErrNotConnected
+}
+
+func (r *memoryRepo) RecordAccountStatus(ctx context.Context, providerName string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error {
+	for i := range r.accounts {
+		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
+			r.accounts[i].Status = status
+			r.accounts[i].StatusReason = reason
+			r.accounts[i].LastError = reason
+			r.accounts[i].LastErrorAt = &at
+			r.accounts[i].RateLimitedUntil = rateLimitedUntil
+			r.accounts[i].CircuitOpenUntil = circuitOpenUntil
+			if status == AccountStatusCircuitOpen {
+				r.accounts[i].FailureCount++
 			}
 			return nil
 		}
