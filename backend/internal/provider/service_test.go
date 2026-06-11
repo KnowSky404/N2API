@@ -60,7 +60,7 @@ func TestStartConnectStoresHashedStateAndBuildsAuthorizationURL(t *testing.T) {
 	repo := newMemoryRepo()
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	result, err := service.StartConnect(context.Background(), "/")
+	result, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 	if err != nil {
 		t.Fatalf("StartConnect returned error: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestStartConnectUsesBuiltInCodexPKCEConfig(t *testing.T) {
 		Secret:      "encryption-secret",
 	})
 
-	result, err := service.StartConnect(context.Background(), "/")
+	result, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 	if err != nil {
 		t.Fatalf("StartConnect returned error: %v", err)
 	}
@@ -126,6 +126,45 @@ func TestStartConnectUsesBuiltInCodexPKCEConfig(t *testing.T) {
 	}
 }
 
+func TestStartConnectStoresPendingAccountOptionsAndFingerprintHashes(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	result, err := service.StartConnect(context.Background(), ConnectOptions{
+		RedirectAfter: "/",
+		Name:          "Work Codex",
+		Priority:      25,
+		Enabled:       boolPtr(false),
+		Fingerprint: Fingerprint{
+			Value:     "browser-fingerprint",
+			UserAgent: "Mozilla/5.0",
+			IP:        "203.0.113.10",
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	if mustQuery(t, result.AuthorizationURL, "state") == "" {
+		t.Fatal("authorization URL missing state")
+	}
+	state := repo.states[0]
+	if state.PendingAccountName != "Work Codex" || state.PendingPriority != 25 || state.PendingEnabled == nil || *state.PendingEnabled {
+		t.Fatalf("state pending account fields = %+v", state)
+	}
+	if state.FingerprintHash == "" || state.UserAgentHash == "" || state.IPHash == "" {
+		t.Fatalf("state fingerprint hashes incomplete: %+v", state)
+	}
+	for _, cleartext := range []string{"browser-fingerprint", "Mozilla/5.0", "203.0.113.10"} {
+		if strings.Contains(state.FingerprintHash+state.UserAgentHash+state.IPHash, cleartext) {
+			t.Fatalf("fingerprint hash leaked cleartext %q", cleartext)
+		}
+	}
+}
+
 func TestCompleteCallbackRejectsInvalidState(t *testing.T) {
 	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
 	if _, err := service.CompleteCallback(context.Background(), "code", "missing-state"); !errors.Is(err, ErrInvalidState) {
@@ -146,7 +185,7 @@ func TestCompleteCallbackStoresEncryptedTokensAndConsumesState(t *testing.T) {
 	}
 	service := newConfiguredService(repo, client)
 
-	started, err := service.StartConnect(context.Background(), "/")
+	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 	if err != nil {
 		t.Fatalf("StartConnect returned error: %v", err)
 	}
@@ -186,7 +225,7 @@ func TestCompleteCallbackPassesPKCEVerifierAndStoresTokenMetadata(t *testing.T) 
 		Secret:      "encryption-secret",
 	})
 
-	started, err := service.StartConnect(context.Background(), "/")
+	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 	if err != nil {
 		t.Fatalf("StartConnect returned error: %v", err)
 	}
@@ -210,6 +249,162 @@ func TestCompleteCallbackPassesPKCEVerifierAndStoresTokenMetadata(t *testing.T) 
 	}
 	if idToken != "id-token" {
 		t.Fatalf("id token = %q, want id-token", idToken)
+	}
+}
+
+func TestCompleteCallbackCreatesNamedAccountWithIsolatedFingerprint(t *testing.T) {
+	repo := newMemoryRepo()
+	client := &captureExchangeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			ExpiresIn:    3600,
+			AccountID:    "acct_work",
+			Email:        "work@example.com",
+			ClientID:     "codex-client",
+		},
+	}
+	service := NewService(repo, client, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	started, err := service.StartConnect(context.Background(), ConnectOptions{
+		RedirectAfter: "/",
+		Name:          "Work Account",
+		Priority:      7,
+		Fingerprint: Fingerprint{
+			Value:     "browser-fingerprint",
+			UserAgent: "Mozilla/5.0",
+			IP:        "203.0.113.10",
+		},
+	})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
+	if err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if account.Name != "Work Account" || account.Priority != 7 || account.Status != AccountStatusActive {
+		t.Fatalf("account = %+v, want named active priority 7 account", account)
+	}
+	if account.FingerprintHash == "" || account.UserAgentHash == "" || account.IPHash == "" {
+		t.Fatalf("account fingerprint hashes incomplete: %+v", account)
+	}
+	if account.Metadata["email"] != "work@example.com" || account.Metadata["chatgpt_account_id"] != "acct_work" || account.Metadata["access_token_sha256"] == "" {
+		t.Fatalf("metadata = %+v", account.Metadata)
+	}
+}
+
+func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIdentity(t *testing.T) {
+	repo := newMemoryRepo()
+	existing, err := repo.SaveAccount(context.Background(), Account{
+		Provider:              "openai",
+		Subject:               "acct_old",
+		Name:                  "Old Account",
+		DisplayName:           "old@example.com",
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		Enabled:               true,
+		Priority:              30,
+		Status:                AccountStatusActive,
+		Metadata:              map[string]string{"chatgpt_account_id": "acct_old"},
+	})
+	if err != nil {
+		t.Fatalf("SaveAccount returned error: %v", err)
+	}
+	client := &captureExchangeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+			AccountID:    "acct_new_identity",
+			Email:        "new@example.com",
+		},
+	}
+	service := NewService(repo, client, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	started, err := service.StartConnect(context.Background(), ConnectOptions{
+		RedirectAfter:   "/",
+		TargetAccountID: existing.ID,
+		Name:            "Renamed Account",
+	})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
+	if err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if account.ID != existing.ID {
+		t.Fatalf("account ID = %d, want target account %d", account.ID, existing.ID)
+	}
+	if account.Name != "Renamed Account" || account.Metadata["chatgpt_account_id"] != "acct_new_identity" {
+		t.Fatalf("account after reauth = %+v", account)
+	}
+	token, err := secret.DecryptString("encryption-secret", account.EncryptedAccessToken)
+	if err != nil {
+		t.Fatalf("DecryptString returned error: %v", err)
+	}
+	if token != "new-access" {
+		t.Fatalf("access token = %q, want new-access", token)
+	}
+}
+
+func TestCompleteCallbackUpdatesExistingAccountByIdentityWhenNoTarget(t *testing.T) {
+	repo := newMemoryRepo()
+	existing, err := repo.SaveAccount(context.Background(), Account{
+		Provider:              "openai",
+		Subject:               "acct_same",
+		Name:                  "Existing",
+		DisplayName:           "same@example.com",
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		Enabled:               true,
+		Priority:              12,
+		Status:                AccountStatusActive,
+		Metadata:              map[string]string{"chatgpt_account_id": "acct_same"},
+	})
+	if err != nil {
+		t.Fatalf("SaveAccount returned error: %v", err)
+	}
+	client := fakeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+			AccountID:    "acct_same",
+			Email:        "same@example.com",
+		},
+	}
+	service := NewService(repo, client, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/", Name: "Incoming Duplicate"})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
+	if err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if account.ID != existing.ID {
+		t.Fatalf("account ID = %d, want existing account %d", account.ID, existing.ID)
+	}
+	if len(repo.accounts) != 1 {
+		t.Fatalf("account count = %d, want duplicate update", len(repo.accounts))
+	}
+	if account.Name != "Existing" {
+		t.Fatalf("account name = %q, want existing name preserved", account.Name)
 	}
 }
 
@@ -237,7 +432,7 @@ func TestCompleteCallbackExtractsIdentityMetadataFromIDTokenClaims(t *testing.T)
 		Secret:      "encryption-secret",
 	})
 
-	started, err := service.StartConnect(context.Background(), "/")
+	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 	if err != nil {
 		t.Fatalf("StartConnect returned error: %v", err)
 	}
@@ -258,7 +453,7 @@ func TestCompleteCallbackConsumesStateWhenTokenExchangeFails(t *testing.T) {
 	repo := newMemoryRepo()
 	service := newConfiguredService(repo, fakeOAuthClient{exchangeErr: errors.New("token endpoint unavailable")})
 
-	started, err := service.StartConnect(context.Background(), "/")
+	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 	if err != nil {
 		t.Fatalf("StartConnect returned error: %v", err)
 	}
@@ -283,7 +478,7 @@ func TestCompleteCallbackClaimsStateBeforeSavingTokens(t *testing.T) {
 	}
 	service := newConfiguredService(repo, client)
 
-	started, err := service.StartConnect(context.Background(), "/")
+	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 	if err != nil {
 		t.Fatalf("StartConnect returned error: %v", err)
 	}
@@ -309,7 +504,7 @@ func TestCompleteCallbackGeneratesLocalSubjectsForBlankTokenSubject(t *testing.T
 	})
 
 	for i := 0; i < 2; i++ {
-		started, err := service.StartConnect(context.Background(), "/")
+		started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
 		if err != nil {
 			t.Fatalf("StartConnect %d returned error: %v", i, err)
 		}
@@ -489,6 +684,52 @@ func TestSelectAccessTokenSkipsDisabledAndUsesPriority(t *testing.T) {
 	}
 }
 
+func TestSelectAccessTokenSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
+	repo := newMemoryRepo()
+	now := time.Now()
+	expired := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "rate-limited-token"),
+		testAccount(t, 2, true, 2, "circuit-open-token"),
+		testExpiredAccount(t, 3, true, 3, "expired-token", "expired-refresh", expired),
+		testAccount(t, 4, true, 4, "usable-token"),
+	}
+	repo.accounts[0].RateLimitedUntil = &future
+	repo.accounts[1].CircuitOpenUntil = &future
+	repo.accounts[2].Status = AccountStatusExpired
+	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
+
+	selected, err := service.SelectAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 4 || selected.Token != "usable-token" {
+		t.Fatalf("selected = %+v, want usable account 4", selected)
+	}
+}
+
+func TestAccessTokenForAccountRefreshFailureOpensCircuitAfterThreshold(t *testing.T) {
+	repo := newMemoryRepo()
+	expired := time.Now().Add(-time.Minute)
+	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
+
+	for i := 0; i < refreshFailureCircuitThreshold; i++ {
+		_, _ = service.AccessTokenForAccount(context.Background(), repo.accounts[0])
+	}
+	if repo.accounts[0].FailureCount != refreshFailureCircuitThreshold {
+		t.Fatalf("FailureCount = %d, want %d", repo.accounts[0].FailureCount, refreshFailureCircuitThreshold)
+	}
+	if repo.accounts[0].CircuitOpenUntil == nil || !repo.accounts[0].CircuitOpenUntil.After(time.Now()) {
+		t.Fatalf("CircuitOpenUntil = %v, want future circuit", repo.accounts[0].CircuitOpenUntil)
+	}
+	if repo.accounts[0].Status != AccountStatusCircuitOpen {
+		t.Fatalf("Status = %q, want circuit_open", repo.accounts[0].Status)
+	}
+}
+
 func TestSelectAccessTokenUsesPriorityOrder(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -648,11 +889,32 @@ func (r *memoryRepo) FindAccountByID(ctx context.Context, providerName string, i
 	return Account{}, ErrNotConnected
 }
 
+func (r *memoryRepo) FindAccountByIdentity(ctx context.Context, providerName string, identities AccountIdentities) (Account, error) {
+	for _, account := range r.accounts {
+		if account.Provider != providerName {
+			continue
+		}
+		if identities.ChatGPTAccountID != "" && account.Metadata["chatgpt_account_id"] == identities.ChatGPTAccountID {
+			return account, nil
+		}
+		if identities.ChatGPTUserID != "" && account.Metadata["chatgpt_user_id"] == identities.ChatGPTUserID {
+			return account, nil
+		}
+		if identities.Email != "" && strings.EqualFold(account.Metadata["email"], identities.Email) {
+			return account, nil
+		}
+		if identities.AccessTokenSHA256 != "" && account.Metadata["access_token_sha256"] == identities.AccessTokenSHA256 {
+			return account, nil
+		}
+	}
+	return Account{}, ErrNotConnected
+}
+
 func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account, error) {
 	r.saveCount++
 	now := time.Now()
 	for i := range r.accounts {
-		if r.accounts[i].Provider == account.Provider && r.accounts[i].Subject == account.Subject {
+		if r.accounts[i].Provider == account.Provider && (r.accounts[i].Subject == account.Subject || (account.ID > 0 && r.accounts[i].ID == account.ID)) {
 			account.ID = valueOrDefaultInt64(account.ID, r.accounts[i].ID)
 			if !account.Enabled {
 				account.Enabled = r.accounts[i].Enabled
@@ -743,6 +1005,23 @@ func (r *memoryRepo) MarkAccountError(ctx context.Context, providerName string, 
 		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
 			r.accounts[i].LastError = message
 			r.accounts[i].LastErrorAt = &at
+			return nil
+		}
+	}
+	return ErrNotConnected
+}
+
+func (r *memoryRepo) RecordRefreshFailure(ctx context.Context, providerName string, id int64, message string, at time.Time, openUntil *time.Time) error {
+	for i := range r.accounts {
+		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
+			r.accounts[i].FailureCount++
+			r.accounts[i].LastRefreshError = message
+			r.accounts[i].LastRefreshErrorAt = &at
+			if openUntil != nil {
+				r.accounts[i].CircuitOpenUntil = openUntil
+				r.accounts[i].Status = AccountStatusCircuitOpen
+				r.accounts[i].StatusReason = message
+			}
 			return nil
 		}
 	}
@@ -851,6 +1130,10 @@ func mustEncrypt(t *testing.T, encryptionSecret, value string) string {
 		t.Fatalf("EncryptString returned error: %v", err)
 	}
 	return encrypted
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func mustQuery(t *testing.T, rawURL, key string) string {

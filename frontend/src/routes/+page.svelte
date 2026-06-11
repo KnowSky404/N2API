@@ -26,9 +26,14 @@
    * @property {number} id
    * @property {string} provider
    * @property {string} subject
+   * @property {string} name
    * @property {string} displayName
    * @property {boolean} enabled
    * @property {number} priority
+   * @property {string} status
+   * @property {string} statusReason
+   * @property {string | null} circuitOpenUntil
+   * @property {string | null} rateLimitedUntil
    * @property {string | null} accessTokenExpiresAt
    * @property {string | null} lastRefreshAt
    * @property {string | null} lastUsedAt
@@ -76,6 +81,7 @@
   });
   /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
   let providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
+  let providerConnectForm = $state({ name: '', priority: 100, enabled: true });
   /** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
   let apiKeys = $state({
     loading: false,
@@ -196,6 +202,7 @@
       data: null
     };
     providerAccounts = { loading: false, saving: false, error: '', items: [] };
+    providerConnectForm = { name: '', priority: 100, enabled: true };
   }
 
   /** @param {number} version */
@@ -350,7 +357,32 @@
     }
   }
 
-  async function connectProvider() {
+  /** @param {ProviderAccount} account */
+  function accountLabel(account) {
+    return account.name || account.displayName || account.subject || account.provider;
+  }
+
+  /** @param {string | null | undefined} status */
+  function statusLabel(status) {
+    if (!status) return 'active';
+    return status.replaceAll('_', ' ');
+  }
+
+  function browserFingerprint() {
+    if (typeof navigator === 'undefined') return '';
+    return [
+      navigator.userAgent,
+      navigator.language,
+      String(screen?.width ?? ''),
+      String(screen?.height ?? ''),
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    ].join('|');
+  }
+
+  /**
+   * @param {ProviderAccount | null} account
+   */
+  async function connectProvider(account = null) {
     const version = sessionVersion;
     if (!isCurrentAuthenticated(version)) return;
 
@@ -358,7 +390,16 @@
     provider.error = '';
 
     try {
-      const payload = await requestJSON('/api/admin/providers/openai/connect', { method: 'POST' });
+      const payload = await requestJSON('/api/admin/providers/openai/connect', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: account ? account.name || account.displayName || '' : providerConnectForm.name,
+          priority: account ? account.priority : Number(providerConnectForm.priority),
+          enabled: account ? account.enabled : providerConnectForm.enabled,
+          targetAccountId: account?.id ?? 0,
+          fingerprint: browserFingerprint()
+        })
+      });
       if (!isCurrentAuthenticated(version)) return;
       window.location.href = payload.authorizationUrl;
     } catch (error) {
@@ -740,12 +781,55 @@
               class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               type="button"
               disabled={provider.loading || !provider.data?.configured || provider.connecting}
-              onclick={connectProvider}
+              onclick={() => connectProvider()}
             >
               {provider.connecting ? 'Connecting' : 'Connect account'}
             </button>
           </div>
         </div>
+
+        <form
+          class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(220px,1fr)_140px_140px_auto]"
+          onsubmit={(event) => {
+            event.preventDefault();
+            connectProvider();
+          }}
+        >
+          <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+            Account name
+            <input
+              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              type="text"
+              placeholder="Work Codex"
+              bind:value={providerConnectForm.name}
+            />
+          </label>
+          <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+            Priority
+            <input
+              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              type="number"
+              min="0"
+              step="1"
+              bind:value={providerConnectForm.priority}
+            />
+          </label>
+          <label class="flex items-end gap-2 pb-2 text-sm font-medium text-[#3c3c3c]">
+            <input
+              class="size-4 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
+              type="checkbox"
+              bind:checked={providerConnectForm.enabled}
+            />
+            Enable after login
+          </label>
+          <button
+            class="self-end rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            type="submit"
+            disabled={provider.loading || !provider.data?.configured || provider.connecting}
+          >
+            {provider.connecting ? 'Opening OAuth' : 'Add OAuth account'}
+          </button>
+        </form>
 
         {#if provider.error}
           <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -764,6 +848,7 @@
             <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
               <tr>
                 <th class="px-4 py-3 font-medium">Account</th>
+                <th class="px-4 py-3 font-medium">Status</th>
                 <th class="px-4 py-3 font-medium">Enabled</th>
                 <th class="px-4 py-3 font-medium">Priority</th>
                 <th class="px-4 py-3 font-medium">Token expiry</th>
@@ -775,19 +860,22 @@
             <tbody class="divide-y divide-[#ededed]">
               {#if providerAccounts.loading}
                 <tr>
-                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading provider accounts...</td>
+                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading provider accounts...</td>
                 </tr>
               {:else if providerAccounts.items.length === 0}
                 <tr>
-                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No provider accounts connected yet.</td>
+                  <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No provider accounts connected yet.</td>
                 </tr>
               {:else}
                 {#each providerAccounts.items as account}
                   <tr class="bg-white align-top">
                     <td class="px-4 py-3">
                       <p class="font-medium text-[#0d0d0d]">
-                        {account.displayName || account.subject || account.provider}
+                        {accountLabel(account)}
                       </p>
+                      {#if account.displayName && account.displayName !== accountLabel(account)}
+                        <p class="mt-1 text-[#3c3c3c]">{account.displayName}</p>
+                      {/if}
                       <p class="mt-1 font-mono text-[13px] text-[#6e6e6e]">
                         {account.subject || account.provider}
                       </p>
@@ -798,6 +886,29 @@
                             <span class="text-red-600"> - {formatDate(account.lastErrorAt)}</span>
                           {/if}
                         </p>
+                      {/if}
+                    </td>
+                    <td class="px-4 py-3">
+                      <span
+                        class={[
+                          'inline-flex rounded-full px-2.5 py-1 text-xs font-medium capitalize',
+                          account.status === 'active' || !account.status
+                            ? 'bg-[#e8f5f0] text-[#0a7a5e]'
+                            : account.status === 'disabled'
+                              ? 'bg-[#f5f5f5] text-[#6e6e6e]'
+                              : 'bg-amber-50 text-amber-700'
+                        ]}
+                      >
+                        {statusLabel(account.status)}
+                      </span>
+                      {#if account.statusReason}
+                        <p class="mt-2 text-xs text-[#6e6e6e]">{account.statusReason}</p>
+                      {/if}
+                      {#if account.circuitOpenUntil}
+                        <p class="mt-2 text-xs text-amber-700">Circuit until {formatDate(account.circuitOpenUntil)}</p>
+                      {/if}
+                      {#if account.rateLimitedUntil}
+                        <p class="mt-2 text-xs text-amber-700">Rate limited until {formatDate(account.rateLimitedUntil)}</p>
                       {/if}
                     </td>
                     <td class="px-4 py-3">
@@ -833,7 +944,16 @@
                     <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
                     <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
                     <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
-                    <td class="px-4 py-3 text-right">
+                    <td class="px-4 py-3">
+                      <div class="flex justify-end gap-2">
+                        <button
+                          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                          type="button"
+                          disabled={provider.connecting || providerAccounts.saving}
+                          onclick={() => connectProvider(account)}
+                        >
+                          Reauthorize
+                        </button>
                       <button
                         class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                         type="button"
@@ -842,6 +962,7 @@
                       >
                         {providerAccounts.saving ? 'Saving' : 'Disconnect'}
                       </button>
+                      </div>
                     </td>
                   </tr>
                 {/each}

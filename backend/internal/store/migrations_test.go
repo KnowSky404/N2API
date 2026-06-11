@@ -96,6 +96,29 @@ func TestOAuthAuthorizationMetadataMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestCodexAccountPoolStateMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00006_codex_account_pool_state.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'",
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS fingerprint_hash TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS circuit_open_until TIMESTAMPTZ",
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS rate_limited_until TIMESTAMPTZ",
+		"ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS target_account_id BIGINT",
+		"ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS pending_account_name TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS fingerprint_hash TEXT NOT NULL DEFAULT ''",
+		"oauth_accounts_schedulable_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountPoolMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00004_oauth_account_pool.sql")
 	if err != nil {
@@ -125,10 +148,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 5 {
-		t.Fatalf("migration sources = %d, want 5", len(sources))
+	if len(sources) != 6 {
+		t.Fatalf("migration sources = %d, want 6", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[4].Path != "00005_oauth_authorization_metadata.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[5].Path != "00006_codex_account_pool_state.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

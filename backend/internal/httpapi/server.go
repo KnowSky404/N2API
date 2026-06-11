@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"path"
 	"strconv"
@@ -38,7 +39,7 @@ type AdminService interface {
 type ProviderService interface {
 	Status(ctx context.Context) (provider.Status, error)
 	ListAccounts(ctx context.Context) ([]provider.Account, error)
-	StartConnect(ctx context.Context, redirectAfter string) (provider.ConnectResult, error)
+	StartConnect(ctx context.Context, options provider.ConnectOptions) (provider.ConnectResult, error)
 	CompleteCallback(ctx context.Context, code, state string) (provider.Account, error)
 	UpdateAccount(ctx context.Context, id int64, update provider.AccountUpdate) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
@@ -274,7 +275,12 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 			return
 		}
-		result, err := providers.StartConnect(r.Context(), "/")
+		options, err := decodeConnectOptions(w, r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		result, err := providers.StartConnect(r.Context(), options)
 		if err != nil {
 			if errors.Is(err, provider.ErrNotConfigured) {
 				writeError(w, http.StatusConflict, "provider_not_configured")
@@ -416,6 +422,65 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	return mux
+}
+
+func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.ConnectOptions, error) {
+	options := provider.ConnectOptions{
+		RedirectAfter: "/",
+		Fingerprint: provider.Fingerprint{
+			UserAgent: strings.TrimSpace(r.UserAgent()),
+			IP:        clientIP(r),
+		},
+	}
+	if r.Body == nil {
+		return options, nil
+	}
+	if r.ContentLength == 0 {
+		return options, nil
+	}
+	var req struct {
+		RedirectAfter   string `json:"redirectAfter"`
+		Name            string `json:"name"`
+		Priority        int    `json:"priority"`
+		Enabled         *bool  `json:"enabled"`
+		TargetAccountID int64  `json:"targetAccountId"`
+		Fingerprint     string `json:"fingerprint"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		return provider.ConnectOptions{}, err
+	}
+	if strings.TrimSpace(req.RedirectAfter) != "" {
+		options.RedirectAfter = strings.TrimSpace(req.RedirectAfter)
+	}
+	options.Name = strings.TrimSpace(req.Name)
+	options.Priority = req.Priority
+	options.Enabled = req.Enabled
+	options.TargetAccountID = req.TargetAccountID
+	options.Fingerprint.Value = strings.TrimSpace(req.Fingerprint)
+	return options, nil
+}
+
+func clientIP(r *http.Request) string {
+	forwardedFor := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
+	if forwardedFor != "" {
+		parts := strings.Split(forwardedFor, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	realIP := strings.TrimSpace(r.Header.Get("X-Real-IP"))
+	if realIP != "" {
+		return realIP
+	}
+	remoteAddr := strings.TrimSpace(r.RemoteAddr)
+	if remoteAddr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		return strings.TrimSpace(host)
+	}
+	return remoteAddr
 }
 
 func parseServerOptions(options ...any) (http.Handler, fs.FS) {

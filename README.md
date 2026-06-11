@@ -62,6 +62,8 @@ Docker Compose:
 docker compose -f deploy/compose.yaml --env-file .env up --build
 ```
 
+After the stack is up, open `http://localhost:3000`, sign in with the admin credentials from `.env`, and use **Provider accounts** to add Codex/OpenAI OAuth accounts. Each row is a separate OAuth account with its own encrypted tokens, priority, enabled flag, status, and reauthorization action.
+
 ## Current Status
 
-The backend includes admin API key management, OpenAI/Codex OAuth account pool management, request logs, static admin UI serving, and an OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes. The OAuth flow starts from the admin provider page, redirects to OpenAI login, stores encrypted access/refresh/id tokens in PostgreSQL, and records account metadata such as email, account id, plan type, and client id. The gateway selects enabled OpenAI/Codex accounts by priority and recent use, and can fall back before response streaming begins.
+The backend includes admin API key management, OpenAI/Codex OAuth account pool management, request logs, static admin UI serving, and an OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes. The OAuth flow starts from the admin provider page, redirects to OpenAI login, stores encrypted access/refresh/id tokens in PostgreSQL, and records isolated account metadata such as email, account id, plan type, client id, token fingerprint, and browser/request fingerprint hashes. The gateway selects enabled, schedulable OpenAI/Codex accounts by priority and recent use, skips disabled/rate-limited/circuit-open/expired accounts, and can fall back before response streaming begins.

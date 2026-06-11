@@ -38,6 +38,7 @@ type fakeAdminService struct {
 type fakeProviderService struct {
 	status                provider.Status
 	connect               provider.ConnectResult
+	connectOptions        provider.ConnectOptions
 	accounts              []provider.Account
 	updateErr             error
 	disconnectErr         error
@@ -163,10 +164,11 @@ func (s *fakeProviderService) Status(_ context.Context) (provider.Status, error)
 	return s.status, nil
 }
 
-func (s *fakeProviderService) StartConnect(_ context.Context, redirectAfter string) (provider.ConnectResult, error) {
+func (s *fakeProviderService) StartConnect(_ context.Context, options provider.ConnectOptions) (provider.ConnectResult, error) {
 	if !s.status.Configured {
 		return provider.ConnectResult{}, provider.ErrNotConfigured
 	}
+	s.connectOptions = options
 	return s.connect, nil
 }
 
@@ -573,6 +575,35 @@ func TestProviderConnectReturnsAuthorizationURL(t *testing.T) {
 	}
 	if body.AuthorizationURL == "" {
 		t.Fatal("authorizationUrl is empty")
+	}
+}
+
+func TestProviderConnectAcceptsAccountOptionsAndFingerprint(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp"}`))
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if providers.connectOptions.RedirectAfter != "/" ||
+		providers.connectOptions.Name != "Work Codex" ||
+		providers.connectOptions.Priority != 7 ||
+		providers.connectOptions.Enabled == nil ||
+		*providers.connectOptions.Enabled ||
+		providers.connectOptions.TargetAccountID != 42 {
+		t.Fatalf("connectOptions = %+v", providers.connectOptions)
+	}
+	if providers.connectOptions.Fingerprint.Value != "browser-fp" ||
+		providers.connectOptions.Fingerprint.UserAgent != "Mozilla/5.0" ||
+		providers.connectOptions.Fingerprint.IP != "203.0.113.10" {
+		t.Fatalf("fingerprint = %+v", providers.connectOptions.Fingerprint)
 	}
 }
 

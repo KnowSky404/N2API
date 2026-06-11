@@ -22,12 +22,23 @@ import (
 const (
 	defaultStateTTL      = 10 * time.Minute
 	defaultRefreshWindow = 2 * time.Minute
+	defaultCircuitOpen   = 5 * time.Minute
+
+	refreshFailureCircuitThreshold = 3
 
 	defaultOpenAIOAuthClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
 	defaultOpenAIOAuthAuthURL       = "https://auth.openai.com/oauth/authorize"
 	defaultOpenAIOAuthTokenURL      = "https://auth.openai.com/oauth/token"
 	defaultOpenAIOAuthScopes        = "openid profile email offline_access"
 	defaultOpenAIOAuthRefreshScopes = "openid profile email"
+)
+
+const (
+	AccountStatusActive      = "active"
+	AccountStatusDisabled    = "disabled"
+	AccountStatusRateLimited = "rate_limited"
+	AccountStatusCircuitOpen = "circuit_open"
+	AccountStatusExpired     = "expired"
 )
 
 var (
@@ -65,6 +76,21 @@ type ConnectResult struct {
 	AuthorizationURL string
 }
 
+type Fingerprint struct {
+	Value     string
+	UserAgent string
+	IP        string
+}
+
+type ConnectOptions struct {
+	RedirectAfter   string
+	Name            string
+	Priority        int
+	Enabled         *bool
+	TargetAccountID int64
+	Fingerprint     Fingerprint
+}
+
 type OAuthState struct {
 	Provider              string
 	StateHash             string
@@ -75,12 +101,20 @@ type OAuthState struct {
 	EncryptedCodeVerifier string `json:"-"`
 	CodeVerifierHash      string
 	ClientID              string
+	TargetAccountID       int64
+	PendingAccountName    string
+	PendingPriority       int
+	PendingEnabled        *bool
+	FingerprintHash       string
+	UserAgentHash         string
+	IPHash                string
 }
 
 type Account struct {
 	ID                    int64             `json:"id"`
 	Provider              string            `json:"provider"`
 	Subject               string            `json:"subject"`
+	Name                  string            `json:"name"`
 	DisplayName           string            `json:"displayName"`
 	EncryptedAccessToken  string            `json:"-"`
 	EncryptedRefreshToken string            `json:"-"`
@@ -93,6 +127,16 @@ type Account struct {
 	LastError             string            `json:"lastError"`
 	LastErrorAt           *time.Time        `json:"lastErrorAt"`
 	Metadata              map[string]string `json:"metadata"`
+	Status                string            `json:"status"`
+	StatusReason          string            `json:"statusReason"`
+	FingerprintHash       string            `json:"fingerprintHash"`
+	UserAgentHash         string            `json:"userAgentHash"`
+	IPHash                string            `json:"ipHash"`
+	FailureCount          int               `json:"failureCount"`
+	CircuitOpenUntil      *time.Time        `json:"circuitOpenUntil"`
+	RateLimitedUntil      *time.Time        `json:"rateLimitedUntil"`
+	LastRefreshError      string            `json:"lastRefreshError"`
+	LastRefreshErrorAt    *time.Time        `json:"lastRefreshErrorAt"`
 	CreatedAt             time.Time         `json:"createdAt"`
 	UpdatedAt             time.Time         `json:"updatedAt"`
 }
@@ -146,14 +190,23 @@ type Repository interface {
 	ListAccounts(ctx context.Context, provider string) ([]Account, error)
 	FindAccount(ctx context.Context, provider string) (Account, error)
 	FindAccountByID(ctx context.Context, provider string, id int64) (Account, error)
+	FindAccountByIdentity(ctx context.Context, provider string, identities AccountIdentities) (Account, error)
 	SaveAccount(ctx context.Context, account Account) (Account, error)
 	UpdateAccount(ctx context.Context, provider string, id int64, update AccountUpdate) (Account, error)
 	DeleteAccount(ctx context.Context, provider string, id int64) error
 	DeleteAccounts(ctx context.Context, provider string) error
 	MarkAccountUsed(ctx context.Context, provider string, id int64, usedAt time.Time) error
 	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error
+	RecordRefreshFailure(ctx context.Context, provider string, id int64, message string, at time.Time, openUntil *time.Time) error
 	CreateState(ctx context.Context, state OAuthState) error
 	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
+}
+
+type AccountIdentities struct {
+	ChatGPTAccountID  string
+	ChatGPTUserID     string
+	Email             string
+	AccessTokenSHA256 string
 }
 
 type OAuthClient interface {
@@ -309,12 +362,12 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
-func (s *Service) StartConnect(ctx context.Context, redirectAfter string) (ConnectResult, error) {
+func (s *Service) StartConnect(ctx context.Context, options ConnectOptions) (ConnectResult, error) {
 	if !s.Configured() {
 		return ConnectResult{}, ErrNotConfigured
 	}
-	if strings.TrimSpace(redirectAfter) == "" {
-		redirectAfter = "/"
+	if strings.TrimSpace(options.RedirectAfter) == "" {
+		options.RedirectAfter = "/"
 	}
 
 	state, err := secret.GenerateToken("oauth_state")
@@ -334,12 +387,19 @@ func (s *Service) StartConnect(ctx context.Context, redirectAfter string) (Conne
 	if err := s.repo.CreateState(ctx, OAuthState{
 		Provider:              s.cfg.Provider,
 		StateHash:             secret.HashAPIKey(state),
-		RedirectAfter:         redirectAfter,
+		RedirectAfter:         options.RedirectAfter,
 		ExpiresAt:             time.Now().Add(s.cfg.StateTTL),
 		CodeVerifier:          codeVerifier,
 		EncryptedCodeVerifier: encryptedCodeVerifier,
 		CodeVerifierHash:      secret.HashAPIKey(codeVerifier),
 		ClientID:              s.cfg.ClientID,
+		TargetAccountID:       options.TargetAccountID,
+		PendingAccountName:    strings.TrimSpace(options.Name),
+		PendingPriority:       options.Priority,
+		PendingEnabled:        options.Enabled,
+		FingerprintHash:       hashOptional(options.Fingerprint.Value),
+		UserAgentHash:         hashOptional(options.Fingerprint.UserAgent),
+		IPHash:                hashOptional(options.Fingerprint.IP),
 	}); err != nil {
 		return ConnectResult{}, err
 	}
@@ -401,7 +461,7 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 	if err != nil {
 		return Account{}, err
 	}
-	account, err := s.storeTokenResponse(ctx, tokens, nil)
+	account, err := s.storeCallbackTokenResponse(ctx, tokens, claimed)
 	if err != nil {
 		return Account{}, err
 	}
@@ -469,6 +529,17 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 	}
 	tokens, err := s.client.RefreshToken(ctx, s.cfg, refreshToken)
 	if err != nil {
+		if account.ID > 0 {
+			now := time.Now()
+			var openUntil *time.Time
+			if account.FailureCount+1 >= refreshFailureCircuitThreshold {
+				until := now.Add(defaultCircuitOpen)
+				openUntil = &until
+			}
+			if markErr := s.repo.RecordRefreshFailure(ctx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
+				return "", markErr
+			}
+		}
 		return "", err
 	}
 	refreshed, err := s.storeTokenResponse(ctx, tokens, &account)
@@ -505,6 +576,9 @@ func (s *Service) SelectAccessToken(ctx context.Context, excludedAccountIDs ...i
 		}
 		hasEnabled = true
 		if _, ok := excluded[account.ID]; ok {
+			continue
+		}
+		if !accountSchedulable(account, time.Now()) {
 			continue
 		}
 		token, err := s.AccessTokenForAccount(ctx, account)
@@ -616,6 +690,15 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 		LastRefreshAt:         lastRefreshAt,
 		Enabled:               previousEnabled(previous),
 		Priority:              previousPriority(previous),
+		Name:                  previousName(previous),
+		Status:                AccountStatusActive,
+		FingerprintHash:       previousFingerprintHash(previous),
+		UserAgentHash:         previousUserAgentHash(previous),
+		IPHash:                previousIPHash(previous),
+		FailureCount:          0,
+		CircuitOpenUntil:      nil,
+		LastRefreshError:      "",
+		LastRefreshErrorAt:    nil,
 		Metadata:              tokenMetadata(tokens, previous),
 	}
 	saved, err := s.repo.SaveAccount(ctx, account)
@@ -623,6 +706,187 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 		return Account{}, err
 	}
 	return saved, nil
+}
+
+func (s *Service) storeCallbackTokenResponse(ctx context.Context, tokens TokenResponse, state OAuthState) (Account, error) {
+	tokens = enrichTokenResponseFromIDToken(tokens)
+	identities := identitiesFromTokenResponse(tokens)
+
+	var previous *Account
+	if state.TargetAccountID > 0 {
+		account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, state.TargetAccountID)
+		if err != nil {
+			return Account{}, err
+		}
+		previous = &account
+	} else {
+		account, err := s.repo.FindAccountByIdentity(ctx, s.cfg.Provider, identities)
+		if err == nil {
+			previous = &account
+		} else if !errors.Is(err, ErrNotConnected) {
+			return Account{}, err
+		}
+	}
+
+	account, err := s.accountFromTokenResponse(tokens, previous)
+	if err != nil {
+		return Account{}, err
+	}
+	applyOAuthStateToAccount(&account, state, previous)
+	return s.repo.SaveAccount(ctx, account)
+}
+
+func accountSchedulable(account Account, now time.Time) bool {
+	if !account.Enabled {
+		return false
+	}
+	switch account.Status {
+	case "", AccountStatusActive:
+	case AccountStatusDisabled, AccountStatusRateLimited, AccountStatusCircuitOpen, AccountStatusExpired:
+		return false
+	default:
+		return false
+	}
+	if account.RateLimitedUntil != nil && account.RateLimitedUntil.After(now) {
+		return false
+	}
+	if account.CircuitOpenUntil != nil && account.CircuitOpenUntil.After(now) {
+		return false
+	}
+	return true
+}
+
+func identitiesFromTokenResponse(tokens TokenResponse) AccountIdentities {
+	tokens = enrichTokenResponseFromIDToken(tokens)
+	return AccountIdentities{
+		ChatGPTAccountID: strings.TrimSpace(tokens.AccountID),
+		Email:            strings.ToLower(strings.TrimSpace(tokens.Email)),
+	}
+}
+
+func applyOAuthStateToAccount(account *Account, state OAuthState, previous *Account) {
+	if previous != nil {
+		account.Name = previous.Name
+		account.Priority = previous.Priority
+		account.Enabled = previous.Enabled
+		account.FingerprintHash = previous.FingerprintHash
+		account.UserAgentHash = previous.UserAgentHash
+		account.IPHash = previous.IPHash
+	}
+	if strings.TrimSpace(state.PendingAccountName) != "" && (previous == nil || state.TargetAccountID > 0) {
+		account.Name = strings.TrimSpace(state.PendingAccountName)
+	}
+	if state.PendingPriority > 0 && (previous == nil || state.TargetAccountID > 0) {
+		account.Priority = state.PendingPriority
+	}
+	if state.PendingEnabled != nil && (previous == nil || state.TargetAccountID > 0) {
+		account.Enabled = *state.PendingEnabled
+	}
+	if previous == nil && account.Priority == 0 {
+		account.Priority = 100
+	}
+	if previous == nil && account.Name == "" {
+		account.Name = firstNonEmpty(account.DisplayName, account.Subject)
+	}
+	if state.FingerprintHash != "" {
+		account.FingerprintHash = state.FingerprintHash
+	}
+	if state.UserAgentHash != "" {
+		account.UserAgentHash = state.UserAgentHash
+	}
+	if state.IPHash != "" {
+		account.IPHash = state.IPHash
+	}
+	account.Status = AccountStatusActive
+	account.StatusReason = ""
+	account.FailureCount = 0
+	account.CircuitOpenUntil = nil
+	account.LastRefreshError = ""
+	account.LastRefreshErrorAt = nil
+}
+
+func (s *Service) accountFromTokenResponse(tokens TokenResponse, previous *Account) (Account, error) {
+	if strings.TrimSpace(tokens.AccessToken) == "" {
+		return Account{}, errors.New("oauth token response missing access token")
+	}
+	tokens = enrichTokenResponseFromIDToken(tokens)
+
+	refreshToken := tokens.RefreshToken
+	subject := tokens.Subject
+	displayName := tokens.DisplayName
+	if strings.TrimSpace(subject) == "" {
+		subject = firstNonEmpty(tokens.AccountID, tokens.Email)
+	}
+	if strings.TrimSpace(displayName) == "" {
+		displayName = firstNonEmpty(tokens.Email, tokens.AccountID, subject)
+	}
+	if previous != nil {
+		subject = previous.Subject
+		displayName = valueOrDefault(displayName, previous.DisplayName)
+		if refreshToken == "" {
+			var err error
+			refreshToken, err = secret.DecryptString(s.cfg.Secret, previous.EncryptedRefreshToken)
+			if err != nil {
+				return Account{}, err
+			}
+		}
+	}
+	if strings.TrimSpace(subject) == "" {
+		generatedSubject, err := secret.GenerateToken("local_acct")
+		if err != nil {
+			return Account{}, fmt.Errorf("generate local account subject: %w", err)
+		}
+		subject = generatedSubject
+	}
+	if strings.TrimSpace(refreshToken) == "" {
+		return Account{}, errors.New("oauth token response missing refresh token")
+	}
+
+	encryptedAccessToken, err := secret.EncryptString(s.cfg.Secret, tokens.AccessToken)
+	if err != nil {
+		return Account{}, fmt.Errorf("encrypt access token: %w", err)
+	}
+	encryptedRefreshToken, err := secret.EncryptString(s.cfg.Secret, refreshToken)
+	if err != nil {
+		return Account{}, fmt.Errorf("encrypt refresh token: %w", err)
+	}
+	var encryptedIDToken string
+	if strings.TrimSpace(tokens.IDToken) != "" {
+		encryptedIDToken, err = secret.EncryptString(s.cfg.Secret, tokens.IDToken)
+		if err != nil {
+			return Account{}, fmt.Errorf("encrypt id token: %w", err)
+		}
+	} else if previous != nil {
+		encryptedIDToken = previous.EncryptedIDToken
+	}
+
+	var expiresAt *time.Time
+	if tokens.ExpiresIn > 0 {
+		expiry := time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
+		expiresAt = &expiry
+	}
+	var lastRefreshAt *time.Time
+	if previous != nil {
+		now := time.Now()
+		lastRefreshAt = &now
+	}
+
+	return Account{
+		ID:                    previousID(previous),
+		Provider:              s.cfg.Provider,
+		Subject:               subject,
+		Name:                  previousName(previous),
+		DisplayName:           displayName,
+		EncryptedAccessToken:  encryptedAccessToken,
+		EncryptedRefreshToken: encryptedRefreshToken,
+		EncryptedIDToken:      encryptedIDToken,
+		AccessTokenExpiresAt:  expiresAt,
+		LastRefreshAt:         lastRefreshAt,
+		Enabled:               previousEnabled(previous),
+		Priority:              previousPriority(previous),
+		Status:                AccountStatusActive,
+		Metadata:              tokenMetadata(tokens, previous),
+	}, nil
 }
 
 func generateCodeVerifier() (string, error) {
@@ -648,9 +912,11 @@ func tokenMetadata(tokens TokenResponse, previous *Account) map[string]string {
 		}
 	}
 	setMetadata(metadata, "account_id", tokens.AccountID)
+	setMetadata(metadata, "chatgpt_account_id", tokens.AccountID)
 	setMetadata(metadata, "email", tokens.Email)
 	setMetadata(metadata, "plan_type", tokens.PlanType)
 	setMetadata(metadata, "client_id", tokens.ClientID)
+	setMetadata(metadata, "access_token_sha256", sha256Hex(tokens.AccessToken))
 	return metadata
 }
 
@@ -708,6 +974,31 @@ func valueOrDefault(value, fallback string) string {
 	return value
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func hashOptional(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return ""
+	}
+	return secret.HashAPIKey(strings.TrimSpace(value))
+}
+
+func sha256Hex(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
+}
+
 func previousID(previous *Account) int64 {
 	if previous == nil {
 		return 0
@@ -727,4 +1018,32 @@ func previousPriority(previous *Account) int {
 		return 100
 	}
 	return previous.Priority
+}
+
+func previousName(previous *Account) string {
+	if previous == nil {
+		return ""
+	}
+	return previous.Name
+}
+
+func previousFingerprintHash(previous *Account) string {
+	if previous == nil {
+		return ""
+	}
+	return previous.FingerprintHash
+}
+
+func previousUserAgentHash(previous *Account) string {
+	if previous == nil {
+		return ""
+	}
+	return previous.UserAgentHash
+}
+
+func previousIPHash(previous *Account) string {
+	if previous == nil {
+		return ""
+	}
+	return previous.IPHash
 }
