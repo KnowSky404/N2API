@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -293,6 +294,32 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": result.AuthorizationURL})
 	}))
 
+	mux.HandleFunc("POST /api/admin/providers/openai/callback", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		code, state, err := decodeCallbackURL(w, r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		account, err := providers.CompleteCallback(r.Context(), code, state)
+		if err != nil {
+			if errors.Is(err, provider.ErrInvalidState) {
+				writeError(w, http.StatusBadRequest, "invalid_oauth_callback")
+				return
+			}
+			if errors.Is(err, provider.ErrNotConfigured) {
+				writeError(w, http.StatusConflict, "provider_not_configured")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+	}))
+
 	mux.HandleFunc("POST /api/admin/providers/openai/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		if providers == nil {
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
@@ -450,6 +477,25 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	return mux
+}
+
+func decodeCallbackURL(w http.ResponseWriter, r *http.Request) (string, string, error) {
+	var req struct {
+		CallbackURL string `json:"callbackUrl"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		return "", "", err
+	}
+	parsed, err := url.Parse(strings.TrimSpace(req.CallbackURL))
+	if err != nil {
+		return "", "", err
+	}
+	code := strings.TrimSpace(parsed.Query().Get("code"))
+	state := strings.TrimSpace(parsed.Query().Get("state"))
+	if code == "" || state == "" {
+		return "", "", provider.ErrInvalidState
+	}
+	return code, state, nil
 }
 
 func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.ConnectOptions, error) {

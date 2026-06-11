@@ -82,6 +82,7 @@
   /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
   let providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
   let providerConnectForm = $state({ name: '', priority: 100, enabled: true });
+  let providerOAuth = $state({ authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
   /** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
   let apiKeys = $state({
     loading: false,
@@ -164,6 +165,21 @@
     }
   }
 
+  async function copyAuthorizationURL() {
+    if (!providerOAuth.authorizationUrl || !navigator.clipboard) return;
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    try {
+      await navigator.clipboard.writeText(providerOAuth.authorizationUrl);
+      if (!isCurrentAuthenticated(version)) return;
+      providerOAuth.copied = true;
+    } catch {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.error = 'Copy failed';
+    }
+  }
+
   function clearAPIKeys() {
     apiKeys = {
       loading: false,
@@ -203,6 +219,7 @@
     };
     providerAccounts = { loading: false, saving: false, error: '', items: [] };
     providerConnectForm = { name: '', priority: 100, enabled: true };
+    providerOAuth = { authorizationUrl: '', callbackUrl: '', completing: false, copied: false };
   }
 
   /** @param {number} version */
@@ -401,13 +418,40 @@
         })
       });
       if (!isCurrentAuthenticated(version)) return;
-      window.location.href = payload.authorizationUrl;
+      providerOAuth.authorizationUrl = payload.authorizationUrl ?? '';
+      providerOAuth.callbackUrl = '';
+      providerOAuth.copied = false;
     } catch (error) {
       if (!isCurrentAuthenticated(version)) return;
       provider.error = error instanceof Error ? error.message : 'Failed to start provider connection';
     } finally {
       if (!isCurrentAuthenticated(version)) return;
       provider.connecting = false;
+    }
+  }
+
+  async function completeProviderCallback() {
+    const version = sessionVersion;
+    if (!isCurrentAuthenticated(version)) return;
+
+    providerOAuth.completing = true;
+    provider.error = '';
+    providerAccounts.error = '';
+    try {
+      await requestJSON('/api/admin/providers/openai/callback', {
+        method: 'POST',
+        body: JSON.stringify({ callbackUrl: providerOAuth.callbackUrl })
+      });
+      if (!isCurrentAuthenticated(version)) return;
+      providerOAuth = { authorizationUrl: '', callbackUrl: '', completing: false, copied: false };
+      await loadProvider();
+      await loadProviderAccounts();
+    } catch (error) {
+      if (!isCurrentAuthenticated(version)) return;
+      provider.error = error instanceof Error ? error.message : 'Failed to complete provider connection';
+    } finally {
+      if (!isCurrentAuthenticated(version)) return;
+      providerOAuth.completing = false;
     }
   }
 
@@ -807,7 +851,7 @@
               disabled={provider.loading || !provider.data?.configured || provider.connecting}
               onclick={() => connectProvider()}
             >
-              {provider.connecting ? 'Connecting' : 'Connect account'}
+              {provider.connecting ? 'Generating link' : 'Connect account'}
             </button>
           </div>
         </div>
@@ -851,9 +895,52 @@
             type="submit"
             disabled={provider.loading || !provider.data?.configured || provider.connecting}
           >
-            {provider.connecting ? 'Opening OAuth' : 'Add OAuth account'}
+            {provider.connecting ? 'Generating link' : 'Add OAuth account'}
           </button>
         </form>
+
+        {#if providerOAuth.authorizationUrl}
+          <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <p class="text-sm font-medium text-[#0a7a5e]">OAuth authorization link</p>
+              <button
+                class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                type="button"
+                onclick={copyAuthorizationURL}
+              >
+                {providerOAuth.copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]">
+              {providerOAuth.authorizationUrl}
+            </code>
+            <form
+              class="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+              onsubmit={(event) => {
+                event.preventDefault();
+                completeProviderCallback();
+              }}
+            >
+              <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                Callback URL
+                <input
+                  class="w-full min-w-0 rounded-lg border border-[#b7d9cd] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#cbe7dd]"
+                  type="url"
+                  placeholder="http://localhost:3000/oauth/openai/callback?code=...&state=..."
+                  bind:value={providerOAuth.callbackUrl}
+                  required
+                />
+              </label>
+              <button
+                class="self-end rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                type="submit"
+                disabled={providerOAuth.completing || !providerOAuth.callbackUrl.trim()}
+              >
+                {providerOAuth.completing ? 'Completing' : 'Complete OAuth'}
+              </button>
+            </form>
+          </div>
+        {/if}
 
         {#if provider.error}
           <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">

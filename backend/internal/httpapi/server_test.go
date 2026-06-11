@@ -44,6 +44,8 @@ type fakeProviderService struct {
 	refreshErr            error
 	disconnectErr         error
 	callbackErr           error
+	callbackCode          string
+	callbackState         string
 	disconnected          bool
 	refreshedAccountID    int64
 	disconnectedAccountID int64
@@ -179,6 +181,8 @@ func (s *fakeProviderService) ListAccounts(_ context.Context) ([]provider.Accoun
 }
 
 func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state string) (provider.Account, error) {
+	s.callbackCode = code
+	s.callbackState = state
 	if s.callbackErr != nil {
 		return provider.Account{}, s.callbackErr
 	}
@@ -963,6 +967,40 @@ func TestProviderCallbackRedirectsToConnectedOrError(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Location"); got != "/?provider=openai&status=error" {
 		t.Fatalf("Location = %q, want error redirect", got)
+	}
+}
+
+func TestProviderManualCallbackCompletesFromCallbackURL(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc&state=oauth_state"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.callbackCode != "abc" || providers.callbackState != "oauth_state" {
+		t.Fatalf("callback args = code %q state %q, want parsed callback URL values", providers.callbackCode, providers.callbackState)
+	}
+}
+
+func TestProviderManualCallbackRejectsMissingCallbackValues(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	if providers.callbackCode != "" || providers.callbackState != "" {
+		t.Fatalf("callback was called with code %q state %q", providers.callbackCode, providers.callbackState)
 	}
 }
 
