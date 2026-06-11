@@ -16,6 +16,7 @@ func TestHTTPClientExchangeCodePostsAuthorizationCodeGrant(t *testing.T) {
 	var gotClientID string
 	var gotClientSecret string
 	var gotRedirectURI string
+	var gotCodeVerifier string
 	client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("ParseForm returned error: %v", err)
@@ -25,12 +26,17 @@ func TestHTTPClientExchangeCodePostsAuthorizationCodeGrant(t *testing.T) {
 		gotClientID = r.Form.Get("client_id")
 		gotClientSecret = r.Form.Get("client_secret")
 		gotRedirectURI = r.Form.Get("redirect_uri")
+		gotCodeVerifier = r.Form.Get("code_verifier")
 		return jsonResponse(http.StatusOK, map[string]any{
 			"access_token":  "access-token",
 			"refresh_token": "refresh-token",
+			"id_token":      "id-token",
 			"expires_in":    3600,
 			"subject":       "acct_1",
 			"display_name":  "Codex Account",
+			"account_id":    "acct_chatgpt",
+			"email":         "owner@example.com",
+			"plan_type":     "plus",
 		})
 	})})
 
@@ -39,15 +45,16 @@ func TestHTTPClientExchangeCodePostsAuthorizationCodeGrant(t *testing.T) {
 		ClientSecret: "client-secret",
 		RedirectURL:  "http://localhost/oauth/openai/callback",
 		TokenURL:     "https://auth.example.test/token",
+		CodeVerifier: "pkce-verifier",
 	}, "auth-code")
 	if err != nil {
 		t.Fatalf("ExchangeCode returned error: %v", err)
 	}
-	if token.AccessToken != "access-token" || token.RefreshToken != "refresh-token" {
+	if token.AccessToken != "access-token" || token.RefreshToken != "refresh-token" || token.IDToken != "id-token" || token.Email != "owner@example.com" || token.AccountID != "acct_chatgpt" || token.PlanType != "plus" {
 		t.Fatalf("token = %+v", token)
 	}
-	if gotGrantType != "authorization_code" || gotCode != "auth-code" || gotClientID != "client-id" || gotClientSecret != "client-secret" || gotRedirectURI != "http://localhost/oauth/openai/callback" {
-		t.Fatalf("posted form = grant_type:%q code:%q client_id:%q client_secret:%q redirect_uri:%q", gotGrantType, gotCode, gotClientID, gotClientSecret, gotRedirectURI)
+	if gotGrantType != "authorization_code" || gotCode != "auth-code" || gotClientID != "client-id" || gotClientSecret != "client-secret" || gotRedirectURI != "http://localhost/oauth/openai/callback" || gotCodeVerifier != "pkce-verifier" {
+		t.Fatalf("posted form = grant_type:%q code:%q client_id:%q client_secret:%q redirect_uri:%q code_verifier:%q", gotGrantType, gotCode, gotClientID, gotClientSecret, gotRedirectURI, gotCodeVerifier)
 	}
 }
 

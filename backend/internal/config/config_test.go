@@ -49,6 +49,26 @@ func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsOpenAIOAuthForCodexPKCE(t *testing.T) {
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.OpenAIOAuthClientID == "" {
+		t.Fatal("OpenAIOAuthClientID was empty")
+	}
+	if cfg.OpenAIOAuthSecret != "" {
+		t.Fatalf("OpenAIOAuthSecret = %q, want empty public PKCE client secret", cfg.OpenAIOAuthSecret)
+	}
+	if cfg.OpenAIOAuthAuthURL == "" || cfg.OpenAIOAuthTokenURL == "" || cfg.OpenAIOAuthRedirectURL == "" {
+		t.Fatalf("OAuth defaults incomplete: auth=%q token=%q redirect=%q", cfg.OpenAIOAuthAuthURL, cfg.OpenAIOAuthTokenURL, cfg.OpenAIOAuthRedirectURL)
+	}
+}
+
 func TestLoadOpenAIAPIBaseURLConfig(t *testing.T) {
 	cfg, err := Load(mapLookup(map[string]string{
 		"DATABASE_URL":              "postgres://example",

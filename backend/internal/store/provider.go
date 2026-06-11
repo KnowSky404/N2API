@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -20,8 +21,8 @@ func NewProviderRepository(pool *pgxpool.Pool) *ProviderRepository {
 
 const providerAccountColumns = `
 	id, provider, subject, display_name, encrypted_access_token, encrypted_refresh_token,
-	access_token_expires_at, last_refresh_at, enabled, priority, last_used_at,
-	last_error, last_error_at, created_at, updated_at
+	encrypted_id_token, access_token_expires_at, last_refresh_at, enabled, priority, last_used_at,
+	last_error, last_error_at, metadata, created_at, updated_at
 `
 
 func scanProviderAccount(row pgx.Row) (provider.Account, error) {
@@ -33,6 +34,7 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.DisplayName,
 		&account.EncryptedAccessToken,
 		&account.EncryptedRefreshToken,
+		&account.EncryptedIDToken,
 		&account.AccessTokenExpiresAt,
 		&account.LastRefreshAt,
 		&account.Enabled,
@@ -40,6 +42,7 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.LastUsedAt,
 		&account.LastError,
 		&account.LastErrorAt,
+		&account.Metadata,
 		&account.CreatedAt,
 		&account.UpdatedAt,
 	)
@@ -116,18 +119,20 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO oauth_accounts (
 			provider, subject, display_name, encrypted_access_token, encrypted_refresh_token,
-			access_token_expires_at, last_refresh_at, enabled, priority, last_error, updated_at
+			encrypted_id_token, access_token_expires_at, last_refresh_at, enabled, priority, last_error, metadata, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, true, 100, '', now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, 100, '', $9, now())
 		ON CONFLICT (provider, subject)
 		DO UPDATE SET
 			display_name = EXCLUDED.display_name,
 			encrypted_access_token = EXCLUDED.encrypted_access_token,
 			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
+			encrypted_id_token = EXCLUDED.encrypted_id_token,
 			access_token_expires_at = EXCLUDED.access_token_expires_at,
 			last_refresh_at = EXCLUDED.last_refresh_at,
 			last_error = '',
 			last_error_at = NULL,
+			metadata = oauth_accounts.metadata || EXCLUDED.metadata,
 			updated_at = now()
 		RETURNING `+providerAccountColumns+`
 	`, account.Provider,
@@ -135,8 +140,10 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 		account.DisplayName,
 		account.EncryptedAccessToken,
 		account.EncryptedRefreshToken,
+		account.EncryptedIDToken,
 		account.AccessTokenExpiresAt,
 		account.LastRefreshAt,
+		metadataJSON(account.Metadata),
 	)
 	saved, err := scanProviderAccount(row)
 	if err != nil {
@@ -227,9 +234,9 @@ func (r *ProviderRepository) MarkAccountError(ctx context.Context, providerName 
 
 func (r *ProviderRepository) CreateState(ctx context.Context, state provider.OAuthState) error {
 	_, err := r.pool.Exec(ctx, `
-		INSERT INTO oauth_states (provider, state_hash, redirect_after, expires_at)
-		VALUES ($1, $2, $3, $4)
-	`, state.Provider, state.StateHash, state.RedirectAfter, state.ExpiresAt)
+		INSERT INTO oauth_states (provider, state_hash, redirect_after, expires_at, encrypted_code_verifier, code_verifier_hash, client_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, state.Provider, state.StateHash, state.RedirectAfter, state.ExpiresAt, state.EncryptedCodeVerifier, state.CodeVerifierHash, state.ClientID)
 	return err
 }
 
@@ -242,13 +249,16 @@ func (r *ProviderRepository) ClaimState(ctx context.Context, providerName, state
 			AND state_hash = $2
 			AND expires_at > $3
 			AND consumed_at IS NULL
-		RETURNING provider, state_hash, redirect_after, expires_at, consumed_at
+		RETURNING provider, state_hash, redirect_after, expires_at, consumed_at, encrypted_code_verifier, code_verifier_hash, client_id
 	`, providerName, stateHash, now, now).Scan(
 		&state.Provider,
 		&state.StateHash,
 		&state.RedirectAfter,
 		&state.ExpiresAt,
 		&state.ConsumedAt,
+		&state.EncryptedCodeVerifier,
+		&state.CodeVerifierHash,
+		&state.ClientID,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.OAuthState{}, provider.ErrInvalidState
@@ -257,4 +267,15 @@ func (r *ProviderRepository) ClaimState(ctx context.Context, providerName, state
 		return provider.OAuthState{}, err
 	}
 	return state, nil
+}
+
+func metadataJSON(metadata map[string]string) []byte {
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	payload, err := json.Marshal(metadata)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return payload
 }

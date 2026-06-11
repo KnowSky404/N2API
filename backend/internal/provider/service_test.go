@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/url"
 	"sort"
@@ -81,6 +83,49 @@ func TestStartConnectStoresHashedStateAndBuildsAuthorizationURL(t *testing.T) {
 	}
 }
 
+func TestStartConnectUsesBuiltInCodexPKCEConfig(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	result, err := service.StartConnect(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	parsed, err := url.Parse(result.AuthorizationURL)
+	if err != nil {
+		t.Fatalf("authorization URL did not parse: %v", err)
+	}
+	query := parsed.Query()
+	if query.Get("client_id") == "" {
+		t.Fatal("client_id was empty")
+	}
+	if query.Get("code_challenge") == "" {
+		t.Fatal("code_challenge was empty")
+	}
+	if query.Get("code_challenge_method") != "S256" {
+		t.Fatalf("code_challenge_method = %q, want S256", query.Get("code_challenge_method"))
+	}
+	if query.Get("response_type") != "code" {
+		t.Fatalf("response_type = %q, want code", query.Get("response_type"))
+	}
+	if repo.states[0].CodeVerifierHash == "" {
+		t.Fatal("state did not record code verifier hash")
+	}
+	if repo.states[0].CodeVerifier == "" {
+		t.Fatal("memory repo did not retain verifier for token exchange")
+	}
+	if repo.states[0].EncryptedCodeVerifier == "" {
+		t.Fatal("state did not record encrypted code verifier")
+	}
+	if strings.Contains(repo.states[0].CodeVerifierHash, repo.states[0].CodeVerifier) {
+		t.Fatal("state stored cleartext code verifier in hash field")
+	}
+}
+
 func TestCompleteCallbackRejectsInvalidState(t *testing.T) {
 	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
 	if _, err := service.CompleteCallback(context.Background(), "code", "missing-state"); !errors.Is(err, ErrInvalidState) {
@@ -118,6 +163,94 @@ func TestCompleteCallbackStoresEncryptedTokensAndConsumesState(t *testing.T) {
 	}
 	if repo.states[0].ConsumedAt == nil {
 		t.Fatal("state was not consumed")
+	}
+}
+
+func TestCompleteCallbackPassesPKCEVerifierAndStoresTokenMetadata(t *testing.T) {
+	repo := newMemoryRepo()
+	client := &captureExchangeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			IDToken:      "id-token",
+			ExpiresIn:    3600,
+			AccountID:    "acct_chatgpt",
+			Email:        "owner@example.com",
+			PlanType:     "plus",
+			ClientID:     "codex-client",
+		},
+	}
+	service := NewService(repo, client, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	started, err := service.StartConnect(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	state := mustQuery(t, started.AuthorizationURL, "state")
+	account, err := service.CompleteCallback(context.Background(), "auth-code", state)
+	if err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if client.gotCodeVerifier == "" {
+		t.Fatal("ExchangeCode did not receive PKCE code verifier")
+	}
+	if account.Subject != "acct_chatgpt" || account.DisplayName != "owner@example.com" {
+		t.Fatalf("account identity = %q/%q, want account id and email display", account.Subject, account.DisplayName)
+	}
+	if account.Metadata["email"] != "owner@example.com" || account.Metadata["account_id"] != "acct_chatgpt" || account.Metadata["plan_type"] != "plus" || account.Metadata["client_id"] != "codex-client" {
+		t.Fatalf("metadata = %+v", account.Metadata)
+	}
+	idToken, err := secret.DecryptString("encryption-secret", account.EncryptedIDToken)
+	if err != nil {
+		t.Fatalf("decrypt id token returned error: %v", err)
+	}
+	if idToken != "id-token" {
+		t.Fatalf("id token = %q, want id-token", idToken)
+	}
+}
+
+func TestCompleteCallbackExtractsIdentityMetadataFromIDTokenClaims(t *testing.T) {
+	repo := newMemoryRepo()
+	client := fakeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			IDToken: mustUnsignedIDToken(t, map[string]any{
+				"sub":   "user-subject",
+				"email": "owner@example.com",
+				"https://api.openai.com/auth": map[string]any{
+					"chatgpt_account_id": "acct_chatgpt",
+					"chatgpt_plan_type":  "plus",
+				},
+			}),
+			ExpiresIn: 3600,
+			ClientID:  "codex-client",
+		},
+	}
+	service := NewService(repo, client, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	started, err := service.StartConnect(context.Background(), "/")
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	state := mustQuery(t, started.AuthorizationURL, "state")
+	account, err := service.CompleteCallback(context.Background(), "auth-code", state)
+	if err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if account.Subject != "user-subject" || account.DisplayName != "owner@example.com" {
+		t.Fatalf("account identity = %q/%q, want id token subject and email", account.Subject, account.DisplayName)
+	}
+	if account.Metadata["account_id"] != "acct_chatgpt" || account.Metadata["plan_type"] != "plus" {
+		t.Fatalf("metadata = %+v", account.Metadata)
 	}
 }
 
@@ -617,6 +750,12 @@ func (r *memoryRepo) MarkAccountError(ctx context.Context, providerName string, 
 }
 
 func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
+	if state.CodeVerifier != "" && state.CodeVerifierHash == "" {
+		panic("state with code verifier must also include code verifier hash")
+	}
+	if state.CodeVerifier != "" && state.EncryptedCodeVerifier == "" {
+		panic("state with code verifier must also include encrypted code verifier")
+	}
 	r.states = append(r.states, state)
 	return nil
 }
@@ -650,6 +789,20 @@ func (c fakeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code stri
 		return c.exchanges[0], nil
 	}
 	return c.exchange, nil
+}
+
+type captureExchangeOAuthClient struct {
+	exchange        TokenResponse
+	gotCodeVerifier string
+}
+
+func (c *captureExchangeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
+	c.gotCodeVerifier = cfg.CodeVerifier
+	return c.exchange, nil
+}
+
+func (c *captureExchangeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
+	return TokenResponse{}, errors.New("unexpected refresh")
 }
 
 func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
@@ -707,6 +860,19 @@ func mustQuery(t *testing.T, rawURL, key string) string {
 		t.Fatalf("url.Parse returned error: %v", err)
 	}
 	return parsed.Query().Get(key)
+}
+
+func mustUnsignedIDToken(t *testing.T, claims map[string]any) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]string{"alg": "none", "typ": "JWT"})
+	if err != nil {
+		t.Fatalf("json.Marshal header returned error: %v", err)
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("json.Marshal claims returned error: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
 }
 
 func testAccount(t *testing.T, id int64, enabled bool, priority int, accessToken string) Account {

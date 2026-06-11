@@ -2,6 +2,10 @@ package provider
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +22,12 @@ import (
 const (
 	defaultStateTTL      = 10 * time.Minute
 	defaultRefreshWindow = 2 * time.Minute
+
+	defaultOpenAIOAuthClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
+	defaultOpenAIOAuthAuthURL       = "https://auth.openai.com/oauth/authorize"
+	defaultOpenAIOAuthTokenURL      = "https://auth.openai.com/oauth/token"
+	defaultOpenAIOAuthScopes        = "openid profile email offline_access"
+	defaultOpenAIOAuthRefreshScopes = "openid profile email"
 )
 
 var (
@@ -39,6 +49,7 @@ type Config struct {
 	Secret        string
 	StateTTL      time.Duration
 	RefreshWindow time.Duration
+	CodeVerifier  string
 }
 
 type Status struct {
@@ -55,29 +66,35 @@ type ConnectResult struct {
 }
 
 type OAuthState struct {
-	Provider      string
-	StateHash     string
-	RedirectAfter string
-	ExpiresAt     time.Time
-	ConsumedAt    *time.Time
+	Provider              string
+	StateHash             string
+	RedirectAfter         string
+	ExpiresAt             time.Time
+	ConsumedAt            *time.Time
+	CodeVerifier          string `json:"-"`
+	EncryptedCodeVerifier string `json:"-"`
+	CodeVerifierHash      string
+	ClientID              string
 }
 
 type Account struct {
-	ID                    int64      `json:"id"`
-	Provider              string     `json:"provider"`
-	Subject               string     `json:"subject"`
-	DisplayName           string     `json:"displayName"`
-	EncryptedAccessToken  string     `json:"-"`
-	EncryptedRefreshToken string     `json:"-"`
-	AccessTokenExpiresAt  *time.Time `json:"accessTokenExpiresAt"`
-	LastRefreshAt         *time.Time `json:"lastRefreshAt"`
-	Enabled               bool       `json:"enabled"`
-	Priority              int        `json:"priority"`
-	LastUsedAt            *time.Time `json:"lastUsedAt"`
-	LastError             string     `json:"lastError"`
-	LastErrorAt           *time.Time `json:"lastErrorAt"`
-	CreatedAt             time.Time  `json:"createdAt"`
-	UpdatedAt             time.Time  `json:"updatedAt"`
+	ID                    int64             `json:"id"`
+	Provider              string            `json:"provider"`
+	Subject               string            `json:"subject"`
+	DisplayName           string            `json:"displayName"`
+	EncryptedAccessToken  string            `json:"-"`
+	EncryptedRefreshToken string            `json:"-"`
+	EncryptedIDToken      string            `json:"-"`
+	AccessTokenExpiresAt  *time.Time        `json:"accessTokenExpiresAt"`
+	LastRefreshAt         *time.Time        `json:"lastRefreshAt"`
+	Enabled               bool              `json:"enabled"`
+	Priority              int               `json:"priority"`
+	LastUsedAt            *time.Time        `json:"lastUsedAt"`
+	LastError             string            `json:"lastError"`
+	LastErrorAt           *time.Time        `json:"lastErrorAt"`
+	Metadata              map[string]string `json:"metadata"`
+	CreatedAt             time.Time         `json:"createdAt"`
+	UpdatedAt             time.Time         `json:"updatedAt"`
 }
 
 type AccountUpdate struct {
@@ -93,9 +110,36 @@ type SelectedToken struct {
 type TokenResponse struct {
 	AccessToken  string
 	RefreshToken string
+	IDToken      string
 	ExpiresIn    int
 	Subject      string
 	DisplayName  string
+	AccountID    string
+	Email        string
+	PlanType     string
+	ClientID     string
+}
+
+type idTokenClaims struct {
+	Subject    string            `json:"sub"`
+	Email      string            `json:"email"`
+	OpenAIAuth *openAIAuthClaims `json:"https://api.openai.com/auth"`
+}
+
+type openAIAuthClaims struct {
+	ChatGPTAccountID string              `json:"chatgpt_account_id"`
+	ChatGPTUserID    string              `json:"chatgpt_user_id"`
+	ChatGPTPlanType  string              `json:"chatgpt_plan_type"`
+	UserID           string              `json:"user_id"`
+	POID             string              `json:"poid"`
+	Organizations    []organizationClaim `json:"organizations"`
+}
+
+type organizationClaim struct {
+	ID        string `json:"id"`
+	Role      string `json:"role"`
+	Title     string `json:"title"`
+	IsDefault bool   `json:"is_default"`
 }
 
 type Repository interface {
@@ -141,8 +185,13 @@ func (c *HTTPClient) ExchangeCode(ctx context.Context, cfg Config, code string) 
 	values.Set("grant_type", "authorization_code")
 	values.Set("code", code)
 	values.Set("client_id", cfg.ClientID)
-	values.Set("client_secret", cfg.ClientSecret)
+	if strings.TrimSpace(cfg.ClientSecret) != "" {
+		values.Set("client_secret", cfg.ClientSecret)
+	}
 	values.Set("redirect_uri", cfg.RedirectURL)
+	if strings.TrimSpace(cfg.CodeVerifier) != "" {
+		values.Set("code_verifier", cfg.CodeVerifier)
+	}
 	return c.postToken(ctx, cfg.TokenURL, values)
 }
 
@@ -151,13 +200,25 @@ func (c *HTTPClient) RefreshToken(ctx context.Context, cfg Config, refreshToken 
 	values.Set("grant_type", "refresh_token")
 	values.Set("refresh_token", refreshToken)
 	values.Set("client_id", cfg.ClientID)
-	values.Set("client_secret", cfg.ClientSecret)
+	values.Set("scope", defaultOpenAIOAuthRefreshScopes)
+	if strings.TrimSpace(cfg.ClientSecret) != "" {
+		values.Set("client_secret", cfg.ClientSecret)
+	}
 	return c.postToken(ctx, cfg.TokenURL, values)
 }
 
 func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 	if cfg.Provider == "" {
 		cfg.Provider = "openai"
+	}
+	if cfg.ClientID == "" {
+		cfg.ClientID = defaultOpenAIOAuthClientID
+	}
+	if cfg.AuthURL == "" {
+		cfg.AuthURL = defaultOpenAIOAuthAuthURL
+	}
+	if cfg.TokenURL == "" {
+		cfg.TokenURL = defaultOpenAIOAuthTokenURL
 	}
 	if cfg.StateTTL <= 0 {
 		cfg.StateTTL = defaultStateTTL
@@ -195,9 +256,13 @@ func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.
 	var payload struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
 		ExpiresIn    int    `json:"expires_in"`
 		Subject      string `json:"subject"`
 		DisplayName  string `json:"display_name"`
+		AccountID    string `json:"account_id"`
+		Email        string `json:"email"`
+		PlanType     string `json:"plan_type"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
 		return TokenResponse{}, fmt.Errorf("decode oauth token response: %w", err)
@@ -205,15 +270,18 @@ func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.
 	return TokenResponse{
 		AccessToken:  payload.AccessToken,
 		RefreshToken: payload.RefreshToken,
+		IDToken:      payload.IDToken,
 		ExpiresIn:    payload.ExpiresIn,
 		Subject:      payload.Subject,
 		DisplayName:  payload.DisplayName,
+		AccountID:    payload.AccountID,
+		Email:        payload.Email,
+		PlanType:     payload.PlanType,
 	}, nil
 }
 
 func (s *Service) Configured() bool {
 	return strings.TrimSpace(s.cfg.ClientID) != "" &&
-		strings.TrimSpace(s.cfg.ClientSecret) != "" &&
 		strings.TrimSpace(s.cfg.RedirectURL) != "" &&
 		strings.TrimSpace(s.cfg.AuthURL) != "" &&
 		strings.TrimSpace(s.cfg.TokenURL) != "" &&
@@ -253,12 +321,25 @@ func (s *Service) StartConnect(ctx context.Context, redirectAfter string) (Conne
 	if err != nil {
 		return ConnectResult{}, fmt.Errorf("generate oauth state: %w", err)
 	}
+	codeVerifier, err := generateCodeVerifier()
+	if err != nil {
+		return ConnectResult{}, fmt.Errorf("generate code verifier: %w", err)
+	}
+	codeChallenge := codeChallengeS256(codeVerifier)
+	encryptedCodeVerifier, err := secret.EncryptString(s.cfg.Secret, codeVerifier)
+	if err != nil {
+		return ConnectResult{}, fmt.Errorf("encrypt code verifier: %w", err)
+	}
 
 	if err := s.repo.CreateState(ctx, OAuthState{
-		Provider:      s.cfg.Provider,
-		StateHash:     secret.HashAPIKey(state),
-		RedirectAfter: redirectAfter,
-		ExpiresAt:     time.Now().Add(s.cfg.StateTTL),
+		Provider:              s.cfg.Provider,
+		StateHash:             secret.HashAPIKey(state),
+		RedirectAfter:         redirectAfter,
+		ExpiresAt:             time.Now().Add(s.cfg.StateTTL),
+		CodeVerifier:          codeVerifier,
+		EncryptedCodeVerifier: encryptedCodeVerifier,
+		CodeVerifierHash:      secret.HashAPIKey(codeVerifier),
+		ClientID:              s.cfg.ClientID,
 	}); err != nil {
 		return ConnectResult{}, err
 	}
@@ -271,7 +352,12 @@ func (s *Service) StartConnect(ctx context.Context, redirectAfter string) (Conne
 	query.Set("response_type", "code")
 	query.Set("client_id", s.cfg.ClientID)
 	query.Set("redirect_uri", s.cfg.RedirectURL)
+	query.Set("scope", defaultOpenAIOAuthScopes)
 	query.Set("state", state)
+	query.Set("code_challenge", codeChallenge)
+	query.Set("code_challenge_method", "S256")
+	query.Set("id_token_add_organizations", "true")
+	query.Set("codex_cli_simplified_flow", "true")
 	authURL.RawQuery = query.Encode()
 
 	return ConnectResult{AuthorizationURL: authURL.String()}, nil
@@ -295,9 +381,23 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 		}
 		return Account{}, err
 	}
-	_ = claimed
+	codeVerifier := strings.TrimSpace(claimed.CodeVerifier)
+	if codeVerifier == "" {
+		codeVerifier, err = secret.DecryptString(s.cfg.Secret, claimed.EncryptedCodeVerifier)
+		if err != nil {
+			return Account{}, ErrInvalidState
+		}
+	}
+	if strings.TrimSpace(claimed.CodeVerifierHash) != "" && secret.HashAPIKey(codeVerifier) != claimed.CodeVerifierHash {
+		return Account{}, ErrInvalidState
+	}
 
-	tokens, err := s.client.ExchangeCode(ctx, s.cfg, code)
+	exchangeCfg := s.cfg
+	exchangeCfg.CodeVerifier = codeVerifier
+	if strings.TrimSpace(claimed.ClientID) != "" {
+		exchangeCfg.ClientID = claimed.ClientID
+	}
+	tokens, err := s.client.ExchangeCode(ctx, exchangeCfg, code)
 	if err != nil {
 		return Account{}, err
 	}
@@ -442,10 +542,17 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 	if strings.TrimSpace(tokens.AccessToken) == "" {
 		return Account{}, errors.New("oauth token response missing access token")
 	}
+	tokens = enrichTokenResponseFromIDToken(tokens)
 
 	refreshToken := tokens.RefreshToken
 	subject := tokens.Subject
 	displayName := tokens.DisplayName
+	if strings.TrimSpace(subject) == "" {
+		subject = tokens.AccountID
+	}
+	if strings.TrimSpace(displayName) == "" {
+		displayName = valueOrDefault(tokens.Email, tokens.AccountID)
+	}
 	if previous != nil {
 		subject = previous.Subject
 		displayName = valueOrDefault(displayName, previous.DisplayName)
@@ -476,6 +583,15 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 	if err != nil {
 		return Account{}, fmt.Errorf("encrypt refresh token: %w", err)
 	}
+	var encryptedIDToken string
+	if strings.TrimSpace(tokens.IDToken) != "" {
+		encryptedIDToken, err = secret.EncryptString(s.cfg.Secret, tokens.IDToken)
+		if err != nil {
+			return Account{}, fmt.Errorf("encrypt id token: %w", err)
+		}
+	} else if previous != nil {
+		encryptedIDToken = previous.EncryptedIDToken
+	}
 
 	var expiresAt *time.Time
 	if tokens.ExpiresIn > 0 {
@@ -495,16 +611,94 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 		DisplayName:           displayName,
 		EncryptedAccessToken:  encryptedAccessToken,
 		EncryptedRefreshToken: encryptedRefreshToken,
+		EncryptedIDToken:      encryptedIDToken,
 		AccessTokenExpiresAt:  expiresAt,
 		LastRefreshAt:         lastRefreshAt,
 		Enabled:               previousEnabled(previous),
 		Priority:              previousPriority(previous),
+		Metadata:              tokenMetadata(tokens, previous),
 	}
 	saved, err := s.repo.SaveAccount(ctx, account)
 	if err != nil {
 		return Account{}, err
 	}
 	return saved, nil
+}
+
+func generateCodeVerifier() (string, error) {
+	raw := make([]byte, 64)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+func codeChallengeS256(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func tokenMetadata(tokens TokenResponse, previous *Account) map[string]string {
+	metadata := map[string]string{}
+	if previous != nil {
+		for key, value := range previous.Metadata {
+			if strings.TrimSpace(value) != "" {
+				metadata[key] = value
+			}
+		}
+	}
+	setMetadata(metadata, "account_id", tokens.AccountID)
+	setMetadata(metadata, "email", tokens.Email)
+	setMetadata(metadata, "plan_type", tokens.PlanType)
+	setMetadata(metadata, "client_id", tokens.ClientID)
+	return metadata
+}
+
+func setMetadata(metadata map[string]string, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		metadata[key] = strings.TrimSpace(value)
+	}
+}
+
+func enrichTokenResponseFromIDToken(tokens TokenResponse) TokenResponse {
+	claims, err := decodeIDTokenClaims(tokens.IDToken)
+	if err != nil {
+		return tokens
+	}
+	if strings.TrimSpace(tokens.Subject) == "" {
+		tokens.Subject = claims.Subject
+	}
+	if strings.TrimSpace(tokens.Email) == "" {
+		tokens.Email = claims.Email
+	}
+	if claims.OpenAIAuth != nil {
+		if strings.TrimSpace(tokens.AccountID) == "" {
+			tokens.AccountID = claims.OpenAIAuth.ChatGPTAccountID
+		}
+		if strings.TrimSpace(tokens.PlanType) == "" {
+			tokens.PlanType = claims.OpenAIAuth.ChatGPTPlanType
+		}
+	}
+	return tokens
+}
+
+func decodeIDTokenClaims(idToken string) (idTokenClaims, error) {
+	parts := strings.Split(idToken, ".")
+	if len(parts) != 3 {
+		return idTokenClaims{}, errors.New("invalid id token format")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return idTokenClaims{}, err
+		}
+	}
+	var claims idTokenClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return idTokenClaims{}, err
+	}
+	return claims, nil
 }
 
 func valueOrDefault(value, fallback string) string {

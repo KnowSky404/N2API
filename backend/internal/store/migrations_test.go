@@ -77,6 +77,25 @@ func TestOAuthStatesMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestOAuthAuthorizationMetadataMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00005_oauth_authorization_metadata.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS encrypted_code_verifier TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS code_verifier_hash TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS client_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS encrypted_id_token TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE oauth_accounts ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
+		"oauth_accounts_metadata_gin_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountPoolMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00004_oauth_account_pool.sql")
 	if err != nil {
@@ -106,10 +125,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 4 {
-		t.Fatalf("migration sources = %d, want 4", len(sources))
+	if len(sources) != 5 {
+		t.Fatalf("migration sources = %d, want 5", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[3].Path != "00004_oauth_account_pool.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[4].Path != "00005_oauth_authorization_metadata.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
