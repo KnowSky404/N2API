@@ -19,6 +19,7 @@ frontend/bun.lockb
 # Logs
 *.log
 logs/
+.superpowers/
 
 # OS/editor
 .DS_Store
