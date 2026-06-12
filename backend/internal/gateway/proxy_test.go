@@ -225,6 +225,7 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 	var gotOpenAIBeta string
 	var gotOriginator string
 	var gotUserAgent string
+	var gotHost string
 	var gotBody map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -233,6 +234,7 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
 		gotOriginator = r.Header.Get("originator")
 		gotUserAgent = r.Header.Get("User-Agent")
+		gotHost = r.Host
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Fatalf("ReadAll returned error: %v", err)
@@ -281,6 +283,9 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 	}
 	if !strings.HasPrefix(gotUserAgent, "codex_cli_rs/") {
 		t.Fatalf("User-Agent = %q, want codex_cli_rs prefix", gotUserAgent)
+	}
+	if gotHost != strings.TrimPrefix(upstream.URL, "http://") {
+		t.Fatalf("Host = %q, want configured upstream host", gotHost)
 	}
 	if gotBody["stream"] != true {
 		t.Fatalf("stream = %#v, want true", gotBody["stream"])

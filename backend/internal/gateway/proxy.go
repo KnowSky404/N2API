@@ -284,7 +284,6 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedToken, body
 	copyRequestHeaders(req.Header, r.Header)
 	req.Header.Set("Authorization", "Bearer "+selected.Token)
 	if useCodexEndpoint {
-		req.Host = "chatgpt.com"
 		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
 		req.Header.Set("Accept", "text/event-stream")
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
