@@ -149,8 +149,9 @@ type AccountUpdate struct {
 }
 
 type SelectedToken struct {
-	AccountID int64
-	Token     string
+	AccountID        int64
+	Token            string
+	ChatGPTAccountID string
 }
 
 type TokenResponse struct {
@@ -516,6 +517,8 @@ func (s *Service) RecordAccountFailure(ctx context.Context, accountID int64, sta
 	case statusCode == http.StatusTooManyRequests:
 		until := retryAfterTime(retryAfter, now, time.Minute)
 		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusRateLimited, reason, now, &until, nil)
+	case statusCode == http.StatusForbidden && isEndpointPermissionError(reason):
+		return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
 		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusExpired, reason, now, nil, nil)
 	case statusCode >= http.StatusInternalServerError:
@@ -524,6 +527,16 @@ func (s *Service) RecordAccountFailure(ctx context.Context, accountID int64, sta
 	default:
 		return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
 	}
+}
+
+func isEndpointPermissionError(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "missing scopes") ||
+		strings.Contains(lower, "api.responses.write") ||
+		(strings.Contains(lower, "insufficient permissions") && strings.Contains(lower, "scope"))
 }
 
 func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error) {
@@ -652,7 +665,11 @@ func (s *Service) SelectAccessToken(ctx context.Context, excludedAccountIDs ...i
 		if err := s.repo.MarkAccountUsed(ctx, s.cfg.Provider, account.ID, time.Now()); err != nil {
 			return SelectedToken{}, fmt.Errorf("mark provider account used: %w", err)
 		}
-		return SelectedToken{AccountID: account.ID, Token: token}, nil
+		return SelectedToken{
+			AccountID:        account.ID,
+			Token:            token,
+			ChatGPTAccountID: strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
+		}, nil
 	}
 	if !hasEnabled {
 		return SelectedToken{}, ErrAccountsDisabled

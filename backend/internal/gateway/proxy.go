@@ -18,6 +18,9 @@ import (
 )
 
 const defaultUpstreamBaseURL = "https://api.openai.com"
+const defaultCodexResponsesBaseURL = "https://chatgpt.com/backend-api/codex"
+const defaultCodexUserAgent = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+const defaultCodexInstructions = "You are Codex, a coding agent."
 const maxReplayableRequestBody = 1 << 20
 const maxFailureBody = 64 << 10
 
@@ -26,8 +29,9 @@ type APIKeyAuthenticator interface {
 }
 
 type SelectedToken struct {
-	AccountID int64
-	Token     string
+	AccountID        int64
+	Token            string
+	ChatGPTAccountID string
 }
 
 type AccessTokenProvider interface {
@@ -55,8 +59,9 @@ type RequestLog struct {
 }
 
 type Config struct {
-	UpstreamBaseURL string
-	Logger          RequestLogger
+	UpstreamBaseURL       string
+	CodexResponsesBaseURL string
+	Logger                RequestLogger
 }
 
 type Proxy struct {
@@ -64,6 +69,7 @@ type Proxy struct {
 	tokens          AccessTokenProvider
 	client          *http.Client
 	upstreamBaseURL string
+	codexBaseURL    string
 	logger          RequestLogger
 }
 
@@ -79,11 +85,16 @@ func NewProxyWithClient(auth APIKeyAuthenticator, tokens AccessTokenProvider, cf
 	if upstreamBaseURL == "" {
 		upstreamBaseURL = defaultUpstreamBaseURL
 	}
+	codexBaseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
+	if codexBaseURL == "" {
+		codexBaseURL = defaultCodexResponsesBaseURL
+	}
 	return &Proxy{
 		auth:            auth,
 		tokens:          tokens,
 		client:          client,
 		upstreamBaseURL: upstreamBaseURL,
+		codexBaseURL:    codexBaseURL,
 		logger:          cfg.Logger,
 	}
 }
@@ -137,6 +148,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var firstAccountID int64
+	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		var excluded []int64
 		if attempt > 0 && firstAccountID > 0 {
@@ -144,9 +156,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		selected, err := p.tokens.SelectAccessToken(r.Context(), excluded...)
 		if err != nil {
+			if lastRetryableResp != nil {
+				copyResponseHeaders(recorder.Header(), lastRetryableResp.Header)
+				recorder.WriteHeader(lastRetryableResp.StatusCode)
+				_, _ = io.Copy(flushWriter{ResponseWriter: recorder}, lastRetryableResp.Body)
+				_ = lastRetryableResp.Body.Close()
+				return
+			}
 			errorCode = providerErrorCode(err)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
 			return
+		}
+		if lastRetryableResp != nil {
+			_ = lastRetryableResp.Body.Close()
+			lastRetryableResp = nil
 		}
 		if attempt == 0 {
 			firstAccountID = selected.AccountID
@@ -156,7 +179,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		upstreamReq, err := p.newUpstreamRequest(r, selected.Token, bodyFactory())
+		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 		if err != nil {
 			errorCode = "upstream_request_error"
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
@@ -177,7 +200,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			message := captureFailureMessage(upstreamResp)
 			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
 			if attempt+1 < maxAttempts {
-				_ = upstreamResp.Body.Close()
+				lastRetryableResp = upstreamResp
 				continue
 			}
 		}
@@ -236,8 +259,20 @@ func captureFailureMessage(resp *http.Response) string {
 	return string(body)
 }
 
-func (p *Proxy) newUpstreamRequest(r *http.Request, accessToken string, body io.ReadCloser) (*http.Request, error) {
-	upstreamURL, err := url.Parse(p.upstreamBaseURL + r.URL.Path)
+func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedToken, body io.ReadCloser) (*http.Request, error) {
+	useCodexEndpoint := r.Method == http.MethodPost && r.URL.Path == "/v1/responses" && strings.TrimSpace(selected.ChatGPTAccountID) != ""
+	upstreamPath := r.URL.Path
+	upstreamBaseURL := p.upstreamBaseURL
+	if useCodexEndpoint {
+		upstreamBaseURL = p.codexBaseURL
+		upstreamPath = "/responses"
+		var err error
+		body, err = normalizeCodexResponsesBody(body)
+		if err != nil {
+			return nil, err
+		}
+	}
+	upstreamURL, err := url.Parse(upstreamBaseURL + upstreamPath)
 	if err != nil {
 		return nil, fmt.Errorf("parse upstream url: %w", err)
 	}
@@ -247,8 +282,56 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, accessToken string, body io.
 		return nil, err
 	}
 	copyRequestHeaders(req.Header, r.Header)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Authorization", "Bearer "+selected.Token)
+	if useCodexEndpoint {
+		req.Host = "chatgpt.com"
+		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		req.Header.Set("originator", "codex_cli_rs")
+		req.Header.Set("User-Agent", defaultCodexUserAgent)
+		req.Header.Set("Content-Type", "application/json")
+	}
 	return req, nil
+}
+
+func normalizeCodexResponsesBody(body io.ReadCloser) (io.ReadCloser, error) {
+	if body == nil {
+		return nil, nil
+	}
+	raw, err := io.ReadAll(body)
+	if closeErr := body.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return io.NopCloser(bytes.NewReader(raw)), nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return io.NopCloser(bytes.NewReader(raw)), nil
+	}
+	payload["stream"] = true
+	payload["store"] = false
+	if instructions, ok := payload["instructions"].(string); !ok || strings.TrimSpace(instructions) == "" {
+		payload["instructions"] = defaultCodexInstructions
+	}
+	if input, ok := payload["input"].(string); ok {
+		payload["input"] = []any{
+			map[string]any{
+				"type":    "message",
+				"role":    "user",
+				"content": input,
+			},
+		}
+	}
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(normalized)), nil
 }
 
 func requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, error) {

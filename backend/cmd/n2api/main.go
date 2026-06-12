@@ -25,8 +25,9 @@ func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context, excludedAcc
 		return gateway.SelectedToken{}, err
 	}
 	return gateway.SelectedToken{
-		AccountID: selected.AccountID,
-		Token:     selected.Token,
+		AccountID:        selected.AccountID,
+		Token:            selected.Token,
+		ChatGPTAccountID: selected.ChatGPTAccountID,
 	}, nil
 }
 

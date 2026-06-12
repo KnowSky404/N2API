@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -217,6 +218,89 @@ func TestProxyForwardsResponsesCreateWithStreaming(t *testing.T) {
 	}
 }
 
+func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
+	var gotPath string
+	var gotAuthorization string
+	var gotChatGPTAccountID string
+	var gotOpenAIBeta string
+	var gotOriginator string
+	var gotUserAgent string
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuthorization = r.Header.Get("Authorization")
+		gotChatGPTAccountID = r.Header.Get("chatgpt-account-id")
+		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
+		gotOriginator = r.Header.Get("originator")
+		gotUserAgent = r.Header.Get("User-Agent")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("Unmarshal body returned error: %v; body=%s", err, string(body))
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\"}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer upstream.Close()
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{
+		AccountID:        1,
+		Token:            "upstream-token",
+		ChatGPTAccountID: "acct_chatgpt",
+	}}}, Config{
+		UpstreamBaseURL:       "https://api.example.test",
+		CodexResponsesBaseURL: upstream.URL + "/backend-api/codex",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4-mini","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if gotPath != "/backend-api/codex/responses" {
+		t.Fatalf("path = %q, want Codex responses endpoint", gotPath)
+	}
+	if gotAuthorization != "Bearer upstream-token" {
+		t.Fatalf("Authorization = %q", gotAuthorization)
+	}
+	if gotChatGPTAccountID != "acct_chatgpt" {
+		t.Fatalf("chatgpt-account-id = %q", gotChatGPTAccountID)
+	}
+	if gotOpenAIBeta != "responses=experimental" {
+		t.Fatalf("OpenAI-Beta = %q", gotOpenAIBeta)
+	}
+	if gotOriginator != "codex_cli_rs" {
+		t.Fatalf("originator = %q", gotOriginator)
+	}
+	if !strings.HasPrefix(gotUserAgent, "codex_cli_rs/") {
+		t.Fatalf("User-Agent = %q, want codex_cli_rs prefix", gotUserAgent)
+	}
+	if gotBody["stream"] != true {
+		t.Fatalf("stream = %#v, want true", gotBody["stream"])
+	}
+	if gotBody["store"] != false {
+		t.Fatalf("store = %#v, want false", gotBody["store"])
+	}
+	if strings.TrimSpace(gotBody["instructions"].(string)) == "" {
+		t.Fatalf("instructions = %#v, want non-empty string", gotBody["instructions"])
+	}
+	input, ok := gotBody["input"].([]any)
+	if !ok || len(input) != 1 {
+		t.Fatalf("input = %#v, want one message", gotBody["input"])
+	}
+	message, ok := input[0].(map[string]any)
+	if !ok || message["type"] != "message" || message["role"] != "user" || message["content"] != "hi" {
+		t.Fatalf("input message = %#v", input[0])
+	}
+}
+
 func TestProxyForwardsResponsesRetrieveAndInputItems(t *testing.T) {
 	var gotPaths []string
 	var gotQueries []string
@@ -416,6 +500,41 @@ func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing
 	failure := tokens.failures[0]
 	if failure.accountID != 1 || failure.statusCode != http.StatusTooManyRequests || failure.retryAfter != "120" || !strings.Contains(failure.message, "rate limited") {
 		t.Fatalf("failure = %+v", failure)
+	}
+}
+
+func TestProxyReturnsFinalRetryableUpstreamErrorWhenNoFallbackAccount(t *testing.T) {
+	tokens := &fakeSelectedTokenProvider{
+		tokens: []SelectedToken{{AccountID: 1, Token: "rate-limited-token"}},
+		errs:   []error{nil, provider.ErrAccountsUnavailable},
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"60"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"The usage limit has been reached"}}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4-mini","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "60" {
+		t.Fatalf("Retry-After = %q, want 60", got)
+	}
+	if !strings.Contains(recorder.Body.String(), "usage limit") {
+		t.Fatalf("body = %q, want upstream body", recorder.Body.String())
+	}
+	if tokens.calls != 2 {
+		t.Fatalf("token calls = %d, want fallback lookup after first 429", tokens.calls)
 	}
 }
 

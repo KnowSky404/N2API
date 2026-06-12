@@ -686,6 +686,24 @@ func TestSelectAccessTokenSkipsDisabledAndUsesPriority(t *testing.T) {
 	}
 }
 
+func TestSelectAccessTokenReturnsChatGPTAccountMetadata(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	repo.accounts[0].Metadata = map[string]string{"chatgpt_account_id": "acct_chatgpt"}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 7 || selected.Token != "access-token" {
+		t.Fatalf("selected = %+v, want account 7 token", selected)
+	}
+	if selected.ChatGPTAccountID != "acct_chatgpt" {
+		t.Fatalf("ChatGPTAccountID = %q, want metadata value", selected.ChatGPTAccountID)
+	}
+}
+
 func TestSelectAccessTokenSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
 	repo := newMemoryRepo()
 	now := time.Now()
@@ -825,6 +843,27 @@ func TestRecordAccountFailureMapsUpstreamStatusesToAccountState(t *testing.T) {
 	}
 	if repo.accounts[0].Status != AccountStatusCircuitOpen || repo.accounts[0].CircuitOpenUntil == nil || !repo.accounts[0].CircuitOpenUntil.After(time.Now()) {
 		t.Fatalf("circuit account = %+v", repo.accounts[0])
+	}
+}
+
+func TestRecordAccountFailureDoesNotExpireAccountForResponsesScopeForbidden(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	repo.accounts[0].Status = AccountStatusActive
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	message := "You have insufficient permissions for this operation. Missing scopes: api.responses.write."
+
+	if err := service.RecordAccountFailure(context.Background(), 7, 403, "", message); err != nil {
+		t.Fatalf("RecordAccountFailure returned error: %v", err)
+	}
+	if repo.accounts[0].Status != AccountStatusActive {
+		t.Fatalf("status = %q, want active", repo.accounts[0].Status)
+	}
+	if repo.accounts[0].StatusReason != "" {
+		t.Fatalf("status reason = %q, want empty", repo.accounts[0].StatusReason)
+	}
+	if repo.accounts[0].LastError != message || repo.accounts[0].LastErrorAt == nil {
+		t.Fatalf("last error = %q at %v, want recorded message", repo.accounts[0].LastError, repo.accounts[0].LastErrorAt)
 	}
 }
 
