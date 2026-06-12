@@ -36,6 +36,8 @@ export async function copyText(text, deps = {}) {
 
   try {
     return doc.execCommand('copy');
+  } catch {
+    return false;
   } finally {
     doc.body.removeChild(textarea);
   }

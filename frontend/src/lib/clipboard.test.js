@@ -57,4 +57,47 @@ describe('copyText', () => {
     assert.equal(body.appended, textarea);
     assert.equal(body.removed, textarea);
   });
+
+  test('returns false and cleans up when legacy copy throws', async () => {
+    const textarea = {
+      value: '',
+      setAttribute() {},
+      style: {},
+      focus() {},
+      select() {}
+    };
+    /** @type {{ appended: unknown, removed: unknown, appendChild(node: unknown): void, removeChild(node: unknown): void }} */
+    const body = {
+      appended: null,
+      removed: null,
+      /** @param {unknown} node */
+      appendChild(node) {
+        this.appended = node;
+      },
+      /** @param {unknown} node */
+      removeChild(node) {
+        this.removed = node;
+      }
+    };
+    const document = {
+      body,
+      /** @param {string} tag */
+      createElement(tag) {
+        assert.equal(tag, 'textarea');
+        return textarea;
+      },
+      execCommand() {
+        throw new Error('copy blocked');
+      }
+    };
+
+    const copied = await copyText('oauth-link', {
+      clipboard: undefined,
+      document: /** @type {Document} */ (/** @type {unknown} */ (document))
+    });
+
+    assert.equal(copied, false);
+    assert.equal(body.appended, textarea);
+    assert.equal(body.removed, textarea);
+  });
 });
