@@ -111,6 +111,26 @@
       .map((value) => value.toLowerCase());
     return duplicateLabels.includes(label.toLowerCase()) ? '' : label;
   }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function accountHoverDetail(account) {
+    return [accountLabel(account), accountSecondaryLabel(account), account.subject || account.provider]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function statusHoverDetail(account) {
+    return [
+      statusLabel(account.status),
+      account.rateLimitedUntil ? `Rate limited until ${formatDate(account.rateLimitedUntil)}` : '',
+      account.circuitOpenUntil ? `Circuit until ${formatDate(account.circuitOpenUntil)}` : '',
+      account.statusReason,
+      account.lastError ? `${account.lastError}${account.lastErrorAt ? ` - ${formatDate(account.lastErrorAt)}` : ''}` : ''
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
 </script>
 
 <svelte:head>
@@ -363,7 +383,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         Last used<span class="text-[11px]">{sortIndicator('used')}</span>
       </button>
     </th>
-    <th class="sticky right-0 z-10 w-[280px] bg-[#f5f5f5] px-4 py-3 text-right font-medium shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
+    <th class="sticky right-0 z-10 w-36 bg-[#f5f5f5] px-3 py-3 text-right font-medium shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
   </tr>
 </thead>
 <tbody class="divide-y divide-[#ededed]">
@@ -382,26 +402,18 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
   {:else}
     {#each filteredProviderAccounts as account}
       <tr class="bg-white align-top">
-        <td class="px-4 py-3 align-middle">
-          <p class="font-medium text-[#0d0d0d]">
+        <td class="px-4 py-3 align-middle" title={accountHoverDetail(account)}>
+          <p class="max-w-[18rem] truncate font-medium text-[#0d0d0d]">
             {accountLabel(account)}
           </p>
           {#if accountSecondaryLabel(account)}
-            <p class="mt-1 text-[#3c3c3c]">{accountSecondaryLabel(account)}</p>
+            <p class="mt-1 max-w-[18rem] truncate text-[#3c3c3c]">{accountSecondaryLabel(account)}</p>
           {/if}
-          <p class="mt-1 font-mono text-[13px] text-[#6e6e6e]">
+          <p class="mt-1 max-w-[18rem] truncate font-mono text-[13px] text-[#6e6e6e]">
             {account.subject || account.provider}
           </p>
-          {#if account.lastError}
-            <p class="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">
-              {account.lastError}
-              {#if account.lastErrorAt}
-                <span class="text-red-600"> - {formatDate(account.lastErrorAt)}</span>
-              {/if}
-            </p>
-          {/if}
         </td>
-        <td class="px-4 py-3 align-middle">
+        <td class="px-4 py-3 align-middle" title={statusHoverDetail(account)}>
           <span
             class={[
               'inline-flex max-w-full whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium capitalize',
@@ -414,29 +426,28 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           >
             {statusLabel(account.status)}
           </span>
-          {#if account.statusReason}
-            <p class="mt-1 max-w-[11rem] truncate text-xs text-[#6e6e6e]" title={account.statusReason}>{account.statusReason}</p>
-          {/if}
-          {#if account.circuitOpenUntil}
-            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700" title={`Circuit until ${formatDate(account.circuitOpenUntil)}`}>Circuit until {formatDate(account.circuitOpenUntil)}</p>
-          {/if}
           {#if account.rateLimitedUntil}
-            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700" title={`Rate limited until ${formatDate(account.rateLimitedUntil)}`}>Rate limited until {formatDate(account.rateLimitedUntil)}</p>
+            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700">Rate limited until {formatDate(account.rateLimitedUntil)}</p>
+          {:else if account.circuitOpenUntil}
+            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700">Circuit until {formatDate(account.circuitOpenUntil)}</p>
           {/if}
         </td>
         <td class="px-4 py-3 align-middle">
-          <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
+          <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={account.enabled ? 'Enabled' : 'Disabled'}>
             <input
-              class="size-4 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
+              class="peer sr-only"
               type="checkbox"
+              role="switch"
               checked={account.enabled}
               disabled={providerAccounts.saving}
+              aria-label={`Set ${accountLabel(account)} ${account.enabled ? 'disabled' : 'enabled'}`}
               onchange={(event) =>
                 updateProviderAccount(account, {
                   enabled: event.currentTarget.checked
                 })}
             />
-            {account.enabled ? 'Enabled' : 'Disabled'}
+            <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
+            <span class="w-14 text-xs text-[#6e6e6e]">{account.enabled ? 'On' : 'Off'}</span>
           </label>
         </td>
         <td class="px-4 py-3 align-middle">
@@ -457,31 +468,40 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
-        <td class="sticky right-0 bg-white px-4 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
-          <div class="flex justify-end gap-2 whitespace-nowrap">
+        <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+          <div class="flex justify-end gap-1.5 whitespace-nowrap">
             <button
-              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={providerAccounts.saving}
               onclick={() => refreshProviderAccount(account)}
+              title="Refresh account"
+              aria-label="Refresh account"
             >
-              Refresh
+              <span aria-hidden="true">R</span>
+              <span class="sr-only">Refresh account</span>
             </button>
             <button
-              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={provider.connecting || providerAccounts.saving}
               onclick={() => connectProvider(account)}
+              title="Reauthorize account"
+              aria-label="Reauthorize account"
             >
-              Reauthorize
+              <span aria-hidden="true">A</span>
+              <span class="sr-only">Reauthorize account</span>
             </button>
             <button
-              class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              class="inline-flex size-8 items-center justify-center rounded-md border border-red-200 bg-white text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={providerAccounts.saving}
               onclick={() => disconnectProviderAccount(account)}
+              title="Disconnect account"
+              aria-label="Disconnect account"
             >
-              {providerAccounts.saving ? 'Saving' : 'Disconnect'}
+              <span aria-hidden="true">D</span>
+              <span class="sr-only">Disconnect account</span>
             </button>
           </div>
         </td>
