@@ -53,17 +53,19 @@ var (
 )
 
 type Config struct {
-	Provider      string
-	ClientID      string
-	ClientSecret  string
-	RedirectURL   string
-	AuthURL       string
-	TokenURL      string
-	APIBaseURL    string
-	Secret        string
-	StateTTL      time.Duration
-	RefreshWindow time.Duration
-	CodeVerifier  string
+	Provider              string
+	ClientID              string
+	ClientSecret          string
+	RedirectURL           string
+	AuthURL               string
+	TokenURL              string
+	APIBaseURL            string
+	CodexResponsesBaseURL string
+	ProbeChatGPTAccountID string
+	Secret                string
+	StateTTL              time.Duration
+	RefreshWindow         time.Duration
+	CodeVerifier          string
 }
 
 type Status struct {
@@ -295,6 +297,9 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 	if cfg.APIBaseURL == "" {
 		cfg.APIBaseURL = "https://api.openai.com"
 	}
+	if cfg.CodexResponsesBaseURL == "" {
+		cfg.CodexResponsesBaseURL = "https://chatgpt.com/backend-api/codex"
+	}
 	if cfg.StateTTL <= 0 {
 		cfg.StateTTL = defaultStateTTL
 	}
@@ -312,16 +317,45 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 }
 
 func (c *HTTPClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
+	chatGPTAccountID := strings.TrimSpace(cfg.ProbeChatGPTAccountID)
+	if chatGPTAccountID != "" {
+		codexBaseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
+		if codexBaseURL == "" {
+			codexBaseURL = "https://chatgpt.com/backend-api/codex"
+		}
+		return c.probeURL(ctx, codexBaseURL+"/responses", accessToken, func(req *http.Request) {
+			req.Header.Set("chatgpt-account-id", chatGPTAccountID)
+			req.Header.Set("Accept", "text/event-stream")
+			req.Header.Set("OpenAI-Beta", "responses=experimental")
+			req.Header.Set("originator", "codex_cli_rs")
+			req.Header.Set("User-Agent", "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color")
+			req.Header.Set("Content-Type", "application/json")
+		})
+	}
+
 	apiBaseURL := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
 	if apiBaseURL == "" {
 		apiBaseURL = "https://api.openai.com"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL+"/v1/models", nil)
+	return c.probeURL(ctx, apiBaseURL+"/v1/models", accessToken, nil)
+}
+
+func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken string, decorate func(*http.Request)) (probeResult, error) {
+	var body io.Reader
+	method := http.MethodGet
+	if strings.HasSuffix(targetURL, "/responses") {
+		method = http.MethodPost
+		body = strings.NewReader(`{"model":"gpt-5","input":"n2api account status probe","stream":false,"store":false}`)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
 	if err != nil {
 		return probeResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
+	if decorate != nil {
+		decorate(req)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -642,7 +676,9 @@ func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account,
 	if s.prober == nil || strings.TrimSpace(accessToken) == "" {
 		return account, nil
 	}
-	result, err := s.prober.ProbeAccountStatus(ctx, s.cfg, accessToken)
+	cfg := s.cfg
+	cfg.ProbeChatGPTAccountID = strings.TrimSpace(account.Metadata["chatgpt_account_id"])
+	result, err := s.prober.ProbeAccountStatus(ctx, cfg, accessToken)
 	if err != nil {
 		return account, nil
 	}

@@ -113,6 +113,42 @@ func TestHTTPClientTokenErrorDoesNotIncludeBodySecret(t *testing.T) {
 	}
 }
 
+func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
+	var gotPath string
+	var gotAuthorization string
+	var gotChatGPTAccountID string
+	var gotOpenAIBeta string
+	var gotOriginator string
+	client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.Path
+		gotAuthorization = r.Header.Get("Authorization")
+		gotChatGPTAccountID = r.Header.Get("chatgpt-account-id")
+		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
+		gotOriginator = r.Header.Get("originator")
+		return jsonResponse(http.StatusTooManyRequests, map[string]any{
+			"error": map[string]any{"message": "usage limit reached"},
+		})
+	})})
+
+	result, err := client.ProbeAccountStatus(context.Background(), Config{
+		APIBaseURL:            "https://api.example.test",
+		CodexResponsesBaseURL: "https://chatgpt.example.test/backend-api/codex",
+		ProbeChatGPTAccountID: "acct_chatgpt",
+	}, "access-token")
+	if err != nil {
+		t.Fatalf("ProbeAccountStatus returned error: %v", err)
+	}
+	if result.statusCode != http.StatusTooManyRequests || result.message != "usage limit reached" {
+		t.Fatalf("probe result = %+v", result)
+	}
+	if gotPath != "/backend-api/codex/responses" {
+		t.Fatalf("path = %q, want Codex responses endpoint", gotPath)
+	}
+	if gotAuthorization != "Bearer access-token" || gotChatGPTAccountID != "acct_chatgpt" || gotOpenAIBeta != "responses=experimental" || gotOriginator != "codex_cli_rs" {
+		t.Fatalf("headers auth=%q account=%q beta=%q originator=%q", gotAuthorization, gotChatGPTAccountID, gotOpenAIBeta, gotOriginator)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
