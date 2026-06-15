@@ -150,8 +150,25 @@ func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
 	if gotAuthorization != "Bearer access-token" || gotChatGPTAccountID != "acct_chatgpt" || gotOpenAIBeta != "responses=experimental" || gotOriginator != "codex_cli_rs" {
 		t.Fatalf("headers auth=%q account=%q beta=%q originator=%q", gotAuthorization, gotChatGPTAccountID, gotOpenAIBeta, gotOriginator)
 	}
-	if !strings.Contains(gotBody, `"model":"gpt-5.4-mini"`) {
-		t.Fatalf("body = %q, want supported Codex probe model", gotBody)
+	var payload struct {
+		Model        string `json:"model"`
+		Instructions string `json:"instructions"`
+		Input        []struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"input"`
+		Stream bool `json:"stream"`
+		Store  bool `json:"store"`
+	}
+	if err := json.Unmarshal([]byte(gotBody), &payload); err != nil {
+		t.Fatalf("decode probe body: %v", err)
+	}
+	if payload.Model != "gpt-5.4-mini" || payload.Instructions != "You are Codex, a coding agent." || !payload.Stream || payload.Store {
+		t.Fatalf("probe payload = %+v", payload)
+	}
+	if len(payload.Input) != 1 || payload.Input[0].Type != "message" || payload.Input[0].Role != "user" || payload.Input[0].Content != "n2api account status probe" {
+		t.Fatalf("probe input = %+v", payload.Input)
 	}
 }
 
