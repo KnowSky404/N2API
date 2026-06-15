@@ -1133,7 +1133,7 @@ Update `CreateRequestLog` to marshal `entry.PricingSnapshot`, default `UsageSour
 In `backend/internal/store/admin.go`, update `ListRequestLogs` query to select:
 
 ```sql
-COALESCE(NULLIF(a.display_name, ''), NULLIF(a.subject, ''), ''),
+COALESCE(NULLIF(a.name, ''), NULLIF(a.display_name, ''), NULLIF(a.subject, ''), ''),
 l.model,
 l.input_tokens,
 l.output_tokens,
@@ -1177,7 +1177,7 @@ case "client_key":
 	labelExpr = "COALESCE(k.name || ' (' || k.prefix || ')', 'Unknown')"
 case "oauth_account":
 	groupExpr = "COALESCE(l.oauth_account_id::text, 'unknown')"
-	labelExpr = "COALESCE(NULLIF(a.display_name, ''), NULLIF(a.subject, ''), 'Unknown')"
+	labelExpr = "COALESCE(NULLIF(a.name, ''), NULLIF(a.display_name, ''), NULLIF(a.subject, ''), 'Unknown')"
 case "model":
 	groupExpr = "COALESCE(NULLIF(l.model, ''), 'unknown')"
 	labelExpr = "COALESCE(NULLIF(l.model, ''), 'Unknown')"
