@@ -119,12 +119,15 @@ func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
 	var gotChatGPTAccountID string
 	var gotOpenAIBeta string
 	var gotOriginator string
+	var gotBody string
 	client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		gotPath = r.URL.Path
 		gotAuthorization = r.Header.Get("Authorization")
 		gotChatGPTAccountID = r.Header.Get("chatgpt-account-id")
 		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
 		gotOriginator = r.Header.Get("originator")
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
 		return jsonResponse(http.StatusTooManyRequests, map[string]any{
 			"error": map[string]any{"message": "usage limit reached"},
 		})
@@ -146,6 +149,9 @@ func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
 	}
 	if gotAuthorization != "Bearer access-token" || gotChatGPTAccountID != "acct_chatgpt" || gotOpenAIBeta != "responses=experimental" || gotOriginator != "codex_cli_rs" {
 		t.Fatalf("headers auth=%q account=%q beta=%q originator=%q", gotAuthorization, gotChatGPTAccountID, gotOpenAIBeta, gotOriginator)
+	}
+	if !strings.Contains(gotBody, `"model":"gpt-5.4-mini"`) {
+		t.Fatalf("body = %q, want supported Codex probe model", gotBody)
 	}
 }
 

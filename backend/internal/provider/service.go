@@ -345,7 +345,7 @@ func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken string
 	method := http.MethodGet
 	if strings.HasSuffix(targetURL, "/responses") {
 		method = http.MethodPost
-		body = strings.NewReader(`{"model":"gpt-5","input":"n2api account status probe","stream":false,"store":false}`)
+		body = strings.NewReader(`{"model":"gpt-5.4-mini","input":"n2api account status probe","stream":false,"store":false}`)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
 	if err != nil {
