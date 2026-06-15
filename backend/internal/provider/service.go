@@ -363,7 +363,6 @@ func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return probeResult{statusCode: resp.StatusCode}, nil
 	}
 	return probeResult{

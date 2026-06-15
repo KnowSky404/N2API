@@ -172,10 +172,51 @@ func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
 	}
 }
 
+func TestHTTPClientProbeDoesNotReadSuccessfulCodexStream(t *testing.T) {
+	body := &failOnReadBody{t: t}
+	client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       body,
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})})
+
+	result, err := client.ProbeAccountStatus(context.Background(), Config{
+		CodexResponsesBaseURL: "https://chatgpt.example.test/backend-api/codex",
+		ProbeChatGPTAccountID: "acct_chatgpt",
+	}, "access-token")
+	if err != nil {
+		t.Fatalf("ProbeAccountStatus returned error: %v", err)
+	}
+	if result.statusCode != http.StatusOK {
+		t.Fatalf("statusCode = %d, want %d", result.statusCode, http.StatusOK)
+	}
+	if !body.closed {
+		t.Fatal("successful probe response body was not closed")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+type failOnReadBody struct {
+	t      *testing.T
+	closed bool
+}
+
+func (b *failOnReadBody) Read(_ []byte) (int, error) {
+	b.t.Fatal("successful codex probe stream body should not be read")
+	return 0, io.EOF
+}
+
+func (b *failOnReadBody) Close() error {
+	b.closed = true
+	return nil
 }
 
 func jsonResponse(status int, value any) (*http.Response, error) {
