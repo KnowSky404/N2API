@@ -70,6 +70,7 @@ func main() {
 		RedirectURL:  cfg.OpenAIOAuthRedirectURL,
 		AuthURL:      cfg.OpenAIOAuthAuthURL,
 		TokenURL:     cfg.OpenAIOAuthTokenURL,
+		APIBaseURL:   cfg.OpenAIAPIBaseURL,
 		Secret:       cfg.EncryptionSecret,
 	})
 	gatewayProxy := gateway.NewProxy(adminService, gatewayTokenProvider{service: providerService}, gateway.Config{

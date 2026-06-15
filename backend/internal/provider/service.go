@@ -59,6 +59,7 @@ type Config struct {
 	RedirectURL   string
 	AuthURL       string
 	TokenURL      string
+	APIBaseURL    string
 	Secret        string
 	StateTTL      time.Duration
 	RefreshWindow time.Duration
@@ -218,6 +219,16 @@ type OAuthClient interface {
 	RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error)
 }
 
+type accountStatusProber interface {
+	ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error)
+}
+
+type probeResult struct {
+	statusCode int
+	retryAfter string
+	message    string
+}
+
 type HTTPClient struct {
 	client *http.Client
 }
@@ -225,6 +236,7 @@ type HTTPClient struct {
 type Service struct {
 	repo         Repository
 	client       OAuthClient
+	prober       accountStatusProber
 	cfg          Config
 	refreshMu    sync.Mutex
 	refreshLocks map[int64]*sync.Mutex
@@ -280,18 +292,70 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 	if cfg.TokenURL == "" {
 		cfg.TokenURL = defaultOpenAIOAuthTokenURL
 	}
+	if cfg.APIBaseURL == "" {
+		cfg.APIBaseURL = "https://api.openai.com"
+	}
 	if cfg.StateTTL <= 0 {
 		cfg.StateTTL = defaultStateTTL
 	}
 	if cfg.RefreshWindow <= 0 {
 		cfg.RefreshWindow = defaultRefreshWindow
 	}
+	prober, _ := client.(accountStatusProber)
 	return &Service{
 		repo:         repo,
 		client:       client,
+		prober:       prober,
 		cfg:          cfg,
 		refreshLocks: make(map[int64]*sync.Mutex),
 	}
+}
+
+func (c *HTTPClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
+	apiBaseURL := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
+	if apiBaseURL == "" {
+		apiBaseURL = "https://api.openai.com"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL+"/v1/models", nil)
+	if err != nil {
+		return probeResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return probeResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return probeResult{statusCode: resp.StatusCode}, nil
+	}
+	return probeResult{
+		statusCode: resp.StatusCode,
+		retryAfter: resp.Header.Get("Retry-After"),
+		message:    readErrorMessage(resp.Body, resp.StatusCode),
+	}, nil
+}
+
+func readErrorMessage(body io.Reader, statusCode int) string {
+	if body == nil {
+		return http.StatusText(statusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, 64<<10))
+	if err != nil || len(strings.TrimSpace(string(raw))) == 0 {
+		return http.StatusText(statusCode)
+	}
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &payload); err == nil && strings.TrimSpace(payload.Error.Message) != "" {
+		return strings.TrimSpace(payload.Error.Message)
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.Values) (TokenResponse, error) {
@@ -567,7 +631,35 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 		}
 		return Account{}, err
 	}
-	return s.storeTokenResponse(ctx, tokens, &account)
+	refreshed, err := s.storeTokenResponse(ctx, tokens, &account)
+	if err != nil {
+		return Account{}, err
+	}
+	return s.probeLatestAccountStatus(ctx, refreshed, tokens.AccessToken)
+}
+
+func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account, accessToken string) (Account, error) {
+	if s.prober == nil || strings.TrimSpace(accessToken) == "" {
+		return account, nil
+	}
+	result, err := s.prober.ProbeAccountStatus(ctx, s.cfg, accessToken)
+	if err != nil {
+		return account, nil
+	}
+	if !isAccountFailureStatus(result.statusCode) {
+		return account, nil
+	}
+	if err := s.RecordAccountFailure(ctx, account.ID, result.statusCode, result.retryAfter, result.message); err != nil {
+		return Account{}, err
+	}
+	return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
+}
+
+func isAccountFailureStatus(statusCode int) bool {
+	return statusCode == http.StatusUnauthorized ||
+		statusCode == http.StatusForbidden ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
 }
 
 func (s *Service) AccessToken(ctx context.Context) (string, error) {

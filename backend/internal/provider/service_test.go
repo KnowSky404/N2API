@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/url"
 	"sort"
 	"strings"
@@ -816,6 +817,42 @@ func TestRefreshAccountForcesOAuthTokenRefreshAndClearsFailureState(t *testing.T
 	}
 }
 
+func TestRefreshAccountProbesLatestStatusAfterTokenRefresh(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	repo.accounts = []Account{
+		testAccount(t, 7, true, 3, "old-access"),
+	}
+	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", "refresh-token")
+	repo.accounts[0].AccessTokenExpiresAt = &expiresAt
+	service := newConfiguredService(repo, fakeOAuthClient{
+		refresh: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+		},
+		probe: probeResult{
+			statusCode: http.StatusTooManyRequests,
+			retryAfter: "120",
+			message:    "usage limit reached",
+		},
+	})
+
+	account, err := service.RefreshAccount(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("RefreshAccount returned error: %v", err)
+	}
+	if account.Status != AccountStatusRateLimited {
+		t.Fatalf("Status = %q, want rate_limited", account.Status)
+	}
+	if account.StatusReason != "usage limit reached" || account.LastError != "usage limit reached" {
+		t.Fatalf("account failure message not recorded: %+v", account)
+	}
+	if account.RateLimitedUntil == nil || !account.RateLimitedUntil.After(time.Now().Add(100*time.Second)) {
+		t.Fatalf("RateLimitedUntil = %v, want retry-after window", account.RateLimitedUntil)
+	}
+}
+
 func TestRecordAccountFailureMapsUpstreamStatusesToAccountState(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
@@ -1212,6 +1249,7 @@ type fakeOAuthClient struct {
 	exchanges   []TokenResponse
 	exchangeErr error
 	refresh     TokenResponse
+	probe       probeResult
 	refreshErr  error
 }
 
@@ -1244,6 +1282,13 @@ func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshTo
 		return TokenResponse{}, c.refreshErr
 	}
 	return c.refresh, nil
+}
+
+func (c fakeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
+	if c.probe.statusCode == 0 {
+		return probeResult{statusCode: http.StatusOK}, nil
+	}
+	return c.probe, nil
 }
 
 type blockingOAuthClient struct {
