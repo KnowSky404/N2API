@@ -4,8 +4,6 @@
     completeProviderCallback,
     connectProvider,
     copyAuthorizationURL,
-    copySecret,
-    createKey,
     disconnectProviderAccount,
     formatDate,
     getProviderStateLabel,
@@ -23,7 +21,96 @@
     updateProviderAccountPriority
   } from '$lib/admin-state.svelte.js';
 
+  let accountSearch = $state('');
+  let accountSort = $state({ key: 'priority', direction: 'asc' });
+
   const providerStateLabel = $derived(getProviderStateLabel());
+  const filteredProviderAccounts = $derived(
+    sortProviderAccounts(
+      providerAccounts.items.filter((account) => {
+        const query = accountSearch.trim().toLowerCase();
+        if (!query) return true;
+        return accountSearchText(account).includes(query);
+      })
+    )
+  );
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function accountSearchText(account) {
+    return [
+      account.name,
+      account.displayName,
+      account.subject,
+      account.provider,
+      statusLabel(account.status),
+      account.statusReason,
+      account.lastError
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount[]} accounts
+   */
+  function sortProviderAccounts(accounts) {
+    return [...accounts].sort((left, right) => {
+      const leftValue = accountSortValue(left, accountSort.key);
+      const rightValue = accountSortValue(right, accountSort.key);
+      const result =
+        typeof leftValue === 'number' && typeof rightValue === 'number'
+          ? leftValue - rightValue
+          : String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true, sensitivity: 'base' });
+      return accountSort.direction === 'asc' ? result : -result;
+    });
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {string} key
+   */
+  function accountSortValue(account, key) {
+    if (key === 'account') return accountLabel(account);
+    if (key === 'status') return statusLabel(account.status);
+    if (key === 'enabled') return account.enabled ? 0 : 1;
+    if (key === 'priority') return account.priority ?? 0;
+    if (key === 'expires') return Date.parse(account.accessTokenExpiresAt ?? '') || 0;
+    if (key === 'refresh') return Date.parse(account.lastRefreshAt ?? '') || 0;
+    if (key === 'used') return Date.parse(account.lastUsedAt ?? '') || 0;
+    return '';
+  }
+
+  /** @param {string} key */
+  function setProviderAccountSort(key) {
+    accountSort =
+      accountSort.key === key
+        ? { key, direction: accountSort.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: 'asc' };
+  }
+
+  /** @param {string} key */
+  function providerAccountSortDirection(key) {
+    if (accountSort.key !== key) return 'none';
+    return accountSort.direction === 'asc' ? 'ascending' : 'descending';
+  }
+
+  /** @param {string} key */
+  function sortIndicator(key) {
+    if (accountSort.key !== key) return '';
+    return accountSort.direction === 'asc' ? ' Asc' : ' Desc';
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function accountSecondaryLabel(account) {
+    const label = account.displayName?.trim();
+    if (!label || label === accountLabel(account)) return '';
+
+    const duplicateLabels = [statusLabel(account.status), account.statusReason]
+      .filter(Boolean)
+      .map((value) => value.toLowerCase());
+    return duplicateLabels.includes(label.toLowerCase()) ? '' : label;
+  }
 </script>
 
 <svelte:head>
@@ -120,14 +207,6 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   onclick={loadProviderAccounts}
 >
   {providerAccounts.loading ? 'Refreshing' : 'Refresh'}
-</button>
-<button
-  class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-  type="button"
-  disabled={provider.loading || !provider.data?.configured || provider.connecting}
-  onclick={() => connectProvider()}
->
-  {provider.connecting ? 'Generating link' : 'Connect account'}
 </button>
     </div>
   </div>
@@ -230,18 +309,61 @@ disabled={provider.loading || !provider.data?.configured || provider.connecting}
     </p>
   {/if}
 
+  <div class="mt-6 flex flex-wrap items-end justify-between gap-3">
+    <label class="grid min-w-[240px] flex-1 gap-1 text-sm font-medium text-[#3c3c3c]">
+Search
+<input
+  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  type="search"
+  placeholder="Search accounts"
+  bind:value={accountSearch}
+/>
+    </label>
+    <p class="pb-2 text-sm text-[#6e6e6e]">
+Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
+    </p>
+  </div>
+
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[980px] text-left text-sm">
+    <table class="w-full min-w-[1120px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
-    <th class="px-4 py-3 font-medium">Account</th>
-    <th class="px-4 py-3 font-medium">Status</th>
-    <th class="px-4 py-3 font-medium">Enabled</th>
-    <th class="px-4 py-3 font-medium">Priority</th>
-    <th class="px-4 py-3 font-medium">Token expiry</th>
-    <th class="px-4 py-3 font-medium">Last refresh</th>
-    <th class="px-4 py-3 font-medium">Last used</th>
-    <th class="px-4 py-3 text-right font-medium">Action</th>
+    <th class="px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('account')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('account')}>
+        Account<span class="text-[11px]">{sortIndicator('account')}</span>
+      </button>
+    </th>
+    <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('status')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('status')}>
+        Status<span class="text-[11px]">{sortIndicator('status')}</span>
+      </button>
+    </th>
+    <th class="w-32 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('enabled')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('enabled')}>
+        Enabled<span class="text-[11px]">{sortIndicator('enabled')}</span>
+      </button>
+    </th>
+    <th class="w-28 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('priority')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('priority')}>
+        Priority<span class="text-[11px]">{sortIndicator('priority')}</span>
+      </button>
+    </th>
+    <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('expires')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('expires')}>
+        Token expiry<span class="text-[11px]">{sortIndicator('expires')}</span>
+      </button>
+    </th>
+    <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('refresh')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('refresh')}>
+        Last refresh<span class="text-[11px]">{sortIndicator('refresh')}</span>
+      </button>
+    </th>
+    <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('used')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('used')}>
+        Last used<span class="text-[11px]">{sortIndicator('used')}</span>
+      </button>
+    </th>
+    <th class="sticky right-0 z-10 w-[280px] bg-[#f5f5f5] px-4 py-3 text-right font-medium shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
   </tr>
 </thead>
 <tbody class="divide-y divide-[#ededed]">
@@ -253,15 +375,19 @@ disabled={provider.loading || !provider.data?.configured || provider.connecting}
     <tr>
       <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No provider accounts connected yet.</td>
     </tr>
+  {:else if filteredProviderAccounts.length === 0}
+    <tr>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No accounts match your search.</td>
+    </tr>
   {:else}
-    {#each providerAccounts.items as account}
+    {#each filteredProviderAccounts as account}
       <tr class="bg-white align-top">
-        <td class="px-4 py-3">
+        <td class="px-4 py-3 align-middle">
           <p class="font-medium text-[#0d0d0d]">
             {accountLabel(account)}
           </p>
-          {#if account.displayName && account.displayName !== accountLabel(account)}
-            <p class="mt-1 text-[#3c3c3c]">{account.displayName}</p>
+          {#if accountSecondaryLabel(account)}
+            <p class="mt-1 text-[#3c3c3c]">{accountSecondaryLabel(account)}</p>
           {/if}
           <p class="mt-1 font-mono text-[13px] text-[#6e6e6e]">
             {account.subject || account.provider}
@@ -275,10 +401,10 @@ disabled={provider.loading || !provider.data?.configured || provider.connecting}
             </p>
           {/if}
         </td>
-        <td class="px-4 py-3">
+        <td class="px-4 py-3 align-middle">
           <span
             class={[
-              'inline-flex rounded-full px-2.5 py-1 text-xs font-medium capitalize',
+              'inline-flex max-w-full whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium capitalize',
               account.status === 'active' || !account.status
                 ? 'bg-[#e8f5f0] text-[#0a7a5e]'
                 : account.status === 'disabled'
@@ -289,16 +415,16 @@ disabled={provider.loading || !provider.data?.configured || provider.connecting}
             {statusLabel(account.status)}
           </span>
           {#if account.statusReason}
-            <p class="mt-2 text-xs text-[#6e6e6e]">{account.statusReason}</p>
+            <p class="mt-1 max-w-[11rem] truncate text-xs text-[#6e6e6e]" title={account.statusReason}>{account.statusReason}</p>
           {/if}
           {#if account.circuitOpenUntil}
-            <p class="mt-2 text-xs text-amber-700">Circuit until {formatDate(account.circuitOpenUntil)}</p>
+            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700" title={`Circuit until ${formatDate(account.circuitOpenUntil)}`}>Circuit until {formatDate(account.circuitOpenUntil)}</p>
           {/if}
           {#if account.rateLimitedUntil}
-            <p class="mt-2 text-xs text-amber-700">Rate limited until {formatDate(account.rateLimitedUntil)}</p>
+            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700" title={`Rate limited until ${formatDate(account.rateLimitedUntil)}`}>Rate limited until {formatDate(account.rateLimitedUntil)}</p>
           {/if}
         </td>
-        <td class="px-4 py-3">
+        <td class="px-4 py-3 align-middle">
           <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
             <input
               class="size-4 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
@@ -313,7 +439,7 @@ disabled={provider.loading || !provider.data?.configured || provider.connecting}
             {account.enabled ? 'Enabled' : 'Disabled'}
           </label>
         </td>
-        <td class="px-4 py-3">
+        <td class="px-4 py-3 align-middle">
           <label class="sr-only" for={`provider-account-priority-${account.id}`}>
             Priority for {account.displayName || account.subject || account.provider}
           </label>
@@ -328,11 +454,11 @@ disabled={provider.loading || !provider.data?.configured || provider.connecting}
             onchange={(event) => updateProviderAccountPriority(account, event)}
           />
         </td>
-        <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
-        <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
-        <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
-        <td class="px-4 py-3">
-          <div class="flex justify-end gap-2">
+        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
+        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
+        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
+        <td class="sticky right-0 bg-white px-4 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+          <div class="flex justify-end gap-2 whitespace-nowrap">
             <button
               class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
