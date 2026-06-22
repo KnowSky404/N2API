@@ -11,14 +11,15 @@
     loadProviderAccounts,
     login,
     loginForm,
-    parseAccountModelsText,
     provider,
     providerAccounts,
     providerConnectForm,
     providerOAuth,
     refreshProviderAccount,
+    removeAccountModel,
     saveAccountModels,
     session,
+    setAccountModelEnabled,
     statusLabel,
     updateProviderAccount,
     updateProviderAccountPriority
@@ -135,9 +136,9 @@
       .join('\n');
   }
 
-  /** @param {string} text */
-  function enabledAccountModelCount(text) {
-    return parseAccountModelsText(text).length;
+  /** @param {import('$lib/admin-state.svelte.js').AccountModel[]} models */
+  function enabledAccountModelCount(models) {
+    return models.filter((model) => model.enabled).length;
   }
 </script>
 
@@ -411,7 +412,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
   {:else}
     {#each filteredProviderAccounts as account}
       {@const modelState = getAccountModelsState(account.id)}
-      {@const enabledModels = enabledAccountModelCount(modelState.text)}
+      {@const enabledModels = enabledAccountModelCount(modelState.items)}
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle" title={accountHoverDetail(account)}>
           <p class="max-w-[18rem] truncate font-medium text-[#0d0d0d]">
@@ -504,12 +505,50 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             </label>
             <textarea
               id={`provider-account-models-${account.id}`}
-              class="min-h-24 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
               placeholder={'gpt-4.1\ngpt-4.1-mini'}
               bind:value={modelState.text}
               disabled={modelState.loading || modelState.saving}
             ></textarea>
-            <p class="text-xs text-[#6e6e6e]">One model per line.</p>
+            <p class="text-xs text-[#6e6e6e]">Add new models, one per line. Existing rows keep their enabled state.</p>
+            {#if modelState.items.length > 0}
+              <div class="grid max-h-44 gap-1 overflow-y-auto rounded-lg border border-[#ededed] bg-[#fafafa] p-2">
+                {#each modelState.items as configuredModel (configuredModel.model)}
+                  <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                    <label class="inline-flex min-w-0 items-center gap-2 text-xs text-[#3c3c3c]">
+                      <input
+                        class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
+                        type="checkbox"
+                        checked={configuredModel.enabled}
+                        disabled={modelState.loading || modelState.saving}
+                        aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
+                        onchange={(event) => {
+                          modelState.items = setAccountModelEnabled(
+                            modelState.items,
+                            configuredModel.model,
+                            event.currentTarget.checked
+                          );
+                          modelState.saved = false;
+                        }}
+                      />
+                      <span class="truncate font-mono text-[13px] text-[#0d0d0d]">{configuredModel.model}</span>
+                    </label>
+                    <span class="w-12 text-xs text-[#6e6e6e]">{configuredModel.enabled ? 'On' : 'Off'}</span>
+                    <button
+                      class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                      type="button"
+                      disabled={modelState.loading || modelState.saving}
+                      onclick={() => {
+                        modelState.items = removeAccountModel(modelState.items, configuredModel.model);
+                        modelState.saved = false;
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
             {#if !modelState.loading && enabledModels === 0}
               <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
                 This account cannot receive model-routed POST traffic until at least one enabled model is saved.

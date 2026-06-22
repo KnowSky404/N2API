@@ -5,9 +5,14 @@ import { mock } from 'bun:test';
 
 globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
-const { parseAccountModelsText, pruneAccountModelStates, shouldApplyAccountModelsResponse } = await import(
-  '../../lib/admin-state.svelte.js'
-);
+const {
+  mergeAccountModelChanges,
+  parseAccountModelsText,
+  pruneAccountModelStates,
+  removeAccountModel,
+  setAccountModelEnabled,
+  shouldApplyAccountModelsResponse
+} = await import('../../lib/admin-state.svelte.js');
 
 const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const modelsSource = readFileSync('src/routes/models/+page.svelte', 'utf8');
@@ -16,6 +21,41 @@ test('parseAccountModelsText trims blanks and dedupes by first occurrence', () =
   assert.deepEqual(parseAccountModelsText('  gpt-5\n\n gpt-5-mini \ngpt-5\n codex-mini \n'), [
     { model: 'gpt-5', enabled: true },
     { model: 'gpt-5-mini', enabled: true },
+    { model: 'codex-mini', enabled: true }
+  ]);
+});
+
+test('mergeAccountModelChanges preserves disabled rows and adds textarea rows enabled', () => {
+  assert.deepEqual(
+    mergeAccountModelChanges(
+      [
+        { model: 'gpt-5', enabled: false },
+        { model: 'gpt-5-mini', enabled: true }
+      ],
+      ' gpt-5 \n codex-mini \n'
+    ),
+    [
+      { model: 'gpt-5', enabled: false },
+      { model: 'gpt-5-mini', enabled: true },
+      { model: 'codex-mini', enabled: true }
+    ]
+  );
+});
+
+test('account model helpers toggle and remove configured rows without changing other rows', () => {
+  const rows = [
+    { model: 'gpt-5', enabled: false },
+    { model: 'gpt-5-mini', enabled: true },
+    { model: 'codex-mini', enabled: true }
+  ];
+
+  assert.deepEqual(setAccountModelEnabled(rows, 'gpt-5', true), [
+    { model: 'gpt-5', enabled: true },
+    { model: 'gpt-5-mini', enabled: true },
+    { model: 'codex-mini', enabled: true }
+  ]);
+  assert.deepEqual(removeAccountModel(rows, 'gpt-5-mini'), [
+    { model: 'gpt-5', enabled: false },
     { model: 'codex-mini', enabled: true }
   ]);
 });
@@ -60,6 +100,8 @@ test('provider account rows use compact controls and hover details', () => {
 test('provider account rows expose manual model controls and routing warning', () => {
   assert.match(source, /Manual models/);
   assert.match(source, /saveAccountModels\(account\.id/);
+  assert.match(source, /setAccountModelEnabled/);
+  assert.match(source, /removeAccountModel/);
   assert.match(source, /cannot receive model-routed POST traffic/);
 });
 

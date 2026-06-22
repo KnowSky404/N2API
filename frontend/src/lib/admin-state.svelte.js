@@ -163,6 +163,44 @@ export function parseAccountModelsText(value) {
 }
 
 /**
+ * @param {Array<Partial<AccountModel> & { model: string, enabled?: boolean }>} models
+ * @param {string | null | undefined} text
+ */
+export function mergeAccountModelChanges(models, text) {
+  const seen = new Set();
+  const merged = [];
+  for (const item of models) {
+    const model = String(item.model ?? '').trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    merged.push({ model, enabled: item.enabled !== false });
+  }
+  for (const item of parseAccountModelsText(text)) {
+    if (seen.has(item.model)) continue;
+    seen.add(item.model);
+    merged.push(item);
+  }
+  return merged;
+}
+
+/**
+ * @param {AccountModel[]} models
+ * @param {string} modelName
+ * @param {boolean} enabled
+ */
+export function setAccountModelEnabled(models, modelName, enabled) {
+  return models.map((item) => (item.model === modelName ? { ...item, enabled } : item));
+}
+
+/**
+ * @param {AccountModel[]} models
+ * @param {string} modelName
+ */
+export function removeAccountModel(models, modelName) {
+  return models.filter((item) => item.model !== modelName);
+}
+
+/**
  * @param {{ requestSeq: number }} state
  * @param {number} requestSeq
  */
@@ -501,10 +539,7 @@ function ensureAccountModelsState(accountId) {
 
 /** @param {AccountModel[]} models */
 function accountModelsText(models) {
-  return models
-    .filter((model) => model.enabled)
-    .map((model) => model.model)
-    .join('\n');
+  return '';
 }
 
 /** @param {number} accountId */
@@ -558,7 +593,7 @@ export async function saveAccountModels(accountId, text) {
   try {
     const payload = await requestJSON(`/api/admin/providers/openai/accounts/${accountId}/models`, {
       method: 'PUT',
-      body: JSON.stringify({ models: parseAccountModelsText(text) })
+      body: JSON.stringify({ models: mergeAccountModelChanges(state.items, text) })
     });
     if (!isCurrentAuthenticated(version)) return;
     if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
