@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/provider"
@@ -25,6 +26,18 @@ const providerAccountColumns = `
 	last_error, last_error_at, metadata, status, status_reason, fingerprint_hash, user_agent_hash,
 	ip_hash, failure_count, circuit_open_until, rate_limited_until, last_refresh_error,
 	last_refresh_error_at, created_at, updated_at
+`
+
+const providerAccountColumnsFromAlias = `
+	a.id, a.provider, a.subject, a.name, a.display_name, a.encrypted_access_token, a.encrypted_refresh_token,
+	a.encrypted_id_token, a.access_token_expires_at, a.last_refresh_at, a.enabled, a.priority, a.last_used_at,
+	a.last_error, a.last_error_at, a.metadata, a.status, a.status_reason, a.fingerprint_hash, a.user_agent_hash,
+	a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until, a.last_refresh_error,
+	a.last_refresh_error_at, a.created_at, a.updated_at
+`
+
+const providerAccountModelColumns = `
+	id, account_id, provider, model, enabled, source, last_seen_at, last_error, metadata, created_at, updated_at
 `
 
 func scanProviderAccount(row pgx.Row) (provider.Account, error) {
@@ -60,6 +73,24 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.UpdatedAt,
 	)
 	return account, err
+}
+
+func scanProviderAccountModel(row pgx.Row) (provider.AccountModel, error) {
+	var model provider.AccountModel
+	err := row.Scan(
+		&model.ID,
+		&model.AccountID,
+		&model.Provider,
+		&model.Model,
+		&model.Enabled,
+		&model.Source,
+		&model.LastSeenAt,
+		&model.LastError,
+		&model.Metadata,
+		&model.CreatedAt,
+		&model.UpdatedAt,
+	)
+	return model, err
 }
 
 func (r *ProviderRepository) ListAccounts(ctx context.Context, providerName string) ([]provider.Account, error) {
@@ -417,6 +448,195 @@ func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerNa
 	return err
 }
 
+func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName string, accountID int64) ([]provider.AccountModel, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+providerAccountModelColumns+`
+		FROM oauth_account_models
+		WHERE provider = $1
+			AND account_id = $2
+		ORDER BY model ASC
+	`, providerName, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	models := []provider.AccountModel{}
+	for rows.Next() {
+		model, err := scanProviderAccountModel(rows)
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, model)
+	}
+	return models, rows.Err()
+}
+
+func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput) ([]provider.AccountModel, error) {
+	models, err := normalizeAccountModelInputs(inputs)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var existingID int64
+	err = tx.QueryRow(ctx, `
+		SELECT id
+		FROM oauth_accounts
+		WHERE provider = $1
+			AND id = $2
+	`, providerName, accountID).Scan(&existingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, provider.ErrNotConnected
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		DELETE FROM oauth_account_models
+		WHERE provider = $1
+			AND account_id = $2
+			AND source = $3
+	`, providerName, accountID, provider.AccountModelSourceManual)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, model := range models {
+		_, err = tx.Exec(ctx, `
+			INSERT INTO oauth_account_models (
+				account_id, provider, model, enabled, source, metadata, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, now())
+		`, accountID, providerName, model.Model, model.Enabled, provider.AccountModelSourceManual)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT `+providerAccountModelColumns+`
+		FROM oauth_account_models
+		WHERE provider = $1
+			AND account_id = $2
+		ORDER BY model ASC
+	`, providerName, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	saved := []provider.AccountModel{}
+	for rows.Next() {
+		model, err := scanProviderAccountModel(rows)
+		if err != nil {
+			return nil, err
+		}
+		saved = append(saved, model)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
+func (r *ProviderRepository) ListExposedModels(ctx context.Context, providerName string, allowedModels []string) ([]provider.ExposedModel, error) {
+	allowed := normalizeAllowedModels(allowedModels)
+	if len(allowed) == 0 {
+		return []provider.ExposedModel{}, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT m.model
+		FROM oauth_account_models m
+		JOIN oauth_accounts a ON a.id = m.account_id
+			AND a.provider = m.provider
+		WHERE m.provider = $1
+			AND m.enabled = true
+			AND m.model = ANY($2)
+			AND a.enabled = true
+			AND a.status <> 'disabled'
+			AND (a.access_token_expires_at IS NULL OR a.access_token_expires_at > now())
+			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= now())
+			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= now())
+	`, providerName, allowed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	available := map[string]bool{}
+	for rows.Next() {
+		var model string
+		if err := rows.Scan(&model); err != nil {
+			return nil, err
+		}
+		available[model] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	exposed := []provider.ExposedModel{}
+	for _, model := range allowed {
+		if available[model] {
+			exposed = append(exposed, provider.ExposedModel{ID: model, OwnedBy: "openai"})
+		}
+	}
+	return exposed, nil
+}
+
+func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, providerName string, model string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return []provider.Account{}, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+providerAccountColumnsFromAlias+`
+		FROM oauth_accounts a
+		JOIN oauth_account_models m ON m.account_id = a.id
+			AND m.provider = a.provider
+		WHERE a.provider = $1
+			AND m.model = $2
+			AND m.enabled = true
+			AND a.enabled = true
+			AND a.status <> 'disabled'
+			AND (a.access_token_expires_at IS NULL OR a.access_token_expires_at > $3)
+			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= $3)
+			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= $3)
+			AND ($4::bigint[] IS NULL OR cardinality($4::bigint[]) = 0 OR NOT (a.id = ANY($4::bigint[])))
+		ORDER BY
+			a.priority ASC,
+			a.last_used_at ASC NULLS FIRST,
+			a.id ASC
+	`, providerName, model, now, excludedAccountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	accounts := []provider.Account{}
+	for rows.Next() {
+		account, err := scanProviderAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	return accounts, rows.Err()
+}
+
 func (r *ProviderRepository) CreateState(ctx context.Context, state provider.OAuthState) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO oauth_states (
@@ -465,6 +685,46 @@ func (r *ProviderRepository) ClaimState(ctx context.Context, providerName, state
 		return provider.OAuthState{}, err
 	}
 	return state, nil
+}
+
+func normalizeAccountModelInputs(inputs []provider.AccountModelInput) ([]provider.AccountModelInput, error) {
+	models := make([]provider.AccountModelInput, 0, len(inputs))
+	seen := map[string]bool{}
+	for _, input := range inputs {
+		model := strings.TrimSpace(input.Model)
+		if model == "" {
+			continue
+		}
+		if len(model) > 128 {
+			return nil, provider.ErrInvalidInput
+		}
+		if seen[model] {
+			continue
+		}
+		seen[model] = true
+		models = append(models, provider.AccountModelInput{
+			Model:   model,
+			Enabled: input.Enabled,
+		})
+		if len(models) > 100 {
+			return nil, provider.ErrInvalidInput
+		}
+	}
+	return models, nil
+}
+
+func normalizeAllowedModels(inputs []string) []string {
+	models := make([]string, 0, len(inputs))
+	seen := map[string]bool{}
+	for _, input := range inputs {
+		model := strings.TrimSpace(input)
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		models = append(models, model)
+	}
+	return models
 }
 
 func metadataJSON(metadata map[string]string) []byte {
