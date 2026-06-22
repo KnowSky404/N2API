@@ -502,6 +502,70 @@ func TestProxyRoutesAPIUpstreamAccountToConfiguredBaseURLAndToken(t *testing.T) 
 	}
 }
 
+func TestProxyRoutesAPIUpstreamResponsesCreateWithoutCodexTransform(t *testing.T) {
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("default upstream should not be called for API upstream responses create")
+	}))
+	defer defaultUpstream.Close()
+	var gotPath string
+	var gotAuthorization string
+	var gotChatGPTAccountID string
+	var gotOpenAIBeta string
+	var gotOriginator string
+	var gotBody map[string]any
+	apiUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuthorization = r.Header.Get("Authorization")
+		gotChatGPTAccountID = r.Header.Get("chatgpt-account-id")
+		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
+		gotOriginator = r.Header.Get("originator")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("Unmarshal body returned error: %v; body=%s", err, string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_api"}`))
+	}))
+	defer apiUpstream.Close()
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID:          9,
+		AccountType:        provider.AccountTypeAPIUpstream,
+		AuthorizationToken: "sk-upstream",
+		BaseURL:            apiUpstream.URL,
+	}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		UpstreamBaseURL:       defaultUpstream.URL,
+		CodexResponsesBaseURL: "http://codex.invalid",
+		ModelProvider:         fakeModelProvider{defaultModel: "gpt-5", allowedModels: []string{"gpt-5"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi","stream":false}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if gotPath != "/v1/responses" {
+		t.Fatalf("path = %q, want API upstream responses path", gotPath)
+	}
+	if gotAuthorization != "Bearer sk-upstream" {
+		t.Fatalf("Authorization = %q, want upstream API key", gotAuthorization)
+	}
+	if gotChatGPTAccountID != "" || gotOpenAIBeta != "" || gotOriginator != "" {
+		t.Fatalf("codex headers = chatgpt:%q beta:%q originator:%q, want none", gotChatGPTAccountID, gotOpenAIBeta, gotOriginator)
+	}
+	if gotBody["stream"] != false || gotBody["store"] != nil {
+		t.Fatalf("body = %+v, want original API upstream body without codex normalization", gotBody)
+	}
+}
+
 func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 	var gotPath string
 	var gotAuthorization string
