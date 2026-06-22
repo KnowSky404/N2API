@@ -636,6 +636,54 @@ func (s *Service) Disconnect(ctx context.Context) error {
 	return s.repo.DeleteAccounts(ctx, s.cfg.Provider)
 }
 
+func normalizeAccountModelInputs(inputs []AccountModelInput) ([]AccountModelInput, error) {
+	models := make([]AccountModelInput, 0, len(inputs))
+	seen := map[string]bool{}
+	for _, input := range inputs {
+		model := strings.TrimSpace(input.Model)
+		if model == "" {
+			continue
+		}
+		if len(model) > maxModelNameLen {
+			return nil, ErrInvalidInput
+		}
+		if seen[model] {
+			continue
+		}
+		seen[model] = true
+		models = append(models, AccountModelInput{
+			Model:   model,
+			Enabled: input.Enabled,
+		})
+		if len(models) > maxAccountModels {
+			return nil, ErrInvalidInput
+		}
+	}
+	return models, nil
+}
+
+func (s *Service) ListAccountModels(ctx context.Context, accountID int64) ([]AccountModel, error) {
+	if accountID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	return s.repo.ListAccountModels(ctx, s.cfg.Provider, accountID)
+}
+
+func (s *Service) ReplaceAccountModels(ctx context.Context, accountID int64, models []AccountModelInput) ([]AccountModel, error) {
+	if accountID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	normalized, err := normalizeAccountModelInputs(models)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ReplaceAccountModels(ctx, s.cfg.Provider, accountID, normalized)
+}
+
+func (s *Service) ListExposedModels(ctx context.Context, allowedModels []string) ([]ExposedModel, error) {
+	return s.repo.ListExposedModels(ctx, s.cfg.Provider, allowedModels)
+}
+
 func (s *Service) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
 	if accountID <= 0 {
 		return ErrInvalidInput
@@ -734,7 +782,7 @@ func isAccountFailureStatus(statusCode int) bool {
 }
 
 func (s *Service) AccessToken(ctx context.Context) (string, error) {
-	selected, err := s.SelectAccessToken(ctx)
+	selected, err := s.SelectAccessToken(ctx, "")
 	if err != nil {
 		return "", err
 	}
@@ -786,38 +834,16 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 	return secret.DecryptString(s.cfg.Secret, refreshed.EncryptedAccessToken)
 }
 
-func (s *Service) SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error) {
+func (s *Service) SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedToken, error) {
 	if !s.Configured() {
 		return SelectedToken{}, ErrNotConfigured
 	}
 
-	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
 	if err != nil {
 		return SelectedToken{}, err
 	}
-	if len(accounts) == 0 {
-		return SelectedToken{}, ErrNotConnected
-	}
-
-	excluded := make(map[int64]struct{}, len(excludedAccountIDs))
-	for _, id := range excludedAccountIDs {
-		if id > 0 {
-			excluded[id] = struct{}{}
-		}
-	}
-
-	hasEnabled := false
 	for _, account := range accounts {
-		if !account.Enabled {
-			continue
-		}
-		hasEnabled = true
-		if _, ok := excluded[account.ID]; ok {
-			continue
-		}
-		if !accountSchedulable(account, time.Now()) {
-			continue
-		}
 		token, err := s.AccessTokenForAccount(ctx, account)
 		if err != nil {
 			if markErr := s.repo.MarkAccountError(ctx, s.cfg.Provider, account.ID, err.Error(), time.Now()); markErr != nil {
@@ -837,7 +863,61 @@ func (s *Service) SelectAccessToken(ctx context.Context, excludedAccountIDs ...i
 	if !hasEnabled {
 		return SelectedToken{}, ErrAccountsDisabled
 	}
-	return SelectedToken{}, ErrAccountsUnavailable
+	return SelectedToken{}, notFoundErr
+}
+
+func (s *Service) selectionCandidates(ctx context.Context, model string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		accounts, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, normalizedExcludedAccountIDs(excludedAccountIDs), time.Now())
+		if err != nil {
+			return nil, false, ErrModelUnavailable, err
+		}
+		return accounts, true, ErrModelUnavailable, nil
+	}
+
+	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
+	if err != nil {
+		return nil, false, ErrAccountsUnavailable, err
+	}
+	if len(accounts) == 0 {
+		return nil, false, ErrAccountsUnavailable, ErrNotConnected
+	}
+
+	excluded := make(map[int64]struct{}, len(excludedAccountIDs))
+	for _, id := range excludedAccountIDs {
+		if id > 0 {
+			excluded[id] = struct{}{}
+		}
+	}
+
+	candidates := make([]Account, 0, len(accounts))
+	hasEnabled := false
+	now := time.Now()
+	for _, account := range accounts {
+		if !account.Enabled {
+			continue
+		}
+		hasEnabled = true
+		if _, ok := excluded[account.ID]; ok {
+			continue
+		}
+		if !accountSchedulable(account, now) {
+			continue
+		}
+		candidates = append(candidates, account)
+	}
+	return candidates, hasEnabled, ErrAccountsUnavailable, nil
+}
+
+func normalizedExcludedAccountIDs(ids []int64) []int64 {
+	excluded := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			excluded = append(excluded, id)
+		}
+	}
+	return excluded
 }
 
 func (s *Service) lockAccountRefresh(accountID int64) func() {

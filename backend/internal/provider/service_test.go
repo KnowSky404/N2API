@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -678,7 +679,7 @@ func TestSelectAccessTokenSkipsDisabledAndUsesPriority(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background())
+	selected, err := service.SelectAccessToken(context.Background(), "")
 	if err != nil {
 		t.Fatalf("SelectAccessToken returned error: %v", err)
 	}
@@ -693,7 +694,7 @@ func TestSelectAccessTokenReturnsChatGPTAccountMetadata(t *testing.T) {
 	repo.accounts[0].Metadata = map[string]string{"chatgpt_account_id": "acct_chatgpt"}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background())
+	selected, err := service.SelectAccessToken(context.Background(), "")
 	if err != nil {
 		t.Fatalf("SelectAccessToken returned error: %v", err)
 	}
@@ -721,7 +722,7 @@ func TestSelectAccessTokenSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testi
 	repo.accounts[2].Status = AccountStatusExpired
 	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
 
-	selected, err := service.SelectAccessToken(context.Background())
+	selected, err := service.SelectAccessToken(context.Background(), "")
 	if err != nil {
 		t.Fatalf("SelectAccessToken returned error: %v", err)
 	}
@@ -740,7 +741,7 @@ func TestSelectAccessTokenAllowsExpiredRateLimitAndCircuitWindows(t *testing.T) 
 	repo.accounts[0].RateLimitedUntil = &past
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background())
+	selected, err := service.SelectAccessToken(context.Background(), "")
 	if err != nil {
 		t.Fatalf("SelectAccessToken returned error: %v", err)
 	}
@@ -750,7 +751,7 @@ func TestSelectAccessTokenAllowsExpiredRateLimitAndCircuitWindows(t *testing.T) 
 
 	repo.accounts[0].Status = AccountStatusCircuitOpen
 	repo.accounts[0].CircuitOpenUntil = &past
-	selected, err = service.SelectAccessToken(context.Background())
+	selected, err = service.SelectAccessToken(context.Background(), "")
 	if err != nil {
 		t.Fatalf("SelectAccessToken after circuit window returned error: %v", err)
 	}
@@ -912,7 +913,7 @@ func TestSelectAccessTokenUsesPriorityOrder(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background())
+	selected, err := service.SelectAccessToken(context.Background(), "")
 	if err != nil {
 		t.Fatalf("SelectAccessToken returned error: %v", err)
 	}
@@ -929,12 +930,130 @@ func TestSelectAccessTokenSkipsExcludedAccount(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), 1)
+	selected, err := service.SelectAccessToken(context.Background(), "", 1)
 	if err != nil {
 		t.Fatalf("SelectAccessToken returned error: %v", err)
 	}
 	if selected.AccountID != 2 || selected.Token != "fallback-token" {
 		t.Fatalf("selected = %+v, want account 2 fallback-token", selected)
+	}
+}
+
+func TestSelectAccessTokenFiltersByRequestedModel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "gpt-4.1-token"),
+		testAccount(t, 2, true, 2, "gpt-5-token"),
+	}
+	repo.accountModels = map[int64][]AccountModel{
+		1: {{AccountID: 1, Provider: "openai", Model: "gpt-4.1", Enabled: true}},
+		2: {{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background(), "gpt-5")
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.Token != "gpt-5-token" {
+		t.Fatalf("selected = %+v, want account 2 gpt-5-token", selected)
+	}
+}
+
+func TestSelectAccessTokenReturnsModelUnavailableWhenNoAccountSupportsModel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "access-token"),
+	}
+	repo.accountModels = map[int64][]AccountModel{
+		1: {{AccountID: 1, Provider: "openai", Model: "gpt-4.1", Enabled: true}},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccessToken(context.Background(), "gpt-5"); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("SelectAccessToken error = %v, want ErrModelUnavailable", err)
+	}
+}
+
+func TestSelectAccessTokenIgnoresDisabledModelRows(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "disabled-model-token"),
+		testAccount(t, 2, true, 2, "enabled-model-token"),
+	}
+	repo.accountModels = map[int64][]AccountModel{
+		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: false}},
+		2: {{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background(), "gpt-5")
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.Token != "enabled-model-token" {
+		t.Fatalf("selected = %+v, want enabled model account 2", selected)
+	}
+}
+
+func TestSelectAccessTokenRespectsExcludedAccountIDsWithModelFilter(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 2, "fallback-token"),
+	}
+	repo.accountModels = map[int64][]AccountModel{
+		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}},
+		2: {{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccessToken(context.Background(), "gpt-5", 1)
+	if err != nil {
+		t.Fatalf("SelectAccessToken returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.Token != "fallback-token" {
+		t.Fatalf("selected = %+v, want non-excluded account 2", selected)
+	}
+}
+
+func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 7, true, 1, "access-token"),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	models, err := service.ReplaceAccountModels(context.Background(), 7, []AccountModelInput{
+		{Model: " gpt-5 ", Enabled: false},
+		{Model: "", Enabled: true},
+		{Model: "gpt-4.1", Enabled: true},
+		{Model: "gpt-5", Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+	if got := modelNamesAndEnabled(models); strings.Join(got, ",") != "gpt-4.1:true,gpt-5:false" {
+		t.Fatalf("models = %v, want normalized sorted unique models", got)
+	}
+
+	listed, err := service.ListAccountModels(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("ListAccountModels returned error: %v", err)
+	}
+	if got := modelNamesAndEnabled(listed); strings.Join(got, ",") != "gpt-4.1:true,gpt-5:false" {
+		t.Fatalf("listed models = %v, want saved normalized models", got)
+	}
+
+	if _, err := service.ReplaceAccountModels(context.Background(), 7, []AccountModelInput{{Model: strings.Repeat("x", maxModelNameLen+1), Enabled: true}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ReplaceAccountModels long model error = %v, want ErrInvalidInput", err)
+	}
+	tooMany := make([]AccountModelInput, maxAccountModels+1)
+	for i := range tooMany {
+		tooMany[i] = AccountModelInput{Model: "model-" + strconv.Itoa(i), Enabled: true}
+	}
+	if _, err := service.ReplaceAccountModels(context.Background(), 7, tooMany); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ReplaceAccountModels too many models error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -945,7 +1064,7 @@ func TestSelectAccessTokenReturnsUnavailableWhenAllEnabledAccountsExcluded(t *te
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccessToken(context.Background(), 1); !errors.Is(err, ErrAccountsUnavailable) {
+	if _, err := service.SelectAccessToken(context.Background(), "", 1); !errors.Is(err, ErrAccountsUnavailable) {
 		t.Fatalf("SelectAccessToken error = %v, want accounts unavailable", err)
 	}
 }
@@ -959,7 +1078,7 @@ func TestSelectAccessTokenFallsBackWhenRefreshFails(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
 
-	selected, err := service.SelectAccessToken(context.Background())
+	selected, err := service.SelectAccessToken(context.Background(), "")
 	if err != nil {
 		t.Fatalf("SelectAccessToken returned error: %v", err)
 	}
@@ -981,7 +1100,7 @@ func TestSelectAccessTokenReturnsMarkAccountErrorFailure(t *testing.T) {
 	repo.markAccountErrorErr = errors.New("mark account error failed")
 	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
 
-	if _, err := service.SelectAccessToken(context.Background()); !errors.Is(err, repo.markAccountErrorErr) {
+	if _, err := service.SelectAccessToken(context.Background(), ""); !errors.Is(err, repo.markAccountErrorErr) {
 		t.Fatalf("SelectAccessToken error = %v, want mark account error failure", err)
 	}
 }
@@ -994,14 +1113,15 @@ func TestSelectAccessTokenReturnsMarkAccountUsedFailure(t *testing.T) {
 	repo.markAccountUsedErr = errors.New("mark account used failed")
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccessToken(context.Background()); !errors.Is(err, repo.markAccountUsedErr) {
+	if _, err := service.SelectAccessToken(context.Background(), ""); !errors.Is(err, repo.markAccountUsedErr) {
 		t.Fatalf("SelectAccessToken error = %v, want mark account used failure", err)
 	}
 }
 
 type memoryRepo struct {
-	accounts []Account
-	states   []OAuthState
+	accounts      []Account
+	accountModels map[int64][]AccountModel
+	states        []OAuthState
 
 	saveCount           int
 	nextID              int64
@@ -1010,7 +1130,10 @@ type memoryRepo struct {
 }
 
 func newMemoryRepo() *memoryRepo {
-	return &memoryRepo{nextID: 1}
+	return &memoryRepo{
+		accountModels: make(map[int64][]AccountModel),
+		nextID:        1,
+	}
 }
 
 func (r *memoryRepo) ListAccounts(ctx context.Context, providerName string) ([]Account, error) {
@@ -1220,6 +1343,101 @@ func (r *memoryRepo) RecordAccountStatus(ctx context.Context, providerName strin
 	return ErrNotConnected
 }
 
+func (r *memoryRepo) ListAccountModels(ctx context.Context, providerName string, accountID int64) ([]AccountModel, error) {
+	models := append([]AccountModel(nil), r.accountModels[accountID]...)
+	filtered := models[:0]
+	for _, model := range models {
+		if model.Provider == providerName && model.AccountID == accountID {
+			filtered = append(filtered, model)
+		}
+	}
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return filtered[i].Model < filtered[j].Model
+	})
+	return filtered, nil
+}
+
+func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput) ([]AccountModel, error) {
+	if _, err := r.FindAccountByID(ctx, providerName, accountID); err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	models := make([]AccountModel, 0, len(inputs))
+	for i, input := range inputs {
+		models = append(models, AccountModel{
+			ID:        int64(i + 1),
+			AccountID: accountID,
+			Provider:  providerName,
+			Model:     input.Model,
+			Enabled:   input.Enabled,
+			Source:    AccountModelSourceManual,
+			Metadata:  map[string]string{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
+	r.accountModels[accountID] = models
+	return r.ListAccountModels(ctx, providerName, accountID)
+}
+
+func (r *memoryRepo) ListExposedModels(ctx context.Context, providerName string, allowedModels []string) ([]ExposedModel, error) {
+	available := map[string]bool{}
+	now := time.Now()
+	for _, account := range r.accounts {
+		if account.Provider != providerName || !accountSchedulable(account, now) {
+			continue
+		}
+		for _, accountModel := range r.accountModels[account.ID] {
+			if accountModel.Provider == providerName && accountModel.Enabled {
+				available[accountModel.Model] = true
+			}
+		}
+	}
+
+	seen := map[string]bool{}
+	exposed := []ExposedModel{}
+	for _, allowed := range allowedModels {
+		model := strings.TrimSpace(allowed)
+		if model == "" || seen[model] || !available[model] {
+			continue
+		}
+		seen[model] = true
+		exposed = append(exposed, ExposedModel{ID: model, OwnedBy: "openai"})
+	}
+	return exposed, nil
+}
+
+func (r *memoryRepo) ListEligibleAccountsForModel(ctx context.Context, providerName string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return []Account{}, nil
+	}
+	excluded := map[int64]bool{}
+	for _, id := range excludedAccountIDs {
+		if id > 0 {
+			excluded[id] = true
+		}
+	}
+
+	accounts, err := r.ListAccounts(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
+	eligible := []Account{}
+	for _, account := range accounts {
+		if excluded[account.ID] || !accountSchedulable(account, now) {
+			continue
+		}
+		for _, accountModel := range r.accountModels[account.ID] {
+			if accountModel.Provider == providerName && accountModel.Model == model && accountModel.Enabled {
+				eligible = append(eligible, account)
+				break
+			}
+		}
+	}
+	return eligible, nil
+}
+
 func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
 	if state.CodeVerifier != "" && state.CodeVerifierHash == "" {
 		panic("state with code verifier must also include code verifier hash")
@@ -1356,6 +1574,14 @@ func mustUnsignedIDToken(t *testing.T, claims map[string]any) string {
 		t.Fatalf("json.Marshal claims returned error: %v", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
+}
+
+func modelNamesAndEnabled(models []AccountModel) []string {
+	values := make([]string, 0, len(models))
+	for _, model := range models {
+		values = append(values, model.Model+":"+strconv.FormatBool(model.Enabled))
+	}
+	return values
 }
 
 func testAccount(t *testing.T, id int64, enabled bool, priority int, accessToken string) Account {
