@@ -676,7 +676,11 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	if name == "" || baseURL == "" || apiKey == "" {
 		return Account{}, ErrInvalidInput
 	}
-	if _, err := url.ParseRequestURI(baseURL); err != nil {
+	parsedBaseURL, err := url.Parse(baseURL)
+	if err != nil ||
+		!parsedBaseURL.IsAbs() ||
+		parsedBaseURL.Host == "" ||
+		(parsedBaseURL.Scheme != "http" && parsedBaseURL.Scheme != "https") {
 		return Account{}, ErrInvalidInput
 	}
 

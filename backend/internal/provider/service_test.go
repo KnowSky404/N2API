@@ -1190,6 +1190,11 @@ func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
 		{name: "missing name", input: APIUpstreamInput{Name: " ", BaseURL: valid.BaseURL, APIKey: valid.APIKey}},
 		{name: "missing base URL", input: APIUpstreamInput{Name: valid.Name, BaseURL: " ", APIKey: valid.APIKey}},
 		{name: "invalid base URL", input: APIUpstreamInput{Name: valid.Name, BaseURL: "://bad", APIKey: valid.APIKey}},
+		{name: "relative base URL", input: APIUpstreamInput{Name: valid.Name, BaseURL: "/v1", APIKey: valid.APIKey}},
+		{name: "host without scheme", input: APIUpstreamInput{Name: valid.Name, BaseURL: "upstream.example.test", APIKey: valid.APIKey}},
+		{name: "file scheme", input: APIUpstreamInput{Name: valid.Name, BaseURL: "file:///tmp/upstream", APIKey: valid.APIKey}},
+		{name: "mailto scheme", input: APIUpstreamInput{Name: valid.Name, BaseURL: "mailto:test@example.com", APIKey: valid.APIKey}},
+		{name: "https without host", input: APIUpstreamInput{Name: valid.Name, BaseURL: "https:///v1", APIKey: valid.APIKey}},
 		{name: "missing API key", input: APIUpstreamInput{Name: valid.Name, BaseURL: valid.BaseURL, APIKey: " "}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -36,6 +36,7 @@ type fakeAdminService struct {
 	modelPolicyKeyID   int64
 	modelPolicy        string
 	modelPolicyModels  []string
+	modelPolicyErr     error
 }
 
 type fakeProviderService struct {
@@ -135,6 +136,9 @@ func (s *fakeAdminService) UpdateAPIKeyModelPolicy(_ context.Context, id int64, 
 	s.modelPolicyKeyID = id
 	s.modelPolicy = policy
 	s.modelPolicyModels = append([]string(nil), models...)
+	if s.modelPolicyErr != nil {
+		return admin.APIKey{}, s.modelPolicyErr
+	}
 	for i, key := range s.keys {
 		if key.ID == id {
 			key.ModelPolicy = policy
@@ -710,6 +714,59 @@ func TestUpdateAPIKeyModelPolicyEndpoint(t *testing.T) {
 	}
 	if admins.modelPolicyKeyID != 7 || admins.modelPolicy != admin.APIKeyModelPolicySelected || !slices.Equal(admins.modelPolicyModels, []string{"gpt-5", "gpt-4.1"}) {
 		t.Fatalf("recorded model policy = id:%d policy:%q models:%v", admins.modelPolicyKeyID, admins.modelPolicy, admins.modelPolicyModels)
+	}
+}
+
+func TestUpdateAPIKeyModelPolicyEndpointMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path       string
+		body       string
+		serviceErr error
+		wantStatus int
+	}{
+		{
+			name:       "invalid id",
+			path:       "/api/admin/keys/not-a-number/model-policy",
+			body:       `{"modelPolicy":"selected","models":["gpt-5"]}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid policy",
+			path:       "/api/admin/keys/7/model-policy",
+			body:       `{"modelPolicy":"invalid","models":["gpt-5"]}`,
+			serviceErr: admin.ErrInvalidInput,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "empty selected models",
+			path:       "/api/admin/keys/7/model-policy",
+			body:       `{"modelPolicy":"selected","models":[]}`,
+			serviceErr: admin.ErrInvalidInput,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			path:       "/api/admin/keys/99/model-policy",
+			body:       `{"modelPolicy":"all"}`,
+			serviceErr: admin.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admins := newFakeAdminService()
+			admins.modelPolicyErr = tc.serviceErr
+			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+			req := httptest.NewRequest(http.MethodPut, tc.path, strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.wantStatus)
+			}
+		})
 	}
 }
 
