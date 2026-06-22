@@ -35,11 +35,22 @@ type SelectedToken struct {
 }
 
 type AccessTokenProvider interface {
-	SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error)
+	SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedToken, error)
 }
 
 type AccountFailureReporter interface {
 	RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error
+}
+
+type ExposedModel struct {
+	ID      string
+	OwnedBy string
+}
+
+type ModelProvider interface {
+	DefaultModel(ctx context.Context) (string, error)
+	IsModelAllowed(ctx context.Context, model string) (bool, error)
+	ListExposedModels(ctx context.Context) ([]ExposedModel, error)
 }
 
 type RequestLogger interface {
@@ -62,6 +73,7 @@ type Config struct {
 	UpstreamBaseURL       string
 	CodexResponsesBaseURL string
 	Logger                RequestLogger
+	ModelProvider         ModelProvider
 }
 
 type Proxy struct {
@@ -71,6 +83,7 @@ type Proxy struct {
 	upstreamBaseURL string
 	codexBaseURL    string
 	logger          RequestLogger
+	models          ModelProvider
 }
 
 func NewProxy(auth APIKeyAuthenticator, tokens AccessTokenProvider, cfg Config) *Proxy {
@@ -96,6 +109,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, tokens AccessTokenProvider, cf
 		upstreamBaseURL: upstreamBaseURL,
 		codexBaseURL:    codexBaseURL,
 		logger:          cfg.Logger,
+		models:          cfg.ModelProvider,
 	}
 }
 
@@ -104,7 +118,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusNotFound, "unsupported_route", "unsupported route")
 		return
 	}
-	if p.auth == nil || p.tokens == nil {
+	if p.auth == nil {
 		writeOpenAIError(w, http.StatusServiceUnavailable, "service_unavailable", "gateway service unavailable")
 		return
 	}
@@ -140,10 +154,23 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	bodyFactory, maxAttempts, err := requestBodyFactory(r)
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+		if err := p.writeLocalModels(r.Context(), recorder); err != nil {
+			errorCode = "internal_error"
+			writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not list models")
+		}
+		return
+	}
+	if p.tokens == nil {
+		errorCode = "service_unavailable"
+		writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "gateway service unavailable")
+		return
+	}
+
+	bodyFactory, maxAttempts, model, err := p.requestBodyFactory(r)
 	if err != nil {
-		errorCode = "upstream_request_error"
-		writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not read upstream request")
+		errorCode = requestBodyErrorCode(err)
+		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
 		return
 	}
 
@@ -154,7 +181,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if attempt > 0 && firstAccountID > 0 {
 			excluded = append(excluded, firstAccountID)
 		}
-		selected, err := p.tokens.SelectAccessToken(r.Context(), excluded...)
+		selected, err := p.tokens.SelectAccessToken(r.Context(), model, excluded...)
 		if err != nil {
 			if lastRetryableResp != nil {
 				copyResponseHeaders(recorder.Header(), lastRetryableResp.Header)
@@ -222,6 +249,45 @@ func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statu
 		return
 	}
 	_ = reporter.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
+}
+
+func (p *Proxy) writeLocalModels(ctx context.Context, w http.ResponseWriter) error {
+	models := []ExposedModel{}
+	if p.models != nil {
+		var err error
+		models, err = p.models.ListExposedModels(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	type openAIModel struct {
+		ID      string `json:"id"`
+		Object  string `json:"object"`
+		Created int64  `json:"created"`
+		OwnedBy string `json:"owned_by"`
+	}
+	data := make([]openAIModel, 0, len(models))
+	for _, model := range models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		ownedBy := strings.TrimSpace(model.OwnedBy)
+		if ownedBy == "" {
+			ownedBy = "openai"
+		}
+		data = append(data, openAIModel{
+			ID:      id,
+			Object:  "model",
+			Created: 0,
+			OwnedBy: ownedBy,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(map[string]any{
+		"object": "list",
+		"data":   data,
+	})
 }
 
 func retryableUpstreamStatus(statusCode int) bool {
@@ -333,23 +399,130 @@ func normalizeCodexResponsesBody(body io.ReadCloser) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(normalized)), nil
 }
 
-func requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, error) {
+var (
+	errReplayBodyTooLarge = errors.New("request body too large to replay")
+	errInvalidJSONBody    = errors.New("request body must be valid json")
+	errModelNotFound      = errors.New("model not found")
+)
+
+func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return func() io.ReadCloser { return nil }, 2, nil
+		return func() io.ReadCloser { return nil }, 2, "", nil
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, maxReplayableRequestBody+1))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	if len(limitedBody) > maxReplayableRequestBody {
-		body := io.NopCloser(io.MultiReader(bytes.NewReader(limitedBody), r.Body))
-		return func() io.ReadCloser { return body }, 1, nil
+		_ = r.Body.Close()
+		return nil, 0, "", errReplayBodyTooLarge
 	}
 	_ = r.Body.Close()
+	model := ""
+	if routeRequiresModel(r) {
+		var body []byte
+		body, model, err = p.normalizeModelRequestBody(r.Context(), limitedBody)
+		if err != nil {
+			return nil, 0, "", err
+		}
+		limitedBody = body
+	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
-	}, 2, nil
+	}, 2, model, nil
+}
+
+func routeRequiresModel(r *http.Request) bool {
+	return r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/responses")
+}
+
+func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, error) {
+	payload := map[string]any{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, "", errInvalidJSONBody
+		}
+	}
+
+	model, _ := payload["model"].(string)
+	model = strings.TrimSpace(model)
+	if model == "" {
+		defaultModel, err := p.defaultModel(ctx)
+		if err != nil {
+			return nil, "", err
+		}
+		model = defaultModel
+		payload["model"] = model
+		raw, err = json.Marshal(payload)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	allowed, err := p.modelAllowed(ctx, model)
+	if err != nil {
+		return nil, "", err
+	}
+	if !allowed {
+		return nil, "", errModelNotFound
+	}
+	return raw, model, nil
+}
+
+func (p *Proxy) defaultModel(ctx context.Context) (string, error) {
+	if p.models == nil {
+		return "", errModelNotFound
+	}
+	model, err := p.models.DefaultModel(ctx)
+	if err != nil {
+		return "", err
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "", errModelNotFound
+	}
+	return model, nil
+}
+
+func (p *Proxy) modelAllowed(ctx context.Context, model string) (bool, error) {
+	if p.models == nil {
+		return true, nil
+	}
+	return p.models.IsModelAllowed(ctx, model)
+}
+
+func requestBodyErrorCode(err error) string {
+	switch {
+	case errors.Is(err, errReplayBodyTooLarge), errors.Is(err, errInvalidJSONBody):
+		return "invalid_request"
+	case errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
+		return "model_not_found"
+	default:
+		return "upstream_request_error"
+	}
+}
+
+func requestBodyErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, errReplayBodyTooLarge), errors.Is(err, errInvalidJSONBody), errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
+		return http.StatusBadRequest
+	default:
+		return http.StatusBadGateway
+	}
+}
+
+func requestBodyErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, errReplayBodyTooLarge):
+		return "request body is too large to replay"
+	case errors.Is(err, errInvalidJSONBody):
+		return "request body must be valid JSON"
+	case errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
+		return "requested model is not available"
+	default:
+		return "could not read upstream request"
+	}
 }
 
 func isSupportedRoute(r *http.Request) bool {
@@ -420,6 +593,8 @@ func providerErrorCode(err error) string {
 		return "provider_accounts_disabled"
 	case errors.Is(err, provider.ErrAccountsUnavailable):
 		return "provider_accounts_unavailable"
+	case errors.Is(err, provider.ErrModelUnavailable):
+		return "model_unavailable"
 	default:
 		return "upstream_token_error"
 	}
@@ -435,6 +610,8 @@ func providerErrorMessage(code string) string {
 		return "provider accounts are disabled"
 	case "provider_accounts_unavailable":
 		return "provider accounts are unavailable"
+	case "model_unavailable":
+		return "requested model is not available"
 	default:
 		return "provider token lookup failed"
 	}

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
@@ -19,8 +20,8 @@ type gatewayTokenProvider struct {
 	service *provider.Service
 }
 
-func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (gateway.SelectedToken, error) {
-	selected, err := p.service.SelectAccessToken(ctx, "", excludedAccountIDs...)
+func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedToken, error) {
+	selected, err := p.service.SelectAccessToken(ctx, model, excludedAccountIDs...)
 	if err != nil {
 		return gateway.SelectedToken{}, err
 	}
@@ -33,6 +34,52 @@ func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context, excludedAcc
 
 func (p gatewayTokenProvider) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
 	return p.service.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
+}
+
+type gatewayModelProvider struct {
+	admins    *admin.Service
+	providers *provider.Service
+}
+
+func (p gatewayModelProvider) DefaultModel(ctx context.Context) (string, error) {
+	settings, err := p.admins.GetModelSettings(ctx)
+	if err != nil {
+		return "", err
+	}
+	return settings.DefaultModel, nil
+}
+
+func (p gatewayModelProvider) IsModelAllowed(ctx context.Context, model string) (bool, error) {
+	settings, err := p.admins.GetModelSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+	model = strings.TrimSpace(model)
+	for _, allowed := range settings.AllowedModels {
+		if strings.TrimSpace(allowed) == model {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (p gatewayModelProvider) ListExposedModels(ctx context.Context) ([]gateway.ExposedModel, error) {
+	settings, err := p.admins.GetModelSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models, err := p.providers.ListExposedModels(ctx, settings.AllowedModels)
+	if err != nil {
+		return nil, err
+	}
+	exposed := make([]gateway.ExposedModel, 0, len(models))
+	for _, model := range models {
+		exposed = append(exposed, gateway.ExposedModel{
+			ID:      model.ID,
+			OwnedBy: model.OwnedBy,
+		})
+	}
+	return exposed, nil
 }
 
 func main() {
@@ -76,6 +123,10 @@ func main() {
 	gatewayProxy := gateway.NewProxy(adminService, gatewayTokenProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL: cfg.OpenAIAPIBaseURL,
 		Logger:          store.NewGatewayRepository(pool),
+		ModelProvider: gatewayModelProvider{
+			admins:    adminService,
+			providers: providerService,
+		},
 	})
 
 	server := &http.Server{

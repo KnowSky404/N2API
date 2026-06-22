@@ -32,6 +32,7 @@ type fakeSelectedTokenProvider struct {
 	tokens     []SelectedToken
 	errs       []error
 	calls      int
+	models     []string
 	exclusions [][]int64
 	failures   []reportedAccountFailure
 }
@@ -43,9 +44,10 @@ type reportedAccountFailure struct {
 	message    string
 }
 
-func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context, excludedAccountIDs ...int64) (SelectedToken, error) {
+func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedToken, error) {
 	i := p.calls
 	p.calls++
+	p.models = append(p.models, model)
 	p.exclusions = append(p.exclusions, append([]int64(nil), excludedAccountIDs...))
 	if i < len(p.errs) && p.errs[i] != nil {
 		return SelectedToken{}, p.errs[i]
@@ -64,6 +66,29 @@ func (p *fakeSelectedTokenProvider) RecordAccountFailure(_ context.Context, acco
 		message:    message,
 	})
 	return nil
+}
+
+type fakeModelProvider struct {
+	defaultModel  string
+	allowedModels []string
+	exposedModels []ExposedModel
+}
+
+func (p fakeModelProvider) DefaultModel(context.Context) (string, error) {
+	return p.defaultModel, nil
+}
+
+func (p fakeModelProvider) IsModelAllowed(_ context.Context, model string) (bool, error) {
+	for _, allowed := range p.allowedModels {
+		if allowed == model {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (p fakeModelProvider) ListExposedModels(context.Context) ([]ExposedModel, error) {
+	return append([]ExposedModel(nil), p.exposedModels...), nil
 }
 
 type fakeRequestLogger struct {
@@ -95,21 +120,18 @@ func TestProxyRequiresBearerAPIKey(t *testing.T) {
 	}
 }
 
-func TestProxyForwardsModelsWithProviderBearerToken(t *testing.T) {
-	var gotAuthorization string
+func TestProxyModelsReturnsLocalAggregateList(t *testing.T) {
+	upstreamCalled := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/models" {
-			t.Fatalf("path = %q, want /v1/models", r.URL.Path)
-		}
-		gotAuthorization = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+		upstreamCalled = true
+		t.Fatal("upstream should not be called for local models list")
 	}))
 	defer upstream.Close()
 	auth := &fakeAPIKeyAuthenticator{}
-	proxy := NewProxy(auth, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	proxy := NewProxy(auth, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
+		ModelProvider:   fakeModelProvider{exposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}}},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
@@ -123,11 +145,145 @@ func TestProxyForwardsModelsWithProviderBearerToken(t *testing.T) {
 	if auth.gotKey != "n2api_client_secret" {
 		t.Fatalf("authenticated key = %q, want client secret", auth.gotKey)
 	}
-	if gotAuthorization != "Bearer upstream-token" {
-		t.Fatalf("upstream Authorization = %q, want provider token", gotAuthorization)
+	if upstreamCalled {
+		t.Fatal("upstream was called")
 	}
-	if recorder.Body.String() != `{"object":"list","data":[]}` {
-		t.Fatalf("body = %q", recorder.Body.String())
+	if tokens.calls != 0 {
+		t.Fatalf("token calls = %d, want 0", tokens.calls)
+	}
+	var body struct {
+		Object string `json:"object"`
+		Data   []struct {
+			ID      string `json:"id"`
+			Object  string `json:"object"`
+			Created int64  `json:"created"`
+			OwnedBy string `json:"owned_by"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Unmarshal response returned error: %v; body=%s", err, recorder.Body.String())
+	}
+	if body.Object != "list" || len(body.Data) != 1 {
+		t.Fatalf("models response = %+v", body)
+	}
+	if got := body.Data[0]; got.ID != "gpt-5" || got.Object != "model" || got.Created != 0 || got.OwnedBy != "openai" {
+		t.Fatalf("model = %+v, want local gpt-5 model", got)
+	}
+}
+
+func TestProxyRoutesChatCompletionByRequestedModel(t *testing.T) {
+	var gotBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_123"}`))
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: upstream.URL,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 1 || len(tokens.models) != 1 || tokens.models[0] != "gpt-5" {
+		t.Fatalf("requested models = %+v, calls=%d; want gpt-5", tokens.models, tokens.calls)
+	}
+	if gotBody != `{"model":"gpt-5","messages":[]}` {
+		t.Fatalf("upstream body = %q", gotBody)
+	}
+}
+
+func TestProxyInjectsDefaultModelWhenMissing(t *testing.T) {
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("Unmarshal body returned error: %v; body=%s", err, string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_123"}`))
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: upstream.URL,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 1 || len(tokens.models) != 1 || tokens.models[0] != "gpt-5" {
+		t.Fatalf("requested models = %+v, calls=%d; want gpt-5", tokens.models, tokens.calls)
+	}
+	if gotBody["model"] != "gpt-5" {
+		t.Fatalf("forwarded model = %#v, want default gpt-5; body=%+v", gotBody["model"], gotBody)
+	}
+}
+
+func TestProxyReturnsModelUnavailableBeforeUpstream(t *testing.T) {
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		t.Fatal("upstream should not be called when no account supports requested model")
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedTokenProvider{errs: []error{provider.ErrModelUnavailable}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: upstream.URL,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "model_unavailable") {
+		t.Fatalf("body = %q, want model_unavailable", recorder.Body.String())
+	}
+	if upstreamCalled {
+		t.Fatal("upstream was called")
+	}
+	if tokens.calls != 1 || len(tokens.models) != 1 || tokens.models[0] != "gpt-5" {
+		t.Fatalf("requested models = %+v, calls=%d; want gpt-5", tokens.models, tokens.calls)
 	}
 }
 
@@ -354,7 +510,7 @@ func TestProxyReportsMissingProviderAccount(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{errs: []error{provider.ErrNotConnected}}, Config{
 		UpstreamBaseURL: "https://api.example.test",
 	})
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -379,7 +535,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 		UpstreamBaseURL: upstream.URL,
 		Logger:          logger,
 	})
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -392,7 +548,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 	if entry.RequestID == "" {
 		t.Fatal("RequestID is empty")
 	}
-	if entry.ClientKeyID != 42 || entry.Provider != "openai" || entry.Route != "/v1/models" || entry.Method != http.MethodGet {
+	if entry.ClientKeyID != 42 || entry.Provider != "openai" || entry.Route != "/v1/responses/resp_123" || entry.Method != http.MethodGet {
 		t.Fatalf("log entry = %+v", entry)
 	}
 	if entry.StatusCode != http.StatusOK || entry.Error != "" {
@@ -409,7 +565,7 @@ func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 		UpstreamBaseURL: "https://api.example.test",
 		Logger:          logger,
 	})
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -443,7 +599,7 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 		}, nil
 	})}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -487,7 +643,7 @@ func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing
 		}, nil
 	})}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -564,7 +720,7 @@ func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *tes
 		}, nil
 	})}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -592,7 +748,7 @@ func TestProxyRecordsCircuitOpenOnUpstreamServerErrorAndReturnsFinalError(t *tes
 		}, nil
 	})}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -617,7 +773,7 @@ func TestProxyDoesNotRetrySameAccountBeforeStreaming(t *testing.T) {
 		return nil, errors.New("upstream unavailable")
 	})}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
@@ -698,17 +854,17 @@ func TestProxyDoesNotRetryLargePOSTBody(t *testing.T) {
 
 	proxy.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadGateway {
+	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "upstream_unavailable") {
-		t.Fatalf("body = %q, want upstream_unavailable", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "invalid_request") {
+		t.Fatalf("body = %q, want invalid_request", recorder.Body.String())
 	}
-	if tokens.calls != 1 {
-		t.Fatalf("token calls = %d, want 1", tokens.calls)
+	if tokens.calls != 0 {
+		t.Fatalf("token calls = %d, want 0", tokens.calls)
 	}
-	if transportCalls != 1 {
-		t.Fatalf("transport calls = %d, want 1", transportCalls)
+	if transportCalls != 0 {
+		t.Fatalf("transport calls = %d, want 0", transportCalls)
 	}
 }
 
@@ -745,7 +901,7 @@ func TestProxyDoesNotRetryAfterStreamingBegins(t *testing.T) {
 		}, nil
 	})}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"stream":true}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","stream":true}`))
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
