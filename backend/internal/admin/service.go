@@ -11,12 +11,14 @@ import (
 )
 
 const (
-	defaultSessionTTL = 7 * 24 * time.Hour
-	sessionTokenName  = "admin_session"
-	apiKeyTokenName   = "n2api"
-	defaultModel      = "gpt-4.1"
-	maxModels         = 100
-	maxModelNameLen   = 128
+	defaultSessionTTL         = 7 * 24 * time.Hour
+	sessionTokenName          = "admin_session"
+	apiKeyTokenName           = "n2api"
+	defaultModel              = "gpt-4.1"
+	maxModels                 = 100
+	maxModelNameLen           = 128
+	APIKeyModelPolicyAll      = "all"
+	APIKeyModelPolicySelected = "selected"
 )
 
 var (
@@ -42,12 +44,14 @@ type Session struct {
 }
 
 type APIKey struct {
-	ID         int64      `json:"id"`
-	Name       string     `json:"name"`
-	Prefix     string     `json:"prefix"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	LastUsedAt *time.Time `json:"lastUsedAt"`
-	RevokedAt  *time.Time `json:"revokedAt"`
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	Prefix        string     `json:"prefix"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	LastUsedAt    *time.Time `json:"lastUsedAt"`
+	RevokedAt     *time.Time `json:"revokedAt"`
+	ModelPolicy   string     `json:"modelPolicy"`
+	AllowedModels []string   `json:"allowedModels"`
 }
 
 type RequestLog struct {
@@ -99,6 +103,8 @@ type Repository interface {
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
+	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
+	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error)
 	GetModelSettings(ctx context.Context) (ModelSettings, error)
@@ -236,6 +242,42 @@ func (s *Service) RevokeAPIKey(ctx context.Context, id int64) (APIKey, error) {
 	return s.repo.RevokeAPIKey(ctx, id)
 }
 
+func (s *Service) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error) {
+	policy = strings.TrimSpace(policy)
+	switch policy {
+	case APIKeyModelPolicyAll:
+		return s.repo.UpdateAPIKeyModelPolicy(ctx, id, policy, nil)
+	case APIKeyModelPolicySelected:
+		normalized, err := normalizeModelList(models)
+		if err != nil {
+			return APIKey{}, err
+		}
+		if len(normalized) == 0 {
+			return APIKey{}, ErrInvalidInput
+		}
+		return s.repo.UpdateAPIKeyModelPolicy(ctx, id, policy, normalized)
+	default:
+		return APIKey{}, ErrInvalidInput
+	}
+}
+
+func (s *Service) APIKeyAllowsModel(key APIKey, model string) bool {
+	switch key.ModelPolicy {
+	case "", APIKeyModelPolicyAll:
+		return true
+	case APIKeyModelPolicySelected:
+		model = strings.TrimSpace(model)
+		for _, allowed := range key.AllowedModels {
+			if model == allowed {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (APIKey, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
@@ -331,25 +373,12 @@ func normalizeModelSettings(settings ModelSettings) (ModelSettings, error) {
 		return ModelSettings{}, ErrInvalidInput
 	}
 
-	seen := map[string]struct{}{}
-	allowed := make([]string, 0, len(settings.AllowedModels))
+	allowed, err := normalizeModelList(settings.AllowedModels)
+	if err != nil {
+		return ModelSettings{}, err
+	}
 	defaultAllowed := false
-	for _, raw := range settings.AllowedModels {
-		model := strings.TrimSpace(raw)
-		if model == "" {
-			continue
-		}
-		if len(model) > maxModelNameLen {
-			return ModelSettings{}, ErrInvalidInput
-		}
-		if _, ok := seen[model]; ok {
-			continue
-		}
-		seen[model] = struct{}{}
-		allowed = append(allowed, model)
-		if len(allowed) > maxModels {
-			return ModelSettings{}, ErrInvalidInput
-		}
+	for _, model := range allowed {
 		if model == defaultName {
 			defaultAllowed = true
 		}
@@ -359,4 +388,27 @@ func normalizeModelSettings(settings ModelSettings) (ModelSettings, error) {
 	}
 
 	return ModelSettings{DefaultModel: defaultName, AllowedModels: allowed}, nil
+}
+
+func normalizeModelList(models []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, len(models))
+	for _, raw := range models {
+		model := strings.TrimSpace(raw)
+		if model == "" {
+			continue
+		}
+		if len(model) > maxModelNameLen {
+			return nil, ErrInvalidInput
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		normalized = append(normalized, model)
+		if len(normalized) > maxModels {
+			return nil, ErrInvalidInput
+		}
+	}
+	return normalized, nil
 }

@@ -196,6 +196,103 @@ func TestListAPIKeysReturnsRepositoryKeys(t *testing.T) {
 	}
 }
 
+func TestAPIKeyModelPolicyDefaultsToAll(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	if result.Key.ModelPolicy != APIKeyModelPolicyAll {
+		t.Fatalf("ModelPolicy = %q, want all", result.Key.ModelPolicy)
+	}
+	if len(result.Key.AllowedModels) != 0 {
+		t.Fatalf("AllowedModels = %+v, want empty for all policy", result.Key.AllowedModels)
+	}
+	for _, policy := range []string{"", APIKeyModelPolicyAll} {
+		if !service.APIKeyAllowsModel(APIKey{ModelPolicy: policy}, "gpt-5") {
+			t.Fatalf("APIKeyAllowsModel policy %q returned false, want true", policy)
+		}
+	}
+}
+
+func TestAPIKeySelectedModelPolicy(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	updated, err := service.UpdateAPIKeyModelPolicy(context.Background(), result.Key.ID, APIKeyModelPolicySelected, []string{
+		" gpt-5 ",
+		"gpt-5-mini",
+		"gpt-5",
+		"",
+	})
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyModelPolicy returned error: %v", err)
+	}
+	if updated.ModelPolicy != APIKeyModelPolicySelected {
+		t.Fatalf("ModelPolicy = %q, want selected", updated.ModelPolicy)
+	}
+	if !slices.Equal(updated.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+		t.Fatalf("AllowedModels = %+v, want normalized selected models", updated.AllowedModels)
+	}
+	if !service.APIKeyAllowsModel(updated, "gpt-5-mini") {
+		t.Fatal("APIKeyAllowsModel returned false for selected model")
+	}
+	if service.APIKeyAllowsModel(updated, "gpt-4o") {
+		t.Fatal("APIKeyAllowsModel returned true for unselected model")
+	}
+	if service.APIKeyAllowsModel(APIKey{ModelPolicy: "unknown", AllowedModels: []string{"gpt-5"}}, "gpt-5") {
+		t.Fatal("APIKeyAllowsModel returned true for unknown policy")
+	}
+
+	models, err := repo.ListAPIKeyModels(context.Background(), result.Key.ID)
+	if err != nil {
+		t.Fatalf("ListAPIKeyModels returned error: %v", err)
+	}
+	if !slices.Equal(models, []string{"gpt-5", "gpt-5-mini"}) {
+		t.Fatalf("stored models = %+v, want normalized selected models", models)
+	}
+
+	updated, err = service.UpdateAPIKeyModelPolicy(context.Background(), result.Key.ID, APIKeyModelPolicyAll, []string{"gpt-5"})
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyModelPolicy all returned error: %v", err)
+	}
+	if updated.ModelPolicy != APIKeyModelPolicyAll || len(updated.AllowedModels) != 0 {
+		t.Fatalf("updated key = %+v, want all policy with no models", updated)
+	}
+}
+
+func TestUpdateAPIKeyModelPolicyRejectsInvalidInput(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		policy string
+		models []string
+	}{
+		{name: "invalid policy", policy: "limited", models: []string{"gpt-5"}},
+		{name: "empty selected", policy: APIKeyModelPolicySelected, models: []string{" ", ""}},
+		{name: "too many models", policy: APIKeyModelPolicySelected, models: buildModelNames(101)},
+		{name: "model name too long", policy: APIKeyModelPolicySelected, models: []string{strings.Repeat("a", 129)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := service.UpdateAPIKeyModelPolicy(context.Background(), result.Key.ID, tc.policy, tc.models); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("UpdateAPIKeyModelPolicy error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
 func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -419,10 +516,11 @@ func (r *memoryRepo) RevokeSession(_ context.Context, tokenHash string) error {
 
 func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix string) (APIKey, error) {
 	key := APIKey{
-		ID:        r.nextAPIKeyID,
-		Name:      name,
-		Prefix:    prefix,
-		CreatedAt: time.Now(),
+		ID:          r.nextAPIKeyID,
+		Name:        name,
+		Prefix:      prefix,
+		CreatedAt:   time.Now(),
+		ModelPolicy: APIKeyModelPolicyAll,
 	}
 	r.nextAPIKeyID++
 	r.keys[key.ID] = memoryAPIKey{APIKey: key, Hash: hash}
@@ -449,6 +547,25 @@ func (r *memoryRepo) RevokeAPIKey(_ context.Context, id int64) (APIKey, error) {
 	key.RevokedAt = &now
 	r.keys[id] = key
 	return key.APIKey, nil
+}
+
+func (r *memoryRepo) UpdateAPIKeyModelPolicy(_ context.Context, id int64, policy string, models []string) (APIKey, error) {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt != nil {
+		return APIKey{}, ErrNotFound
+	}
+	key.ModelPolicy = policy
+	key.AllowedModels = append([]string(nil), models...)
+	r.keys[id] = key
+	return key.APIKey, nil
+}
+
+func (r *memoryRepo) ListAPIKeyModels(_ context.Context, id int64) ([]string, error) {
+	key, ok := r.keys[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return append([]string(nil), key.AllowedModels...), nil
 }
 
 func (r *memoryRepo) FindAPIKeyByHash(_ context.Context, hash string, _ time.Time) (APIKey, error) {

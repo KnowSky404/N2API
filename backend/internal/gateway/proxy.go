@@ -158,7 +158,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
-		if err := p.writeLocalModels(r.Context(), recorder); err != nil {
+		if err := p.writeLocalModels(r.Context(), recorder, key); err != nil {
 			errorCode = "internal_error"
 			writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not list models")
 		}
@@ -174,6 +174,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		errorCode = requestBodyErrorCode(err)
 		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
+		return
+	}
+	if model != "" && !apiKeyAllowsModel(key, model) {
+		errorCode = "model_not_found"
+		writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
 		return
 	}
 
@@ -251,7 +256,7 @@ func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statu
 	_ = reporter.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
 }
 
-func (p *Proxy) writeLocalModels(ctx context.Context, w http.ResponseWriter) error {
+func (p *Proxy) writeLocalModels(ctx context.Context, w http.ResponseWriter, key admin.APIKey) error {
 	models := []ExposedModel{}
 	if p.models != nil {
 		var err error
@@ -270,6 +275,9 @@ func (p *Proxy) writeLocalModels(ctx context.Context, w http.ResponseWriter) err
 	for _, model := range models {
 		id := strings.TrimSpace(model.ID)
 		if id == "" {
+			continue
+		}
+		if !apiKeyAllowsModel(key, id) {
 			continue
 		}
 		ownedBy := strings.TrimSpace(model.OwnedBy)
@@ -506,6 +514,23 @@ func (p *Proxy) modelAllowed(ctx context.Context, model string) (bool, error) {
 		return true, nil
 	}
 	return p.models.IsModelAllowed(ctx, model)
+}
+
+func apiKeyAllowsModel(key admin.APIKey, model string) bool {
+	switch key.ModelPolicy {
+	case "", admin.APIKeyModelPolicyAll:
+		return true
+	case admin.APIKeyModelPolicySelected:
+		model = strings.TrimSpace(model)
+		for _, allowed := range key.AllowedModels {
+			if model == allowed {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func requestBodyErrorCode(err error) string {

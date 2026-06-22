@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
@@ -125,7 +126,7 @@ func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix s
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO client_api_keys (name, key_hash, prefix)
 		VALUES ($1, $2, $3)
-		RETURNING id, name, prefix, created_at, last_used_at, revoked_at
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy
 	`, name, hash, prefix).Scan(
 		&created.ID,
 		&created.Name,
@@ -133,6 +134,7 @@ func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix s
 		&created.CreatedAt,
 		&created.LastUsedAt,
 		&created.RevokedAt,
+		&created.ModelPolicy,
 	)
 	if err != nil {
 		return admin.APIKey{}, err
@@ -142,7 +144,7 @@ func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix s
 
 func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, name, prefix, created_at, last_used_at, revoked_at
+		SELECT id, name, prefix, created_at, last_used_at, revoked_at, model_policy
 		FROM client_api_keys
 		ORDER BY created_at DESC
 	`)
@@ -161,12 +163,16 @@ func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, erro
 			&key.CreatedAt,
 			&key.LastUsedAt,
 			&key.RevokedAt,
+			&key.ModelPolicy,
 		); err != nil {
 			return nil, err
 		}
 		keys = append(keys, key)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.populateAPIKeyModels(ctx, keys); err != nil {
 		return nil, err
 	}
 
@@ -179,7 +185,7 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 		UPDATE client_api_keys
 		SET revoked_at = COALESCE(revoked_at, now())
 		WHERE id = $1
-		RETURNING id, name, prefix, created_at, last_used_at, revoked_at
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy
 	`, id).Scan(
 		&revoked.ID,
 		&revoked.Name,
@@ -187,6 +193,7 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 		&revoked.CreatedAt,
 		&revoked.LastUsedAt,
 		&revoked.RevokedAt,
+		&revoked.ModelPolicy,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
@@ -194,13 +201,20 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 	if err != nil {
 		return admin.APIKey{}, err
 	}
+	if revoked.ModelPolicy == admin.APIKeyModelPolicySelected {
+		models, err := r.ListAPIKeyModels(ctx, revoked.ID)
+		if err != nil {
+			return admin.APIKey{}, err
+		}
+		revoked.AllowedModels = models
+	}
 	return revoked, nil
 }
 
 func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ time.Time) (admin.APIKey, error) {
 	var found admin.APIKey
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, name, prefix, created_at, last_used_at, revoked_at
+		SELECT id, name, prefix, created_at, last_used_at, revoked_at, model_policy
 		FROM client_api_keys
 		WHERE key_hash = $1
 			AND revoked_at IS NULL
@@ -211,6 +225,7 @@ func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ t
 		&found.CreatedAt,
 		&found.LastUsedAt,
 		&found.RevokedAt,
+		&found.ModelPolicy,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
@@ -218,7 +233,124 @@ func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ t
 	if err != nil {
 		return admin.APIKey{}, err
 	}
+	if found.ModelPolicy == admin.APIKeyModelPolicySelected {
+		models, err := r.ListAPIKeyModels(ctx, found.ID)
+		if err != nil {
+			return admin.APIKey{}, err
+		}
+		found.AllowedModels = models
+	}
 	return found, nil
+}
+
+func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error) {
+	models = normalizeAPIKeyModels(models)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var updated admin.APIKey
+	err = tx.QueryRow(ctx, `
+		UPDATE client_api_keys
+		SET model_policy = $2
+		WHERE id = $1
+			AND revoked_at IS NULL
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy
+	`, id, policy).Scan(
+		&updated.ID,
+		&updated.Name,
+		&updated.Prefix,
+		&updated.CreatedAt,
+		&updated.LastUsedAt,
+		&updated.RevokedAt,
+		&updated.ModelPolicy,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKey{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM client_api_key_models
+		WHERE client_key_id = $1
+	`, id); err != nil {
+		return admin.APIKey{}, err
+	}
+	for _, model := range models {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO client_api_key_models (client_key_id, model)
+			VALUES ($1, $2)
+		`, id, model); err != nil {
+			return admin.APIKey{}, err
+		}
+	}
+	updated.AllowedModels = append([]string(nil), models...)
+
+	if err := tx.Commit(ctx); err != nil {
+		return admin.APIKey{}, err
+	}
+	return updated, nil
+}
+
+func normalizeAPIKeyModels(models []string) []string {
+	seen := map[string]struct{}{}
+	normalized := make([]string, 0, len(models))
+	for _, raw := range models {
+		model := strings.TrimSpace(raw)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		normalized = append(normalized, model)
+	}
+	return normalized
+}
+
+func (r *AdminRepository) ListAPIKeyModels(ctx context.Context, id int64) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT model
+		FROM client_api_key_models
+		WHERE client_key_id = $1
+		ORDER BY model ASC
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var models []string
+	for rows.Next() {
+		var model string
+		if err := rows.Scan(&model); err != nil {
+			return nil, err
+		}
+		models = append(models, model)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+func (r *AdminRepository) populateAPIKeyModels(ctx context.Context, keys []admin.APIKey) error {
+	for i := range keys {
+		if keys[i].ModelPolicy != admin.APIKeyModelPolicySelected {
+			continue
+		}
+		models, err := r.ListAPIKeyModels(ctx, keys[i].ID)
+		if err != nil {
+			return err
+		}
+		keys[i].AllowedModels = models
+	}
+	return nil
 }
 
 func (r *AdminRepository) TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error {

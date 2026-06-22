@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,12 +19,16 @@ import (
 type fakeAPIKeyAuthenticator struct {
 	gotKey string
 	err    error
+	key    admin.APIKey
 }
 
 func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey string) (admin.APIKey, error) {
 	a.gotKey = apiKey
 	if a.err != nil {
 		return admin.APIKey{}, a.err
+	}
+	if a.key.ID != 0 {
+		return a.key, nil
 	}
 	return admin.APIKey{ID: 42, Name: "test key"}, nil
 }
@@ -171,6 +176,50 @@ func TestProxyModelsReturnsLocalAggregateList(t *testing.T) {
 	}
 }
 
+func TestProxyModelsFiltersLocalListForSelectedAPIKey(t *testing.T) {
+	auth := &fakeAPIKeyAuthenticator{key: admin.APIKey{
+		ID:            42,
+		Name:          "test key",
+		ModelPolicy:   admin.APIKeyModelPolicySelected,
+		AllowedModels: []string{"gpt-5-mini", "gpt-4o"},
+	}}
+	accounts := &fakeSelectedAccountProvider{}
+	proxy := NewProxy(auth, accounts, Config{
+		ModelProvider: fakeModelProvider{exposedModels: []ExposedModel{
+			{ID: "gpt-5", OwnedBy: "openai"},
+			{ID: "gpt-5-mini", OwnedBy: "openai"},
+			{ID: "gpt-4o", OwnedBy: "openai"},
+		}},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if accounts.calls != 0 {
+		t.Fatalf("account calls = %d, want 0", accounts.calls)
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("Unmarshal response returned error: %v; body=%s", err, recorder.Body.String())
+	}
+	var ids []string
+	for _, model := range body.Data {
+		ids = append(ids, model.ID)
+	}
+	if !slices.Equal(ids, []string{"gpt-5-mini", "gpt-4o"}) {
+		t.Fatalf("model IDs = %+v, want selected intersection", ids)
+	}
+}
+
 func TestProxyRoutesChatCompletionByRequestedModel(t *testing.T) {
 	var gotBody string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +256,39 @@ func TestProxyRoutesChatCompletionByRequestedModel(t *testing.T) {
 	}
 	if gotBody != `{"model":"gpt-5","messages":[]}` {
 		t.Fatalf("upstream body = %q", gotBody)
+	}
+}
+
+func TestProxyRejectsUnlistedModelForSelectedAPIKeyBeforeAccountSelection(t *testing.T) {
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
+	auth := &fakeAPIKeyAuthenticator{key: admin.APIKey{
+		ID:            42,
+		Name:          "selected key",
+		ModelPolicy:   admin.APIKeyModelPolicySelected,
+		AllowedModels: []string{"gpt-5-mini"},
+	}}
+	proxy := NewProxy(auth, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "model_not_found") || !strings.Contains(recorder.Body.String(), "requested model is not available") {
+		t.Fatalf("body = %q, want model_not_found with unavailable message", recorder.Body.String())
+	}
+	if accounts.calls != 0 {
+		t.Fatalf("account calls = %d, want 0", accounts.calls)
 	}
 }
 
