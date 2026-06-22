@@ -155,6 +155,35 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		Priority:              5,
 		Status:                "active",
 	})
+	errorSameUse := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "error-same-use",
+		DisplayName:           "Error Same Use",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              8,
+		Status:                "active",
+	})
+	if err := repo.MarkAccountUsed(ctx, "openai", errorSameUse.ID, older); err != nil {
+		t.Fatalf("MarkAccountUsed error account returned error: %v", err)
+	}
+	if err := repo.MarkAccountError(ctx, "openai", errorSameUse.ID, "temporary failure", now.Add(-time.Minute)); err != nil {
+		t.Fatalf("MarkAccountError returned error: %v", err)
+	}
+	cleanSameUse := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "clean-same-use",
+		DisplayName:           "Clean Same Use",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              8,
+		Status:                "active",
+	})
+	if err := repo.MarkAccountUsed(ctx, "openai", cleanSameUse.ID, older); err != nil {
+		t.Fatalf("MarkAccountUsed clean returned error: %v", err)
+	}
 	disabledAccount := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
 		Subject:               "disabled-account",
@@ -275,6 +304,8 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		first,
 		nullLastUsed,
 		higherPriority,
+		cleanSameUse,
+		errorSameUse,
 		disabledAccount,
 		rateLimitedFuture,
 		rateLimitedNull,
@@ -302,7 +333,7 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		t.Fatalf("ListEligibleAccountsForModel returned error: %v", err)
 	}
 	gotIDs := accountIDs(eligible)
-	wantIDs := []int64{rateLimitedPast.ID, circuitOpenPast.ID, nullLastUsed.ID, first.ID}
+	wantIDs := []int64{expired.ID, rateLimitedPast.ID, circuitOpenPast.ID, cleanSameUse.ID, errorSameUse.ID, nullLastUsed.ID, first.ID}
 	if !reflect.DeepEqual(gotIDs, wantIDs) {
 		t.Fatalf("eligible account IDs = %v, want %v", gotIDs, wantIDs)
 	}
@@ -480,6 +511,7 @@ func TestListExposedModelsFiltersByAllowedOrder(t *testing.T) {
 	}
 	want := []provider.ExposedModel{
 		{ID: "codex-mini", OwnedBy: "openai"},
+		{ID: "expired-only", OwnedBy: "openai"},
 		{ID: "rate-limited-past", OwnedBy: "openai"},
 		{ID: "circuit-open-past", OwnedBy: "openai"},
 		{ID: "gpt-5", OwnedBy: "openai"},

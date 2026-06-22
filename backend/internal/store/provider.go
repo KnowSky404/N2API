@@ -566,7 +566,6 @@ func (r *ProviderRepository) ListExposedModels(ctx context.Context, providerName
 			AND m.enabled = true
 			AND m.model = ANY($2)
 			AND a.enabled = true
-			AND (a.access_token_expires_at IS NULL OR a.access_token_expires_at > now())
 			AND (
 				a.status IN ('', 'active')
 				OR (a.status = 'rate_limited' AND a.rate_limited_until IS NOT NULL AND a.rate_limited_until <= now())
@@ -616,7 +615,6 @@ func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, p
 			AND m.model = $2
 			AND m.enabled = true
 			AND a.enabled = true
-			AND (a.access_token_expires_at IS NULL OR a.access_token_expires_at > $3)
 			AND (
 				a.status IN ('', 'active')
 				OR (a.status = 'rate_limited' AND a.rate_limited_until IS NOT NULL AND a.rate_limited_until <= $3)
@@ -627,6 +625,7 @@ func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, p
 			AND ($4::bigint[] IS NULL OR cardinality($4::bigint[]) = 0 OR NOT (a.id = ANY($4::bigint[])))
 		ORDER BY
 			a.priority ASC,
+			(a.last_error_at IS NOT NULL) ASC,
 			a.last_used_at ASC NULLS FIRST,
 			a.id ASC
 	`, providerName, model, now, excludedAccountIDs)
