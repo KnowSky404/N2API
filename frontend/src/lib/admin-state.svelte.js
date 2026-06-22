@@ -387,6 +387,10 @@ function clearProvider() {
   replaceState(accountModels, {});
   replaceState(providerConnectForm, { name: '', priority: 100, enabled: true });
   replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
+  resetAPIUpstreamForm();
+}
+
+function resetAPIUpstreamForm() {
   replaceState(apiUpstreamForm, {
     name: '',
     baseUrl: '',
@@ -786,8 +790,7 @@ export async function createAPIUpstreamAccount() {
       })
     });
     if (!isCurrentAuthenticated(version)) return;
-    apiUpstreamForm.apiKey = '';
-    apiUpstreamForm.modelsText = '';
+    resetAPIUpstreamForm();
     await loadProviderAccounts();
     await loadModelRouting();
   } catch (error) {
@@ -845,12 +848,11 @@ export async function disconnectProviderAccount(account) {
   providerAccounts.saving = true;
   providerAccounts.error = '';
   try {
-    await requestJSON(`/api/admin/providers/openai/accounts/${account.id}/disconnect`, {
-      method: 'POST'
-    });
+    await requestJSON(`/api/admin/provider-accounts/${account.id}`, { method: 'DELETE' });
     if (!isCurrentAuthenticated(version)) return;
     await loadProvider();
     await loadProviderAccounts();
+    await loadModelRouting();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Account disconnect failed';

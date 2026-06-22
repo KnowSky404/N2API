@@ -685,7 +685,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-red-200 bg-white text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
-              disabled={providerAccounts.saving || !isCodexOAuthAccount(account)}
+              disabled={providerAccounts.saving}
               onclick={() => disconnectProviderAccount(account)}
               title="Disconnect account"
               aria-label="Disconnect account"

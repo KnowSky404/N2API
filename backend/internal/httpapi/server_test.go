@@ -1284,6 +1284,24 @@ func TestAdminCanDisconnectProviderAccount(t *testing.T) {
 	}
 }
 
+func TestAdminCanDeleteUnifiedProviderAccount(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Upstream", Enabled: true, Priority: 10}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/provider-accounts/7", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if providers.disconnectedAccountID != 7 {
+		t.Fatalf("disconnectedAccountID = %d, want 7", providers.disconnectedAccountID)
+	}
+}
+
 func TestAccountModelsRequireSession(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 
@@ -1460,6 +1478,42 @@ func TestAdminDisconnectProviderAccountMapsErrors(t *testing.T) {
 			providers.disconnectErr = tc.err
 			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 			req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/accounts/7/disconnect", nil)
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.want)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != tc.code {
+				t.Fatalf("error = %q, want %s", body["error"], tc.code)
+			}
+		})
+	}
+}
+
+func TestAdminDeleteUnifiedProviderAccountMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		err  error
+		want int
+		code string
+	}{
+		{name: "bad id", path: "/api/admin/provider-accounts/not-a-number", want: http.StatusBadRequest, code: "bad_request"},
+		{name: "invalid input", path: "/api/admin/provider-accounts/7", err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "not found", path: "/api/admin/provider-accounts/7", err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.disconnectErr = tc.err
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodDelete, tc.path, nil)
 			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 			recorder := httptest.NewRecorder()
 

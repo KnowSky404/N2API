@@ -121,6 +121,8 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /API upstream/);
   assert.match(source, /Base URL/);
   assert.match(source, /Manual models/);
+  assert.match(source, /disconnectProviderAccount\(account\)/);
+  assert.match(source, /disabled=\{providerAccounts\.saving\}\s+onclick=\{\(\) => disconnectProviderAccount\(account\)\}/);
 });
 
 test('api keys page owns model policy and gateway default model', () => {

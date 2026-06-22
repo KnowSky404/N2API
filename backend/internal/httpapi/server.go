@@ -346,6 +346,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handlePatchProviderAccount(w, r, providers)
 	}))
 
+	mux.HandleFunc("DELETE /api/admin/provider-accounts/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleDeleteProviderAccount(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/provider-accounts/{id}/models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleListProviderAccountModels(w, r, providers)
 	}))
@@ -590,6 +594,24 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+}
+
+func handleDeleteProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	if err := providers.DisconnectAccount(r.Context(), id); err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleListProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
