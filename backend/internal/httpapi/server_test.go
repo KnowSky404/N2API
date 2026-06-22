@@ -40,7 +40,12 @@ type fakeProviderService struct {
 	connect               provider.ConnectResult
 	connectOptions        provider.ConnectOptions
 	accounts              []provider.Account
+	accountModels         map[int64][]provider.AccountModel
+	exposedModels         []provider.ExposedModel
 	updateErr             error
+	accountModelsErr      error
+	replaceModelsErr      error
+	exposedModelsErr      error
 	refreshErr            error
 	disconnectErr         error
 	callbackErr           error
@@ -152,6 +157,28 @@ func (s *fakeAdminService) UpdateModelSettings(_ context.Context, settings admin
 	return s.modelSettings, nil
 }
 
+func (s *fakeAdminService) DefaultModel(ctx context.Context) (string, error) {
+	settings, err := s.GetModelSettings(ctx)
+	if err != nil {
+		return "", err
+	}
+	return settings.DefaultModel, nil
+}
+
+func (s *fakeAdminService) IsModelAllowed(ctx context.Context, model string) (bool, error) {
+	settings, err := s.GetModelSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+	model = strings.TrimSpace(model)
+	for _, allowed := range settings.AllowedModels {
+		if model == allowed {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func newFakeProviderService() *fakeProviderService {
 	return &fakeProviderService{
 		status: provider.Status{
@@ -160,7 +187,8 @@ func newFakeProviderService() *fakeProviderService {
 			Connected:   true,
 			DisplayName: "Codex Account",
 		},
-		connect: provider.ConnectResult{AuthorizationURL: "https://auth.example.test/authorize?state=oauth_state"},
+		connect:       provider.ConnectResult{AuthorizationURL: "https://auth.example.test/authorize?state=oauth_state"},
+		accountModels: map[int64][]provider.AccountModel{},
 	}
 }
 
@@ -178,6 +206,53 @@ func (s *fakeProviderService) StartConnect(_ context.Context, options provider.C
 
 func (s *fakeProviderService) ListAccounts(_ context.Context) ([]provider.Account, error) {
 	return s.accounts, nil
+}
+
+func (s *fakeProviderService) ListAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, error) {
+	if s.accountModelsErr != nil {
+		return nil, s.accountModelsErr
+	}
+	models, ok := s.accountModels[accountID]
+	if !ok {
+		return nil, provider.ErrNotConnected
+	}
+	return append([]provider.AccountModel(nil), models...), nil
+}
+
+func (s *fakeProviderService) ReplaceAccountModels(_ context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error) {
+	if s.replaceModelsErr != nil {
+		return nil, s.replaceModelsErr
+	}
+	if _, ok := s.accountModels[accountID]; !ok {
+		return nil, provider.ErrNotConnected
+	}
+	saved := make([]provider.AccountModel, 0, len(models))
+	for i, model := range models {
+		saved = append(saved, provider.AccountModel{
+			ID:        int64(i + 1),
+			AccountID: accountID,
+			Provider:  "openai",
+			Model:     strings.TrimSpace(model.Model),
+			Enabled:   model.Enabled,
+			Source:    provider.AccountModelSourceManual,
+		})
+	}
+	s.accountModels[accountID] = saved
+	return append([]provider.AccountModel(nil), saved...), nil
+}
+
+func (s *fakeProviderService) ListExposedModels(_ context.Context, allowedModels []string) ([]provider.ExposedModel, error) {
+	if s.exposedModelsErr != nil {
+		return nil, s.exposedModelsErr
+	}
+	if s.exposedModels != nil {
+		return append([]provider.ExposedModel(nil), s.exposedModels...), nil
+	}
+	models := make([]provider.ExposedModel, 0, len(allowedModels))
+	for _, model := range allowedModels {
+		models = append(models, provider.ExposedModel{ID: model, OwnedBy: "openai"})
+	}
+	return models, nil
 }
 
 func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state string) (provider.Account, error) {
@@ -910,6 +985,123 @@ func TestAdminCanDisconnectProviderAccount(t *testing.T) {
 	}
 }
 
+func TestAccountModelsRequireSession(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/api/admin/providers/openai/accounts/7/models"},
+		{method: http.MethodPut, path: "/api/admin/providers/openai/accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", recorder.Code)
+			}
+		})
+	}
+}
+
+func TestListAccountModelsReturnsModels(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accountModels[7] = []provider.AccountModel{
+		{ID: 11, AccountID: 7, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
+		{ID: 12, AccountID: 7, Provider: "openai", Model: "gpt-5-mini", Enabled: false, Source: provider.AccountModelSourceManual},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai/accounts/7/models", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Models []provider.AccountModel `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 2 || body.Models[0].Model != "gpt-5" || body.Models[1].Enabled {
+		t.Fatalf("models = %+v", body.Models)
+	}
+}
+
+func TestReplaceAccountModelsReturnsSavedModels(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accountModels[7] = []provider.AccountModel{}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/providers/openai/accounts/7/models", strings.NewReader(`{"models":[{"model":"gpt-5","enabled":true},{"model":"gpt-5-mini","enabled":false}]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Models []provider.AccountModel `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 2 || body.Models[0].Model != "gpt-5" || body.Models[1].Enabled {
+		t.Fatalf("models = %+v", body.Models)
+	}
+	if got := providers.accountModels[7]; len(got) != 2 || got[0].Model != "gpt-5" {
+		t.Fatalf("saved models = %+v", got)
+	}
+}
+
+func TestAccountModelsMapProviderErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+		err    error
+		want   int
+		code   string
+	}{
+		{name: "list invalid input", method: http.MethodGet, err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "list not found", method: http.MethodGet, err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+		{name: "replace invalid input", method: http.MethodPut, err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "replace not found", method: http.MethodPut, err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			if tc.method == http.MethodGet {
+				providers.accountModelsErr = tc.err
+			} else {
+				providers.replaceModelsErr = tc.err
+			}
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(tc.method, "/api/admin/providers/openai/accounts/7/models", strings.NewReader(`{"models":[{"model":"gpt-5","enabled":true}]}`))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.want)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != tc.code {
+				t.Fatalf("error = %q, want %s", body["error"], tc.code)
+			}
+		})
+	}
+}
+
 func TestAdminDisconnectProviderAccountMapsErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1096,6 +1288,63 @@ func TestUpdateModelSettingsReturnsBadRequestForInvalidInput(t *testing.T) {
 	}
 	if body["error"] != "invalid_input" {
 		t.Fatalf("error = %q, want invalid_input", body["error"])
+	}
+}
+
+func TestModelRoutingReturnsStatus(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.modelSettings = admin.ModelSettings{
+		DefaultModel:  "gpt-5",
+		AllowedModels: []string{"gpt-5", "gpt-5-mini", "codex-mini"},
+	}
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", Enabled: true},
+		{ID: 8, Provider: "openai", Enabled: false},
+	}
+	providers.accountModels[7] = []provider.AccountModel{
+		{ID: 11, AccountID: 7, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
+		{ID: 12, AccountID: 7, Provider: "openai", Model: "gpt-5-mini", Enabled: false, Source: provider.AccountModelSourceManual},
+	}
+	providers.accountModels[8] = []provider.AccountModel{
+		{ID: 13, AccountID: 8, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
+		{ID: 14, AccountID: 8, Provider: "openai", Model: "unallowed-model", Enabled: true, Source: provider.AccountModelSourceManual},
+	}
+	providers.exposedModels = []provider.ExposedModel{
+		{ID: "gpt-5", OwnedBy: "openai"},
+		{ID: "gpt-5-mini", OwnedBy: "openai"},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body admin.ModelRoutingStatus
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.DefaultModel != "gpt-5" || !slices.Equal(body.AllowedModels, []string{"gpt-5", "gpt-5-mini", "codex-mini"}) {
+		t.Fatalf("routing settings = %+v", body)
+	}
+	if len(body.Models) != 4 {
+		t.Fatalf("models length = %d, want 4: %+v", len(body.Models), body.Models)
+	}
+	if body.Models[0] != (admin.ModelRoutingModel{Model: "gpt-5", Allowed: true, ConfiguredCount: 2, EnabledCount: 1}) {
+		t.Fatalf("first model = %+v", body.Models[0])
+	}
+	if body.Models[2] != (admin.ModelRoutingModel{Model: "codex-mini", Allowed: true}) {
+		t.Fatalf("third model = %+v", body.Models[2])
+	}
+	if body.Models[3] != (admin.ModelRoutingModel{Model: "unallowed-model", ConfiguredCount: 1}) {
+		t.Fatalf("fourth model = %+v", body.Models[3])
+	}
+	if len(body.Warnings) != 1 || !strings.Contains(body.Warnings[0], "codex-mini") {
+		t.Fatalf("warnings = %+v, want missing codex-mini warning", body.Warnings)
 	}
 }
 

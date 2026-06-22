@@ -68,6 +68,20 @@ type ModelSettings struct {
 	AllowedModels []string `json:"allowedModels"`
 }
 
+type ModelRoutingStatus struct {
+	DefaultModel  string              `json:"defaultModel"`
+	AllowedModels []string            `json:"allowedModels"`
+	Models        []ModelRoutingModel `json:"models"`
+	Warnings      []string            `json:"warnings"`
+}
+
+type ModelRoutingModel struct {
+	Model           string `json:"model"`
+	Allowed         bool   `json:"allowed"`
+	ConfiguredCount int    `json:"configuredCount"`
+	EnabledCount    int    `json:"enabledCount"`
+}
+
 type CreatedAPIKey struct {
 	Key    APIKey
 	Secret string
@@ -275,6 +289,28 @@ func (s *Service) UpdateModelSettings(ctx context.Context, settings ModelSetting
 		return ModelSettings{}, err
 	}
 	return s.repo.SaveModelSettings(ctx, normalized)
+}
+
+func (s *Service) DefaultModel(ctx context.Context) (string, error) {
+	settings, err := s.GetModelSettings(ctx)
+	if err != nil {
+		return "", err
+	}
+	return settings.DefaultModel, nil
+}
+
+func (s *Service) IsModelAllowed(ctx context.Context, model string) (bool, error) {
+	settings, err := s.GetModelSettings(ctx)
+	if err != nil {
+		return false, err
+	}
+	model = strings.TrimSpace(model)
+	for _, allowed := range settings.AllowedModels {
+		if model == allowed {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func defaultModelSettings() ModelSettings {

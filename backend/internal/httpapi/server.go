@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,8 @@ type AdminService interface {
 	ListRequestLogs(ctx context.Context, limit int) ([]admin.RequestLog, error)
 	GetModelSettings(ctx context.Context) (admin.ModelSettings, error)
 	UpdateModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error)
+	DefaultModel(ctx context.Context) (string, error)
+	IsModelAllowed(ctx context.Context, model string) (bool, error)
 }
 
 type ProviderService interface {
@@ -44,6 +47,9 @@ type ProviderService interface {
 	StartConnect(ctx context.Context, options provider.ConnectOptions) (provider.ConnectResult, error)
 	CompleteCallback(ctx context.Context, code, state string) (provider.Account, error)
 	UpdateAccount(ctx context.Context, id int64, update provider.AccountUpdate) (provider.Account, error)
+	ListAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, error)
+	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
+	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
 	Disconnect(ctx context.Context) error
@@ -260,6 +266,27 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, settings)
 	}))
 
+	mux.HandleFunc("GET /api/admin/model-routing", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		status, err := modelRoutingStatus(r.Context(), admins, providers)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) || errors.Is(err, provider.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, provider.ErrNotConnected) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	}))
+
 	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		if providers == nil {
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
@@ -387,6 +414,68 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+	}))
+
+	mux.HandleFunc("GET /api/admin/providers/openai/accounts/{id}/models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		models, err := providers.ListAccountModels(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, provider.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, provider.ErrNotConnected) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]provider.AccountModel{"models": models})
+	}))
+
+	mux.HandleFunc("PUT /api/admin/providers/openai/accounts/{id}/models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if providers == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		var req struct {
+			Models []provider.AccountModelInput `json:"models"`
+		}
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		models, err := providers.ReplaceAccountModels(r.Context(), id, req.Models)
+		if err != nil {
+			if errors.Is(err, provider.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, provider.ErrNotConnected) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]provider.AccountModel{"models": models})
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -517,6 +606,96 @@ func absoluteRequestURL(r *http.Request) string {
 		return r.URL.RequestURI()
 	}
 	return scheme + "://" + host + r.URL.RequestURI()
+}
+
+func modelRoutingStatus(ctx context.Context, admins AdminService, providers ProviderService) (admin.ModelRoutingStatus, error) {
+	defaultModel, err := admins.DefaultModel(ctx)
+	if err != nil {
+		return admin.ModelRoutingStatus{}, err
+	}
+	allowed, err := admins.IsModelAllowed(ctx, defaultModel)
+	if err != nil {
+		return admin.ModelRoutingStatus{}, err
+	}
+	if !allowed {
+		return admin.ModelRoutingStatus{}, admin.ErrInvalidInput
+	}
+
+	settings, err := admins.GetModelSettings(ctx)
+	if err != nil {
+		return admin.ModelRoutingStatus{}, err
+	}
+	accounts, err := providers.ListAccounts(ctx)
+	if err != nil {
+		return admin.ModelRoutingStatus{}, err
+	}
+	exposed, err := providers.ListExposedModels(ctx, settings.AllowedModels)
+	if err != nil {
+		return admin.ModelRoutingStatus{}, err
+	}
+
+	status := admin.ModelRoutingStatus{
+		DefaultModel:  defaultModel,
+		AllowedModels: append([]string(nil), settings.AllowedModels...),
+		Models:        make([]admin.ModelRoutingModel, 0, len(settings.AllowedModels)),
+	}
+	allowedSet := make(map[string]struct{}, len(settings.AllowedModels))
+	modelIndexes := make(map[string]int, len(settings.AllowedModels))
+	for _, model := range settings.AllowedModels {
+		allowedSet[model] = struct{}{}
+		status.Models = append(status.Models, admin.ModelRoutingModel{
+			Model:   model,
+			Allowed: true,
+		})
+		modelIndexes[model] = len(status.Models) - 1
+	}
+
+	extraModels := []string{}
+	extraModelSet := map[string]struct{}{}
+	for _, account := range accounts {
+		models, err := providers.ListAccountModels(ctx, account.ID)
+		if err != nil {
+			return admin.ModelRoutingStatus{}, err
+		}
+		for _, model := range models {
+			index, ok := modelIndexes[model.Model]
+			if !ok {
+				status.Models = append(status.Models, admin.ModelRoutingModel{
+					Model: model.Model,
+				})
+				index = len(status.Models) - 1
+				modelIndexes[model.Model] = index
+				if _, seen := extraModelSet[model.Model]; !seen {
+					extraModelSet[model.Model] = struct{}{}
+					extraModels = append(extraModels, model.Model)
+				}
+			}
+			status.Models[index].ConfiguredCount++
+			if account.Enabled && model.Enabled {
+				status.Models[index].EnabledCount++
+			}
+		}
+	}
+	if len(extraModels) > 1 {
+		sort.Strings(extraModels)
+		extras := make([]admin.ModelRoutingModel, 0, len(extraModels))
+		for _, model := range extraModels {
+			extras = append(extras, status.Models[modelIndexes[model]])
+		}
+		status.Models = append(status.Models[:len(settings.AllowedModels)], extras...)
+	}
+
+	exposedSet := map[string]struct{}{}
+	for _, model := range exposed {
+		exposedSet[model.ID] = struct{}{}
+	}
+
+	for _, model := range status.Models {
+		if _, ok := exposedSet[model.Model]; model.Allowed && !ok {
+			status.Warnings = append(status.Warnings, "allowed model "+model.Model+" has no enabled account")
+		}
+	}
+	return status, nil
 }
 
 func decodeCallbackURL(w http.ResponseWriter, r *http.Request) (string, string, error) {

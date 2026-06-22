@@ -275,6 +275,48 @@ func TestUpdateModelSettingsRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestModelPolicyHelpersReturnDefaultAndAllowedStatus(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	defaultModel, err := service.DefaultModel(context.Background())
+	if err != nil {
+		t.Fatalf("DefaultModel returned error: %v", err)
+	}
+	if defaultModel != "gpt-4.1" {
+		t.Fatalf("DefaultModel = %q, want gpt-4.1", defaultModel)
+	}
+
+	allowed, err := service.IsModelAllowed(context.Background(), " gpt-4.1-mini ")
+	if err != nil {
+		t.Fatalf("IsModelAllowed returned error: %v", err)
+	}
+	if !allowed {
+		t.Fatal("IsModelAllowed returned false for configured model")
+	}
+
+	allowed, err = service.IsModelAllowed(context.Background(), "gpt-5")
+	if err != nil {
+		t.Fatalf("IsModelAllowed returned error: %v", err)
+	}
+	if allowed {
+		t.Fatal("IsModelAllowed returned true for unconfigured model")
+	}
+}
+
+func TestDefaultModelRejectsInvalidStoredSettings(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.modelSettings = ModelSettings{
+		DefaultModel:  "gpt-5",
+		AllowedModels: []string{"gpt-5-mini"},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	if _, err := service.DefaultModel(context.Background()); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("DefaultModel error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func buildModelNames(count int) []string {
 	names := make([]string, 0, count)
 	for i := range count {
