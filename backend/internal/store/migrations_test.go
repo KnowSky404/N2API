@@ -119,6 +119,25 @@ func TestCodexAccountPoolStateMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestOAuthAccountModelsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00007_oauth_account_models.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS oauth_account_models",
+		"account_id BIGINT NOT NULL REFERENCES oauth_accounts(id) ON DELETE CASCADE",
+		"source TEXT NOT NULL DEFAULT 'manual'",
+		"UNIQUE (account_id, model)",
+		"oauth_account_models_provider_model_enabled_idx",
+		"oauth_account_models_account_enabled_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountPoolMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00004_oauth_account_pool.sql")
 	if err != nil {
@@ -148,10 +167,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 6 {
-		t.Fatalf("migration sources = %d, want 6", len(sources))
+	if len(sources) != 7 {
+		t.Fatalf("migration sources = %d, want 7", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[5].Path != "00006_codex_account_pool_state.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[6].Path != "00007_oauth_account_models.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

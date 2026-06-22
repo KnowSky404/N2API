@@ -43,6 +43,13 @@ const (
 	AccountStatusExpired     = "expired"
 )
 
+const (
+	AccountModelSourceManual = "manual"
+
+	maxAccountModels = 100
+	maxModelNameLen  = 128
+)
+
 var (
 	ErrNotConfigured       = errors.New("provider not configured")
 	ErrNotConnected        = errors.New("provider not connected")
@@ -50,6 +57,7 @@ var (
 	ErrInvalidInput        = errors.New("invalid provider input")
 	ErrAccountsDisabled    = errors.New("provider accounts disabled")
 	ErrAccountsUnavailable = errors.New("provider accounts unavailable")
+	ErrModelUnavailable    = errors.New("model unavailable")
 )
 
 type Config struct {
@@ -146,6 +154,30 @@ type Account struct {
 	UpdatedAt             time.Time         `json:"updatedAt"`
 }
 
+type AccountModel struct {
+	ID         int64             `json:"id"`
+	AccountID  int64             `json:"accountId"`
+	Provider   string            `json:"provider"`
+	Model      string            `json:"model"`
+	Enabled    bool              `json:"enabled"`
+	Source     string            `json:"source"`
+	LastSeenAt *time.Time        `json:"lastSeenAt"`
+	LastError  string            `json:"lastError"`
+	Metadata   map[string]string `json:"metadata"`
+	CreatedAt  time.Time         `json:"createdAt"`
+	UpdatedAt  time.Time         `json:"updatedAt"`
+}
+
+type AccountModelInput struct {
+	Model   string `json:"model"`
+	Enabled bool   `json:"enabled"`
+}
+
+type ExposedModel struct {
+	ID      string `json:"id"`
+	OwnedBy string `json:"ownedBy"`
+}
+
 type AccountUpdate struct {
 	Enabled  *bool
 	Priority *int
@@ -205,6 +237,10 @@ type Repository interface {
 	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error
 	RecordRefreshFailure(ctx context.Context, provider string, id int64, message string, at time.Time, openUntil *time.Time) error
 	RecordAccountStatus(ctx context.Context, provider string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error
+	ListAccountModels(ctx context.Context, provider string, accountID int64) ([]AccountModel, error)
+	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
+	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
+	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	CreateState(ctx context.Context, state OAuthState) error
 	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
 }
