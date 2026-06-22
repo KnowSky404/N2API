@@ -1127,6 +1127,79 @@ func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	}
 }
 
+func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:     "  OpenAI proxy  ",
+		BaseURL:  "https://upstream.example.test/v1/ ",
+		APIKey:   " upstream-secret ",
+		Enabled:  true,
+		Priority: 12,
+		Models: []string{
+			" gpt-5 ",
+			"gpt-4.1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+	if account.ID == 0 || account.Provider != "openai" || account.AccountType != AccountTypeAPIUpstream {
+		t.Fatalf("account identity = %+v", account)
+	}
+	if account.Name != "OpenAI proxy" || account.Credential.BaseURL != "https://upstream.example.test/v1" {
+		t.Fatalf("account = %+v, want trimmed name and base URL", account)
+	}
+	if !account.Enabled || account.Priority != 12 || account.Status != AccountStatusActive {
+		t.Fatalf("account scheduling = %+v, want enabled priority 12 active", account)
+	}
+	if account.Credential.CredentialType != CredentialTypeAPIKey {
+		t.Fatalf("credential type = %q, want api key", account.Credential.CredentialType)
+	}
+	if account.Credential.EncryptedAPIKey == "" || account.Credential.EncryptedAPIKey == "upstream-secret" {
+		t.Fatalf("encrypted API key = %q, want encrypted non-plaintext value", account.Credential.EncryptedAPIKey)
+	}
+	decrypted, err := secret.DecryptString("encryption-secret", account.Credential.EncryptedAPIKey)
+	if err != nil {
+		t.Fatalf("DecryptString returned error: %v", err)
+	}
+	if decrypted != "upstream-secret" {
+		t.Fatalf("decrypted API key = %q, want upstream-secret", decrypted)
+	}
+	if saved := repo.accounts[0]; saved.Credential.EncryptedAPIKey != account.Credential.EncryptedAPIKey || saved.Credential.BaseURL != "https://upstream.example.test/v1" {
+		t.Fatalf("saved account credential = %+v", saved.Credential)
+	}
+	models, err := service.ListAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountModels returned error: %v", err)
+	}
+	if got := modelNamesAndEnabled(models); strings.Join(got, ",") != "gpt-4.1:true,gpt-5:true" {
+		t.Fatalf("models = %v, want enabled normalized models", got)
+	}
+}
+
+func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
+	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
+	valid := APIUpstreamInput{Name: "Upstream", BaseURL: "https://upstream.example.test/v1", APIKey: "secret"}
+
+	for _, tc := range []struct {
+		name  string
+		input APIUpstreamInput
+	}{
+		{name: "missing name", input: APIUpstreamInput{Name: " ", BaseURL: valid.BaseURL, APIKey: valid.APIKey}},
+		{name: "missing base URL", input: APIUpstreamInput{Name: valid.Name, BaseURL: " ", APIKey: valid.APIKey}},
+		{name: "invalid base URL", input: APIUpstreamInput{Name: valid.Name, BaseURL: "://bad", APIKey: valid.APIKey}},
+		{name: "missing API key", input: APIUpstreamInput{Name: valid.Name, BaseURL: valid.BaseURL, APIKey: " "}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := service.CreateAPIUpstreamAccount(context.Background(), tc.input); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("CreateAPIUpstreamAccount error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
 func TestSelectAccessTokenReturnsUnavailableWhenAllEnabledAccountsExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{

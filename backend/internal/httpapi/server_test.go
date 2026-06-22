@@ -33,12 +33,16 @@ type fakeAdminService struct {
 	errorOnEmptyLogout bool
 	logoutTokens       []string
 	modelSettings      admin.ModelSettings
+	modelPolicyKeyID   int64
+	modelPolicy        string
+	modelPolicyModels  []string
 }
 
 type fakeProviderService struct {
 	status                provider.Status
 	connect               provider.ConnectResult
 	connectOptions        provider.ConnectOptions
+	createdAPIUpstream    provider.APIUpstreamInput
 	accounts              []provider.Account
 	accountModels         map[int64][]provider.AccountModel
 	exposedModels         []provider.ExposedModel
@@ -127,6 +131,25 @@ func (s *fakeAdminService) RevokeAPIKey(_ context.Context, id int64) (admin.APIK
 	return admin.APIKey{}, admin.ErrNotFound
 }
 
+func (s *fakeAdminService) UpdateAPIKeyModelPolicy(_ context.Context, id int64, policy string, models []string) (admin.APIKey, error) {
+	s.modelPolicyKeyID = id
+	s.modelPolicy = policy
+	s.modelPolicyModels = append([]string(nil), models...)
+	for i, key := range s.keys {
+		if key.ID == id {
+			key.ModelPolicy = policy
+			if policy == admin.APIKeyModelPolicyAll {
+				key.AllowedModels = nil
+			} else {
+				key.AllowedModels = append([]string(nil), models...)
+			}
+			s.keys[i] = key
+			return key, nil
+		}
+	}
+	return admin.APIKey{}, admin.ErrNotFound
+}
+
 func (s *fakeAdminService) ListRequestLogs(_ context.Context, limit int) ([]admin.RequestLog, error) {
 	if limit > len(s.logs) {
 		limit = len(s.logs)
@@ -206,6 +229,43 @@ func (s *fakeProviderService) StartConnect(_ context.Context, options provider.C
 
 func (s *fakeProviderService) ListAccounts(_ context.Context) ([]provider.Account, error) {
 	return s.accounts, nil
+}
+
+func (s *fakeProviderService) CreateAPIUpstreamAccount(_ context.Context, input provider.APIUpstreamInput) (provider.Account, error) {
+	s.createdAPIUpstream = input
+	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.BaseURL) == "" || strings.TrimSpace(input.APIKey) == "" {
+		return provider.Account{}, provider.ErrInvalidInput
+	}
+	account := provider.Account{
+		ID:          int64(len(s.accounts) + 1),
+		Provider:    "openai",
+		AccountType: provider.AccountTypeAPIUpstream,
+		Name:        strings.TrimSpace(input.Name),
+		DisplayName: strings.TrimSpace(input.Name),
+		Enabled:     input.Enabled,
+		Priority:    input.Priority,
+		Status:      provider.AccountStatusActive,
+		Credential: provider.AccountCredential{
+			CredentialType: provider.CredentialTypeAPIKey,
+			BaseURL:        strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"),
+		},
+	}
+	s.accounts = append(s.accounts, account)
+	if len(input.Models) > 0 {
+		models := make([]provider.AccountModel, 0, len(input.Models))
+		for i, model := range input.Models {
+			models = append(models, provider.AccountModel{
+				ID:        int64(i + 1),
+				AccountID: account.ID,
+				Provider:  "openai",
+				Model:     strings.TrimSpace(model),
+				Enabled:   true,
+				Source:    provider.AccountModelSourceManual,
+			})
+		}
+		s.accountModels[account.ID] = models
+	}
+	return account, nil
 }
 
 func (s *fakeProviderService) ListAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, error) {
@@ -627,6 +687,32 @@ func TestRevokeAPIKeyParsesIDAndReturnsRevokedKey(t *testing.T) {
 	}
 }
 
+func TestUpdateAPIKeyModelPolicyEndpoint(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/model-policy", strings.NewReader(`{"modelPolicy":"selected","models":["gpt-5","gpt-4.1"]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Key admin.APIKey `json:"key"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Key.ID != 7 || body.Key.ModelPolicy != admin.APIKeyModelPolicySelected || !slices.Equal(body.Key.AllowedModels, []string{"gpt-5", "gpt-4.1"}) {
+		t.Fatalf("key = %+v, want selected model policy", body.Key)
+	}
+	if admins.modelPolicyKeyID != 7 || admins.modelPolicy != admin.APIKeyModelPolicySelected || !slices.Equal(admins.modelPolicyModels, []string{"gpt-5", "gpt-4.1"}) {
+		t.Fatalf("recorded model policy = id:%d policy:%q models:%v", admins.modelPolicyKeyID, admins.modelPolicy, admins.modelPolicyModels)
+	}
+}
+
 func TestProviderStatusRequiresSessionAndReturnsStatus(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	recorder := httptest.NewRecorder()
@@ -757,6 +843,120 @@ func TestAdminProviderAccountsRequireSession(t *testing.T) {
 	}
 }
 
+func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
+		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
+		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
+		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
+		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401", recorder.Code)
+			}
+		})
+	}
+}
+
+func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
+		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
+		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
+		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
+		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", recorder.Code)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != "service_unavailable" {
+				t.Fatalf("error = %q, want service_unavailable", body["error"])
+			}
+		})
+	}
+}
+
+func TestCreateAPIUpstreamAccount(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":" Upstream ","baseUrl":"https://upstream.example.test/v1/","apiKey":" secret ","enabled":true,"priority":8,"models":[" gpt-5 ","gpt-4.1"]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
+	}
+	if providers.createdAPIUpstream.Name != " Upstream " || providers.createdAPIUpstream.BaseURL != "https://upstream.example.test/v1/" || providers.createdAPIUpstream.APIKey != " secret " {
+		t.Fatalf("created input = %+v", providers.createdAPIUpstream)
+	}
+	if !providers.createdAPIUpstream.Enabled || providers.createdAPIUpstream.Priority != 8 || len(providers.createdAPIUpstream.Models) != 2 {
+		t.Fatalf("created input scheduling/models = %+v", providers.createdAPIUpstream)
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.ID == 0 || body.Account.AccountType != provider.AccountTypeAPIUpstream {
+		t.Fatalf("account = %+v", body.Account)
+	}
+	if strings.Contains(recorder.Body.String(), "secret") {
+		t.Fatalf("response leaked api key: %s", recorder.Body.String())
+	}
+}
+
+func TestCreateAPIUpstreamAccountMapsErrors(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":"","baseUrl":"https://upstream.example.test","apiKey":"secret"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "invalid_input" {
+		t.Fatalf("error = %q, want invalid_input", body["error"])
+	}
+}
+
 func TestAdminProviderAccountMutationsRequireSession(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	for _, tc := range []struct {
@@ -779,6 +979,48 @@ func TestAdminProviderAccountMutationsRequireSession(t *testing.T) {
 				t.Fatalf("status = %d, want 401", recorder.Code)
 			}
 		})
+	}
+}
+
+func TestAdminCanListUnifiedProviderAccounts(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/provider-accounts", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"id":7`) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"enabled":false,"priority":2}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.ID != 7 || body.Account.Enabled || body.Account.Priority != 2 {
+		t.Fatalf("account = %+v, want disabled account 7 priority 2", body.Account)
 	}
 }
 
@@ -1058,6 +1300,50 @@ func TestReplaceAccountModelsReturnsSavedModels(t *testing.T) {
 	}
 	if got := providers.accountModels[7]; len(got) != 2 || got[0].Model != "gpt-5" {
 		t.Fatalf("saved models = %+v", got)
+	}
+}
+
+func TestUnifiedAccountModelsEndpoints(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accountModels[7] = []provider.AccountModel{
+		{ID: 11, AccountID: 7, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/provider-accounts/7/models", nil)
+	listReq.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listReq)
+
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", listRecorder.Code, listRecorder.Body.String())
+	}
+	var listBody struct {
+		Models []provider.AccountModel `json:"models"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode list body: %v", err)
+	}
+	if len(listBody.Models) != 1 || listBody.Models[0].Model != "gpt-5" {
+		t.Fatalf("list models = %+v", listBody.Models)
+	}
+
+	replaceReq := httptest.NewRequest(http.MethodPut, "/api/admin/provider-accounts/7/models", strings.NewReader(`{"models":[{"model":"gpt-4.1","enabled":true},{"model":"gpt-5","enabled":false}]}`))
+	replaceReq.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	replaceRecorder := httptest.NewRecorder()
+	server.ServeHTTP(replaceRecorder, replaceReq)
+
+	if replaceRecorder.Code != http.StatusOK {
+		t.Fatalf("replace status = %d body=%s, want 200", replaceRecorder.Code, replaceRecorder.Body.String())
+	}
+	var replaceBody struct {
+		Models []provider.AccountModel `json:"models"`
+	}
+	if err := json.Unmarshal(replaceRecorder.Body.Bytes(), &replaceBody); err != nil {
+		t.Fatalf("decode replace body: %v", err)
+	}
+	if len(replaceBody.Models) != 2 || replaceBody.Models[0].Model != "gpt-4.1" || replaceBody.Models[1].Enabled {
+		t.Fatalf("replace models = %+v", replaceBody.Models)
 	}
 }
 

@@ -199,6 +199,15 @@ type AccountModelInput struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type APIUpstreamInput struct {
+	Name     string   `json:"name"`
+	BaseURL  string   `json:"baseUrl"`
+	APIKey   string   `json:"apiKey"`
+	Enabled  bool     `json:"enabled"`
+	Priority int      `json:"priority"`
+	Models   []string `json:"models"`
+}
+
 type ExposedModel struct {
 	ID      string `json:"id"`
 	OwnedBy string `json:"ownedBy"`
@@ -658,6 +667,54 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		return Account{}, ErrInvalidInput
 	}
 	return s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
+}
+
+func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstreamInput) (Account, error) {
+	name := strings.TrimSpace(input.Name)
+	baseURL := strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
+	apiKey := strings.TrimSpace(input.APIKey)
+	if name == "" || baseURL == "" || apiKey == "" {
+		return Account{}, ErrInvalidInput
+	}
+	if _, err := url.ParseRequestURI(baseURL); err != nil {
+		return Account{}, ErrInvalidInput
+	}
+
+	encryptedAPIKey, err := secret.EncryptString(s.cfg.Secret, apiKey)
+	if err != nil {
+		return Account{}, err
+	}
+	account, err := s.repo.SaveAccount(ctx, Account{
+		Provider:    s.cfg.Provider,
+		AccountType: AccountTypeAPIUpstream,
+		Name:        name,
+		DisplayName: name,
+		Enabled:     input.Enabled,
+		Priority:    input.Priority,
+		Status:      AccountStatusActive,
+		Credential: AccountCredential{
+			CredentialType:  CredentialTypeAPIKey,
+			EncryptedAPIKey: encryptedAPIKey,
+			BaseURL:         baseURL,
+		},
+	})
+	if err != nil {
+		return Account{}, err
+	}
+
+	if len(input.Models) > 0 {
+		models := make([]AccountModelInput, 0, len(input.Models))
+		for _, model := range input.Models {
+			models = append(models, AccountModelInput{
+				Model:   model,
+				Enabled: true,
+			})
+		}
+		if _, err := s.ReplaceAccountModels(ctx, account.ID, models); err != nil {
+			return Account{}, err
+		}
+	}
+	return account, nil
 }
 
 func (s *Service) DisconnectAccount(ctx context.Context, id int64) error {
