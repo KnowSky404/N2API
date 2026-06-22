@@ -873,7 +873,11 @@ func (s *Service) selectionCandidates(ctx context.Context, model string, exclude
 		if err != nil {
 			return nil, false, ErrModelUnavailable, err
 		}
-		return accounts, true, ErrModelUnavailable, nil
+		notFoundErr := ErrAccountsUnavailable
+		if len(accounts) == 0 {
+			notFoundErr = ErrModelUnavailable
+		}
+		return accounts, true, notFoundErr, nil
 	}
 
 	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
@@ -1057,7 +1061,7 @@ func (s *Service) storeCallbackTokenResponse(ctx context.Context, tokens TokenRe
 	return s.repo.SaveAccount(ctx, account)
 }
 
-func accountSchedulable(account Account, now time.Time) bool {
+func AccountSchedulable(account Account, now time.Time) bool {
 	if !account.Enabled {
 		return false
 	}
@@ -1083,6 +1087,10 @@ func accountSchedulable(account Account, now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+func accountSchedulable(account Account, now time.Time) bool {
+	return AccountSchedulable(account, now)
 }
 
 func retryAfterTime(value string, now time.Time, fallback time.Duration) time.Time {

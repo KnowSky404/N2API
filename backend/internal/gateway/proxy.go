@@ -184,11 +184,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		selected, err := p.tokens.SelectAccessToken(r.Context(), model, excluded...)
 		if err != nil {
 			if lastRetryableResp != nil {
-				copyResponseHeaders(recorder.Header(), lastRetryableResp.Header)
-				recorder.WriteHeader(lastRetryableResp.StatusCode)
-				_, _ = io.Copy(flushWriter{ResponseWriter: recorder}, lastRetryableResp.Body)
 				_ = lastRetryableResp.Body.Close()
-				return
+				lastRetryableResp = nil
 			}
 			errorCode = providerErrorCode(err)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))

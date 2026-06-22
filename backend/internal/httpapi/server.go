@@ -652,11 +652,13 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 
 	extraModels := []string{}
 	extraModelSet := map[string]struct{}{}
+	now := time.Now()
 	for _, account := range accounts {
 		models, err := providers.ListAccountModels(ctx, account.ID)
 		if err != nil {
 			return admin.ModelRoutingStatus{}, err
 		}
+		accountEnabled := provider.AccountSchedulable(account, now)
 		for _, model := range models {
 			index, ok := modelIndexes[model.Model]
 			if !ok {
@@ -671,7 +673,7 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 				}
 			}
 			status.Models[index].ConfiguredCount++
-			if account.Enabled && model.Enabled {
+			if accountEnabled && model.Enabled {
 				status.Models[index].EnabledCount++
 			}
 		}

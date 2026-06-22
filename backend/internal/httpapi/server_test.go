@@ -1348,6 +1348,49 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 	}
 }
 
+func TestModelRoutingStatusEnabledCountUsesSchedulableAccountRules(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5"}}
+	now := time.Now()
+	future := now.Add(time.Hour)
+	past := now.Add(-time.Hour)
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", Enabled: true, Status: provider.AccountStatusExpired},
+		{ID: 8, Provider: "openai", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
+		{ID: 9, Provider: "openai", Enabled: true, Status: provider.AccountStatusCircuitOpen, CircuitOpenUntil: &future},
+		{ID: 10, Provider: "openai", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &past},
+		{ID: 11, Provider: "openai", Enabled: true, Status: provider.AccountStatusCircuitOpen, CircuitOpenUntil: &past},
+	}
+	for _, account := range providers.accounts {
+		providers.accountModels[account.ID] = []provider.AccountModel{
+			{AccountID: account.ID, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
+		}
+	}
+	providers.exposedModels = []provider.ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body admin.ModelRoutingStatus
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 1 {
+		t.Fatalf("models = %+v, want one model", body.Models)
+	}
+	want := admin.ModelRoutingModel{Model: "gpt-5", Allowed: true, ConfiguredCount: 5, EnabledCount: 2}
+	if body.Models[0] != want {
+		t.Fatalf("model = %+v, want %+v", body.Models[0], want)
+	}
+}
+
 func TestV1RoutesUseGatewayHandler(t *testing.T) {
 	gateway := &fakeGatewayHandler{}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService(), gateway)

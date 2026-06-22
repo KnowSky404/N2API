@@ -741,7 +741,7 @@ func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing
 	}
 }
 
-func TestProxyReturnsFinalRetryableUpstreamErrorWhenNoFallbackAccount(t *testing.T) {
+func TestProxyReturnsAccountsUnavailableWhenRetryableUpstreamHasNoFallbackAccount(t *testing.T) {
 	tokens := &fakeSelectedTokenProvider{
 		tokens: []SelectedToken{{AccountID: 1, Token: "rate-limited-token"}},
 		errs:   []error{nil, provider.ErrAccountsUnavailable},
@@ -762,14 +762,14 @@ func TestProxyReturnsFinalRetryableUpstreamErrorWhenNoFallbackAccount(t *testing
 
 	proxy.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429; body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", recorder.Code, recorder.Body.String())
 	}
-	if got := recorder.Header().Get("Retry-After"); got != "60" {
-		t.Fatalf("Retry-After = %q, want 60", got)
+	if got := recorder.Header().Get("Retry-After"); got != "" {
+		t.Fatalf("Retry-After = %q, want empty", got)
 	}
-	if !strings.Contains(recorder.Body.String(), "usage limit") {
-		t.Fatalf("body = %q, want upstream body", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "provider_accounts_unavailable") {
+		t.Fatalf("body = %q, want provider_accounts_unavailable", recorder.Body.String())
 	}
 	if tokens.calls != 2 {
 		t.Fatalf("token calls = %d, want fallback lookup after first 429", tokens.calls)

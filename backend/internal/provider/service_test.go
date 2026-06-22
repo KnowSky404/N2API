@@ -975,6 +975,24 @@ func TestSelectAccessTokenReturnsModelUnavailableWhenNoAccountSupportsModel(t *t
 	}
 }
 
+func TestSelectAccessTokenReturnsAccountsUnavailableWhenModelAccountsCannotProvideToken(t *testing.T) {
+	repo := newMemoryRepo()
+	badToken := testAccount(t, 1, true, 1, "access-token")
+	badToken.EncryptedAccessToken = "not-encrypted"
+	repo.accounts = []Account{badToken}
+	repo.accountModels = map[int64][]AccountModel{
+		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccessToken(context.Background(), "gpt-5"); !errors.Is(err, ErrAccountsUnavailable) {
+		t.Fatalf("SelectAccessToken error = %v, want ErrAccountsUnavailable", err)
+	}
+	if repo.accounts[0].LastError == "" {
+		t.Fatal("account token lookup failure was not marked")
+	}
+}
+
 func TestSelectAccessTokenIgnoresDisabledModelRows(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
