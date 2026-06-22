@@ -28,14 +28,17 @@ type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (admin.APIKey, error)
 }
 
-type SelectedToken struct {
-	AccountID        int64
-	Token            string
-	ChatGPTAccountID string
+type SelectedAccount struct {
+	AccountID          int64
+	Provider           string
+	AccountType        string
+	AuthorizationToken string
+	BaseURL            string
+	ChatGPTAccountID   string
 }
 
-type AccessTokenProvider interface {
-	SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedToken, error)
+type AccountProvider interface {
+	SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
 type AccountFailureReporter interface {
@@ -78,7 +81,7 @@ type Config struct {
 
 type Proxy struct {
 	auth            APIKeyAuthenticator
-	tokens          AccessTokenProvider
+	accounts        AccountProvider
 	client          *http.Client
 	upstreamBaseURL string
 	codexBaseURL    string
@@ -86,11 +89,11 @@ type Proxy struct {
 	models          ModelProvider
 }
 
-func NewProxy(auth APIKeyAuthenticator, tokens AccessTokenProvider, cfg Config) *Proxy {
-	return NewProxyWithClient(auth, tokens, cfg, http.DefaultClient)
+func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
+	return NewProxyWithClient(auth, accounts, cfg, http.DefaultClient)
 }
 
-func NewProxyWithClient(auth APIKeyAuthenticator, tokens AccessTokenProvider, cfg Config, client *http.Client) *Proxy {
+func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config, client *http.Client) *Proxy {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -104,7 +107,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, tokens AccessTokenProvider, cf
 	}
 	return &Proxy{
 		auth:            auth,
-		tokens:          tokens,
+		accounts:        accounts,
 		client:          client,
 		upstreamBaseURL: upstreamBaseURL,
 		codexBaseURL:    codexBaseURL,
@@ -161,7 +164,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if p.tokens == nil {
+	if p.accounts == nil {
 		errorCode = "service_unavailable"
 		writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "gateway service unavailable")
 		return
@@ -181,7 +184,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if attempt > 0 && firstAccountID > 0 {
 			excluded = append(excluded, firstAccountID)
 		}
-		selected, err := p.tokens.SelectAccessToken(r.Context(), model, excluded...)
+		selected, err := p.accounts.SelectAccountForModel(r.Context(), model, excluded...)
 		if err != nil {
 			if lastRetryableResp != nil {
 				_ = lastRetryableResp.Body.Close()
@@ -241,7 +244,7 @@ func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statu
 	if accountID <= 0 {
 		return
 	}
-	reporter, ok := p.tokens.(AccountFailureReporter)
+	reporter, ok := p.accounts.(AccountFailureReporter)
 	if !ok {
 		return
 	}
@@ -322,8 +325,8 @@ func captureFailureMessage(resp *http.Response) string {
 	return string(body)
 }
 
-func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedToken, body io.ReadCloser) (*http.Request, error) {
-	useCodexEndpoint := r.Method == http.MethodPost && r.URL.Path == "/v1/responses" && strings.TrimSpace(selected.ChatGPTAccountID) != ""
+func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, body io.ReadCloser) (*http.Request, error) {
+	useCodexEndpoint := selected.AccountType == provider.AccountTypeCodexOAuth && r.Method == http.MethodPost && r.URL.Path == "/v1/responses" && strings.TrimSpace(selected.ChatGPTAccountID) != ""
 	upstreamPath := r.URL.Path
 	upstreamBaseURL := p.upstreamBaseURL
 	if useCodexEndpoint {
@@ -334,6 +337,8 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedToken, body
 		if err != nil {
 			return nil, err
 		}
+	} else if selectedBaseURL := strings.TrimRight(strings.TrimSpace(selected.BaseURL), "/"); selectedBaseURL != "" {
+		upstreamBaseURL = selectedBaseURL
 	}
 	upstreamURL, err := url.Parse(upstreamBaseURL + upstreamPath)
 	if err != nil {
@@ -345,7 +350,7 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedToken, body
 		return nil, err
 	}
 	copyRequestHeaders(req.Header, r.Header)
-	req.Header.Set("Authorization", "Bearer "+selected.Token)
+	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
 	if useCodexEndpoint {
 		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
 		req.Header.Set("Accept", "text/event-stream")

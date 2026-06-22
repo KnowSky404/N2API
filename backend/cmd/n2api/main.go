@@ -20,15 +20,20 @@ type gatewayTokenProvider struct {
 	service *provider.Service
 }
 
-func (p gatewayTokenProvider) SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedToken, error) {
-	selected, err := p.service.SelectAccessToken(ctx, model, excludedAccountIDs...)
+var _ gateway.AccountProvider = gatewayTokenProvider{}
+
+func (p gatewayTokenProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
+	selected, err := p.service.SelectAccountForModel(ctx, model, excludedAccountIDs...)
 	if err != nil {
-		return gateway.SelectedToken{}, err
+		return gateway.SelectedAccount{}, err
 	}
-	return gateway.SelectedToken{
-		AccountID:        selected.AccountID,
-		Token:            selected.Token,
-		ChatGPTAccountID: selected.ChatGPTAccountID,
+	return gateway.SelectedAccount{
+		AccountID:          selected.AccountID,
+		Provider:           selected.Provider,
+		AccountType:        selected.AccountType,
+		AuthorizationToken: selected.AuthorizationToken,
+		BaseURL:            selected.BaseURL,
+		ChatGPTAccountID:   selected.ChatGPTAccountID,
 	}, nil
 }
 

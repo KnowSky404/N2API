@@ -28,8 +28,8 @@ func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey s
 	return admin.APIKey{ID: 42, Name: "test key"}, nil
 }
 
-type fakeSelectedTokenProvider struct {
-	tokens     []SelectedToken
+type fakeSelectedAccountProvider struct {
+	accounts   []SelectedAccount
 	errs       []error
 	calls      int
 	models     []string
@@ -44,21 +44,21 @@ type reportedAccountFailure struct {
 	message    string
 }
 
-func (p *fakeSelectedTokenProvider) SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedToken, error) {
+func (p *fakeSelectedAccountProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	i := p.calls
 	p.calls++
 	p.models = append(p.models, model)
 	p.exclusions = append(p.exclusions, append([]int64(nil), excludedAccountIDs...))
 	if i < len(p.errs) && p.errs[i] != nil {
-		return SelectedToken{}, p.errs[i]
+		return SelectedAccount{}, p.errs[i]
 	}
-	if i < len(p.tokens) {
-		return p.tokens[i], nil
+	if i < len(p.accounts) {
+		return p.accounts[i], nil
 	}
-	return SelectedToken{}, provider.ErrAccountsUnavailable
+	return SelectedAccount{}, provider.ErrAccountsUnavailable
 }
 
-func (p *fakeSelectedTokenProvider) RecordAccountFailure(_ context.Context, accountID int64, statusCode int, retryAfter, message string) error {
+func (p *fakeSelectedAccountProvider) RecordAccountFailure(_ context.Context, accountID int64, statusCode int, retryAfter, message string) error {
 	p.failures = append(p.failures, reportedAccountFailure{
 		accountID:  accountID,
 		statusCode: statusCode,
@@ -105,7 +105,7 @@ func TestProxyRequiresBearerAPIKey(t *testing.T) {
 		t.Fatal("upstream should not be called without client API key")
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 	recorder := httptest.NewRecorder()
@@ -128,7 +128,7 @@ func TestProxyModelsReturnsLocalAggregateList(t *testing.T) {
 	}))
 	defer upstream.Close()
 	auth := &fakeAPIKeyAuthenticator{}
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	proxy := NewProxy(auth, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider:   fakeModelProvider{exposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}}},
@@ -184,7 +184,7 @@ func TestProxyRoutesChatCompletionByRequestedModel(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"chatcmpl_123"}`))
 	}))
 	defer upstream.Close()
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
@@ -225,7 +225,7 @@ func TestProxyInjectsDefaultModelWhenMissing(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"resp_123"}`))
 	}))
 	defer upstream.Close()
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
@@ -258,7 +258,7 @@ func TestProxyRejectsNonStringModel(t *testing.T) {
 		t.Fatal("upstream should not be called for invalid model field")
 	}))
 	defer upstream.Close()
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
@@ -302,7 +302,7 @@ func TestProxyTrimsRequestedModelBeforeRoutingAndForwarding(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"chatcmpl_123"}`))
 	}))
 	defer upstream.Close()
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
@@ -335,7 +335,7 @@ func TestProxyReturnsModelUnavailableBeforeUpstream(t *testing.T) {
 		t.Fatal("upstream should not be called when no account supports requested model")
 	}))
 	defer upstream.Close()
-	tokens := &fakeSelectedTokenProvider{errs: []error{provider.ErrModelUnavailable}}
+	tokens := &fakeSelectedAccountProvider{errs: []error{provider.ErrModelUnavailable}}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
@@ -385,7 +385,7 @@ func TestProxyStreamsChatCompletionsResponse(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[],"stream":true}`))
@@ -430,7 +430,7 @@ func TestProxyForwardsResponsesCreateWithStreaming(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi","stream":true}`))
@@ -448,6 +448,57 @@ func TestProxyForwardsResponsesCreateWithStreaming(t *testing.T) {
 	}
 	if recorder.Body.String() != "data: {\"type\":\"response.output_text.delta\"}\n\ndata: [DONE]\n\n" {
 		t.Fatalf("stream body = %q", recorder.Body.String())
+	}
+}
+
+func TestProxyRoutesAPIUpstreamAccountToConfiguredBaseURLAndToken(t *testing.T) {
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("default upstream should not be called for API upstream account")
+	}))
+	defer defaultUpstream.Close()
+	var gotPath string
+	var gotAuthorization string
+	var gotChatGPTAccountID string
+	var gotOpenAIBeta string
+	apiUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuthorization = r.Header.Get("Authorization")
+		gotChatGPTAccountID = r.Header.Get("chatgpt-account-id")
+		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_123"}`))
+	}))
+	defer apiUpstream.Close()
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID:          9,
+		AccountType:        provider.AccountTypeAPIUpstream,
+		AuthorizationToken: "sk-upstream",
+		BaseURL:            apiUpstream.URL,
+	}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		UpstreamBaseURL: defaultUpstream.URL,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if gotPath != "/v1/responses/resp_123" {
+		t.Fatalf("path = %q, want API upstream responses path", gotPath)
+	}
+	if gotAuthorization != "Bearer sk-upstream" {
+		t.Fatalf("Authorization = %q, want upstream API key", gotAuthorization)
+	}
+	if gotChatGPTAccountID != "" || gotOpenAIBeta != "" {
+		t.Fatalf("codex headers = chatgpt:%q beta:%q, want none", gotChatGPTAccountID, gotOpenAIBeta)
+	}
+	if accounts.calls != 1 {
+		t.Fatalf("account calls = %d, want 1", accounts.calls)
 	}
 }
 
@@ -481,10 +532,11 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{
-		AccountID:        1,
-		Token:            "upstream-token",
-		ChatGPTAccountID: "acct_chatgpt",
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID:          1,
+		AccountType:        provider.AccountTypeCodexOAuth,
+		AuthorizationToken: "upstream-token",
+		ChatGPTAccountID:   "acct_chatgpt",
 	}}}, Config{
 		UpstreamBaseURL:       "https://api.example.test",
 		CodexResponsesBaseURL: upstream.URL + "/backend-api/codex",
@@ -553,9 +605,9 @@ func TestProxyForwardsResponsesRetrieveAndInputItems(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"resp_123"}`))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{
-		{AccountID: 1, Token: "upstream-token"},
-		{AccountID: 1, Token: "upstream-token"},
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AuthorizationToken: "upstream-token"},
+		{AccountID: 1, AuthorizationToken: "upstream-token"},
 	}}, Config{
 		UpstreamBaseURL: upstream.URL,
 	})
@@ -584,7 +636,7 @@ func TestProxyForwardsResponsesRetrieveAndInputItems(t *testing.T) {
 }
 
 func TestProxyReportsMissingProviderAccount(t *testing.T) {
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{errs: []error{provider.ErrNotConnected}}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{errs: []error{provider.ErrNotConnected}}, Config{
 		UpstreamBaseURL: "https://api.example.test",
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
@@ -608,7 +660,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 		Logger:          logger,
 	})
@@ -638,7 +690,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 
 func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedTokenProvider{errs: []error{provider.ErrNotConnected}}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{errs: []error{provider.ErrNotConnected}}, Config{
 		UpstreamBaseURL: "https://api.example.test",
 		Logger:          logger,
 	})
@@ -659,7 +711,7 @@ func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 
 func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	transportCalls := 0
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		if transportCalls == 1 {
@@ -698,7 +750,7 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 
 func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	transportCalls := 0
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "rate-limited-token"}, {AccountID: 2, Token: "second-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "rate-limited-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		if transportCalls == 1 {
@@ -742,9 +794,9 @@ func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing
 }
 
 func TestProxyReturnsAccountsUnavailableWhenRetryableUpstreamHasNoFallbackAccount(t *testing.T) {
-	tokens := &fakeSelectedTokenProvider{
-		tokens: []SelectedToken{{AccountID: 1, Token: "rate-limited-token"}},
-		errs:   []error{nil, provider.ErrAccountsUnavailable},
+	tokens := &fakeSelectedAccountProvider{
+		accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "rate-limited-token"}},
+		errs:     []error{nil, provider.ErrAccountsUnavailable},
 	}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -778,7 +830,7 @@ func TestProxyReturnsAccountsUnavailableWhenRetryableUpstreamHasNoFallbackAccoun
 
 func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *testing.T) {
 	transportCalls := 0
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "expired-token"}, {AccountID: 2, Token: "second-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "expired-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		if transportCalls == 1 {
@@ -815,7 +867,7 @@ func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *tes
 }
 
 func TestProxyRecordsCircuitOpenOnUpstreamServerErrorAndReturnsFinalError(t *testing.T) {
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "bad-token"}, {AccountID: 1, Token: "same-account-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "bad-token"}, {AccountID: 1, AuthorizationToken: "same-account-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusBadGateway,
@@ -844,7 +896,7 @@ func TestProxyRecordsCircuitOpenOnUpstreamServerErrorAndReturnsFinalError(t *tes
 
 func TestProxyDoesNotRetrySameAccountBeforeStreaming(t *testing.T) {
 	transportCalls := 0
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 1, Token: "same-account-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 1, AuthorizationToken: "same-account-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		return nil, errors.New("upstream unavailable")
@@ -876,7 +928,7 @@ func TestProxyDoesNotRetrySameAccountBeforeStreaming(t *testing.T) {
 func TestProxyReplaysSmallPOSTBodyOnFallback(t *testing.T) {
 	const requestBody = `{"model":"gpt-5","messages":[],"stream":false}`
 	transportCalls := 0
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		if transportCalls == 1 {
@@ -922,7 +974,7 @@ func TestProxyReplaysSmallPOSTBodyOnFallback(t *testing.T) {
 
 func TestProxyDoesNotRetryLargePOSTBody(t *testing.T) {
 	transportCalls := 0
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		return nil, errors.New("upstream unavailable")
@@ -971,7 +1023,7 @@ func (r *brokenReader) Close() error {
 }
 
 func TestProxyDoesNotRetryAfterStreamingBegins(t *testing.T) {
-	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "first-token"}, {AccountID: 2, Token: "second-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,

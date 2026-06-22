@@ -706,6 +706,43 @@ func TestSelectAccessTokenReturnsChatGPTAccountMetadata(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{{
+		ID:          11,
+		Provider:    "openai",
+		AccountType: AccountTypeAPIUpstream,
+		Subject:     "api-upstream",
+		Credential: AccountCredential{
+			CredentialType:  CredentialTypeAPIKey,
+			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-upstream"),
+			BaseURL:         "https://upstream.example.test",
+		},
+		Enabled:  true,
+		Priority: 1,
+		Status:   AccountStatusActive,
+		Metadata: map[string]string{},
+	}}
+	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("oauth refresh should not be called")})
+
+	selected, err := service.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
+	}
+	if selected.AccountID != 11 || selected.Provider != "openai" || selected.AccountType != AccountTypeAPIUpstream {
+		t.Fatalf("selected account identity = %+v", selected)
+	}
+	if selected.AuthorizationToken != "sk-upstream" {
+		t.Fatalf("AuthorizationToken = %q, want upstream API key", selected.AuthorizationToken)
+	}
+	if selected.BaseURL != "https://upstream.example.test" {
+		t.Fatalf("BaseURL = %q, want upstream base URL", selected.BaseURL)
+	}
+	if repo.accounts[0].LastUsedAt == nil {
+		t.Fatal("API upstream account was not marked used")
+	}
+}
+
 func TestSelectAccessTokenSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
 	repo := newMemoryRepo()
 	now := time.Now()

@@ -215,6 +215,15 @@ type SelectedToken struct {
 	ChatGPTAccountID string
 }
 
+type SelectedAccount struct {
+	AccountID          int64
+	Provider           string
+	AccountType        string
+	AuthorizationToken string
+	BaseURL            string
+	ChatGPTAccountID   string
+}
+
 type TokenResponse struct {
 	AccessToken  string
 	RefreshToken string
@@ -816,6 +825,7 @@ func (s *Service) AccessToken(ctx context.Context) (string, error) {
 }
 
 func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (string, error) {
+	account = normalizeAccountCredentialFields(account)
 	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
 		return secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
 	}
@@ -828,6 +838,7 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 		if err != nil {
 			return "", err
 		}
+		latest = normalizeAccountCredentialFields(latest)
 		if latest.AccessTokenExpiresAt == nil || latest.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
 			return secret.DecryptString(s.cfg.Secret, latest.EncryptedAccessToken)
 		}
@@ -861,35 +872,135 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 }
 
 func (s *Service) SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedToken, error) {
+	selected, err := s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+	if err != nil {
+		return SelectedToken{}, err
+	}
+	return SelectedToken{
+		AccountID:        selected.AccountID,
+		Token:            selected.AuthorizationToken,
+		ChatGPTAccountID: selected.ChatGPTAccountID,
+	}, nil
+}
+
+func (s *Service) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if !s.Configured() {
-		return SelectedToken{}, ErrNotConfigured
+		return SelectedAccount{}, ErrNotConfigured
 	}
 
 	accounts, hasEnabled, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
 	if err != nil {
-		return SelectedToken{}, err
+		return SelectedAccount{}, err
 	}
 	for _, account := range accounts {
-		token, err := s.AccessTokenForAccount(ctx, account)
+		selected, err := s.selectedAccount(ctx, account)
 		if err != nil {
 			if markErr := s.repo.MarkAccountError(ctx, s.cfg.Provider, account.ID, err.Error(), time.Now()); markErr != nil {
-				return SelectedToken{}, fmt.Errorf("mark provider account error: %w", markErr)
+				return SelectedAccount{}, fmt.Errorf("mark provider account error: %w", markErr)
 			}
 			continue
 		}
 		if err := s.repo.MarkAccountUsed(ctx, s.cfg.Provider, account.ID, time.Now()); err != nil {
-			return SelectedToken{}, fmt.Errorf("mark provider account used: %w", err)
+			return SelectedAccount{}, fmt.Errorf("mark provider account used: %w", err)
 		}
-		return SelectedToken{
-			AccountID:        account.ID,
-			Token:            token,
-			ChatGPTAccountID: strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
-		}, nil
+		return selected, nil
 	}
 	if !hasEnabled {
-		return SelectedToken{}, ErrAccountsDisabled
+		return SelectedAccount{}, ErrAccountsDisabled
 	}
-	return SelectedToken{}, notFoundErr
+	return SelectedAccount{}, notFoundErr
+}
+
+func (s *Service) selectedAccount(ctx context.Context, account Account) (SelectedAccount, error) {
+	account = normalizeAccountCredentialFields(account)
+	accountType := strings.TrimSpace(account.AccountType)
+	if accountType == "" {
+		accountType = AccountTypeCodexOAuth
+	}
+	selected := SelectedAccount{
+		AccountID:        account.ID,
+		Provider:         valueOrDefault(strings.TrimSpace(account.Provider), s.cfg.Provider),
+		AccountType:      accountType,
+		ChatGPTAccountID: strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
+	}
+	switch accountType {
+	case AccountTypeCodexOAuth:
+		token, err := s.AccessTokenForAccount(ctx, account)
+		if err != nil {
+			return SelectedAccount{}, err
+		}
+		selected.AuthorizationToken = token
+		selected.BaseURL = strings.TrimRight(strings.TrimSpace(s.cfg.APIBaseURL), "/")
+		return selected, nil
+	case AccountTypeAPIUpstream:
+		token, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedAPIKey)
+		if err != nil {
+			return SelectedAccount{}, err
+		}
+		selected.AuthorizationToken = token
+		selected.BaseURL = strings.TrimRight(strings.TrimSpace(account.Credential.BaseURL), "/")
+		return selected, nil
+	default:
+		return SelectedAccount{}, fmt.Errorf("unsupported account type %q", accountType)
+	}
+}
+
+func normalizeAccountCredentialFields(account Account) Account {
+	if strings.TrimSpace(account.AccountType) == "" {
+		account.AccountType = AccountTypeCodexOAuth
+	}
+	if account.Metadata == nil {
+		account.Metadata = account.Credential.Metadata
+	}
+	if account.Metadata == nil {
+		account.Metadata = map[string]string{}
+	}
+	if account.Credential.Metadata == nil {
+		account.Credential.Metadata = account.Metadata
+	}
+	if account.EncryptedAccessToken == "" {
+		account.EncryptedAccessToken = account.Credential.EncryptedAccessToken
+	}
+	if account.EncryptedRefreshToken == "" {
+		account.EncryptedRefreshToken = account.Credential.EncryptedRefreshToken
+	}
+	if account.EncryptedIDToken == "" {
+		account.EncryptedIDToken = account.Credential.EncryptedIDToken
+	}
+	if account.AccessTokenExpiresAt == nil {
+		account.AccessTokenExpiresAt = account.Credential.AccessTokenExpiresAt
+	}
+	if account.LastRefreshAt == nil {
+		account.LastRefreshAt = account.Credential.LastRefreshAt
+	}
+	if account.LastRefreshError == "" {
+		account.LastRefreshError = account.Credential.LastRefreshError
+	}
+	if account.LastRefreshErrorAt == nil {
+		account.LastRefreshErrorAt = account.Credential.LastRefreshErrorAt
+	}
+	if account.Credential.EncryptedAccessToken == "" {
+		account.Credential.EncryptedAccessToken = account.EncryptedAccessToken
+	}
+	if account.Credential.EncryptedRefreshToken == "" {
+		account.Credential.EncryptedRefreshToken = account.EncryptedRefreshToken
+	}
+	if account.Credential.EncryptedIDToken == "" {
+		account.Credential.EncryptedIDToken = account.EncryptedIDToken
+	}
+	if account.Credential.AccessTokenExpiresAt == nil {
+		account.Credential.AccessTokenExpiresAt = account.AccessTokenExpiresAt
+	}
+	if account.Credential.LastRefreshAt == nil {
+		account.Credential.LastRefreshAt = account.LastRefreshAt
+	}
+	if account.Credential.LastRefreshError == "" {
+		account.Credential.LastRefreshError = account.LastRefreshError
+	}
+	if account.Credential.LastRefreshErrorAt == nil {
+		account.Credential.LastRefreshErrorAt = account.LastRefreshErrorAt
+	}
+	return account
 }
 
 func (s *Service) selectionCandidates(ctx context.Context, model string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
