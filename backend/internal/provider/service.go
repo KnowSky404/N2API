@@ -218,12 +218,6 @@ type AccountUpdate struct {
 	Priority *int
 }
 
-type SelectedToken struct {
-	AccountID        int64
-	Token            string
-	ChatGPTAccountID string
-}
-
 type SelectedAccount struct {
 	AccountID          int64
 	Provider           string
@@ -878,11 +872,11 @@ func isAccountFailureStatus(statusCode int) bool {
 }
 
 func (s *Service) AccessToken(ctx context.Context) (string, error) {
-	selected, err := s.SelectAccessToken(ctx, "")
+	selected, err := s.SelectAccountForModel(ctx, "")
 	if err != nil {
 		return "", err
 	}
-	return selected.Token, nil
+	return selected.AuthorizationToken, nil
 }
 
 func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (string, error) {
@@ -930,18 +924,6 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 		return "", err
 	}
 	return secret.DecryptString(s.cfg.Secret, refreshed.EncryptedAccessToken)
-}
-
-func (s *Service) SelectAccessToken(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedToken, error) {
-	selected, err := s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
-	if err != nil {
-		return SelectedToken{}, err
-	}
-	return SelectedToken{
-		AccountID:        selected.AccountID,
-		Token:            selected.AuthorizationToken,
-		ChatGPTAccountID: selected.ChatGPTAccountID,
-	}, nil
 }
 
 func (s *Service) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {

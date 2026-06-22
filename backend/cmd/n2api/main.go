@@ -16,13 +16,13 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/store"
 )
 
-type gatewayTokenProvider struct {
+type gatewayAccountProvider struct {
 	service *provider.Service
 }
 
-var _ gateway.AccountProvider = gatewayTokenProvider{}
+var _ gateway.AccountProvider = gatewayAccountProvider{}
 
-func (p gatewayTokenProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
+func (p gatewayAccountProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
 	selected, err := p.service.SelectAccountForModel(ctx, model, excludedAccountIDs...)
 	if err != nil {
 		return gateway.SelectedAccount{}, err
@@ -37,7 +37,7 @@ func (p gatewayTokenProvider) SelectAccountForModel(ctx context.Context, model s
 	}, nil
 }
 
-func (p gatewayTokenProvider) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
+func (p gatewayAccountProvider) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
 	return p.service.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
 }
 
@@ -125,7 +125,7 @@ func main() {
 		APIBaseURL:   cfg.OpenAIAPIBaseURL,
 		Secret:       cfg.EncryptionSecret,
 	})
-	gatewayProxy := gateway.NewProxy(adminService, gatewayTokenProvider{service: providerService}, gateway.Config{
+	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL: cfg.OpenAIAPIBaseURL,
 		Logger:          store.NewGatewayRepository(pool),
 		ModelProvider: gatewayModelProvider{

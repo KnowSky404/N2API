@@ -1378,6 +1378,32 @@ func TestReplaceAccountModelsReturnsSavedModels(t *testing.T) {
 	}
 }
 
+func TestLegacyProviderAccountModelsRouteDelegatesToUnifiedModels(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accountModels[7] = []provider.AccountModel{
+		{ID: 11, AccountID: 7, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai/accounts/7/models", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Models []provider.AccountModel `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 1 || body.Models[0].AccountID != 7 || body.Models[0].Model != "gpt-5" {
+		t.Fatalf("models = %+v", body.Models)
+	}
+}
+
 func TestUnifiedAccountModelsEndpoints(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accountModels[7] = []provider.AccountModel{

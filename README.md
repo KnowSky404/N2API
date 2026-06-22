@@ -62,12 +62,20 @@ Docker Compose:
 docker compose -f deploy/compose.yaml --env-file .env up --build
 ```
 
-After the stack is up, open `http://localhost:3000`, sign in with the admin credentials from `.env`, and use **Provider accounts** to add Codex/OpenAI OAuth accounts. Adding or reauthorizing an account generates an authorization link; open it manually, finish the provider login, then paste the resulting callback URL back into the admin UI to complete the account connection. Each row is a separate OAuth account with its own encrypted tokens, priority, enabled flag, status, configured models, manual token refresh action, and reauthorization action.
+After the stack is up, open `http://localhost:3000`, sign in with the admin credentials from `.env`, and use **Provider accounts** to add Codex/OpenAI OAuth accounts or API-key upstream accounts. Adding or reauthorizing an OAuth account generates an authorization link; open it manually, finish the provider login, then paste the resulting callback URL back into the admin UI to complete the account connection.
 
-Configure model capability on each connected account from the provider account row. The global **Models** settings page controls which configured models are exposed through the gateway and which model is injected by default when a request omits `model`; it does not grant capability to accounts that do not list that model.
+## Provider Accounts
+
+Provider accounts are gateway exits. N2API supports Codex OAuth accounts and API-key upstream accounts. Both account types share enabled state, priority, health status, and per-account model lists.
+
+Configure model capability on each provider account row. The API Keys page controls the gateway default model, the global routable model list, and client-key model access; these settings do not grant capability to accounts that do not list that model.
+
+## API Key Model Access
+
+Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it.
 
 ## Current Status
 
-The backend includes admin API key management, OpenAI/Codex OAuth account pool management, per-account model configuration, request logs, static admin UI serving, and an OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes. The OAuth flow starts from the admin provider page, returns an authorization link, accepts the pasted callback URL, stores encrypted access/refresh/id tokens in PostgreSQL, and records isolated account metadata such as email, account id, plan type, client id, token fingerprint, and browser/request fingerprint hashes. The gateway selects enabled, schedulable OpenAI/Codex accounts by requested model, priority, and recent use; skips disabled/rate-limited/circuit-open/expired accounts; writes upstream 429/401/403/5xx failures back to account status; and can fall back before response streaming begins.
+The backend includes admin API key management, provider account management, per-account model configuration, request logs, static admin UI serving, and an OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes. The OAuth flow starts from the admin provider page, returns an authorization link, accepts the pasted callback URL, stores encrypted access/refresh/id tokens in PostgreSQL, and records isolated account metadata such as email, account id, plan type, client id, token fingerprint, and browser/request fingerprint hashes. API upstream accounts store encrypted API keys and base URLs. The gateway selects enabled, schedulable provider accounts by requested model, priority, and recent use; skips disabled/rate-limited/circuit-open/expired accounts; writes upstream 429/401/403/5xx failures back to account status; and can fall back before response streaming begins.
 
 `/v1/models` returns the aggregate exposed model list: a model must be enabled on at least one connected account and included in the global allowed-model list to appear. Model-routed POST traffic is sent only to accounts that explicitly support the requested or defaulted model, and fallback is limited to other accounts that support that same model. Connected accounts with no configured models remain visible in admin but do not receive model-routed POST traffic.

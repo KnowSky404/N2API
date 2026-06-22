@@ -357,7 +357,7 @@ func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIden
 		t.Fatalf("DecryptString returned error: %v", err)
 	}
 	if token != "new-access" {
-		t.Fatalf("access token = %q, want new-access", token)
+		t.Fatalf("token = %q, want new-access", token)
 	}
 }
 
@@ -671,7 +671,7 @@ func TestAccessTokenForAccountSerializesConcurrentRefresh(t *testing.T) {
 	}
 }
 
-func TestSelectAccessTokenSkipsDisabledAndUsesPriority(t *testing.T) {
+func TestSelectAccountForModelSkipsDisabledAndUsesPriority(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, false, 1, "disabled-token"),
@@ -679,27 +679,27 @@ func TestSelectAccessTokenSkipsDisabledAndUsesPriority(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "")
+	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 2 || selected.Token != "enabled-token" {
+	if selected.AccountID != 2 || selected.AuthorizationToken != "enabled-token" {
 		t.Fatalf("selected = %+v", selected)
 	}
 }
 
-func TestSelectAccessTokenReturnsChatGPTAccountMetadata(t *testing.T) {
+func TestSelectAccountForModelReturnsChatGPTAccountMetadata(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
 	repo.accounts[0].Metadata = map[string]string{"chatgpt_account_id": "acct_chatgpt"}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "")
+	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 7 || selected.Token != "access-token" {
-		t.Fatalf("selected = %+v, want account 7 token", selected)
+	if selected.AccountID != 7 || selected.AuthorizationToken != "access-token" {
+		t.Fatalf("selected = %+v, want account 7 authorization token", selected)
 	}
 	if selected.ChatGPTAccountID != "acct_chatgpt" {
 		t.Fatalf("ChatGPTAccountID = %q, want metadata value", selected.ChatGPTAccountID)
@@ -743,7 +743,7 @@ func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.
 	}
 }
 
-func TestSelectAccessTokenSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
+func TestSelectAccountForModelSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
 	repo := newMemoryRepo()
 	now := time.Now()
 	expired := now.Add(-time.Hour)
@@ -759,16 +759,16 @@ func TestSelectAccessTokenSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testi
 	repo.accounts[2].Status = AccountStatusExpired
 	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
 
-	selected, err := service.SelectAccessToken(context.Background(), "")
+	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 4 || selected.Token != "usable-token" {
+	if selected.AccountID != 4 || selected.AuthorizationToken != "usable-token" {
 		t.Fatalf("selected = %+v, want usable account 4", selected)
 	}
 }
 
-func TestSelectAccessTokenAllowsExpiredRateLimitAndCircuitWindows(t *testing.T) {
+func TestSelectAccountForModelAllowsExpiredRateLimitAndCircuitWindows(t *testing.T) {
 	repo := newMemoryRepo()
 	past := time.Now().Add(-time.Minute)
 	repo.accounts = []Account{
@@ -778,19 +778,19 @@ func TestSelectAccessTokenAllowsExpiredRateLimitAndCircuitWindows(t *testing.T) 
 	repo.accounts[0].RateLimitedUntil = &past
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "")
+	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 1 || selected.Token != "rate-limited-token" {
+	if selected.AccountID != 1 || selected.AuthorizationToken != "rate-limited-token" {
 		t.Fatalf("selected = %+v, want recovered account 1", selected)
 	}
 
 	repo.accounts[0].Status = AccountStatusCircuitOpen
 	repo.accounts[0].CircuitOpenUntil = &past
-	selected, err = service.SelectAccessToken(context.Background(), "")
+	selected, err = service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
-		t.Fatalf("SelectAccessToken after circuit window returned error: %v", err)
+		t.Fatalf("SelectAccountForModel after circuit window returned error: %v", err)
 	}
 	if selected.AccountID != 1 {
 		t.Fatalf("selected = %+v, want recovered circuit account 1", selected)
@@ -942,7 +942,7 @@ func TestRecordAccountFailureDoesNotExpireAccountForResponsesScopeForbidden(t *t
 	}
 }
 
-func TestSelectAccessTokenUsesPriorityOrder(t *testing.T) {
+func TestSelectAccountForModelUsesPriorityOrder(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 10, "low-priority-token"),
@@ -950,16 +950,16 @@ func TestSelectAccessTokenUsesPriorityOrder(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "")
+	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 2 || selected.Token != "high-priority-token" {
+	if selected.AccountID != 2 || selected.AuthorizationToken != "high-priority-token" {
 		t.Fatalf("selected = %+v", selected)
 	}
 }
 
-func TestSelectAccessTokenSkipsExcludedAccount(t *testing.T) {
+func TestSelectAccountForModelSkipsExcludedAccount(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "first-token"),
@@ -967,16 +967,16 @@ func TestSelectAccessTokenSkipsExcludedAccount(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "", 1)
+	selected, err := service.SelectAccountForModel(context.Background(), "", 1)
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 2 || selected.Token != "fallback-token" {
+	if selected.AccountID != 2 || selected.AuthorizationToken != "fallback-token" {
 		t.Fatalf("selected = %+v, want account 2 fallback-token", selected)
 	}
 }
 
-func TestSelectAccessTokenFiltersByRequestedModel(t *testing.T) {
+func TestSelectAccountForModelFiltersByRequestedModel(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "gpt-4.1-token"),
@@ -988,16 +988,16 @@ func TestSelectAccessTokenFiltersByRequestedModel(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "gpt-5")
+	selected, err := service.SelectAccountForModel(context.Background(), "gpt-5")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 2 || selected.Token != "gpt-5-token" {
+	if selected.AccountID != 2 || selected.AuthorizationToken != "gpt-5-token" {
 		t.Fatalf("selected = %+v, want account 2 gpt-5-token", selected)
 	}
 }
 
-func TestSelectAccessTokenReturnsModelUnavailableWhenNoAccountSupportsModel(t *testing.T) {
+func TestSelectAccountForModelReturnsModelUnavailableWhenNoAccountSupportsModel(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "access-token"),
@@ -1007,12 +1007,12 @@ func TestSelectAccessTokenReturnsModelUnavailableWhenNoAccountSupportsModel(t *t
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccessToken(context.Background(), "gpt-5"); !errors.Is(err, ErrModelUnavailable) {
-		t.Fatalf("SelectAccessToken error = %v, want ErrModelUnavailable", err)
+	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("SelectAccountForModel error = %v, want ErrModelUnavailable", err)
 	}
 }
 
-func TestSelectAccessTokenReturnsAccountsUnavailableWhenOnlyModelAccountExcluded(t *testing.T) {
+func TestSelectAccountForModelReturnsAccountsUnavailableWhenOnlyModelAccountExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "access-token"),
@@ -1022,12 +1022,12 @@ func TestSelectAccessTokenReturnsAccountsUnavailableWhenOnlyModelAccountExcluded
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccessToken(context.Background(), "gpt-5", 1); !errors.Is(err, ErrAccountsUnavailable) {
-		t.Fatalf("SelectAccessToken error = %v, want ErrAccountsUnavailable", err)
+	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5", 1); !errors.Is(err, ErrAccountsUnavailable) {
+		t.Fatalf("SelectAccountForModel error = %v, want ErrAccountsUnavailable", err)
 	}
 }
 
-func TestSelectAccessTokenReturnsAccountsUnavailableWhenModelAccountsCannotProvideToken(t *testing.T) {
+func TestSelectAccountForModelReturnsAccountsUnavailableWhenModelAccountsCannotProvideToken(t *testing.T) {
 	repo := newMemoryRepo()
 	badToken := testAccount(t, 1, true, 1, "access-token")
 	badToken.EncryptedAccessToken = "not-encrypted"
@@ -1037,15 +1037,15 @@ func TestSelectAccessTokenReturnsAccountsUnavailableWhenModelAccountsCannotProvi
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccessToken(context.Background(), "gpt-5"); !errors.Is(err, ErrAccountsUnavailable) {
-		t.Fatalf("SelectAccessToken error = %v, want ErrAccountsUnavailable", err)
+	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); !errors.Is(err, ErrAccountsUnavailable) {
+		t.Fatalf("SelectAccountForModel error = %v, want ErrAccountsUnavailable", err)
 	}
 	if repo.accounts[0].LastError == "" {
-		t.Fatal("account token lookup failure was not marked")
+		t.Fatal("account credential lookup failure was not marked")
 	}
 }
 
-func TestSelectAccessTokenIgnoresDisabledModelRows(t *testing.T) {
+func TestSelectAccountForModelIgnoresDisabledModelRows(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "disabled-model-token"),
@@ -1057,16 +1057,16 @@ func TestSelectAccessTokenIgnoresDisabledModelRows(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "gpt-5")
+	selected, err := service.SelectAccountForModel(context.Background(), "gpt-5")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 2 || selected.Token != "enabled-model-token" {
+	if selected.AccountID != 2 || selected.AuthorizationToken != "enabled-model-token" {
 		t.Fatalf("selected = %+v, want enabled model account 2", selected)
 	}
 }
 
-func TestSelectAccessTokenRespectsExcludedAccountIDsWithModelFilter(t *testing.T) {
+func TestSelectAccountForModelRespectsExcludedAccountIDsWithModelFilter(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "first-token"),
@@ -1078,11 +1078,11 @@ func TestSelectAccessTokenRespectsExcludedAccountIDsWithModelFilter(t *testing.T
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	selected, err := service.SelectAccessToken(context.Background(), "gpt-5", 1)
+	selected, err := service.SelectAccountForModel(context.Background(), "gpt-5", 1)
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 2 || selected.Token != "fallback-token" {
+	if selected.AccountID != 2 || selected.AuthorizationToken != "fallback-token" {
 		t.Fatalf("selected = %+v, want non-excluded account 2", selected)
 	}
 }
@@ -1205,19 +1205,19 @@ func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
 	}
 }
 
-func TestSelectAccessTokenReturnsUnavailableWhenAllEnabledAccountsExcluded(t *testing.T) {
+func TestSelectAccountForModelReturnsUnavailableWhenAllEnabledAccountsExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "only-token"),
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccessToken(context.Background(), "", 1); !errors.Is(err, ErrAccountsUnavailable) {
-		t.Fatalf("SelectAccessToken error = %v, want accounts unavailable", err)
+	if _, err := service.SelectAccountForModel(context.Background(), "", 1); !errors.Is(err, ErrAccountsUnavailable) {
+		t.Fatalf("SelectAccountForModel error = %v, want accounts unavailable", err)
 	}
 }
 
-func TestSelectAccessTokenFallsBackWhenRefreshFails(t *testing.T) {
+func TestSelectAccountForModelFallsBackWhenRefreshFails(t *testing.T) {
 	repo := newMemoryRepo()
 	expired := time.Now().Add(-time.Minute)
 	repo.accounts = []Account{
@@ -1226,11 +1226,11 @@ func TestSelectAccessTokenFallsBackWhenRefreshFails(t *testing.T) {
 	}
 	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
 
-	selected, err := service.SelectAccessToken(context.Background(), "")
+	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
-		t.Fatalf("SelectAccessToken returned error: %v", err)
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
 	}
-	if selected.AccountID != 2 || selected.Token != "fallback-token" {
+	if selected.AccountID != 2 || selected.AuthorizationToken != "fallback-token" {
 		t.Fatalf("selected = %+v", selected)
 	}
 	if repo.accounts[0].LastError == "" {
@@ -1238,7 +1238,7 @@ func TestSelectAccessTokenFallsBackWhenRefreshFails(t *testing.T) {
 	}
 }
 
-func TestSelectAccessTokenReturnsMarkAccountErrorFailure(t *testing.T) {
+func TestSelectAccountForModelReturnsMarkAccountErrorFailure(t *testing.T) {
 	repo := newMemoryRepo()
 	expired := time.Now().Add(-time.Minute)
 	repo.accounts = []Account{
@@ -1248,12 +1248,12 @@ func TestSelectAccessTokenReturnsMarkAccountErrorFailure(t *testing.T) {
 	repo.markAccountErrorErr = errors.New("mark account error failed")
 	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
 
-	if _, err := service.SelectAccessToken(context.Background(), ""); !errors.Is(err, repo.markAccountErrorErr) {
-		t.Fatalf("SelectAccessToken error = %v, want mark account error failure", err)
+	if _, err := service.SelectAccountForModel(context.Background(), ""); !errors.Is(err, repo.markAccountErrorErr) {
+		t.Fatalf("SelectAccountForModel error = %v, want mark account error failure", err)
 	}
 }
 
-func TestSelectAccessTokenReturnsMarkAccountUsedFailure(t *testing.T) {
+func TestSelectAccountForModelReturnsMarkAccountUsedFailure(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "access-token"),
@@ -1261,8 +1261,8 @@ func TestSelectAccessTokenReturnsMarkAccountUsedFailure(t *testing.T) {
 	repo.markAccountUsedErr = errors.New("mark account used failed")
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccessToken(context.Background(), ""); !errors.Is(err, repo.markAccountUsedErr) {
-		t.Fatalf("SelectAccessToken error = %v, want mark account used failure", err)
+	if _, err := service.SelectAccountForModel(context.Background(), ""); !errors.Is(err, repo.markAccountUsedErr) {
+		t.Fatalf("SelectAccountForModel error = %v, want mark account used failure", err)
 	}
 }
 
