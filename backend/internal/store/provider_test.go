@@ -39,8 +39,8 @@ func TestReplaceAccountModelsLocksParentAccountRow(t *testing.T) {
 		t.Fatalf("ReadFile provider.go returned error: %v", err)
 	}
 	sql := strings.ToUpper(string(source))
-	if !strings.Contains(sql, "SELECT ID\n\t\tFROM OAUTH_ACCOUNTS\n\t\tWHERE PROVIDER = $1\n\t\t\tAND ID = $2\n\t\tFOR UPDATE") {
-		t.Fatal("ReplaceAccountModels must lock the parent oauth_accounts row before deleting and inserting model rows")
+	if !strings.Contains(sql, "SELECT ID\n\t\tFROM PROVIDER_ACCOUNTS\n\t\tWHERE PROVIDER = $1\n\t\t\tAND ID = $2\n\t\tFOR UPDATE") {
+		t.Fatal("ReplaceAccountModels must lock the parent provider_accounts row before deleting and inserting model rows")
 	}
 }
 
@@ -50,8 +50,47 @@ func TestListAccountModelsChecksParentAccountExists(t *testing.T) {
 		t.Fatalf("ReadFile provider.go returned error: %v", err)
 	}
 	sql := strings.ToUpper(string(source))
-	if !strings.Contains(sql, "SELECT 1\n\t\tFROM OAUTH_ACCOUNTS\n\t\tWHERE PROVIDER = $1\n\t\t\tAND ID = $2") {
-		t.Fatal("ListAccountModels must check oauth_accounts before returning model rows")
+	if !strings.Contains(sql, "SELECT 1\n\t\tFROM PROVIDER_ACCOUNTS\n\t\tWHERE PROVIDER = $1\n\t\t\tAND ID = $2") {
+		t.Fatal("ListAccountModels must check provider_accounts before returning model rows")
+	}
+}
+
+func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	saved := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:    "openai",
+		AccountType: provider.AccountTypeAPIUpstream,
+		Subject:     "https://upstream.example.test",
+		DisplayName: "API Upstream",
+		Enabled:     true,
+		Priority:    5,
+		Status:      provider.AccountStatusActive,
+		Credential: provider.AccountCredential{
+			CredentialType:  provider.CredentialTypeAPIKey,
+			EncryptedAPIKey: "encrypted-api-key",
+			BaseURL:         "https://upstream.example.test/v1",
+		},
+	})
+
+	if saved.AccountType != provider.AccountTypeAPIUpstream {
+		t.Fatalf("saved AccountType = %q, want api upstream", saved.AccountType)
+	}
+	if saved.Credential.CredentialType != provider.CredentialTypeAPIKey || saved.Credential.EncryptedAPIKey != "encrypted-api-key" {
+		t.Fatalf("saved credential = %+v, want api key credential", saved.Credential)
+	}
+
+	found, err := repo.FindAccountByID(ctx, "openai", saved.ID)
+	if err != nil {
+		t.Fatalf("FindAccountByID returned error: %v", err)
+	}
+	if found.AccountType != provider.AccountTypeAPIUpstream {
+		t.Fatalf("found AccountType = %q, want api upstream", found.AccountType)
+	}
+	if found.Credential.CredentialType != provider.CredentialTypeAPIKey || found.Credential.BaseURL != "https://upstream.example.test/v1" {
+		t.Fatalf("found credential = %+v, want api key base URL", found.Credential)
 	}
 }
 
@@ -388,6 +427,61 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryListEligibleAccountsForModelUsesUnifiedTables(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
+	oauthAccount := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "oauth-account",
+		DisplayName:           "OAuth Account",
+		EncryptedAccessToken:  "encrypted-access-token",
+		EncryptedRefreshToken: "encrypted-refresh-token",
+		Enabled:               true,
+		Priority:              10,
+		Status:                provider.AccountStatusActive,
+	})
+	apiUpstreamAccount := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:    "openai",
+		AccountType: provider.AccountTypeAPIUpstream,
+		Subject:     "https://upstream.example.test",
+		DisplayName: "API Upstream",
+		Enabled:     true,
+		Priority:    1,
+		Status:      provider.AccountStatusActive,
+		Credential: provider.AccountCredential{
+			CredentialType:  provider.CredentialTypeAPIKey,
+			EncryptedAPIKey: "encrypted-api-key",
+			BaseURL:         "https://upstream.example.test/v1",
+		},
+	})
+
+	for _, account := range []provider.Account{oauthAccount, apiUpstreamAccount} {
+		if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{{Model: "gpt-5", Enabled: true}}); err != nil {
+			t.Fatalf("ReplaceAccountModels(%d) returned error: %v", account.ID, err)
+		}
+	}
+
+	eligible, err := repo.ListEligibleAccountsForModel(ctx, "openai", "gpt-5", nil, now)
+	if err != nil {
+		t.Fatalf("ListEligibleAccountsForModel returned error: %v", err)
+	}
+	gotIDs := accountIDs(eligible)
+	wantIDs := []int64{apiUpstreamAccount.ID, oauthAccount.ID}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("eligible account IDs = %v, want %v", gotIDs, wantIDs)
+	}
+	if eligible[0].AccountType != provider.AccountTypeAPIUpstream || eligible[1].AccountType != provider.AccountTypeCodexOAuth {
+		t.Fatalf("eligible account types = %q/%q, want api upstream then oauth", eligible[0].AccountType, eligible[1].AccountType)
+	}
+	if eligible[0].Credential.BaseURL != "https://upstream.example.test/v1" {
+		t.Fatalf("eligible API upstream base URL = %q, want upstream URL", eligible[0].Credential.BaseURL)
+	}
+}
+
 func TestListExposedModelsFiltersByAllowedOrder(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
@@ -612,7 +706,7 @@ func newProviderRepositoryForTest(t *testing.T) (*ProviderRepository, func()) {
 		pool.Close()
 		t.Fatalf("RunMigrations returned error: %v", err)
 	}
-	if _, err := pool.Exec(ctx, "TRUNCATE oauth_account_models, oauth_accounts, oauth_states RESTART IDENTITY CASCADE"); err != nil {
+	if _, err := pool.Exec(ctx, "TRUNCATE provider_account_models, provider_account_credentials, provider_accounts, oauth_account_models, oauth_accounts, oauth_states RESTART IDENTITY CASCADE"); err != nil {
 		pool.Close()
 		t.Fatalf("TRUNCATE returned error: %v", err)
 	}

@@ -136,9 +136,11 @@ type OAuthState struct {
 type Account struct {
 	ID                    int64             `json:"id"`
 	Provider              string            `json:"provider"`
+	AccountType           string            `json:"accountType"`
 	Subject               string            `json:"subject"`
 	Name                  string            `json:"name"`
 	DisplayName           string            `json:"displayName"`
+	Credential            AccountCredential `json:"-"`
 	EncryptedAccessToken  string            `json:"-"`
 	EncryptedRefreshToken string            `json:"-"`
 	EncryptedIDToken      string            `json:"-"`
@@ -162,6 +164,20 @@ type Account struct {
 	LastRefreshErrorAt    *time.Time        `json:"lastRefreshErrorAt"`
 	CreatedAt             time.Time         `json:"createdAt"`
 	UpdatedAt             time.Time         `json:"updatedAt"`
+}
+
+type AccountCredential struct {
+	CredentialType        string            `json:"credentialType"`
+	EncryptedAccessToken  string            `json:"-"`
+	EncryptedRefreshToken string            `json:"-"`
+	EncryptedIDToken      string            `json:"-"`
+	AccessTokenExpiresAt  *time.Time        `json:"accessTokenExpiresAt"`
+	LastRefreshAt         *time.Time        `json:"lastRefreshAt"`
+	LastRefreshError      string            `json:"lastRefreshError"`
+	LastRefreshErrorAt    *time.Time        `json:"lastRefreshErrorAt"`
+	EncryptedAPIKey       string            `json:"-"`
+	BaseURL               string            `json:"baseUrl"`
+	Metadata              map[string]string `json:"metadata"`
 }
 
 type AccountModel struct {
@@ -1025,10 +1041,20 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 	}
 
 	account := Account{
-		ID:                    previousID(previous),
-		Provider:              s.cfg.Provider,
-		Subject:               subject,
-		DisplayName:           displayName,
+		ID:          previousID(previous),
+		Provider:    s.cfg.Provider,
+		AccountType: AccountTypeCodexOAuth,
+		Subject:     subject,
+		DisplayName: displayName,
+		Credential: AccountCredential{
+			CredentialType:        CredentialTypeOAuthToken,
+			EncryptedAccessToken:  encryptedAccessToken,
+			EncryptedRefreshToken: encryptedRefreshToken,
+			EncryptedIDToken:      encryptedIDToken,
+			AccessTokenExpiresAt:  expiresAt,
+			LastRefreshAt:         lastRefreshAt,
+			Metadata:              tokenMetadata(tokens, previous),
+		},
 		EncryptedAccessToken:  encryptedAccessToken,
 		EncryptedRefreshToken: encryptedRefreshToken,
 		EncryptedIDToken:      encryptedIDToken,
@@ -1244,11 +1270,21 @@ func (s *Service) accountFromTokenResponse(tokens TokenResponse, previous *Accou
 	}
 
 	return Account{
-		ID:                    previousID(previous),
-		Provider:              s.cfg.Provider,
-		Subject:               subject,
-		Name:                  previousName(previous),
-		DisplayName:           displayName,
+		ID:          previousID(previous),
+		Provider:    s.cfg.Provider,
+		AccountType: AccountTypeCodexOAuth,
+		Subject:     subject,
+		Name:        previousName(previous),
+		DisplayName: displayName,
+		Credential: AccountCredential{
+			CredentialType:        CredentialTypeOAuthToken,
+			EncryptedAccessToken:  encryptedAccessToken,
+			EncryptedRefreshToken: encryptedRefreshToken,
+			EncryptedIDToken:      encryptedIDToken,
+			AccessTokenExpiresAt:  expiresAt,
+			LastRefreshAt:         lastRefreshAt,
+			Metadata:              tokenMetadata(tokens, previous),
+		},
 		EncryptedAccessToken:  encryptedAccessToken,
 		EncryptedRefreshToken: encryptedRefreshToken,
 		EncryptedIDToken:      encryptedIDToken,

@@ -21,19 +21,13 @@ func NewProviderRepository(pool *pgxpool.Pool) *ProviderRepository {
 }
 
 const providerAccountColumns = `
-	id, provider, subject, name, display_name, encrypted_access_token, encrypted_refresh_token,
-	encrypted_id_token, access_token_expires_at, last_refresh_at, enabled, priority, last_used_at,
-	last_error, last_error_at, metadata, status, status_reason, fingerprint_hash, user_agent_hash,
-	ip_hash, failure_count, circuit_open_until, rate_limited_until, last_refresh_error,
-	last_refresh_error_at, created_at, updated_at
-`
-
-const providerAccountColumnsFromAlias = `
-	a.id, a.provider, a.subject, a.name, a.display_name, a.encrypted_access_token, a.encrypted_refresh_token,
-	a.encrypted_id_token, a.access_token_expires_at, a.last_refresh_at, a.enabled, a.priority, a.last_used_at,
-	a.last_error, a.last_error_at, a.metadata, a.status, a.status_reason, a.fingerprint_hash, a.user_agent_hash,
-	a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until, a.last_refresh_error,
-	a.last_refresh_error_at, a.created_at, a.updated_at
+	a.id, a.provider, a.account_type, a.subject, a.name, a.display_name, a.enabled, a.priority,
+	a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
+	a.user_agent_hash, a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until,
+	a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
+	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
+	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
+	c.base_url, c.metadata
 `
 
 const providerAccountModelColumns = `
@@ -45,20 +39,15 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 	err := row.Scan(
 		&account.ID,
 		&account.Provider,
+		&account.AccountType,
 		&account.Subject,
 		&account.Name,
 		&account.DisplayName,
-		&account.EncryptedAccessToken,
-		&account.EncryptedRefreshToken,
-		&account.EncryptedIDToken,
-		&account.AccessTokenExpiresAt,
-		&account.LastRefreshAt,
 		&account.Enabled,
 		&account.Priority,
 		&account.LastUsedAt,
 		&account.LastError,
 		&account.LastErrorAt,
-		&account.Metadata,
 		&account.Status,
 		&account.StatusReason,
 		&account.FingerprintHash,
@@ -67,11 +56,23 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.FailureCount,
 		&account.CircuitOpenUntil,
 		&account.RateLimitedUntil,
-		&account.LastRefreshError,
-		&account.LastRefreshErrorAt,
 		&account.CreatedAt,
 		&account.UpdatedAt,
+		&account.Credential.CredentialType,
+		&account.Credential.EncryptedAccessToken,
+		&account.Credential.EncryptedRefreshToken,
+		&account.Credential.EncryptedIDToken,
+		&account.Credential.AccessTokenExpiresAt,
+		&account.Credential.LastRefreshAt,
+		&account.Credential.LastRefreshError,
+		&account.Credential.LastRefreshErrorAt,
+		&account.Credential.EncryptedAPIKey,
+		&account.Credential.BaseURL,
+		&account.Credential.Metadata,
 	)
+	if err == nil {
+		syncAccountLegacyFields(&account)
+	}
 	return account, err
 }
 
@@ -93,16 +94,114 @@ func scanProviderAccountModel(row pgx.Row) (provider.AccountModel, error) {
 	return model, err
 }
 
+func normalizeAccountForSave(account *provider.Account) {
+	if strings.TrimSpace(account.AccountType) == "" {
+		account.AccountType = provider.AccountTypeCodexOAuth
+	}
+	if strings.TrimSpace(account.Credential.CredentialType) == "" {
+		switch account.AccountType {
+		case provider.AccountTypeAPIUpstream:
+			account.Credential.CredentialType = provider.CredentialTypeAPIKey
+		default:
+			account.Credential.CredentialType = provider.CredentialTypeOAuthToken
+		}
+	}
+	if account.Credential.EncryptedAccessToken == "" {
+		account.Credential.EncryptedAccessToken = account.EncryptedAccessToken
+	}
+	if account.Credential.EncryptedRefreshToken == "" {
+		account.Credential.EncryptedRefreshToken = account.EncryptedRefreshToken
+	}
+	if account.Credential.EncryptedIDToken == "" {
+		account.Credential.EncryptedIDToken = account.EncryptedIDToken
+	}
+	if account.Credential.AccessTokenExpiresAt == nil {
+		account.Credential.AccessTokenExpiresAt = account.AccessTokenExpiresAt
+	}
+	if account.Credential.LastRefreshAt == nil {
+		account.Credential.LastRefreshAt = account.LastRefreshAt
+	}
+	if account.Credential.LastRefreshError == "" {
+		account.Credential.LastRefreshError = account.LastRefreshError
+	}
+	if account.Credential.LastRefreshErrorAt == nil {
+		account.Credential.LastRefreshErrorAt = account.LastRefreshErrorAt
+	}
+	if account.Credential.Metadata == nil {
+		account.Credential.Metadata = account.Metadata
+	}
+	if account.Metadata == nil {
+		account.Metadata = account.Credential.Metadata
+	}
+	syncAccountLegacyFields(account)
+}
+
+func syncAccountLegacyFields(account *provider.Account) {
+	account.EncryptedAccessToken = account.Credential.EncryptedAccessToken
+	account.EncryptedRefreshToken = account.Credential.EncryptedRefreshToken
+	account.EncryptedIDToken = account.Credential.EncryptedIDToken
+	account.AccessTokenExpiresAt = account.Credential.AccessTokenExpiresAt
+	account.LastRefreshAt = account.Credential.LastRefreshAt
+	account.LastRefreshError = account.Credential.LastRefreshError
+	account.LastRefreshErrorAt = account.Credential.LastRefreshErrorAt
+	account.Metadata = account.Credential.Metadata
+	if account.Metadata == nil {
+		account.Metadata = map[string]string{}
+	}
+	if account.Credential.Metadata == nil {
+		account.Credential.Metadata = account.Metadata
+	}
+}
+
+func upsertProviderAccountCredential(ctx context.Context, tx pgx.Tx, account provider.Account) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO provider_account_credentials (
+			account_id, credential_type, encrypted_access_token, encrypted_refresh_token,
+			encrypted_id_token, access_token_expires_at, last_refresh_at, last_refresh_error,
+			last_refresh_error_at, encrypted_api_key, base_url, metadata, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+		ON CONFLICT (account_id)
+		DO UPDATE SET
+			credential_type = EXCLUDED.credential_type,
+			encrypted_access_token = EXCLUDED.encrypted_access_token,
+			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
+			encrypted_id_token = EXCLUDED.encrypted_id_token,
+			access_token_expires_at = EXCLUDED.access_token_expires_at,
+			last_refresh_at = EXCLUDED.last_refresh_at,
+			last_refresh_error = EXCLUDED.last_refresh_error,
+			last_refresh_error_at = EXCLUDED.last_refresh_error_at,
+			encrypted_api_key = EXCLUDED.encrypted_api_key,
+			base_url = EXCLUDED.base_url,
+			metadata = provider_account_credentials.metadata || EXCLUDED.metadata,
+			updated_at = now()
+	`, account.ID,
+		account.Credential.CredentialType,
+		account.Credential.EncryptedAccessToken,
+		account.Credential.EncryptedRefreshToken,
+		account.Credential.EncryptedIDToken,
+		account.Credential.AccessTokenExpiresAt,
+		account.Credential.LastRefreshAt,
+		account.Credential.LastRefreshError,
+		account.Credential.LastRefreshErrorAt,
+		account.Credential.EncryptedAPIKey,
+		account.Credential.BaseURL,
+		metadataJSON(account.Credential.Metadata),
+	)
+	return err
+}
+
 func (r *ProviderRepository) ListAccounts(ctx context.Context, providerName string) ([]provider.Account, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+providerAccountColumns+`
-		FROM oauth_accounts
-		WHERE provider = $1
+		FROM provider_accounts a
+		JOIN provider_account_credentials c ON c.account_id = a.id
+		WHERE a.provider = $1
 		ORDER BY
-			priority ASC,
-			(last_error_at IS NOT NULL) ASC,
-			last_used_at ASC NULLS FIRST,
-			id ASC
+			a.priority ASC,
+			(a.last_error_at IS NOT NULL) ASC,
+			a.last_used_at ASC NULLS FIRST,
+			a.id ASC
 	`, providerName)
 	if err != nil {
 		return nil, err
@@ -123,13 +222,14 @@ func (r *ProviderRepository) ListAccounts(ctx context.Context, providerName stri
 func (r *ProviderRepository) FindAccount(ctx context.Context, providerName string) (provider.Account, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT `+providerAccountColumns+`
-		FROM oauth_accounts
-		WHERE provider = $1
+		FROM provider_accounts a
+		JOIN provider_account_credentials c ON c.account_id = a.id
+		WHERE a.provider = $1
 		ORDER BY
-			priority ASC,
-			(last_error_at IS NOT NULL) ASC,
-			last_used_at ASC NULLS FIRST,
-			id ASC
+			a.priority ASC,
+			(a.last_error_at IS NOT NULL) ASC,
+			a.last_used_at ASC NULLS FIRST,
+			a.id ASC
 		LIMIT 1
 	`, providerName)
 	account, err := scanProviderAccount(row)
@@ -145,9 +245,10 @@ func (r *ProviderRepository) FindAccount(ctx context.Context, providerName strin
 func (r *ProviderRepository) FindAccountByID(ctx context.Context, providerName string, id int64) (provider.Account, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT `+providerAccountColumns+`
-		FROM oauth_accounts
-		WHERE provider = $1
-			AND id = $2
+		FROM provider_accounts a
+		JOIN provider_account_credentials c ON c.account_id = a.id
+		WHERE a.provider = $1
+			AND a.id = $2
 	`, providerName, id)
 	account, err := scanProviderAccount(row)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -162,15 +263,16 @@ func (r *ProviderRepository) FindAccountByID(ctx context.Context, providerName s
 func (r *ProviderRepository) FindAccountByIdentity(ctx context.Context, providerName string, identities provider.AccountIdentities) (provider.Account, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT `+providerAccountColumns+`
-		FROM oauth_accounts
-		WHERE provider = $1
+		FROM provider_accounts a
+		JOIN provider_account_credentials c ON c.account_id = a.id
+		WHERE a.provider = $1
 			AND (
-				($2 <> '' AND metadata->>'chatgpt_account_id' = $2)
-				OR ($3 <> '' AND metadata->>'chatgpt_user_id' = $3)
-				OR ($4 <> '' AND lower(metadata->>'email') = $4)
-				OR ($5 <> '' AND metadata->>'access_token_sha256' = $5)
+				($2 <> '' AND c.metadata->>'chatgpt_account_id' = $2)
+				OR ($3 <> '' AND c.metadata->>'chatgpt_user_id' = $3)
+				OR ($4 <> '' AND lower(c.metadata->>'email') = $4)
+				OR ($5 <> '' AND c.metadata->>'access_token_sha256' = $5)
 			)
-		ORDER BY id ASC
+		ORDER BY a.id ASC
 		LIMIT 1
 	`, providerName, identities.ChatGPTAccountID, identities.ChatGPTUserID, identities.Email, identities.AccessTokenSHA256)
 	account, err := scanProviderAccount(row)
@@ -184,50 +286,46 @@ func (r *ProviderRepository) FindAccountByIdentity(ctx context.Context, provider
 }
 
 func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.Account) (provider.Account, error) {
+	normalizeAccountForSave(&account)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return provider.Account{}, err
+	}
+	defer tx.Rollback(ctx)
+
 	if account.ID > 0 {
-		row := r.pool.QueryRow(ctx, `
-			UPDATE oauth_accounts
+		var updatedID int64
+		err := tx.QueryRow(ctx, `
+			UPDATE provider_accounts
 			SET
-				subject = $3,
-				name = $4,
-				display_name = $5,
-				encrypted_access_token = $6,
-				encrypted_refresh_token = $7,
-				encrypted_id_token = $8,
-				access_token_expires_at = $9,
-				last_refresh_at = $10,
-				enabled = $11,
-				priority = CASE WHEN $12 = 0 THEN 100 ELSE $12 END,
+				account_type = $3,
+				subject = $4,
+				name = $5,
+				display_name = $6,
+				enabled = $7,
+				priority = CASE WHEN $8 = 0 THEN 100 ELSE $8 END,
 				last_error = '',
 				last_error_at = NULL,
-				metadata = oauth_accounts.metadata || $13,
-				status = COALESCE(NULLIF($14, ''), 'active'),
-				status_reason = $15,
-				fingerprint_hash = $16,
-				user_agent_hash = $17,
-				ip_hash = $18,
-				failure_count = $19,
-				circuit_open_until = $20,
-				rate_limited_until = $21,
-				last_refresh_error = $22,
-				last_refresh_error_at = $23,
+				status = COALESCE(NULLIF($9, ''), 'active'),
+				status_reason = $10,
+				fingerprint_hash = $11,
+				user_agent_hash = $12,
+				ip_hash = $13,
+				failure_count = $14,
+				circuit_open_until = $15,
+				rate_limited_until = $16,
 				updated_at = now()
 			WHERE provider = $1
 				AND id = $2
-			RETURNING `+providerAccountColumns+`
+			RETURNING id
 		`, account.Provider,
 			account.ID,
+			account.AccountType,
 			account.Subject,
 			account.Name,
 			account.DisplayName,
-			account.EncryptedAccessToken,
-			account.EncryptedRefreshToken,
-			account.EncryptedIDToken,
-			account.AccessTokenExpiresAt,
-			account.LastRefreshAt,
 			account.Enabled,
 			account.Priority,
-			metadataJSON(account.Metadata),
 			account.Status,
 			account.StatusReason,
 			account.FingerprintHash,
@@ -236,45 +334,46 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			account.FailureCount,
 			account.CircuitOpenUntil,
 			account.RateLimitedUntil,
-			account.LastRefreshError,
-			account.LastRefreshErrorAt,
-		)
-		saved, err := scanProviderAccount(row)
+		).Scan(&updatedID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return provider.Account{}, provider.ErrNotConnected
 		}
 		if err != nil {
 			return provider.Account{}, err
 		}
+		if err := upsertProviderAccountCredential(ctx, tx, account); err != nil {
+			return provider.Account{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return provider.Account{}, err
+		}
+		saved, err := r.FindAccountByID(ctx, account.Provider, account.ID)
+		if err != nil {
+			return provider.Account{}, err
+		}
 		return saved, nil
 	}
 
-	row := r.pool.QueryRow(ctx, `
-		INSERT INTO oauth_accounts (
-			provider, subject, name, display_name, encrypted_access_token, encrypted_refresh_token,
-			encrypted_id_token, access_token_expires_at, last_refresh_at, enabled, priority, last_error,
-			metadata, status, status_reason, fingerprint_hash, user_agent_hash, ip_hash, failure_count,
-			circuit_open_until, rate_limited_until, last_refresh_error, last_refresh_error_at, updated_at
+	var savedID int64
+	err = tx.QueryRow(ctx, `
+		INSERT INTO provider_accounts (
+			provider, account_type, subject, name, display_name, enabled, priority, last_error,
+			status, status_reason, fingerprint_hash, user_agent_hash, ip_hash, failure_count,
+			circuit_open_until, rate_limited_until, updated_at
 		)
 		VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9,
-			$10,
-			CASE WHEN $11 = 0 THEN 100 ELSE $11 END,
-			'', $12, COALESCE(NULLIF($13, ''), 'active'), $14, $15, $16, $17, $18,
-			$19, $20, $21, $22, now()
+			$1, $2, $3, $4, $5,
+			$6,
+			CASE WHEN $7 = 0 THEN 100 ELSE $7 END,
+			'', COALESCE(NULLIF($8, ''), 'active'), $9, $10, $11, $12, $13,
+			$14, $15, now()
 		)
-		ON CONFLICT (provider, subject)
+		ON CONFLICT (provider, account_type, subject) WHERE subject <> ''
 		DO UPDATE SET
 			name = EXCLUDED.name,
 			display_name = EXCLUDED.display_name,
-			encrypted_access_token = EXCLUDED.encrypted_access_token,
-			encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
-			encrypted_id_token = EXCLUDED.encrypted_id_token,
-			access_token_expires_at = EXCLUDED.access_token_expires_at,
-			last_refresh_at = EXCLUDED.last_refresh_at,
 			last_error = '',
 			last_error_at = NULL,
-			metadata = oauth_accounts.metadata || EXCLUDED.metadata,
 			status = EXCLUDED.status,
 			status_reason = EXCLUDED.status_reason,
 			fingerprint_hash = EXCLUDED.fingerprint_hash,
@@ -283,22 +382,15 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			failure_count = EXCLUDED.failure_count,
 			circuit_open_until = EXCLUDED.circuit_open_until,
 			rate_limited_until = EXCLUDED.rate_limited_until,
-			last_refresh_error = EXCLUDED.last_refresh_error,
-			last_refresh_error_at = EXCLUDED.last_refresh_error_at,
 			updated_at = now()
-		RETURNING `+providerAccountColumns+`
+		RETURNING id
 	`, account.Provider,
+		account.AccountType,
 		account.Subject,
 		account.Name,
 		account.DisplayName,
-		account.EncryptedAccessToken,
-		account.EncryptedRefreshToken,
-		account.EncryptedIDToken,
-		account.AccessTokenExpiresAt,
-		account.LastRefreshAt,
 		account.Enabled,
 		account.Priority,
-		metadataJSON(account.Metadata),
 		account.Status,
 		account.StatusReason,
 		account.FingerprintHash,
@@ -307,10 +399,18 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 		account.FailureCount,
 		account.CircuitOpenUntil,
 		account.RateLimitedUntil,
-		account.LastRefreshError,
-		account.LastRefreshErrorAt,
-	)
-	saved, err := scanProviderAccount(row)
+	).Scan(&savedID)
+	if err != nil {
+		return provider.Account{}, err
+	}
+	account.ID = savedID
+	if err := upsertProviderAccountCredential(ctx, tx, account); err != nil {
+		return provider.Account{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return provider.Account{}, err
+	}
+	saved, err := r.FindAccountByID(ctx, account.Provider, savedID)
 	if err != nil {
 		return provider.Account{}, err
 	}
@@ -319,29 +419,30 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 
 func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName string, id int64, update provider.AccountUpdate) (provider.Account, error) {
 	row := r.pool.QueryRow(ctx, `
-		UPDATE oauth_accounts
+		UPDATE provider_accounts
 		SET
 			enabled = COALESCE($3, enabled),
 			priority = COALESCE($4, priority),
 			updated_at = now()
 		WHERE provider = $1
 			AND id = $2
-		RETURNING `+providerAccountColumns+`
+		RETURNING id
 	`, providerName, id, update.Enabled, update.Priority)
-	account, err := scanProviderAccount(row)
+	var updatedID int64
+	err := row.Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.Account{}, provider.ErrNotConnected
 	}
 	if err != nil {
 		return provider.Account{}, err
 	}
-	return account, nil
+	return r.FindAccountByID(ctx, providerName, updatedID)
 }
 
 func (r *ProviderRepository) DeleteAccount(ctx context.Context, providerName string, id int64) error {
 	var deletedID int64
 	err := r.pool.QueryRow(ctx, `
-		DELETE FROM oauth_accounts
+		DELETE FROM provider_accounts
 		WHERE provider = $1
 			AND id = $2
 		RETURNING id
@@ -354,16 +455,22 @@ func (r *ProviderRepository) DeleteAccount(ctx context.Context, providerName str
 
 func (r *ProviderRepository) DeleteAccounts(ctx context.Context, providerName string) error {
 	_, err := r.pool.Exec(ctx, `
-		DELETE FROM oauth_accounts
+		DELETE FROM provider_accounts
 		WHERE provider = $1
 	`, providerName)
 	return err
 }
 
 func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
-		UPDATE oauth_accounts
+	err = tx.QueryRow(ctx, `
+		UPDATE provider_accounts
 		SET
 			last_used_at = $3,
 			last_error = '',
@@ -372,8 +479,6 @@ func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName s
 			status_reason = '',
 			failure_count = 0,
 			circuit_open_until = NULL,
-			last_refresh_error = '',
-			last_refresh_error_at = NULL,
 			updated_at = now()
 		WHERE provider = $1
 			AND id = $2
@@ -382,13 +487,27 @@ func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName s
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.ErrNotConnected
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE provider_account_credentials
+		SET
+			last_refresh_error = '',
+			last_refresh_error_at = NULL,
+			updated_at = now()
+		WHERE account_id = $1
+	`, id)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) MarkAccountError(ctx context.Context, providerName string, id int64, message string, at time.Time) error {
 	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
-		UPDATE oauth_accounts
+		UPDATE provider_accounts
 		SET
 			last_error = $3,
 			last_error_at = $4,
@@ -404,31 +523,49 @@ func (r *ProviderRepository) MarkAccountError(ctx context.Context, providerName 
 }
 
 func (r *ProviderRepository) RecordRefreshFailure(ctx context.Context, providerName string, id int64, message string, at time.Time, openUntil *time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
-		UPDATE oauth_accounts
+	err = tx.QueryRow(ctx, `
+		UPDATE provider_accounts
 		SET
 			failure_count = failure_count + 1,
-			last_refresh_error = $3,
-			last_refresh_error_at = $4,
-			status = CASE WHEN $5::timestamptz IS NULL THEN status ELSE 'circuit_open' END,
-			status_reason = CASE WHEN $5::timestamptz IS NULL THEN status_reason ELSE $3 END,
-			circuit_open_until = COALESCE($5, circuit_open_until),
+			status = CASE WHEN $3::timestamptz IS NULL THEN status ELSE 'circuit_open' END,
+			status_reason = CASE WHEN $3::timestamptz IS NULL THEN status_reason ELSE $4 END,
+			circuit_open_until = COALESCE($3, circuit_open_until),
 			updated_at = now()
 		WHERE provider = $1
 			AND id = $2
 		RETURNING id
-	`, providerName, id, message, at, openUntil).Scan(&updatedID)
+	`, providerName, id, openUntil, message).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.ErrNotConnected
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE provider_account_credentials
+		SET
+			last_refresh_error = $2,
+			last_refresh_error_at = $3,
+			updated_at = now()
+		WHERE account_id = $1
+	`, id, message, at)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerName string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error {
 	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
-		UPDATE oauth_accounts
+		UPDATE provider_accounts
 		SET
 			status = $3,
 			status_reason = $4,
@@ -452,7 +589,7 @@ func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName
 	var exists int
 	err := r.pool.QueryRow(ctx, `
 		SELECT 1
-		FROM oauth_accounts
+		FROM provider_accounts
 		WHERE provider = $1
 			AND id = $2
 	`, providerName, accountID).Scan(&exists)
@@ -465,7 +602,7 @@ func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName
 
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+providerAccountModelColumns+`
-		FROM oauth_account_models
+		FROM provider_account_models
 		WHERE provider = $1
 			AND account_id = $2
 		ORDER BY model ASC
@@ -501,7 +638,7 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 	var existingID int64
 	err = tx.QueryRow(ctx, `
 		SELECT id
-		FROM oauth_accounts
+		FROM provider_accounts
 		WHERE provider = $1
 			AND id = $2
 		FOR UPDATE
@@ -514,7 +651,7 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 	}
 
 	_, err = tx.Exec(ctx, `
-		DELETE FROM oauth_account_models
+		DELETE FROM provider_account_models
 		WHERE provider = $1
 			AND account_id = $2
 			AND source = $3
@@ -525,7 +662,7 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 
 	for _, model := range models {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO oauth_account_models (
+			INSERT INTO provider_account_models (
 				account_id, provider, model, enabled, source, metadata, updated_at
 			)
 			VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, now())
@@ -537,7 +674,7 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 
 	rows, err := tx.Query(ctx, `
 		SELECT `+providerAccountModelColumns+`
-		FROM oauth_account_models
+		FROM provider_account_models
 		WHERE provider = $1
 			AND account_id = $2
 		ORDER BY model ASC
@@ -573,8 +710,8 @@ func (r *ProviderRepository) ListExposedModels(ctx context.Context, providerName
 
 	rows, err := r.pool.Query(ctx, `
 		SELECT DISTINCT m.model
-		FROM oauth_account_models m
-		JOIN oauth_accounts a ON a.id = m.account_id
+		FROM provider_account_models m
+		JOIN provider_accounts a ON a.id = m.account_id
 			AND a.provider = m.provider
 		WHERE m.provider = $1
 			AND m.enabled = true
@@ -621,9 +758,10 @@ func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, p
 	}
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT `+providerAccountColumnsFromAlias+`
-		FROM oauth_accounts a
-		JOIN oauth_account_models m ON m.account_id = a.id
+		SELECT `+providerAccountColumns+`
+		FROM provider_accounts a
+		JOIN provider_account_credentials c ON c.account_id = a.id
+		JOIN provider_account_models m ON m.account_id = a.id
 			AND m.provider = a.provider
 		WHERE a.provider = $1
 			AND m.model = $2

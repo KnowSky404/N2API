@@ -1242,6 +1242,7 @@ func (r *memoryRepo) FindAccountByIdentity(ctx context.Context, providerName str
 
 func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account, error) {
 	r.saveCount++
+	normalizeMemoryAccount(&account)
 	now := time.Now()
 	for i := range r.accounts {
 		if r.accounts[i].Provider == account.Provider && (r.accounts[i].Subject == account.Subject || (account.ID > 0 && r.accounts[i].ID == account.ID)) {
@@ -1272,6 +1273,58 @@ func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account,
 	account.UpdatedAt = now
 	r.accounts = append(r.accounts, account)
 	return account, nil
+}
+
+func normalizeMemoryAccount(account *Account) {
+	if strings.TrimSpace(account.AccountType) == "" {
+		account.AccountType = AccountTypeCodexOAuth
+	}
+	if strings.TrimSpace(account.Credential.CredentialType) == "" {
+		switch account.AccountType {
+		case AccountTypeAPIUpstream:
+			account.Credential.CredentialType = CredentialTypeAPIKey
+		default:
+			account.Credential.CredentialType = CredentialTypeOAuthToken
+		}
+	}
+	if account.Credential.EncryptedAccessToken == "" {
+		account.Credential.EncryptedAccessToken = account.EncryptedAccessToken
+	}
+	if account.Credential.EncryptedRefreshToken == "" {
+		account.Credential.EncryptedRefreshToken = account.EncryptedRefreshToken
+	}
+	if account.Credential.EncryptedIDToken == "" {
+		account.Credential.EncryptedIDToken = account.EncryptedIDToken
+	}
+	if account.Credential.AccessTokenExpiresAt == nil {
+		account.Credential.AccessTokenExpiresAt = account.AccessTokenExpiresAt
+	}
+	if account.Credential.LastRefreshAt == nil {
+		account.Credential.LastRefreshAt = account.LastRefreshAt
+	}
+	if account.Credential.LastRefreshError == "" {
+		account.Credential.LastRefreshError = account.LastRefreshError
+	}
+	if account.Credential.LastRefreshErrorAt == nil {
+		account.Credential.LastRefreshErrorAt = account.LastRefreshErrorAt
+	}
+	if account.Credential.Metadata == nil {
+		account.Credential.Metadata = account.Metadata
+	}
+	account.EncryptedAccessToken = account.Credential.EncryptedAccessToken
+	account.EncryptedRefreshToken = account.Credential.EncryptedRefreshToken
+	account.EncryptedIDToken = account.Credential.EncryptedIDToken
+	account.AccessTokenExpiresAt = account.Credential.AccessTokenExpiresAt
+	account.LastRefreshAt = account.Credential.LastRefreshAt
+	account.LastRefreshError = account.Credential.LastRefreshError
+	account.LastRefreshErrorAt = account.Credential.LastRefreshErrorAt
+	account.Metadata = account.Credential.Metadata
+	if account.Metadata == nil {
+		account.Metadata = map[string]string{}
+	}
+	if account.Credential.Metadata == nil {
+		account.Credential.Metadata = account.Metadata
+	}
 }
 
 func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id int64, update AccountUpdate) (Account, error) {
