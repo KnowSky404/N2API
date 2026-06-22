@@ -449,6 +449,20 @@ func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerNa
 }
 
 func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName string, accountID int64) ([]provider.AccountModel, error) {
+	var exists int
+	err := r.pool.QueryRow(ctx, `
+		SELECT 1
+		FROM oauth_accounts
+		WHERE provider = $1
+			AND id = $2
+	`, providerName, accountID).Scan(&exists)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, provider.ErrNotConnected
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+providerAccountModelColumns+`
 		FROM oauth_account_models

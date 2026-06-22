@@ -44,6 +44,17 @@ func TestReplaceAccountModelsLocksParentAccountRow(t *testing.T) {
 	}
 }
 
+func TestListAccountModelsChecksParentAccountExists(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	if !strings.Contains(sql, "SELECT 1\n\t\tFROM OAUTH_ACCOUNTS\n\t\tWHERE PROVIDER = $1\n\t\t\tAND ID = $2") {
+		t.Fatal("ListAccountModels must check oauth_accounts before returning model rows")
+	}
+}
+
 func TestReplaceAccountModelsNormalizesAndListsRows(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
@@ -108,6 +119,36 @@ func TestReplaceAccountModelsNormalizesAndListsRows(t *testing.T) {
 	_, err = repo.ReplaceAccountModels(ctx, "openai", account.ID, tooMany)
 	if !errors.Is(err, provider.ErrInvalidInput) {
 		t.Fatalf("ReplaceAccountModels too many models error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestListAccountModelsDistinguishesMissingAccountFromNoModels(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "acct-no-models",
+		DisplayName:           "No Models",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "active",
+	})
+
+	models, err := repo.ListAccountModels(ctx, "openai", account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountModels existing account returned error: %v", err)
+	}
+	if len(models) != 0 {
+		t.Fatalf("models = %+v, want empty list", models)
+	}
+
+	_, err = repo.ListAccountModels(ctx, "openai", 9_223_372_036_854_775_000)
+	if !errors.Is(err, provider.ErrNotConnected) {
+		t.Fatalf("ListAccountModels missing account error = %v, want ErrNotConnected", err)
 	}
 }
 
