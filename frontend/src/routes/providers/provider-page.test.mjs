@@ -5,7 +5,9 @@ import { mock } from 'bun:test';
 
 globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
-const { parseAccountModelsText } = await import('../../lib/admin-state.svelte.js');
+const { parseAccountModelsText, pruneAccountModelStates, shouldApplyAccountModelsResponse } = await import(
+  '../../lib/admin-state.svelte.js'
+);
 
 const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const modelsSource = readFileSync('src/routes/models/+page.svelte', 'utf8');
@@ -16,6 +18,23 @@ test('parseAccountModelsText trims blanks and dedupes by first occurrence', () =
     { model: 'gpt-5-mini', enabled: true },
     { model: 'codex-mini', enabled: true }
   ]);
+});
+
+test('shouldApplyAccountModelsResponse rejects stale account model responses', () => {
+  assert.equal(shouldApplyAccountModelsResponse({ requestSeq: 3 }, 3), true);
+  assert.equal(shouldApplyAccountModelsResponse({ requestSeq: 4 }, 3), false);
+});
+
+test('pruneAccountModelStates removes account model state for missing accounts', () => {
+  const states = {
+    7: { requestSeq: 1 },
+    8: { requestSeq: 1 },
+    12: { requestSeq: 1 }
+  };
+
+  pruneAccountModelStates(states, [8, 12]);
+
+  assert.deepEqual(Object.keys(states), ['8', '12']);
 });
 
 test('provider page has a single OAuth account creation entry point', () => {

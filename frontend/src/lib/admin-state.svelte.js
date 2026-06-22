@@ -80,6 +80,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} saved
  * @property {string} text
  * @property {AccountModel[]} items
+ * @property {number} requestSeq
  */
 
 /**
@@ -159,6 +160,27 @@ export function parseAccountModelsText(value) {
       return true;
     })
     .map((model) => ({ model, enabled: true }));
+}
+
+/**
+ * @param {{ requestSeq: number }} state
+ * @param {number} requestSeq
+ */
+export function shouldApplyAccountModelsResponse(state, requestSeq) {
+  return state.requestSeq === requestSeq;
+}
+
+/**
+ * @param {Record<string, any>} states
+ * @param {Array<number | string>} accountIds
+ */
+export function pruneAccountModelStates(states, accountIds) {
+  const accountKeys = new Set(accountIds.map((id) => String(id)));
+  for (const key of Object.keys(states)) {
+    if (!accountKeys.has(key)) {
+      delete states[key];
+    }
+  }
 }
 
 export function getProviderStateLabel() {
@@ -447,6 +469,10 @@ export async function loadProviderAccounts() {
     const payload = await requestJSON('/api/admin/providers/openai/accounts');
     if (!isCurrentAuthenticated(version)) return;
     providerAccounts.items = payload.accounts ?? [];
+    pruneAccountModelStates(
+      accountModels,
+      providerAccounts.items.map((account) => account.id)
+    );
     await Promise.all(providerAccounts.items.map((account) => loadAccountModels(account.id)));
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
@@ -466,7 +492,8 @@ function ensureAccountModelsState(accountId) {
       error: '',
       saved: false,
       text: '',
-      items: []
+      items: [],
+      requestSeq: 0
     };
   }
   return accountModels[key];
@@ -490,20 +517,27 @@ export async function loadAccountModels(accountId) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
   const state = ensureAccountModelsState(accountId);
+  state.requestSeq += 1;
+  const requestSeq = state.requestSeq;
   state.loading = true;
+  state.saving = false;
   state.error = '';
   state.saved = false;
   try {
     const payload = await requestJSON(`/api/admin/providers/openai/accounts/${accountId}/models`);
     if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
     const models = payload.models ?? [];
     state.items = models;
     state.text = accountModelsText(models);
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
     state.error = error instanceof Error ? error.message : 'Account model load failed';
   } finally {
-    if (isCurrentAuthenticated(version)) state.loading = false;
+    if (isCurrentAuthenticated(version) && shouldApplyAccountModelsResponse(state, requestSeq)) {
+      state.loading = false;
+    }
   }
 }
 
@@ -515,6 +549,9 @@ export async function saveAccountModels(accountId, text) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
   const state = ensureAccountModelsState(accountId);
+  state.requestSeq += 1;
+  const requestSeq = state.requestSeq;
+  state.loading = false;
   state.saving = true;
   state.error = '';
   state.saved = false;
@@ -524,6 +561,7 @@ export async function saveAccountModels(accountId, text) {
       body: JSON.stringify({ models: parseAccountModelsText(text) })
     });
     if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
     const models = payload.models ?? [];
     state.items = models;
     state.text = accountModelsText(models);
@@ -531,9 +569,12 @@ export async function saveAccountModels(accountId, text) {
     await loadModelRouting();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
     state.error = error instanceof Error ? error.message : 'Account model save failed';
   } finally {
-    if (isCurrentAuthenticated(version)) state.saving = false;
+    if (isCurrentAuthenticated(version) && shouldApplyAccountModelsResponse(state, requestSeq)) {
+      state.saving = false;
+    }
   }
 }
 
