@@ -898,7 +898,7 @@ func parseServerOptions(options ...any) (http.Handler, fs.FS) {
 }
 
 func serveWeb(w http.ResponseWriter, r *http.Request, webFS fs.FS) bool {
-	if webFS == nil || r.Method != http.MethodGet {
+	if webFS == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
 		return false
 	}
 	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/v1/") || strings.HasPrefix(r.URL.Path, "/oauth/") {

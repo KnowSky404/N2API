@@ -1857,6 +1857,15 @@ func TestServesStaticFrontendAndSPAFallback(t *testing.T) {
 			t.Fatalf("%s body = %q, want %q", tc.path, recorder.Body.String(), tc.want)
 		}
 	}
+
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodHead, "/", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("HEAD / status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("HEAD / Content-Type = %q, want text/html", contentType)
+	}
 }
 
 func TestBadAdminJSONReturnsBadRequest(t *testing.T) {
