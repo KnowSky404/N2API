@@ -275,7 +275,7 @@ Within the transaction:
 
 Implement `ListExposedModels` using enabled account rows joined to enabled account model rows, filtered by the passed `allowedModels`. Preserve allowed-list order by sorting in Go after fetching the distinct model set.
 
-Implement `ListEligibleAccountsForModel`:
+Implement `ListEligibleAccountsForModel`. Normalize `nil` exclusions to an empty `[]int64{}` before executing the query, and cast the parameter in SQL so an empty exclusion list never filters out all accounts:
 
 ```sql
 SELECT <providerAccountColumns>
@@ -289,7 +289,7 @@ WHERE a.provider = $1
   AND a.status NOT IN ('disabled', 'expired')
   AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= $3)
   AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= $3)
-  AND NOT (a.id = ANY($4))
+  AND (cardinality($4::bigint[]) = 0 OR NOT (a.id = ANY($4::bigint[])))
 ORDER BY a.priority ASC, a.last_used_at ASC NULLS FIRST, a.id ASC
 ```
 
@@ -788,18 +788,22 @@ export const accountModels = $state({
 });
 ```
 
-Add `loadAccountModels(accountId)` and `saveAccountModels(accountId, text)` using the new admin endpoints.
+Add `ensureAccountModelsState(accountId)`, `loadAccountModels(accountId)`, and `saveAccountModels(accountId, text)` using the new admin endpoints. The ensure helper must create a default `{ text: '', loaded: false, saved: false }` entry before any component binds to per-account model state.
 
 - [ ] **Step 4: Update Providers page**
 
 In `frontend/src/routes/providers/+page.svelte`, add an account models editor in each account row/details area:
 
 ```svelte
-<textarea
-  class="mt-2 min-h-24 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  bind:value={accountModels.byAccountId[account.id].text}
-  placeholder={'gpt-5\ngpt-5-mini'}
-></textarea>
+{#if accountModels.byAccountId[account.id]}
+  <textarea
+    class="mt-2 min-h-24 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+    bind:value={accountModels.byAccountId[account.id].text}
+    placeholder={'gpt-5\ngpt-5-mini'}
+  ></textarea>
+{:else}
+  <p class="mt-2 text-[13px] text-[#6b6b6b]">Loading account models...</p>
+{/if}
 ```
 
 Add a compact save button and inline error/saved state. Load models when provider accounts are loaded.
