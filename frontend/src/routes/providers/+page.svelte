@@ -6,15 +6,18 @@
     copyAuthorizationURL,
     disconnectProviderAccount,
     formatDate,
+    getAccountModelsState,
     getProviderStateLabel,
     loadProviderAccounts,
     login,
     loginForm,
+    parseAccountModelsText,
     provider,
     providerAccounts,
     providerConnectForm,
     providerOAuth,
     refreshProviderAccount,
+    saveAccountModels,
     session,
     statusLabel,
     updateProviderAccount,
@@ -130,6 +133,11 @@
     ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  /** @param {string} text */
+  function enabledAccountModelCount(text) {
+    return parseAccountModelsText(text).length;
   }
 </script>
 
@@ -345,7 +353,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
   </div>
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1120px] text-left text-sm">
+    <table class="w-full min-w-[1320px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('account')}>
@@ -383,24 +391,27 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         Last used<span class="text-[11px]">{sortIndicator('used')}</span>
       </button>
     </th>
+    <th class="w-72 px-4 py-3 font-medium">Manual models</th>
     <th class="sticky right-0 z-10 w-36 bg-[#f5f5f5] px-3 py-3 text-right font-medium shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
   </tr>
 </thead>
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading provider accounts...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No provider accounts connected yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No accounts match your search.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">No accounts match your search.</td>
     </tr>
   {:else}
     {#each filteredProviderAccounts as account}
+      {@const modelState = getAccountModelsState(account.id)}
+      {@const enabledModels = enabledAccountModelCount(modelState.text)}
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle" title={accountHoverDetail(account)}>
           <p class="max-w-[18rem] truncate font-medium text-[#0d0d0d]">
@@ -468,6 +479,50 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
+        <td class="px-4 py-3 align-top">
+          <form
+            class="grid gap-2"
+            onsubmit={(event) => {
+              event.preventDefault();
+              saveAccountModels(account.id, modelState.text);
+            }}
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <p class="text-xs font-medium text-[#3c3c3c]">
+                {modelState.loading ? 'Loading models' : `${enabledModels} enabled model${enabledModels === 1 ? '' : 's'}`}
+              </p>
+              <button
+                class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                type="submit"
+                disabled={modelState.loading || modelState.saving}
+              >
+                {modelState.saving ? 'Saving' : 'Save'}
+              </button>
+            </div>
+            <label class="sr-only" for={`provider-account-models-${account.id}`}>
+              Manual models for {accountLabel(account)}
+            </label>
+            <textarea
+              id={`provider-account-models-${account.id}`}
+              class="min-h-24 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              placeholder={'gpt-4.1\ngpt-4.1-mini'}
+              bind:value={modelState.text}
+              disabled={modelState.loading || modelState.saving}
+            ></textarea>
+            <p class="text-xs text-[#6e6e6e]">One model per line.</p>
+            {#if !modelState.loading && enabledModels === 0}
+              <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
+                This account cannot receive model-routed POST traffic until at least one enabled model is saved.
+              </p>
+            {/if}
+            {#if modelState.saved}
+              <p class="text-xs text-[#0a7a5e]">Saved.</p>
+            {/if}
+            {#if modelState.error}
+              <p class="text-xs text-red-700">{modelState.error}</p>
+            {/if}
+          </form>
+        </td>
         <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
           <div class="flex justify-end gap-1.5 whitespace-nowrap">
             <button

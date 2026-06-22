@@ -1,12 +1,18 @@
 <script>
   import {
     loadModelSettings,
+    loadModelRouting,
     login,
     loginForm,
+    modelRouting,
     modelSettings,
     saveModelSettings,
     session,
   } from '$lib/admin-state.svelte.js';
+
+  async function refreshModelsPage() {
+    await Promise.all([loadModelSettings(), loadModelRouting()]);
+  }
 </script>
 
 <svelte:head>
@@ -62,9 +68,9 @@
 class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
 type="button"
 disabled={modelSettings.loading}
-onclick={loadModelSettings}
+onclick={refreshModelsPage}
     >
-{modelSettings.loading ? 'Refreshing' : 'Refresh'}
+{modelSettings.loading || modelRouting.loading ? 'Refreshing' : 'Refresh'}
     </button>
   </div>
 
@@ -114,6 +120,94 @@ Model settings saved.
 {modelSettings.error}
     </p>
   {/if}
+</section>
+
+<section class="mt-6 rounded-lg border border-[#ededed] bg-white p-6">
+  <div class="flex flex-wrap items-center justify-between gap-4">
+    <div>
+<h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Model routing status</h2>
+<p class="mt-1 text-sm text-[#6e6e6e]">
+  Aggregate availability across allowed models and connected accounts.
+</p>
+    </div>
+    <button
+class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+type="button"
+disabled={modelRouting.loading}
+onclick={loadModelRouting}
+    >
+{modelRouting.loading ? 'Refreshing' : 'Refresh routing'}
+    </button>
+  </div>
+
+  {#if modelRouting.error}
+    <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+{modelRouting.error}
+    </p>
+  {/if}
+
+  {#if modelRouting.warnings.length > 0}
+    <div class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+      <p class="font-medium">Warnings</p>
+      <ul class="mt-2 grid gap-1">
+        {#each modelRouting.warnings as warning}
+          <li>{warning}</li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
+
+  <div class="mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
+    <table class="w-full min-w-[760px] text-left text-sm">
+<thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+  <tr>
+    <th class="px-4 py-3 font-medium">Model</th>
+    <th class="w-32 px-4 py-3 font-medium">Visibility</th>
+    <th class="w-40 px-4 py-3 text-right font-medium">Configured accounts</th>
+    <th class="w-36 px-4 py-3 text-right font-medium">Enabled accounts</th>
+    <th class="w-56 px-4 py-3 font-medium">Warnings</th>
+  </tr>
+</thead>
+<tbody class="divide-y divide-[#ededed]">
+  {#if modelRouting.loading && modelRouting.models.length === 0}
+    <tr>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="5">Loading model routing...</td>
+    </tr>
+  {:else if modelRouting.models.length === 0}
+    <tr>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="5">No routing status loaded yet.</td>
+    </tr>
+  {:else}
+    {#each modelRouting.models as row}
+      <tr class="bg-white">
+        <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{row.model}</td>
+        <td class="px-4 py-3">
+          <span
+            class={[
+              'inline-flex rounded-full px-2.5 py-1 text-xs font-medium',
+              row.allowed ? 'bg-[#e8f5f0] text-[#0a7a5e]' : 'bg-[#f5f5f5] text-[#6e6e6e]'
+            ]}
+          >
+            {row.allowed ? 'Allowed' : 'Hidden'}
+          </span>
+        </td>
+        <td class="px-4 py-3 text-right tabular-nums text-[#3c3c3c]">{row.configuredCount}</td>
+        <td class="px-4 py-3 text-right tabular-nums text-[#3c3c3c]">{row.enabledCount}</td>
+        <td class="px-4 py-3 text-[#6e6e6e]">
+          {#if row.allowed && row.enabledCount === 0}
+            <span class="text-amber-700">No enabled account</span>
+          {:else if !row.allowed}
+            <span class="text-[#6e6e6e]">Hidden from /v1/models</span>
+          {:else}
+            <span>Ready</span>
+          {/if}
+        </td>
+      </tr>
+    {/each}
+  {/if}
+</tbody>
+    </table>
+  </div>
 </section>
 
 {/if}

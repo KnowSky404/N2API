@@ -60,6 +60,36 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string[]} allowedModels
  */
 
+/**
+ * @typedef {object} AccountModel
+ * @property {number} id
+ * @property {number} accountId
+ * @property {string} provider
+ * @property {string} model
+ * @property {boolean} enabled
+ * @property {string} source
+ * @property {string | null} lastSeenAt
+ * @property {string} lastError
+ */
+
+/**
+ * @typedef {object} AccountModelsState
+ * @property {boolean} loading
+ * @property {boolean} saving
+ * @property {string} error
+ * @property {boolean} saved
+ * @property {string} text
+ * @property {AccountModel[]} items
+ */
+
+/**
+ * @typedef {object} ModelRoutingModel
+ * @property {string} model
+ * @property {boolean} allowed
+ * @property {number} configuredCount
+ * @property {number} enabledCount
+ */
+
 export const health = $state({
   loading: true,
   error: '',
@@ -105,6 +135,31 @@ export const modelSettings = $state({
   defaultModel: '',
   allowedModelsText: ''
 });
+/** @type {Record<string, AccountModelsState>} */
+export const accountModels = $state({});
+/** @type {{ loading: boolean, error: string, defaultModel: string, allowedModels: string[], models: ModelRoutingModel[], warnings: string[] }} */
+export const modelRouting = $state({
+  loading: false,
+  error: '',
+  defaultModel: '',
+  allowedModels: [],
+  models: [],
+  warnings: []
+});
+
+/** @param {string | null | undefined} value */
+export function parseAccountModelsText(value) {
+  const seen = new Set();
+  return String(value ?? '')
+    .split('\n')
+    .map((model) => model.trim())
+    .filter((model) => {
+      if (!model || seen.has(model)) return false;
+      seen.add(model);
+      return true;
+    })
+    .map((model) => ({ model, enabled: true }));
+}
 
 export function getProviderStateLabel() {
   return provider.data?.configured
@@ -223,6 +278,15 @@ function clearModelSettings() {
     defaultModel: '',
     allowedModelsText: ''
   });
+  replaceState(modelRouting, {
+    loading: false,
+    error: '',
+    defaultModel: '',
+    allowedModels: [],
+    models: [],
+    warnings: []
+  });
+  replaceState(accountModels, {});
 }
 
 function clearProvider() {
@@ -233,6 +297,7 @@ function clearProvider() {
     data: null
   });
   replaceState(providerAccounts, { loading: false, saving: false, error: '', items: [] });
+  replaceState(accountModels, {});
   replaceState(providerConnectForm, { name: '', priority: 100, enabled: true });
   replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
 }
@@ -301,6 +366,7 @@ export async function loadSession() {
     await loadProvider();
     await loadProviderAccounts();
     await loadModelSettings();
+    await loadModelRouting();
     await loadKeys();
     await loadRequestLogs();
   } catch (error) {
@@ -381,11 +447,93 @@ export async function loadProviderAccounts() {
     const payload = await requestJSON('/api/admin/providers/openai/accounts');
     if (!isCurrentAuthenticated(version)) return;
     providerAccounts.items = payload.accounts ?? [];
+    await Promise.all(providerAccounts.items.map((account) => loadAccountModels(account.id)));
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     providerAccounts.error = error instanceof Error ? error.message : 'Account load failed';
   } finally {
     if (isCurrentAuthenticated(version)) providerAccounts.loading = false;
+  }
+}
+
+/** @param {number} accountId */
+function ensureAccountModelsState(accountId) {
+  const key = String(accountId);
+  if (!accountModels[key]) {
+    accountModels[key] = {
+      loading: false,
+      saving: false,
+      error: '',
+      saved: false,
+      text: '',
+      items: []
+    };
+  }
+  return accountModels[key];
+}
+
+/** @param {AccountModel[]} models */
+function accountModelsText(models) {
+  return models
+    .filter((model) => model.enabled)
+    .map((model) => model.model)
+    .join('\n');
+}
+
+/** @param {number} accountId */
+export function getAccountModelsState(accountId) {
+  return ensureAccountModelsState(accountId);
+}
+
+/** @param {number} accountId */
+export async function loadAccountModels(accountId) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const state = ensureAccountModelsState(accountId);
+  state.loading = true;
+  state.error = '';
+  state.saved = false;
+  try {
+    const payload = await requestJSON(`/api/admin/providers/openai/accounts/${accountId}/models`);
+    if (!isCurrentAuthenticated(version)) return;
+    const models = payload.models ?? [];
+    state.items = models;
+    state.text = accountModelsText(models);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    state.error = error instanceof Error ? error.message : 'Account model load failed';
+  } finally {
+    if (isCurrentAuthenticated(version)) state.loading = false;
+  }
+}
+
+/**
+ * @param {number} accountId
+ * @param {string} text
+ */
+export async function saveAccountModels(accountId, text) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const state = ensureAccountModelsState(accountId);
+  state.saving = true;
+  state.error = '';
+  state.saved = false;
+  try {
+    const payload = await requestJSON(`/api/admin/providers/openai/accounts/${accountId}/models`, {
+      method: 'PUT',
+      body: JSON.stringify({ models: parseAccountModelsText(text) })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    const models = payload.models ?? [];
+    state.items = models;
+    state.text = accountModelsText(models);
+    state.saved = true;
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    state.error = error instanceof Error ? error.message : 'Account model save failed';
+  } finally {
+    if (isCurrentAuthenticated(version)) state.saving = false;
   }
 }
 
@@ -604,6 +752,29 @@ export async function loadModelSettings() {
   }
 }
 
+export async function loadModelRouting() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  modelRouting.loading = true;
+  modelRouting.error = '';
+
+  try {
+    const payload = await requestJSON('/api/admin/model-routing');
+    if (!isCurrentAuthenticated(version)) return;
+    modelRouting.defaultModel = payload.defaultModel ?? '';
+    modelRouting.allowedModels = payload.allowedModels ?? [];
+    modelRouting.models = payload.models ?? [];
+    modelRouting.warnings = payload.warnings ?? [];
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    modelRouting.error = error instanceof Error ? error.message : 'Failed to load model routing';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    modelRouting.loading = false;
+  }
+}
+
 /** @param {SubmitEvent} event */
 export async function saveModelSettings(event) {
   event.preventDefault();
@@ -631,6 +802,7 @@ export async function saveModelSettings(event) {
     modelSettings.defaultModel = payload.defaultModel ?? '';
     modelSettings.allowedModelsText = (payload.allowedModels ?? []).join('\n');
     modelSettings.saved = true;
+    await loadModelRouting();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     modelSettings.error = error instanceof Error ? error.message : 'Failed to save model settings';
