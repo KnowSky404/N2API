@@ -4,6 +4,9 @@ import { copyText } from '$lib/clipboard.js';
  * @typedef {object} APIKey
  * @property {number} id
  * @property {string} name
+ * @property {string} modelPolicy
+ * @property {string[]} allowedModels
+ * @property {string | undefined} allowedModelsText
  * @property {string} prefix
  * @property {string} createdAt
  * @property {string | null} lastUsedAt
@@ -24,6 +27,7 @@ import { copyText } from '$lib/clipboard.js';
  * @typedef {object} ProviderAccount
  * @property {number} id
  * @property {string} provider
+ * @property {string} accountType
  * @property {string} subject
  * @property {string} name
  * @property {string} displayName
@@ -112,6 +116,16 @@ export const provider = $state({
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
 export const providerConnectForm = $state({ name: '', priority: 100, enabled: true });
 export const providerOAuth = $state({ authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
+export const apiUpstreamForm = $state({
+  name: '',
+  baseUrl: '',
+  apiKey: '',
+  priority: 100,
+  enabled: true,
+  modelsText: '',
+  submitting: false,
+  error: ''
+});
 /** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
 export const apiKeys = $state({
   loading: false,
@@ -160,6 +174,19 @@ export function parseAccountModelsText(value) {
       return true;
     })
     .map((model) => ({ model, enabled: true }));
+}
+
+/** @param {string | null | undefined} text */
+export function parseModelLines(text) {
+  const seen = new Set();
+  return String(text ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((model) => {
+      if (!model || seen.has(model)) return false;
+      seen.add(model);
+      return true;
+    });
 }
 
 /**
@@ -360,6 +387,16 @@ function clearProvider() {
   replaceState(accountModels, {});
   replaceState(providerConnectForm, { name: '', priority: 100, enabled: true });
   replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
+  replaceState(apiUpstreamForm, {
+    name: '',
+    baseUrl: '',
+    apiKey: '',
+    priority: 100,
+    enabled: true,
+    modelsText: '',
+    submitting: false,
+    error: ''
+  });
 }
 
 /** @param {number} version */
@@ -504,7 +541,7 @@ export async function loadProviderAccounts() {
   providerAccounts.loading = true;
   providerAccounts.error = '';
   try {
-    const payload = await requestJSON('/api/admin/providers/openai/accounts');
+    const payload = await requestJSON('/api/admin/provider-accounts');
     if (!isCurrentAuthenticated(version)) return;
     providerAccounts.items = payload.accounts ?? [];
     pruneAccountModelStates(
@@ -559,7 +596,7 @@ export async function loadAccountModels(accountId) {
   state.error = '';
   state.saved = false;
   try {
-    const payload = await requestJSON(`/api/admin/providers/openai/accounts/${accountId}/models`);
+    const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models`);
     if (!isCurrentAuthenticated(version)) return;
     if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
     const models = payload.models ?? [];
@@ -591,7 +628,7 @@ export async function saveAccountModels(accountId, text) {
   state.error = '';
   state.saved = false;
   try {
-    const payload = await requestJSON(`/api/admin/providers/openai/accounts/${accountId}/models`, {
+    const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models`, {
       method: 'PUT',
       body: JSON.stringify({ models: mergeAccountModelChanges(state.items, text) })
     });
@@ -616,6 +653,12 @@ export async function saveAccountModels(accountId, text) {
 /** @param {ProviderAccount} account */
 export function accountLabel(account) {
   return account.name || account.displayName || account.subject || account.provider;
+}
+
+/** @param {ProviderAccount} account */
+export function accountTypeLabel(account) {
+  if (account.accountType === 'api_upstream') return 'API upstream';
+  return 'Codex OAuth';
 }
 
 /** @param {string | null | undefined} status */
@@ -700,10 +743,11 @@ export async function completeProviderCallback() {
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
   providerAccounts.saving = true;
   providerAccounts.error = '';
   try {
-    await requestJSON(`/api/admin/providers/openai/accounts/${account.id}`, {
+    await requestJSON(`/api/admin/provider-accounts/${account.id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch)
     });
@@ -718,6 +762,39 @@ export async function updateProviderAccount(account, patch) {
     providerAccounts.error = message;
   } finally {
     if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
+export async function createAPIUpstreamAccount() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  apiUpstreamForm.submitting = true;
+  apiUpstreamForm.error = '';
+  providerAccounts.error = '';
+
+  try {
+    await requestJSON('/api/admin/provider-accounts/api-upstream', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: apiUpstreamForm.name,
+        baseUrl: apiUpstreamForm.baseUrl,
+        apiKey: apiUpstreamForm.apiKey,
+        priority: Number(apiUpstreamForm.priority) || 100,
+        enabled: apiUpstreamForm.enabled,
+        models: parseModelLines(apiUpstreamForm.modelsText)
+      })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    apiUpstreamForm.apiKey = '';
+    apiUpstreamForm.modelsText = '';
+    await loadProviderAccounts();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiUpstreamForm.error = error instanceof Error ? error.message : 'API upstream account create failed';
+  } finally {
+    if (isCurrentAuthenticated(version)) apiUpstreamForm.submitting = false;
   }
 }
 
@@ -806,6 +883,32 @@ export async function loadKeys() {
   }
 }
 
+/**
+ * @param {number} keyId
+ * @param {string} modelPolicy
+ * @param {string} modelsText
+ */
+export async function updateAPIKeyModelPolicy(keyId, modelPolicy, modelsText) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  apiKeys.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/keys/${keyId}/model-policy`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        modelPolicy,
+        models: parseModelLines(modelsText)
+      })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.error = error instanceof Error ? error.message : 'Failed to update model access';
+  }
+}
+
 export async function loadModelSettings() {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
@@ -861,10 +964,7 @@ export async function saveModelSettings(event) {
   modelSettings.error = '';
   modelSettings.saved = false;
 
-  const allowedModels = modelSettings.allowedModelsText
-    .split('\n')
-    .map((model) => model.trim())
-    .filter(Boolean);
+  const allowedModels = parseModelLines(modelSettings.allowedModelsText);
 
   try {
     const payload = await requestJSON('/api/admin/model-settings', {

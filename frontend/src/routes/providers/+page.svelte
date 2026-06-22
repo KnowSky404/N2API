@@ -1,9 +1,11 @@
 <script>
   import {
     accountLabel,
+    accountTypeLabel,
     completeProviderCallback,
     connectProvider,
     copyAuthorizationURL,
+    createAPIUpstreamAccount,
     disconnectProviderAccount,
     formatDate,
     getAccountModelsState,
@@ -11,6 +13,7 @@
     loadProviderAccounts,
     login,
     loginForm,
+    apiUpstreamForm,
     provider,
     providerAccounts,
     providerConnectForm,
@@ -46,6 +49,7 @@
       account.displayName,
       account.subject,
       account.provider,
+      accountTypeLabel(account),
       statusLabel(account.status),
       account.statusReason,
       account.lastError
@@ -124,6 +128,11 @@
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function isCodexOAuthAccount(account) {
+    return account.accountType === 'codex_oauth' || !account.accountType;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function statusHoverDetail(account) {
     return [
       statusLabel(account.status),
@@ -187,7 +196,7 @@
   <div class="flex flex-wrap items-start justify-between gap-4">
     <div>
 <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Provider accounts</h2>
-<p class="mt-1 text-sm text-[#6e6e6e]">OpenAI/Codex account pool</p>
+<p class="mt-1 text-sm text-[#6e6e6e]">Codex OAuth and API upstream gateway exits</p>
     </div>
     <span
 class={[
@@ -277,10 +286,91 @@ Enable after login
     <button
 class="self-end rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
 type="submit"
-disabled={provider.loading || !provider.data?.configured || provider.connecting}
+      disabled={provider.loading || !provider.data?.configured || provider.connecting}
     >
 {provider.connecting ? 'Generating link' : 'Add OAuth account'}
     </button>
+  </form>
+
+  <form
+    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_120px_auto]"
+    onsubmit={(event) => {
+      event.preventDefault();
+      createAPIUpstreamAccount();
+    }}
+  >
+    <div class="lg:col-span-5">
+      <h3 class="text-base font-semibold text-[#0d0d0d]">API upstream</h3>
+      <p class="mt-1 text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
+    </div>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Name
+<input
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  type="text"
+  placeholder="OpenAI API"
+  bind:value={apiUpstreamForm.name}
+  required
+/>
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Base URL
+<input
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  type="url"
+  placeholder="https://api.openai.com/v1"
+  bind:value={apiUpstreamForm.baseUrl}
+  required
+/>
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+API key
+<input
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  type="password"
+  autocomplete="off"
+  bind:value={apiUpstreamForm.apiKey}
+  required
+/>
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Priority
+<input
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  type="number"
+  min="0"
+  step="1"
+  bind:value={apiUpstreamForm.priority}
+/>
+    </label>
+    <label class="inline-flex h-10 self-end whitespace-nowrap items-center gap-2 text-sm font-medium text-[#3c3c3c]">
+<input
+  class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
+  type="checkbox"
+  bind:checked={apiUpstreamForm.enabled}
+/>
+Enabled
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-4">
+Manual models
+<textarea
+  class="min-h-20 w-full min-w-0 resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  placeholder={'gpt-4.1\ngpt-4.1-mini'}
+  bind:value={apiUpstreamForm.modelsText}
+></textarea>
+    </label>
+    <button
+class="self-end rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+type="submit"
+disabled={apiUpstreamForm.submitting}
+    >
+{apiUpstreamForm.submitting ? 'Adding' : 'Add API upstream'}
+    </button>
+    {#if apiUpstreamForm.error}
+      <p class="lg:col-span-5 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        {apiUpstreamForm.error}
+      </p>
+    {/if}
   </form>
 
   {#if providerOAuth.authorizationUrl}
@@ -362,6 +452,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         Account<span class="text-[11px]">{sortIndicator('account')}</span>
       </button>
     </th>
+    <th class="w-36 px-4 py-3 font-medium">Type</th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('status')}>
       <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('status')}>
         Status<span class="text-[11px]">{sortIndicator('status')}</span>
@@ -399,15 +490,15 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">Loading provider accounts...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="10">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">No provider accounts connected yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="10">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">No accounts match your search.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="10">No accounts match your search.</td>
     </tr>
   {:else}
     {#each filteredProviderAccounts as account}
@@ -424,6 +515,11 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           <p class="mt-1 max-w-[18rem] truncate font-mono text-[13px] text-[#6e6e6e]">
             {account.subject || account.provider}
           </p>
+        </td>
+        <td class="px-4 py-3 align-middle">
+          <span class="inline-flex whitespace-nowrap rounded-full bg-[#f5f5f5] px-2.5 py-1 text-xs font-medium text-[#3c3c3c]">
+            {accountTypeLabel(account)}
+          </span>
         </td>
         <td class="px-4 py-3 align-middle" title={statusHoverDetail(account)}>
           <span
@@ -567,7 +663,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
-              disabled={providerAccounts.saving}
+              disabled={providerAccounts.saving || !isCodexOAuthAccount(account)}
               onclick={() => refreshProviderAccount(account)}
               title="Refresh account"
               aria-label="Refresh account"
@@ -578,7 +674,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
-              disabled={provider.connecting || providerAccounts.saving}
+              disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)}
               onclick={() => connectProvider(account)}
               title="Reauthorize account"
               aria-label="Reauthorize account"
@@ -589,7 +685,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-red-200 bg-white text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
-              disabled={providerAccounts.saving}
+              disabled={providerAccounts.saving || !isCodexOAuthAccount(account)}
               onclick={() => disconnectProviderAccount(account)}
               title="Disconnect account"
               aria-label="Disconnect account"

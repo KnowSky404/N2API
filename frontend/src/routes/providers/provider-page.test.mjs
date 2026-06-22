@@ -8,6 +8,7 @@ mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
   mergeAccountModelChanges,
   parseAccountModelsText,
+  parseModelLines,
   pruneAccountModelStates,
   removeAccountModel,
   setAccountModelEnabled,
@@ -16,12 +17,21 @@ const {
 
 const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const modelsSource = readFileSync('src/routes/models/+page.svelte', 'utf8');
+const apiKeysSource = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
 
 test('parseAccountModelsText trims blanks and dedupes by first occurrence', () => {
   assert.deepEqual(parseAccountModelsText('  gpt-5\n\n gpt-5-mini \ngpt-5\n codex-mini \n'), [
     { model: 'gpt-5', enabled: true },
     { model: 'gpt-5-mini', enabled: true },
     { model: 'codex-mini', enabled: true }
+  ]);
+});
+
+test('parseModelLines trims blanks and dedupes plain model names', () => {
+  assert.deepEqual(parseModelLines('  gpt-5\n\n gpt-5-mini \ngpt-5\n codex-mini \n'), [
+    'gpt-5',
+    'gpt-5-mini',
+    'codex-mini'
   ]);
 });
 
@@ -105,9 +115,22 @@ test('provider account rows expose manual model controls and routing warning', (
   assert.match(source, /cannot receive model-routed POST traffic/);
 });
 
-test('models page shows aggregate model routing status', () => {
-  assert.match(modelsSource, /Model routing status/);
-  assert.match(modelsSource, /Configured accounts/);
-  assert.match(modelsSource, /Enabled accounts/);
-  assert.match(modelsSource, /modelRouting/);
+test('providers page is account-oriented and supports api upstream accounts', () => {
+  assert.match(source, /Provider accounts/);
+  assert.match(source, /Codex OAuth/);
+  assert.match(source, /API upstream/);
+  assert.match(source, /Base URL/);
+  assert.match(source, /Manual models/);
+});
+
+test('api keys page owns model policy and gateway default model', () => {
+  assert.match(apiKeysSource, /Gateway default model/);
+  assert.match(apiKeysSource, /Model access/);
+  assert.match(apiKeysSource, /All routable models/);
+  assert.match(apiKeysSource, /Selected models/);
+});
+
+test('models page points model access management to api keys', () => {
+  assert.match(modelsSource, /API Keys/);
+  assert.match(modelsSource, /href="\/api-keys"/);
 });

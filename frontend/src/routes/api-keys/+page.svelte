@@ -7,8 +7,11 @@
     getActiveKeys,
     login,
     loginForm,
+    modelSettings,
     revokeKey,
+    saveModelSettings,
     session,
+    updateAPIKeyModelPolicy,
   } from '$lib/admin-state.svelte.js';
 
   const activeKeys = $derived(getActiveKeys());
@@ -86,6 +89,50 @@
     </div>
   </form>
 
+  <form class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={saveModelSettings}>
+    <div class="grid gap-4 lg:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]">
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+Gateway default model
+<input
+  class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  bind:value={modelSettings.defaultModel}
+  maxlength="128"
+  placeholder="gpt-4.1"
+  required
+/>
+      </label>
+
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+All routable models
+<textarea
+  class="mt-2 min-h-28 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  bind:value={modelSettings.allowedModelsText}
+  placeholder={'gpt-4.1\ngpt-4.1-mini'}
+  required
+></textarea>
+      </label>
+    </div>
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <p class="text-sm text-[#6e6e6e]">
+        Client keys can use all routable models or a selected subset from this gateway list.
+      </p>
+      <button
+        class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={modelSettings.loading || modelSettings.saving}
+      >
+        {modelSettings.saving ? 'Saving' : 'Save model settings'}
+      </button>
+    </div>
+    {#if modelSettings.saved}
+      <p class="mt-3 text-sm text-[#0a7a5e]">Model settings saved.</p>
+    {/if}
+    {#if modelSettings.error}
+      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        {modelSettings.error}
+      </p>
+    {/if}
+  </form>
+
   {#if apiKeys.oneTimeSecret}
     <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
 <div class="flex flex-wrap items-center justify-between gap-3">
@@ -115,11 +162,12 @@
   {/if}
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[760px] text-left text-sm">
+    <table class="w-full min-w-[1080px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Name</th>
     <th class="px-4 py-3 font-medium">Prefix</th>
+    <th class="w-80 px-4 py-3 font-medium">Model access</th>
     <th class="px-4 py-3 font-medium">Created</th>
     <th class="px-4 py-3 font-medium">Last used</th>
     <th class="px-4 py-3 font-medium">Status</th>
@@ -129,17 +177,61 @@
 <tbody class="divide-y divide-[#ededed]">
   {#if apiKeys.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">Loading API keys...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading API keys...</td>
     </tr>
   {:else if apiKeys.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No API keys created yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys created yet.</td>
     </tr>
   {:else}
     {#each apiKeys.items as key}
       <tr class="bg-white">
         <td class="px-4 py-3 font-medium text-[#0d0d0d]">{key.name}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</td>
+        <td class="px-4 py-3">
+          <form
+            class="grid gap-2"
+            onsubmit={(event) => {
+              event.preventDefault();
+              updateAPIKeyModelPolicy(
+                key.id,
+                key.modelPolicy || 'all',
+                key.allowedModelsText ?? (key.allowedModels ?? []).join('\n')
+              );
+            }}
+          >
+            <label class="sr-only" for={`api-key-model-policy-${key.id}`}>Model access for {key.name}</label>
+            <select
+              id={`api-key-model-policy-${key.id}`}
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              bind:value={key.modelPolicy}
+              disabled={Boolean(key.revokedAt)}
+            >
+              <option value="all">All routable models</option>
+              <option value="selected">Selected models</option>
+            </select>
+            {#if key.modelPolicy === 'selected'}
+              <label class="sr-only" for={`api-key-selected-models-${key.id}`}>Selected models for {key.name}</label>
+              <textarea
+                id={`api-key-selected-models-${key.id}`}
+                class="min-h-20 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                placeholder={'gpt-4.1\ngpt-4.1-mini'}
+                value={key.allowedModelsText ?? (key.allowedModels ?? []).join('\n')}
+                disabled={Boolean(key.revokedAt)}
+                oninput={(event) => {
+                  key.allowedModelsText = event.currentTarget.value;
+                }}
+              ></textarea>
+            {/if}
+            <button
+              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="submit"
+              disabled={Boolean(key.revokedAt)}
+            >
+              Save access
+            </button>
+          </form>
+        </td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.createdAt)}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.lastUsedAt)}</td>
         <td class="px-4 py-3">
