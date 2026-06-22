@@ -251,6 +251,83 @@ func TestProxyInjectsDefaultModelWhenMissing(t *testing.T) {
 	}
 }
 
+func TestProxyRejectsNonStringModel(t *testing.T) {
+	upstreamCalled := false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		t.Fatal("upstream should not be called for invalid model field")
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: upstream.URL,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":123,"messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "invalid_request") {
+		t.Fatalf("body = %q, want invalid_request", recorder.Body.String())
+	}
+	if tokens.calls != 0 {
+		t.Fatalf("token calls = %d, want 0", tokens.calls)
+	}
+	if upstreamCalled {
+		t.Fatal("upstream was called")
+	}
+}
+
+func TestProxyTrimsRequestedModelBeforeRoutingAndForwarding(t *testing.T) {
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("Unmarshal body returned error: %v; body=%s", err, string(body))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_123"}`))
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedTokenProvider{tokens: []SelectedToken{{AccountID: 1, Token: "upstream-token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: upstream.URL,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":" gpt-5 ","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 1 || len(tokens.models) != 1 || tokens.models[0] != "gpt-5" {
+		t.Fatalf("requested models = %+v, calls=%d; want gpt-5", tokens.models, tokens.calls)
+	}
+	if gotBody["model"] != "gpt-5" {
+		t.Fatalf("forwarded model = %#v, want trimmed gpt-5; body=%+v", gotBody["model"], gotBody)
+	}
+}
+
 func TestProxyReturnsModelUnavailableBeforeUpstream(t *testing.T) {
 	upstreamCalled := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -834,6 +911,9 @@ func TestProxyReplaysSmallPOSTBodyOnFallback(t *testing.T) {
 	}
 	if tokens.calls != 2 {
 		t.Fatalf("token calls = %d, want 2", tokens.calls)
+	}
+	if len(tokens.models) != 2 || tokens.models[0] != "gpt-5" || tokens.models[1] != "gpt-5" {
+		t.Fatalf("requested models = %+v, want gpt-5 for both attempts", tokens.models)
 	}
 	if transportCalls != 2 {
 		t.Fatalf("transport calls = %d, want 2", transportCalls)

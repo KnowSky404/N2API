@@ -445,8 +445,15 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 		}
 	}
 
-	model, _ := payload["model"].(string)
-	model = strings.TrimSpace(model)
+	rawModel, hasModel := payload["model"]
+	model := ""
+	if hasModel {
+		modelValue, ok := rawModel.(string)
+		if !ok {
+			return nil, "", errInvalidJSONBody
+		}
+		model = strings.TrimSpace(modelValue)
+	}
 	if model == "" {
 		defaultModel, err := p.defaultModel(ctx)
 		if err != nil {
@@ -458,6 +465,13 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 		if err != nil {
 			return nil, "", err
 		}
+	} else if rawModel != model {
+		payload["model"] = model
+		normalized, err := json.Marshal(payload)
+		if err != nil {
+			return nil, "", err
+		}
+		raw = normalized
 	}
 
 	allowed, err := p.modelAllowed(ctx, model)
