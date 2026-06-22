@@ -292,6 +292,69 @@ func TestProxyRejectsUnlistedModelForSelectedAPIKeyBeforeAccountSelection(t *tes
 	}
 }
 
+func TestProxyRejectsUnlistedGloballyHiddenModelForSelectedAPIKeyWithoutLeakingGlobalPolicy(t *testing.T) {
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
+	auth := &fakeAPIKeyAuthenticator{key: admin.APIKey{
+		ID:            42,
+		Name:          "selected key",
+		ModelPolicy:   admin.APIKeyModelPolicySelected,
+		AllowedModels: []string{"gpt-5-mini"},
+	}}
+	proxy := NewProxy(auth, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5-mini"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"hidden-model","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want selected-key 404; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "model_not_found") || !strings.Contains(recorder.Body.String(), "requested model is not available") {
+		t.Fatalf("body = %q, want model_not_found with unavailable message", recorder.Body.String())
+	}
+	if accounts.calls != 0 {
+		t.Fatalf("account calls = %d, want 0", accounts.calls)
+	}
+}
+
+func TestProxyRejectsInjectedDefaultModelWhenSelectedAPIKeyDoesNotAllowIt(t *testing.T) {
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
+	auth := &fakeAPIKeyAuthenticator{key: admin.APIKey{
+		ID:            42,
+		Name:          "selected key",
+		ModelPolicy:   admin.APIKeyModelPolicySelected,
+		AllowedModels: []string{"gpt-5-mini"},
+	}}
+	proxy := NewProxy(auth, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want selected-key 404; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if accounts.calls != 0 {
+		t.Fatalf("account calls = %d, want 0", accounts.calls)
+	}
+}
+
 func TestProxyInjectsDefaultModelWhenMissing(t *testing.T) {
 	var gotBody map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

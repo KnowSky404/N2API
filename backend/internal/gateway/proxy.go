@@ -181,6 +181,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
 		return
 	}
+	if model != "" {
+		allowed, err := p.modelAllowed(r.Context(), model)
+		if err != nil {
+			errorCode = requestBodyErrorCode(err)
+			writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
+			return
+		}
+		if !allowed {
+			errorCode = "model_not_found"
+			writeOpenAIError(recorder, http.StatusBadRequest, errorCode, "requested model is not available")
+			return
+		}
+	}
 
 	var firstAccountID int64
 	var lastRetryableResp *http.Response
@@ -484,13 +497,6 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 		raw = normalized
 	}
 
-	allowed, err := p.modelAllowed(ctx, model)
-	if err != nil {
-		return nil, "", err
-	}
-	if !allowed {
-		return nil, "", errModelNotFound
-	}
 	return raw, model, nil
 }
 
