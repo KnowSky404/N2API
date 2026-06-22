@@ -169,7 +169,7 @@ func TestUnifiedProviderAccountMigrationCopiesOAuthData(t *testing.T) {
 		t.Fatalf("MigrationSQL returned error: %v", err)
 	}
 	for _, want := range []string{
-		"SELECT\n        id, provider, 'codex_oauth'",
+		"id, provider, 'codex_oauth'",
 		"encrypted_access_token, encrypted_refresh_token, encrypted_id_token",
 		"FROM oauth_accounts",
 		"SELECT id, account_id, provider, model, enabled",
