@@ -869,12 +869,23 @@ func (s *Service) SelectAccessToken(ctx context.Context, model string, excludedA
 func (s *Service) selectionCandidates(ctx context.Context, model string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
 	model = strings.TrimSpace(model)
 	if model != "" {
-		accounts, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, normalizedExcludedAccountIDs(excludedAccountIDs), time.Now())
+		now := time.Now()
+		excluded := normalizedExcludedAccountIDs(excludedAccountIDs)
+		accounts, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, excluded, now)
 		if err != nil {
 			return nil, false, ErrModelUnavailable, err
 		}
 		notFoundErr := ErrAccountsUnavailable
 		if len(accounts) == 0 {
+			if len(excluded) > 0 {
+				availableWithoutExclusions, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, nil, now)
+				if err != nil {
+					return nil, false, ErrModelUnavailable, err
+				}
+				if len(availableWithoutExclusions) > 0 {
+					return accounts, true, ErrAccountsUnavailable, nil
+				}
+			}
 			notFoundErr = ErrModelUnavailable
 		}
 		return accounts, true, notFoundErr, nil
