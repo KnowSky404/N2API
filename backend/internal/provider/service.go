@@ -709,6 +709,9 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 			})
 		}
 		if _, err := s.ReplaceAccountModels(ctx, account.ID, models); err != nil {
+			if deleteErr := s.repo.DeleteAccount(ctx, s.cfg.Provider, account.ID); deleteErr != nil {
+				return Account{}, fmt.Errorf("replace account models: %w; cleanup account: %v", err, deleteErr)
+			}
 			return Account{}, err
 		}
 	}

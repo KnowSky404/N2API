@@ -1179,6 +1179,24 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 	}
 }
 
+func TestCreateAPIUpstreamAccountDeletesAccountWhenInitialModelsFail(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.replaceModelsErr = errors.New("replace models failed")
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:    "Upstream",
+		BaseURL: "https://upstream.example.test/v1",
+		APIKey:  "secret",
+		Models:  []string{"gpt-5"},
+	}); !errors.Is(err, repo.replaceModelsErr) {
+		t.Fatalf("CreateAPIUpstreamAccount error = %v, want replaceModelsErr", err)
+	}
+	if len(repo.accounts) != 0 {
+		t.Fatalf("accounts = %+v, want saved account removed after model failure", repo.accounts)
+	}
+}
+
 func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
 	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
 	valid := APIUpstreamInput{Name: "Upstream", BaseURL: "https://upstream.example.test/v1", APIKey: "secret"}
@@ -1275,6 +1293,7 @@ type memoryRepo struct {
 	nextID              int64
 	markAccountErrorErr error
 	markAccountUsedErr  error
+	replaceModelsErr    error
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -1559,6 +1578,9 @@ func (r *memoryRepo) ListAccountModels(ctx context.Context, providerName string,
 }
 
 func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput) ([]AccountModel, error) {
+	if r.replaceModelsErr != nil {
+		return nil, r.replaceModelsErr
+	}
 	if _, err := r.FindAccountByID(ctx, providerName, accountID); err != nil {
 		return nil, err
 	}

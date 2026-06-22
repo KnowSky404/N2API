@@ -935,12 +935,30 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	}
 	if len(modelInputs) > 0 {
 		if _, err := s.ReplaceAccountModels(ctx, saved.ID, modelInputs); err != nil {
+			if deleteErr := s.repo.DeleteAccount(ctx, s.cfg.Provider, saved.ID); deleteErr != nil {
+				return Account{}, fmt.Errorf("replace account models: %w; cleanup account: %v", err, deleteErr)
+			}
 			return Account{}, err
 		}
 	}
 	return saved, nil
 }
 ```
+
+When selecting an `api_upstream` account, decrypt `Credential.EncryptedAPIKey` into the selected account's authorization token before handing it to the gateway:
+
+```go
+case AccountTypeAPIUpstream:
+	token, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedAPIKey)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	selected.AuthorizationToken = token
+	selected.BaseURL = strings.TrimRight(strings.TrimSpace(account.Credential.BaseURL), "/")
+	return selected, nil
+```
+
+Do not return encrypted API-key ciphertext as the upstream bearer token.
 
 - [ ] **Step 3: Add HTTP routes**
 
