@@ -79,22 +79,20 @@ CREATE TABLE IF NOT EXISTS client_api_key_models (
     UNIQUE (client_key_id, model)
 );
 
-WITH copied_accounts AS (
-    INSERT INTO provider_accounts (
-        id, provider, account_type, name, subject, display_name, enabled, priority,
-        status, status_reason, last_used_at, last_error, last_error_at, failure_count,
-        circuit_open_until, rate_limited_until, fingerprint_hash, user_agent_hash, ip_hash,
-        created_at, updated_at
-    )
-    SELECT
-        id, provider, 'codex_oauth', name, subject, display_name, enabled, priority,
-        status, status_reason, last_used_at, last_error, last_error_at, failure_count,
-        circuit_open_until, rate_limited_until, fingerprint_hash, user_agent_hash, ip_hash,
-        created_at, updated_at
-    FROM oauth_accounts
-    ON CONFLICT DO NOTHING
-    RETURNING id
+INSERT INTO provider_accounts (
+    id, provider, account_type, name, subject, display_name, enabled, priority,
+    status, status_reason, last_used_at, last_error, last_error_at, failure_count,
+    circuit_open_until, rate_limited_until, fingerprint_hash, user_agent_hash, ip_hash,
+    created_at, updated_at
 )
+SELECT
+    id, provider, 'codex_oauth', name, subject, display_name, enabled, priority,
+    status, status_reason, last_used_at, last_error, last_error_at, failure_count,
+    circuit_open_until, rate_limited_until, fingerprint_hash, user_agent_hash, ip_hash,
+    created_at, updated_at
+FROM oauth_accounts
+ON CONFLICT (id) DO NOTHING;
+
 INSERT INTO provider_account_credentials (
     account_id, credential_type, encrypted_access_token, encrypted_refresh_token, encrypted_id_token,
     access_token_expires_at, last_refresh_at, last_refresh_error, last_refresh_error_at,
@@ -114,8 +112,8 @@ SELECT id, account_id, provider, model, enabled, source, last_seen_at, last_erro
 FROM oauth_account_models
 ON CONFLICT DO NOTHING;
 
-SELECT setval(pg_get_serial_sequence('provider_accounts', 'id'), COALESCE((SELECT MAX(id) FROM provider_accounts), 1), true);
-SELECT setval(pg_get_serial_sequence('provider_account_models', 'id'), COALESCE((SELECT MAX(id) FROM provider_account_models), 1), true);
+SELECT setval(pg_get_serial_sequence('provider_accounts', 'id'), COALESCE((SELECT MAX(id) FROM provider_accounts), 1), (SELECT MAX(id) FROM provider_accounts) IS NOT NULL);
+SELECT setval(pg_get_serial_sequence('provider_account_models', 'id'), COALESCE((SELECT MAX(id) FROM provider_account_models), 1), (SELECT MAX(id) FROM provider_account_models) IS NOT NULL);
 -- +goose StatementEnd
 
 -- +goose Down

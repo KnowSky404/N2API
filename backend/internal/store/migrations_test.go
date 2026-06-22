@@ -151,6 +151,7 @@ func TestUnifiedProviderAccountsMigrationIsEmbedded(t *testing.T) {
 		"ALTER TABLE client_api_keys ADD COLUMN IF NOT EXISTS model_policy",
 		"INSERT INTO provider_accounts",
 		"FROM oauth_accounts",
+		"ON CONFLICT (id) DO NOTHING",
 		"INSERT INTO provider_account_models",
 		"FROM oauth_account_models",
 		"provider_accounts_schedulable_idx",
@@ -174,6 +175,8 @@ func TestUnifiedProviderAccountMigrationCopiesOAuthData(t *testing.T) {
 		"SELECT id, account_id, provider, model, enabled",
 		"FROM oauth_account_models",
 		"client_api_keys ADD COLUMN IF NOT EXISTS model_policy TEXT NOT NULL DEFAULT 'all'",
+		"setval(pg_get_serial_sequence('provider_accounts', 'id'), COALESCE((SELECT MAX(id) FROM provider_accounts), 1), (SELECT MAX(id) FROM provider_accounts) IS NOT NULL)",
+		"setval(pg_get_serial_sequence('provider_account_models', 'id'), COALESCE((SELECT MAX(id) FROM provider_account_models), 1), (SELECT MAX(id) FROM provider_account_models) IS NOT NULL)",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("migration copy SQL missing %q", want)
