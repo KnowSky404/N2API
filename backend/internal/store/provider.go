@@ -565,8 +565,12 @@ func (r *ProviderRepository) ListExposedModels(ctx context.Context, providerName
 			AND m.enabled = true
 			AND m.model = ANY($2)
 			AND a.enabled = true
-			AND a.status <> 'disabled'
 			AND (a.access_token_expires_at IS NULL OR a.access_token_expires_at > now())
+			AND (
+				a.status IN ('', 'active')
+				OR (a.status = 'rate_limited' AND a.rate_limited_until IS NOT NULL AND a.rate_limited_until <= now())
+				OR (a.status = 'circuit_open' AND a.circuit_open_until IS NOT NULL AND a.circuit_open_until <= now())
+			)
 			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= now())
 			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= now())
 	`, providerName, allowed)
@@ -611,8 +615,12 @@ func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, p
 			AND m.model = $2
 			AND m.enabled = true
 			AND a.enabled = true
-			AND a.status <> 'disabled'
 			AND (a.access_token_expires_at IS NULL OR a.access_token_expires_at > $3)
+			AND (
+				a.status IN ('', 'active')
+				OR (a.status = 'rate_limited' AND a.rate_limited_until IS NOT NULL AND a.rate_limited_until <= $3)
+				OR (a.status = 'circuit_open' AND a.circuit_open_until IS NOT NULL AND a.circuit_open_until <= $3)
+			)
 			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= $3)
 			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= $3)
 			AND ($4::bigint[] IS NULL OR cardinality($4::bigint[]) = 0 OR NOT (a.id = ANY($4::bigint[])))

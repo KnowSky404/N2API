@@ -128,6 +128,7 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	older := now.Add(-2 * time.Hour)
+	past := now.Add(-time.Minute)
 	later := now.Add(time.Hour)
 
 	first := saveProviderTestAccount(t, repo, provider.Account{
@@ -184,10 +185,10 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		Priority:              1,
 		Status:                "active",
 	})
-	rateLimited := saveProviderTestAccount(t, repo, provider.Account{
+	rateLimitedFuture := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
-		Subject:               "rate-limited",
-		DisplayName:           "Rate Limited",
+		Subject:               "rate-limited-future",
+		DisplayName:           "Rate Limited Future",
 		EncryptedAccessToken:  "access",
 		EncryptedRefreshToken: "refresh",
 		Enabled:               true,
@@ -195,16 +196,58 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		Status:                "rate_limited",
 		RateLimitedUntil:      &later,
 	})
-	circuitOpen := saveProviderTestAccount(t, repo, provider.Account{
+	rateLimitedNull := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
-		Subject:               "circuit-open",
-		DisplayName:           "Circuit Open",
+		Subject:               "rate-limited-null",
+		DisplayName:           "Rate Limited Null",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              1,
+		Status:                "rate_limited",
+	})
+	rateLimitedPast := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "rate-limited-past",
+		DisplayName:           "Rate Limited Past",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              6,
+		Status:                "rate_limited",
+		RateLimitedUntil:      &past,
+	})
+	circuitOpenFuture := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "circuit-open-future",
+		DisplayName:           "Circuit Open Future",
 		EncryptedAccessToken:  "access",
 		EncryptedRefreshToken: "refresh",
 		Enabled:               true,
 		Priority:              1,
 		Status:                "circuit_open",
 		CircuitOpenUntil:      &later,
+	})
+	circuitOpenNull := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "circuit-open-null",
+		DisplayName:           "Circuit Open Null",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              1,
+		Status:                "circuit_open",
+	})
+	circuitOpenPast := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "circuit-open-past",
+		DisplayName:           "Circuit Open Past",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              7,
+		Status:                "circuit_open",
+		CircuitOpenUntil:      &past,
 	})
 	expired := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
@@ -217,8 +260,42 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		Priority:              1,
 		Status:                "active",
 	})
+	expiredStatus := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "expired-status",
+		DisplayName:           "Expired Status",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              1,
+		Status:                "expired",
+	})
+	unknownStatus := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "unknown-status",
+		DisplayName:           "Unknown Status",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              1,
+		Status:                "needs_review",
+	})
 
-	for _, account := range []provider.Account{first, nullLastUsed, higherPriority, disabledAccount, rateLimited, circuitOpen, expired} {
+	for _, account := range []provider.Account{
+		first,
+		nullLastUsed,
+		higherPriority,
+		disabledAccount,
+		rateLimitedFuture,
+		rateLimitedNull,
+		rateLimitedPast,
+		circuitOpenFuture,
+		circuitOpenNull,
+		circuitOpenPast,
+		expired,
+		expiredStatus,
+		unknownStatus,
+	} {
 		if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{{Model: "gpt-5", Enabled: true}}); err != nil {
 			t.Fatalf("ReplaceAccountModels(%d) returned error: %v", account.ID, err)
 		}
@@ -235,7 +312,7 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		t.Fatalf("ListEligibleAccountsForModel returned error: %v", err)
 	}
 	gotIDs := accountIDs(eligible)
-	wantIDs := []int64{nullLastUsed.ID, first.ID}
+	wantIDs := []int64{rateLimitedPast.ID, circuitOpenPast.ID, nullLastUsed.ID, first.ID}
 	if !reflect.DeepEqual(gotIDs, wantIDs) {
 		t.Fatalf("eligible account IDs = %v, want %v", gotIDs, wantIDs)
 	}
@@ -254,6 +331,9 @@ func TestListExposedModelsFiltersByAllowedOrder(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	now := time.Now().UTC()
+	past := now.Add(-time.Minute)
+	later := now.Add(time.Hour)
 	account := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
 		Subject:               "exposed-enabled",
@@ -274,6 +354,91 @@ func TestListExposedModelsFiltersByAllowedOrder(t *testing.T) {
 		Priority:              10,
 		Status:                "active",
 	})
+	expiredAccount := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-expired",
+		DisplayName:           "Expired",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		AccessTokenExpiresAt:  &past,
+		Enabled:               true,
+		Priority:              10,
+		Status:                "active",
+	})
+	unknownStatus := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-unknown",
+		DisplayName:           "Unknown",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "needs_review",
+	})
+	rateLimitedNull := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-rate-null",
+		DisplayName:           "Rate Null",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "rate_limited",
+	})
+	rateLimitedFuture := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-rate-future",
+		DisplayName:           "Rate Future",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "rate_limited",
+		RateLimitedUntil:      &later,
+	})
+	rateLimitedPast := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-rate-past",
+		DisplayName:           "Rate Past",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "rate_limited",
+		RateLimitedUntil:      &past,
+	})
+	circuitOpenNull := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-circuit-null",
+		DisplayName:           "Circuit Null",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "circuit_open",
+	})
+	circuitOpenFuture := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-circuit-future",
+		DisplayName:           "Circuit Future",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "circuit_open",
+		CircuitOpenUntil:      &later,
+	})
+	circuitOpenPast := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "exposed-circuit-past",
+		DisplayName:           "Circuit Past",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "circuit_open",
+		CircuitOpenUntil:      &past,
+	})
 
 	if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{
 		{Model: "gpt-5", Enabled: true},
@@ -287,13 +452,46 @@ func TestListExposedModelsFiltersByAllowedOrder(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ReplaceAccountModels disabled account returned error: %v", err)
 	}
+	for _, testCase := range []struct {
+		account provider.Account
+		model   string
+	}{
+		{expiredAccount, "expired-only"},
+		{unknownStatus, "unknown-status-only"},
+		{rateLimitedNull, "rate-limited-null-only"},
+		{rateLimitedFuture, "rate-limited-future-only"},
+		{rateLimitedPast, "rate-limited-past"},
+		{circuitOpenNull, "circuit-open-null-only"},
+		{circuitOpenFuture, "circuit-open-future-only"},
+		{circuitOpenPast, "circuit-open-past"},
+	} {
+		if _, err := repo.ReplaceAccountModels(ctx, "openai", testCase.account.ID, []provider.AccountModelInput{{Model: testCase.model, Enabled: true}}); err != nil {
+			t.Fatalf("ReplaceAccountModels %s returned error: %v", testCase.model, err)
+		}
+	}
 
-	models, err := repo.ListExposedModels(ctx, "openai", []string{"codex-mini", "disabled-model", "gpt-5", "missing", "codex-mini"})
+	models, err := repo.ListExposedModels(ctx, "openai", []string{
+		"codex-mini",
+		"disabled-model",
+		"expired-only",
+		"unknown-status-only",
+		"rate-limited-null-only",
+		"rate-limited-future-only",
+		"rate-limited-past",
+		"circuit-open-null-only",
+		"circuit-open-future-only",
+		"circuit-open-past",
+		"gpt-5",
+		"missing",
+		"codex-mini",
+	})
 	if err != nil {
 		t.Fatalf("ListExposedModels returned error: %v", err)
 	}
 	want := []provider.ExposedModel{
 		{ID: "codex-mini", OwnedBy: "openai"},
+		{ID: "rate-limited-past", OwnedBy: "openai"},
+		{ID: "circuit-open-past", OwnedBy: "openai"},
 		{ID: "gpt-5", OwnedBy: "openai"},
 	}
 	if !reflect.DeepEqual(models, want) {
