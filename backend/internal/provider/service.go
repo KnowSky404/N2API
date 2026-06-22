@@ -36,6 +36,16 @@ const (
 )
 
 const (
+	AccountTypeCodexOAuth  = "codex_oauth"
+	AccountTypeAPIUpstream = "api_upstream"
+)
+
+const (
+	CredentialTypeOAuthToken = "oauth_token"
+	CredentialTypeAPIKey     = "api_key"
+)
+
+const (
 	AccountStatusActive      = "active"
 	AccountStatusDisabled    = "disabled"
 	AccountStatusRateLimited = "rate_limited"

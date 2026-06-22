@@ -138,6 +138,49 @@ func TestOAuthAccountModelsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestUnifiedProviderAccountsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00008_unified_provider_accounts.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS provider_accounts",
+		"CREATE TABLE IF NOT EXISTS provider_account_credentials",
+		"CREATE TABLE IF NOT EXISTS provider_account_models",
+		"CREATE TABLE IF NOT EXISTS client_api_key_models",
+		"ALTER TABLE client_api_keys ADD COLUMN IF NOT EXISTS model_policy",
+		"INSERT INTO provider_accounts",
+		"FROM oauth_accounts",
+		"INSERT INTO provider_account_models",
+		"FROM oauth_account_models",
+		"provider_accounts_schedulable_idx",
+		"provider_account_models_provider_model_enabled_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
+func TestUnifiedProviderAccountMigrationCopiesOAuthData(t *testing.T) {
+	sql, err := MigrationSQL("00008_unified_provider_accounts.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"SELECT\n        id, provider, 'codex_oauth'",
+		"encrypted_access_token, encrypted_refresh_token, encrypted_id_token",
+		"FROM oauth_accounts",
+		"SELECT id, account_id, provider, model, enabled",
+		"FROM oauth_account_models",
+		"client_api_keys ADD COLUMN IF NOT EXISTS model_policy TEXT NOT NULL DEFAULT 'all'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration copy SQL missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountPoolMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00004_oauth_account_pool.sql")
 	if err != nil {
@@ -167,10 +210,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 7 {
-		t.Fatalf("migration sources = %d, want 7", len(sources))
+	if len(sources) != 8 {
+		t.Fatalf("migration sources = %d, want 8", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[6].Path != "00007_oauth_account_models.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[7].Path != "00008_unified_provider_accounts.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
