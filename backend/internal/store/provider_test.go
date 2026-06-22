@@ -33,6 +33,17 @@ func TestSaveAccountSubjectConflictPreservesSchedulingFields(t *testing.T) {
 	}
 }
 
+func TestReplaceAccountModelsLocksParentAccountRow(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	if !strings.Contains(sql, "SELECT ID\n\t\tFROM OAUTH_ACCOUNTS\n\t\tWHERE PROVIDER = $1\n\t\t\tAND ID = $2\n\t\tFOR UPDATE") {
+		t.Fatal("ReplaceAccountModels must lock the parent oauth_accounts row before deleting and inserting model rows")
+	}
+}
+
 func TestReplaceAccountModelsNormalizesAndListsRows(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

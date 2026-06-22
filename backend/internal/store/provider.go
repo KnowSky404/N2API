@@ -490,6 +490,7 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 		FROM oauth_accounts
 		WHERE provider = $1
 			AND id = $2
+		FOR UPDATE
 	`, providerName, accountID).Scan(&existingID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, provider.ErrNotConnected
