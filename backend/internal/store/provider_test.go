@@ -33,6 +33,45 @@ func TestSaveAccountSubjectConflictPreservesSchedulingFields(t *testing.T) {
 	}
 }
 
+func TestProviderRepositorySubjectConflictPreservesSchedulingFields(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	first := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "same-subject",
+		DisplayName:           "first",
+		EncryptedAccessToken:  "first-access-token",
+		EncryptedRefreshToken: "first-refresh-token",
+		Enabled:               false,
+		Priority:              7,
+		Status:                provider.AccountStatusActive,
+	})
+
+	reconnected := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "same-subject",
+		DisplayName:           "second",
+		EncryptedAccessToken:  "second-access-token",
+		EncryptedRefreshToken: "second-refresh-token",
+		Enabled:               true,
+		Priority:              100,
+		Status:                provider.AccountStatusActive,
+	})
+
+	if reconnected.ID != first.ID {
+		t.Fatalf("reconnected ID = %d, want existing account ID %d", reconnected.ID, first.ID)
+	}
+	if reconnected.Enabled || reconnected.Priority != 7 {
+		t.Fatalf("scheduling = enabled %v priority %d, want false/7", reconnected.Enabled, reconnected.Priority)
+	}
+	if reconnected.EncryptedAccessToken != "second-access-token" || reconnected.EncryptedRefreshToken != "second-refresh-token" {
+		t.Fatalf("tokens = (%q, %q), want updated reconnect tokens", reconnected.EncryptedAccessToken, reconnected.EncryptedRefreshToken)
+	}
+}
+
 func TestReplaceAccountModelsLocksParentAccountRow(t *testing.T) {
 	source, err := os.ReadFile("provider.go")
 	if err != nil {
