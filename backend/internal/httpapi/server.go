@@ -362,6 +362,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleDeleteProviderAccount(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleDeleteProviderAccount(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/provider-accounts/{id}/models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleListProviderAccountModels(w, r, providers)
 	}))
