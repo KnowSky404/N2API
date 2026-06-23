@@ -66,6 +66,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} reasoningTokens
  * @property {string} usageSource
  * @property {number} estimatedCostMicrousd
+ * @property {boolean} pricingMatched
  * @property {string} createdAt
  */
 

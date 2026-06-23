@@ -366,7 +366,11 @@ onclick={loadRequestLogs}
           <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total</p>
         </td>
         <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
-          {formatCostMicrousd(log.estimatedCostMicrousd)}
+          {#if !log.pricingMatched && (log.inputTokens || log.outputTokens || log.totalTokens)}
+            <span class="font-sans text-sm text-[#6e6e6e]">Unpriced</span>
+          {:else}
+            {formatCostMicrousd(log.estimatedCostMicrousd)}
+          {/if}
         </td>
         <td class="px-4 py-3 text-[#3c3c3c]">
           <span class="text-sm">{usageSourceLabel(log.usageSource)}</span>

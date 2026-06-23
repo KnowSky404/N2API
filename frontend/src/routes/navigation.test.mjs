@@ -52,6 +52,8 @@ test('request logs page shows token usage', () => {
   assert.match(requestLogsPage, /log\.totalTokens/);
   assert.match(requestLogsPage, /log\.usageSource/);
   assert.match(requestLogsPage, /log\.estimatedCostMicrousd/);
+  assert.match(requestLogsPage, /log\.pricingMatched/);
+  assert.match(requestLogsPage, /Unpriced/);
 });
 
 test('request logs page includes usage accounting UI', () => {

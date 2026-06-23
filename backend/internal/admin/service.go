@@ -76,6 +76,7 @@ type RequestLog struct {
 	ReasoningTokens       int       `json:"reasoningTokens"`
 	UsageSource           string    `json:"usageSource"`
 	EstimatedCostMicrousd int64     `json:"estimatedCostMicrousd"`
+	PricingMatched        bool      `json:"pricingMatched"`
 	CreatedAt             time.Time `json:"createdAt"`
 }
 
