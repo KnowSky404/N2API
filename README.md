@@ -86,7 +86,7 @@ The API Keys page shows the concurrency and rate guards loaded by the running ba
 
 All five limits are local to the running process. Set a value to `0` to disable that guard. Per-account concurrency makes busy accounts temporarily ineligible so the gateway can pick another eligible account when possible; if every eligible account is busy, the gateway returns a local 429. Per-key request and observed-token minute limits use fixed one-minute windows, and local 429 responses include `Retry-After` with the seconds remaining until the next window.
 
-For sticky session routing, POST bodies may include `session_id`. Header-based clients can send `session_id` or the proxy-friendly `X-N2API-Session-ID`; the body value takes precedence when both are present.
+For sticky session routing, POST bodies may include `session_id`. Header-based clients can send `session_id` or the proxy-friendly `X-N2API-Session-ID`; the body value takes precedence when both are present. If N2API is behind Nginx and clients send the `session_id` header, set `underscores_in_headers on;` in the relevant `http` or `server` block so Nginx does not drop that header before it reaches the gateway.
 
 ## Current Status
 

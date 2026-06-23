@@ -2121,6 +2121,50 @@ func TestProxyReplaysSmallPOSTBodyOnFallback(t *testing.T) {
 	}
 }
 
+func TestProxyCarriesStickySessionOnFallbackSelection(t *testing.T) {
+	const requestBody = `{"model":"gpt-5","session_id":" workspace-123 ","messages":[],"stream":false}`
+	transportCalls := 0
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls == 1 {
+			return nil, errors.New("upstream unavailable")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+		},
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Equal(tokens.models, []string{"gpt-5", "gpt-5"}) {
+		t.Fatalf("selected models = %+v, want gpt-5 for both attempts", tokens.models)
+	}
+	if !slices.Equal(tokens.sessions, []string{"workspace-123", "workspace-123"}) {
+		t.Fatalf("selected sessions = %+v, want sticky session on both attempts", tokens.sessions)
+	}
+	if len(tokens.exclusions) != 2 || !slices.Equal(tokens.exclusions[1], []int64{1}) {
+		t.Fatalf("exclusions = %+v, want second attempt to exclude failed account 1", tokens.exclusions)
+	}
+}
+
 func TestProxyDoesNotRetryLargePOSTBody(t *testing.T) {
 	transportCalls := 0
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
