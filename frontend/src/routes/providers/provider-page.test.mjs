@@ -220,6 +220,12 @@ test('provider account state uses unified test-results endpoint', () => {
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{accountId\}\/test-results/);
 });
 
+test('provider account state preinitializes test history state outside templates', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /for \(const account of providerAccounts\.items\) \{\s*ensureAccountTestResultsState\(account\.id\);\s*\}/);
+});
+
 test('provider account state uses unified codex oauth callback endpoint', () => {
   const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 

@@ -917,6 +917,9 @@ export async function loadProviderAccounts() {
       accountTestResults,
       providerAccounts.items.map((account) => account.id)
     );
+    for (const account of providerAccounts.items) {
+      ensureAccountTestResultsState(account.id);
+    }
     await Promise.all(providerAccounts.items.map((account) => loadAccountModels(account.id)));
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
