@@ -83,6 +83,8 @@ Use **Test account** when you want to probe one provider account before sending 
 
 Use **Test selected** to probe selected provider accounts without probing the whole account pool. This is useful after filtering, bulk enabling, or restoring a subset of accounts; it updates the same last-test fields, health fields, and test history as **Test account**.
 
+Use **Refresh selected** to force credential refresh for selected provider accounts together. This is useful after rotating, restoring, or reauthorizing a subset of OAuth-backed exits without refreshing the whole pool.
+
 Provider account auto tests are disabled by default. `N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED` and `N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS` are startup defaults for Gateway Settings; after sign-in, use the Gateway Settings form to save the runtime auto-test setting. Enable it to run **Test all accounts** automatically in the backend, and use an interval of `300` seconds or higher for routine checks. Automatic tests update the same last test status, last test time, last test error, test history, and local account health fields shown in Provider accounts and Routing diagnostics.
 
 Use **Pause scheduling** when you want a healthy account to stop receiving traffic for a short window. Set **Pause duration seconds** on the Provider accounts page before clicking the action; it temporarily opens the account circuit for that window without disabling or deleting the account. Paused and rate-limited rows show the remaining scheduling block in the status column. Use **Reset local status** to clear the pause early when you want the account to rejoin routing immediately.
