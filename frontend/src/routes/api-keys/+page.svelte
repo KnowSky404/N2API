@@ -47,6 +47,18 @@
   function unroutableModelsForKey(key) {
     return apiKeyModelWarnings(key, modelRouting.models);
   }
+
+  /**
+   * @param {number | null | undefined} value
+   * @param {number | null | undefined} defaultValue
+   */
+  function keyLimitLabel(value, defaultValue) {
+    const limit = Number(value ?? 0);
+    if (limit > 0) return String(limit);
+
+    const fallback = Number(defaultValue ?? 0);
+    return fallback > 0 ? `Default (${fallback})` : 'Default (disabled)';
+  }
 </script>
 
 <svelte:head>
@@ -376,6 +388,9 @@ All routable models
                     key.requestsPerMinute = Number(event.currentTarget.value || 0);
                   }}
                 />
+                <span class="mt-1 block text-[11px] font-normal text-[#6e6e6e]">
+                  {keyLimitLabel(key.requestsPerMinute, gatewaySettings.data?.requestsPerMinutePerKey)}
+                </span>
               </label>
               <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-tokens-per-minute-${key.id}`}>
                 Tokens /min
@@ -391,6 +406,9 @@ All routable models
                     key.tokensPerMinute = Number(event.currentTarget.value || 0);
                   }}
                 />
+                <span class="mt-1 block text-[11px] font-normal text-[#6e6e6e]">
+                  {keyLimitLabel(key.tokensPerMinute, gatewaySettings.data?.tokensPerMinutePerKey)}
+                </span>
               </label>
             </div>
             <button
