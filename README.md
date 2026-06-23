@@ -75,6 +75,8 @@ API upstream credentials can be updated after account creation. Use the provider
 
 Use **Test account** when you want to probe one provider account before sending client traffic through it. The action probes one provider account with its current OAuth token or API upstream key, clears local failure status on a successful probe, and records upstream failure status for 401/403/429/5xx probe responses. The account row keeps the last test status, last test time, and last test error so manual checks remain visible after refresh.
 
+Provider account auto tests are disabled by default. Set `N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED=true` to run **Test all accounts** automatically in the backend, and set `N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS=300` or higher to control the interval. Automatic tests update the same last test status, last test time, last test error, and local account health fields shown in Provider accounts and Routing diagnostics.
+
 Use **Pause scheduling** when you want a healthy account to stop receiving traffic for a short window. The action temporarily opens the account circuit for five minutes without disabling or deleting the account. Use **Reset local status** to clear the pause early when you want the account to rejoin routing immediately.
 
 During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so the gateway does not assume every account can serve every globally allowed model.
