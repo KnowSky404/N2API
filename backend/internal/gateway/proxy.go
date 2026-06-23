@@ -879,7 +879,7 @@ var (
 
 func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", "", nil
+		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), nil
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, maxReplayableRequestBody+1))

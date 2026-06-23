@@ -419,6 +419,38 @@ func TestProxyRoutesRequestWithN2APISessionHeaderForStickySelection(t *testing.T
 	}
 }
 
+func TestProxyRoutesResponsesGetWithSessionHeaderForStickySelection(t *testing.T) {
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/v1/responses/resp_123" {
+			t.Fatalf("upstream path = %q, want responses lookup", r.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_123"}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("X-N2API-Session-ID", " workspace-header-789 ")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 1 || len(tokens.models) != 1 || tokens.models[0] != "" {
+		t.Fatalf("requested models = %+v, calls=%d; want empty model for GET responses route", tokens.models, tokens.calls)
+	}
+	if !slices.Equal(tokens.sessions, []string{"workspace-header-789"}) {
+		t.Fatalf("sessions = %+v, want trimmed header workspace-header-789", tokens.sessions)
+	}
+}
+
 func TestProxyPrefersBodySessionIDOverHeaderForStickySelection(t *testing.T) {
 	const requestBody = `{"model":"gpt-5","session_id":" body-session ","messages":[]}`
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
