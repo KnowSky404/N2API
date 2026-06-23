@@ -245,14 +245,16 @@ type SelectionPreview struct {
 }
 
 type SelectionCandidate struct {
-	ID           int64      `json:"id"`
-	DisplayName  string     `json:"displayName"`
-	AccountType  string     `json:"accountType"`
-	Priority     int        `json:"priority"`
-	Status       string     `json:"status"`
-	LastUsedAt   *time.Time `json:"lastUsedAt"`
-	ScheduleRank int        `json:"scheduleRank"`
-	Selected     bool       `json:"selected"`
+	ID                  int64      `json:"id"`
+	DisplayName         string     `json:"displayName"`
+	AccountType         string     `json:"accountType"`
+	Priority            int        `json:"priority"`
+	Status              string     `json:"status"`
+	LastUsedAt          *time.Time `json:"lastUsedAt"`
+	ScheduleRank        int        `json:"scheduleRank"`
+	Selected            bool       `json:"selected"`
+	Schedulable         bool       `json:"schedulable"`
+	UnschedulableReason string     `json:"unschedulableReason"`
 }
 
 type TokenResponse struct {
@@ -1054,6 +1056,7 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 	}
 	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
+	now := time.Now()
 	accounts, _, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
 	if err != nil {
 		return SelectionPreview{}, err
@@ -1072,19 +1075,89 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 		Candidates:        make([]SelectionCandidate, 0, len(accounts)),
 	}
 	for index, account := range accounts {
-		account = normalizeAccountCredentialFields(account)
-		preview.Candidates = append(preview.Candidates, SelectionCandidate{
-			ID:           account.ID,
-			DisplayName:  accountDisplayName(account),
-			AccountType:  account.AccountType,
-			Priority:     account.Priority,
-			Status:       valueOrDefault(account.Status, AccountStatusActive),
-			LastUsedAt:   account.LastUsedAt,
-			ScheduleRank: index + 1,
-			Selected:     index == 0,
-		})
+		preview.Candidates = append(preview.Candidates, selectionCandidate(account, index+1, index == 0, true, ""))
 	}
+	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidates(ctx, model, accounts, excludedAccountIDs, now)...)
 	return preview, nil
+}
+
+func (s *Service) unschedulableSelectionCandidates(ctx context.Context, model string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {
+	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
+	if err != nil {
+		return nil
+	}
+	selectedIDs := make(map[int64]struct{}, len(selected))
+	for _, account := range selected {
+		selectedIDs[account.ID] = struct{}{}
+	}
+	excluded := make(map[int64]struct{}, len(excludedAccountIDs))
+	for _, id := range excludedAccountIDs {
+		if id > 0 {
+			excluded[id] = struct{}{}
+		}
+	}
+
+	candidates := make([]SelectionCandidate, 0, len(accounts))
+	for _, account := range accounts {
+		if _, ok := selectedIDs[account.ID]; ok {
+			continue
+		}
+		reason := s.selectionUnschedulableReason(ctx, account, model, excluded, now)
+		if reason == "" {
+			continue
+		}
+		candidates = append(candidates, selectionCandidate(account, 0, false, false, reason))
+	}
+	return candidates
+}
+
+func (s *Service) selectionUnschedulableReason(ctx context.Context, account Account, model string, excluded map[int64]struct{}, now time.Time) string {
+	if _, ok := excluded[account.ID]; ok {
+		return "account excluded"
+	}
+	if !account.Enabled {
+		return "account disabled"
+	}
+	if reason := accountUnschedulableReason(account, now); reason != "" {
+		return reason
+	}
+	if strings.TrimSpace(model) == "" {
+		return ""
+	}
+	models, err := s.repo.ListAccountModels(ctx, s.cfg.Provider, account.ID)
+	if err != nil {
+		return "model not configured"
+	}
+	hasModel := false
+	for _, item := range models {
+		if item.Model != model {
+			continue
+		}
+		hasModel = true
+		if item.Enabled {
+			return ""
+		}
+	}
+	if hasModel {
+		return "model disabled"
+	}
+	return "model not configured"
+}
+
+func selectionCandidate(account Account, scheduleRank int, selected bool, schedulable bool, reason string) SelectionCandidate {
+	account = normalizeAccountCredentialFields(account)
+	return SelectionCandidate{
+		ID:                  account.ID,
+		DisplayName:         accountDisplayName(account),
+		AccountType:         account.AccountType,
+		Priority:            account.Priority,
+		Status:              valueOrDefault(account.Status, AccountStatusActive),
+		LastUsedAt:          account.LastUsedAt,
+		ScheduleRank:        scheduleRank,
+		Selected:            selected,
+		Schedulable:         schedulable,
+		UnschedulableReason: reason,
+	}
 }
 
 func stickySessionCandidates(accounts []Account, sessionID string) []Account {
@@ -1535,6 +1608,36 @@ func AccountSchedulable(account Account, now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+func accountUnschedulableReason(account Account, now time.Time) string {
+	if !account.Enabled {
+		return "account disabled"
+	}
+	switch account.Status {
+	case "", AccountStatusActive:
+	case AccountStatusRateLimited:
+		if account.RateLimitedUntil == nil || account.RateLimitedUntil.After(now) {
+			return "account rate limited"
+		}
+	case AccountStatusCircuitOpen:
+		if account.CircuitOpenUntil == nil || account.CircuitOpenUntil.After(now) {
+			return "account circuit open"
+		}
+	case AccountStatusDisabled:
+		return "account disabled"
+	case AccountStatusExpired:
+		return "account expired"
+	default:
+		return "status " + account.Status
+	}
+	if account.RateLimitedUntil != nil && account.RateLimitedUntil.After(now) {
+		return "account rate limited"
+	}
+	if account.CircuitOpenUntil != nil && account.CircuitOpenUntil.After(now) {
+		return "account circuit open"
+	}
+	return ""
 }
 
 func accountSchedulable(account Account, now time.Time) bool {

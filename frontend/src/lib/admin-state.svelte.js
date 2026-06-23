@@ -179,6 +179,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string | null} lastUsedAt
  * @property {number} scheduleRank
  * @property {boolean} selected
+ * @property {boolean} schedulable
+ * @property {string} unschedulableReason
  */
 
 /**

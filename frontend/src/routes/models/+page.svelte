@@ -263,16 +263,23 @@
                   'inline-flex max-w-[300px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
                   account.selected
                     ? 'border-[#d8ece5] bg-[#e8f5f0] text-[#0a7a5e]'
+                    : account.schedulable === false
+                      ? 'border-amber-200 bg-amber-50 text-amber-800'
                     : 'border-[#ededed] bg-white text-[#3c3c3c]'
                 ]}
               >
-                <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">Rank #{account.scheduleRank}</span>
+                <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">
+                  {account.schedulable === false ? 'Blocked' : `Rank #${account.scheduleRank}`}
+                </span>
                 <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
                 <span>{accountTypeLabel(account.accountType)}</span>
                 <span>Priority {account.priority}</span>
                 <span>Used {formatDate(account.lastUsedAt)}</span>
                 {#if account.selected}
                   <span class="font-medium text-[#0a7a5e]">Selected</span>
+                {/if}
+                {#if account.schedulable === false && account.unschedulableReason}
+                  <span class="font-medium text-amber-800">{account.unschedulableReason}</span>
                 {/if}
               </span>
             {/each}

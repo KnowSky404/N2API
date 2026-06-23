@@ -396,4 +396,7 @@ test('models page can preview sticky session routing', () => {
   assert.match(modelsSource, /selectedPreviewAccount/);
   assert.match(modelsSource, /selectedPreviewAccount\.displayName/);
   assert.match(modelsSource, /accountTypeLabel\(selectedPreviewAccount\.accountType\)/);
+  assert.match(modelsSource, /account\.schedulable === false/);
+  assert.match(modelsSource, /account\.unschedulableReason/);
+  assert.match(modelsSource, /Blocked/);
 });

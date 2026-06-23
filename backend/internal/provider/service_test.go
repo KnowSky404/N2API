@@ -1519,6 +1519,53 @@ func TestPreviewAccountSelectionUsesStickySessionWithoutMarkingAccountUsed(t *te
 	}
 }
 
+func TestPreviewAccountSelectionIncludesUnschedulableReasons(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, false, 1, "disabled-token"),
+		testAccount(t, 3, true, 1, "missing-model-token"),
+		testAccount(t, 4, true, 1, "excluded-token"),
+	}
+	repo.accountModels[1] = []AccountModel{{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	repo.accountModels[2] = []AccountModel{{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	repo.accountModels[3] = []AccountModel{{AccountID: 3, Provider: "openai", Model: "gpt-4.1", Enabled: true}}
+	repo.accountModels[4] = []AccountModel{{AccountID: 4, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "", 4)
+	if err != nil {
+		t.Fatalf("PreviewAccountSelection returned error: %v", err)
+	}
+
+	if len(preview.Candidates) != 4 {
+		t.Fatalf("candidates = %+v, want eligible and unschedulable accounts", preview.Candidates)
+	}
+	want := map[int64]struct {
+		schedulable bool
+		reason      string
+		selected    bool
+	}{
+		1: {schedulable: true, selected: true},
+		2: {schedulable: false, reason: "account disabled"},
+		3: {schedulable: false, reason: "model not configured"},
+		4: {schedulable: false, reason: "account excluded"},
+	}
+	for _, candidate := range preview.Candidates {
+		expected, ok := want[candidate.ID]
+		if !ok {
+			t.Fatalf("unexpected candidate %+v", candidate)
+		}
+		if candidate.Schedulable != expected.schedulable || candidate.UnschedulableReason != expected.reason || candidate.Selected != expected.selected {
+			t.Fatalf("candidate %d = schedulable:%v reason:%q selected:%v, want schedulable:%v reason:%q selected:%v", candidate.ID, candidate.Schedulable, candidate.UnschedulableReason, candidate.Selected, expected.schedulable, expected.reason, expected.selected)
+		}
+		delete(want, candidate.ID)
+	}
+	if len(want) > 0 {
+		t.Fatalf("missing candidates: %+v", want)
+	}
+}
+
 func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
