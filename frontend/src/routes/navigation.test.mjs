@@ -25,7 +25,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing', 'API Keys', 'Request Logs', 'Sign out']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'API Keys', 'Request Logs', 'Sign out']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -34,8 +34,8 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
 test('primary navigation moves model policy ownership to API keys', () => {
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
 
-  assert.match(layout, /href:\s*'\/models'/);
-  assert.match(layout, /label:\s*'Routing'/);
+  assert.doesNotMatch(layout, /href:\s*'\/models'/);
+  assert.doesNotMatch(layout, /label:\s*'Routing'/);
   assert.match(layout, /href:\s*'\/gateway'/);
   assert.match(layout, /href:\s*'\/api-keys'/);
 });
