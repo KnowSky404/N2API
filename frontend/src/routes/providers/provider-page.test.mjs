@@ -257,9 +257,14 @@ test('admin state refreshes model routing after provider account scheduling chan
   const updateProviderAccountSource = adminStateSource.match(
     /export async function updateProviderAccount\(account, patch\) \{[\s\S]*?\n\}/
   )?.[0] ?? '';
+  const refreshProviderAccountSource = adminStateSource.match(
+    /export async function refreshProviderAccount\(account\) \{[\s\S]*?\n\}/
+  )?.[0] ?? '';
 
   assert.match(updateProviderAccountSource, /loadProviderAccounts\(\)/);
   assert.match(updateProviderAccountSource, /loadModelRouting\(\)/);
+  assert.match(refreshProviderAccountSource, /loadProviderAccounts\(\)/);
+  assert.match(refreshProviderAccountSource, /loadModelRouting\(\)/);
 });
 
 test('api keys page owns model policy and gateway default model', () => {

@@ -1132,6 +1132,7 @@ export async function refreshProviderAccount(account) {
     if (!isCurrentAuthenticated(version)) return;
     await loadProvider();
     await loadProviderAccounts();
+    await loadModelRouting();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Account refresh failed';
