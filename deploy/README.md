@@ -31,7 +31,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - Lower priority numbers are selected before higher priority numbers.
 - Rate-limited, circuit-open, expired, and disabled accounts are skipped during gateway account selection.
 - Upstream 429 responses mark the account as rate-limited, 401/403 mark it expired, and 5xx responses open a short circuit window before traffic tries another account.
-- `/v1/models` returns the aggregate exposed models across connected accounts after applying the global allowed-model list.
+- `/v1/models` returns the aggregate exposed models for the authenticated API key. All-model keys see the routable list after applying the global allowed-model list; selected-model keys see the intersection of their selected models and currently routable models.
 - If one enabled account cannot refresh a token or fails before streaming starts, N2API tries another eligible account that supports the same requested model.
 - Once upstream streaming has started, N2API preserves that stream and does not retry against another account.
 - OAuth access tokens, refresh tokens, id tokens, and short-lived PKCE verifier records are encrypted before being stored. Browser/request fingerprints are stored only as hashes.

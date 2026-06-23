@@ -72,7 +72,7 @@ Configure model capability on each provider account row. The API Keys page contr
 
 ## API Key Model Access
 
-Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it.
+Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it. `/v1/models` is also filtered by the authenticated API key: `all` keys see the full routable list, while `selected` keys see the intersection of their selected models and currently routable models.
 
 ## Gateway Runtime Limits
 
@@ -92,4 +92,4 @@ For sticky session routing, POST bodies may include `session_id`. Header-based c
 
 The backend includes admin API key management, provider account management, per-account model configuration, request logs, static admin UI serving, and an OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes. The OAuth flow starts from the admin provider page, returns an authorization link, accepts the pasted callback URL, stores encrypted access/refresh/id tokens in PostgreSQL, and records isolated account metadata such as email, account id, plan type, client id, token fingerprint, and browser/request fingerprint hashes. API upstream accounts store encrypted API keys and base URLs. The gateway selects enabled, schedulable provider accounts by requested model, priority, and recent use; skips disabled/rate-limited/circuit-open/expired accounts; writes upstream 429/401/403/5xx failures back to account status; and can fall back before response streaming begins.
 
-`/v1/models` returns the aggregate exposed model list: a model must be enabled on at least one connected account and included in the global allowed-model list to appear. Model-routed POST traffic is sent only to accounts that explicitly support the requested or defaulted model, and fallback is limited to other accounts that support that same model. Connected accounts with no configured models remain visible in admin but do not receive model-routed POST traffic.
+`/v1/models` returns the aggregate exposed model list for the authenticated API key: a model must be enabled on at least one connected account, included in the global allowed-model list, and visible under the API key's model policy to appear. For selected-key policies, the public list is the intersection of the key's selected models and currently routable models. Model-routed POST traffic is sent only to accounts that explicitly support the requested or defaulted model, and fallback is limited to other accounts that support that same model. Connected accounts with no configured models remain visible in admin but do not receive model-routed POST traffic.
