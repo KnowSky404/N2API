@@ -670,6 +670,7 @@ export async function loadSession() {
     await loadUsagePricing();
     await loadUsageSummary('24h', 'provider_account');
     await loadUsageSummary('24h', 'client_key');
+    await loadUsageSummary('24h', 'session');
     await loadUsageSummary('24h', usage.groupBy);
     await loadUsageSummary('30d', usage.groupBy);
     await loadUsageSummary('7d', usage.groupBy);

@@ -107,7 +107,7 @@ test('dashboard shows gateway runtime scheduling limits', () => {
 });
 
 test('dashboard shows 24h gateway usage snapshot', () => {
-  for (const label of ['24h usage', 'Top models', 'Top provider accounts', 'Top client keys', 'Requests', 'Tokens', 'Estimated cost']) {
+  for (const label of ['24h usage', 'Top models', 'Top provider accounts', 'Top client keys', 'Top sessions', 'Requests', 'Tokens', 'Estimated cost']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
   }
 
@@ -115,8 +115,10 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(dashboardPage, /usage24h\.rows/);
   assert.match(dashboardPage, /usage24hProviderAccounts\.rows/);
   assert.match(dashboardPage, /usage24hClientKeys\.rows/);
+  assert.match(dashboardPage, /usage24hSessions\.rows/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'client_key'\)/);
+  assert.match(adminState, /await loadUsageSummary\('24h', 'session'\)/);
   assert.match(dashboardPage, /formatTokens/);
   assert.match(dashboardPage, /formatCostMicrousd/);
 });
