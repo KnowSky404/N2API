@@ -179,6 +179,7 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.match(apiKeysSource, /Model access/);
   assert.match(apiKeysSource, /All routable models/);
   assert.match(apiKeysSource, /Selected models/);
+  assert.match(apiKeysSource, /loadModelRouting/);
   assert.match(apiKeysSource, /apiKeyModelWarnings/);
   assert.match(apiKeysSource, /No schedulable account/);
 });

@@ -6,6 +6,7 @@
     createKey,
     formatDate,
     getActiveKeys,
+    loadModelRouting,
     login,
     loginForm,
     modelRouting,
@@ -17,6 +18,18 @@
   } from '$lib/admin-state.svelte.js';
 
   const activeKeys = $derived(getActiveKeys());
+  let modelRoutingRequested = $state(false);
+
+  $effect(() => {
+    if (!session.authenticated) {
+      modelRoutingRequested = false;
+      return;
+    }
+    if (!modelRoutingRequested) {
+      modelRoutingRequested = true;
+      void loadModelRouting();
+    }
+  });
 
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
   function unroutableModelsForKey(key) {
