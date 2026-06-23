@@ -640,6 +640,7 @@ export async function loadSession() {
     await loadProviderAccounts();
     await loadModelSettings();
     await loadModelRouting();
+    await loadGatewaySettings();
     await loadKeys();
     await loadRequestLogs();
     await loadUsagePricing();

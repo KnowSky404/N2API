@@ -88,6 +88,23 @@ test('dashboard shows gateway scheduling capacity', () => {
   assert.match(dashboardPage, /modelRouting/);
 });
 
+test('dashboard shows gateway runtime scheduling limits', () => {
+  for (const label of [
+    'Gateway runtime limits',
+    'Gateway concurrency',
+    'Per account concurrency',
+    'Per key concurrency',
+    'Requests per minute',
+    'Tokens per minute'
+  ]) {
+    assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
+  }
+
+  assert.match(dashboardPage, /gatewaySettings/);
+  assert.match(dashboardPage, /gatewayLimitLabel/);
+  assert.match(adminState, /await loadGatewaySettings\(\)/);
+});
+
 test('admin state derives schedulable gateway capacity', () => {
   assert.match(adminState, /export function getSchedulableProviderAccounts/);
   assert.match(adminState, /rateLimitedUntil/);
