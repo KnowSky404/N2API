@@ -89,6 +89,49 @@ func TestLoadOpenAIAPIBaseURLConfig(t *testing.T) {
 	}
 }
 
+func TestLoadGatewayConcurrencyLimitConfig(t *testing.T) {
+	defaultCfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if defaultCfg.GatewayMaxConcurrentRequests != 0 {
+		t.Fatalf("GatewayMaxConcurrentRequests = %d, want default disabled 0", defaultCfg.GatewayMaxConcurrentRequests)
+	}
+
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                          "postgres://example",
+		"N2API_ENCRYPTION_SECRET":               "encryption-secret",
+		"N2API_ADMIN_PASSWORD":                  "admin-password",
+		"N2API_GATEWAY_MAX_CONCURRENT_REQUESTS": "3",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.GatewayMaxConcurrentRequests != 3 {
+		t.Fatalf("GatewayMaxConcurrentRequests = %d, want 3", cfg.GatewayMaxConcurrentRequests)
+	}
+}
+
+func TestLoadRejectsInvalidGatewayConcurrencyLimit(t *testing.T) {
+	for _, value := range []string{"abc", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Load(mapLookup(map[string]string{
+				"DATABASE_URL":                          "postgres://example",
+				"N2API_ENCRYPTION_SECRET":               "encryption-secret",
+				"N2API_ADMIN_PASSWORD":                  "admin-password",
+				"N2API_GATEWAY_MAX_CONCURRENT_REQUESTS": value,
+			}))
+			if err == nil {
+				t.Fatal("Load returned nil error, want invalid gateway concurrency limit error")
+			}
+		})
+	}
+}
+
 func TestLoadRequiresDatabaseURL(t *testing.T) {
 	_, err := Load(mapLookup(map[string]string{
 		"N2API_ENCRYPTION_SECRET": "a-long-enough-secret",

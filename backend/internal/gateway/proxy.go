@@ -101,11 +101,12 @@ type RequestLog struct {
 }
 
 type Config struct {
-	UpstreamBaseURL       string
-	CodexResponsesBaseURL string
-	Logger                RequestLogger
-	ModelProvider         ModelProvider
-	UsagePricer           UsagePricer
+	UpstreamBaseURL              string
+	CodexResponsesBaseURL        string
+	MaxConcurrentGatewayRequests int
+	Logger                       RequestLogger
+	ModelProvider                ModelProvider
+	UsagePricer                  UsagePricer
 }
 
 type Proxy struct {
@@ -114,6 +115,7 @@ type Proxy struct {
 	client          *http.Client
 	upstreamBaseURL string
 	codexBaseURL    string
+	limiter         chan struct{}
 	logger          RequestLogger
 	models          ModelProvider
 	usagePricer     UsagePricer
@@ -135,12 +137,17 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if codexBaseURL == "" {
 		codexBaseURL = defaultCodexResponsesBaseURL
 	}
+	var limiter chan struct{}
+	if cfg.MaxConcurrentGatewayRequests > 0 {
+		limiter = make(chan struct{}, cfg.MaxConcurrentGatewayRequests)
+	}
 	return &Proxy{
 		auth:            auth,
 		accounts:        accounts,
 		client:          client,
 		upstreamBaseURL: upstreamBaseURL,
 		codexBaseURL:    codexBaseURL,
+		limiter:         limiter,
 		logger:          cfg.Logger,
 		models:          cfg.ModelProvider,
 		usagePricer:     cfg.UsagePricer,
@@ -246,6 +253,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	release, ok := p.tryAcquireGatewaySlot()
+	if !ok {
+		errorCode = "rate_limit_exceeded"
+		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "gateway concurrency limit exceeded")
+		return
+	}
+	defer release()
+
 	failedAccountIDs := []int64{}
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -303,6 +318,18 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		recorder.WriteHeader(upstreamResp.StatusCode)
 		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
 		return
+	}
+}
+
+func (p *Proxy) tryAcquireGatewaySlot() (func(), bool) {
+	if p.limiter == nil {
+		return func() {}, true
+	}
+	select {
+	case p.limiter <- struct{}{}:
+		return func() { <-p.limiter }, true
+	default:
+		return nil, false
 	}
 }
 

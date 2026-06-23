@@ -7,19 +7,20 @@ import (
 )
 
 type Config struct {
-	Host                   string
-	Port                   int
-	PublicURL              string
-	DatabaseURL            string
-	AdminUsername          string
-	AdminPassword          string
-	EncryptionSecret       string
-	OpenAIOAuthClientID    string
-	OpenAIOAuthSecret      string
-	OpenAIOAuthRedirectURL string
-	OpenAIOAuthAuthURL     string
-	OpenAIOAuthTokenURL    string
-	OpenAIAPIBaseURL       string
+	Host                         string
+	Port                         int
+	PublicURL                    string
+	DatabaseURL                  string
+	AdminUsername                string
+	AdminPassword                string
+	EncryptionSecret             string
+	OpenAIOAuthClientID          string
+	OpenAIOAuthSecret            string
+	OpenAIOAuthRedirectURL       string
+	OpenAIOAuthAuthURL           string
+	OpenAIOAuthTokenURL          string
+	OpenAIAPIBaseURL             string
+	GatewayMaxConcurrentRequests int
 }
 
 const (
@@ -51,6 +52,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.Port = port
+	maxConcurrent, err := parseNonNegativeInt(lookup("N2API_GATEWAY_MAX_CONCURRENT_REQUESTS"), "N2API_GATEWAY_MAX_CONCURRENT_REQUESTS")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GatewayMaxConcurrentRequests = maxConcurrent
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -85,4 +91,18 @@ func parsePort(value string) (int, error) {
 		return 0, fmt.Errorf("N2API_PORT must be between 1 and 65535")
 	}
 	return port, nil
+}
+
+func parseNonNegativeInt(value, name string) (int, error) {
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number: %w", name, err)
+	}
+	if parsed < 0 {
+		return 0, fmt.Errorf("%s must be greater than or equal to 0", name)
+	}
+	return parsed, nil
 }
