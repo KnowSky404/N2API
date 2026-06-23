@@ -56,6 +56,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
     'Requests per minute',
     'Tokens per minute',
     '24h usage',
+    'Top models',
     'Top provider accounts',
     'Top client keys',
     'Top sessions'
@@ -71,6 +72,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /getSchedulableProviderAccounts/);
   assert.match(gatewayPage, /getRoutableModelCount/);
   assert.match(gatewayPage, /getActiveKeys/);
+  assert.match(gatewayPage, /loadUsageSummary\('24h', 'model'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'session'\)/);

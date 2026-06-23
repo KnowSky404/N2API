@@ -31,6 +31,7 @@
       activeKeys
     })
   );
+  const usage24hModels = $derived(usage.summaries['24h:model'] ?? null);
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   const usage24hSessions = $derived(usage.summaries['24h:session'] ?? null);
@@ -43,6 +44,7 @@
     if (!gatewayRequested) {
       gatewayRequested = true;
       void loadGatewaySettings();
+      void loadUsageSummary('24h', 'model');
       void loadUsageSummary('24h', 'provider_account');
       void loadUsageSummary('24h', 'client_key');
       void loadUsageSummary('24h', 'session');
@@ -58,6 +60,7 @@
   }
 
   const usageSections = $derived([
+    usageRows('Top models', usage24hModels),
     usageRows('Top provider accounts', usage24hProviderAccounts),
     usageRows('Top client keys', usage24hClientKeys),
     usageRows('Top sessions', usage24hSessions)
