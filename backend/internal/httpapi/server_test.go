@@ -67,6 +67,8 @@ type fakeProviderService struct {
 	lastAccountUpdate     provider.AccountUpdate
 	accountUpdateIDs      []int64
 	accountUpdates        []provider.AccountUpdate
+	replacedModelIDs      []int64
+	replacedModels        [][]provider.AccountModelInput
 	updateErr             error
 	accountModelsErr      error
 	accountTestResultsErr error
@@ -409,6 +411,8 @@ func (s *fakeProviderService) ReplaceAccountModels(_ context.Context, accountID 
 	if _, ok := s.accountModels[accountID]; !ok {
 		return nil, provider.ErrNotConnected
 	}
+	s.replacedModelIDs = append(s.replacedModelIDs, accountID)
+	s.replacedModels = append(s.replacedModels, append([]provider.AccountModelInput(nil), models...))
 	saved := make([]provider.AccountModel, 0, len(models))
 	for i, model := range models {
 		saved = append(saved, provider.AccountModel{
@@ -1771,6 +1775,81 @@ func TestAdminBulkProviderAccountResetStatusValidatesInput(t *testing.T) {
 			}
 			if len(providers.resetStatusAccountIDs) != 0 {
 				t.Fatalf("reset ids = %+v, want no resets", providers.resetStatusAccountIDs)
+			}
+		})
+	}
+}
+
+func TestAdminCanBulkReplaceUnifiedProviderAccountModels(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true},
+		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true},
+	}
+	providers.accountModels[7] = []provider.AccountModel{{AccountID: 7, Provider: "openai", Model: "old-model", Enabled: true}}
+	providers.accountModels[8] = []provider.AccountModel{{AccountID: 8, Provider: "openai", Model: "old-model", Enabled: true}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-models", strings.NewReader(`{"accountIds":[7,8,7],"models":[{"model":"gpt-5","enabled":true},{"model":"codex-mini","enabled":true}]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !reflect.DeepEqual(providers.replacedModelIDs, []int64{7, 8}) {
+		t.Fatalf("replaced model ids = %+v, want [7 8]", providers.replacedModelIDs)
+	}
+	for index, models := range providers.replacedModels {
+		if len(models) != 2 || models[0].Model != "gpt-5" || !models[0].Enabled || models[1].Model != "codex-mini" || !models[1].Enabled {
+			t.Fatalf("replace payload %d = %+v, want gpt-5 and codex-mini enabled", index, models)
+		}
+	}
+	var body struct {
+		Accounts []struct {
+			AccountID int64                   `json:"accountId"`
+			Models    []provider.AccountModel `json:"models"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Accounts) != 2 || body.Accounts[0].AccountID != 7 || body.Accounts[1].AccountID != 8 {
+		t.Fatalf("accounts = %+v, want entries for account 7 and 8", body.Accounts)
+	}
+	if len(body.Accounts[0].Models) != 2 || body.Accounts[0].Models[0].Model != "gpt-5" {
+		t.Fatalf("account 7 models = %+v, want replaced models", body.Accounts[0].Models)
+	}
+}
+
+func TestAdminBulkProviderAccountModelsValidatesInput(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "empty ids", body: `{"accountIds":[],"models":[{"model":"gpt-5","enabled":true}]}`},
+		{name: "bad id", body: `{"accountIds":[0],"models":[{"model":"gpt-5","enabled":true}]}`},
+		{name: "empty models", body: `{"accountIds":[7],"models":[]}`},
+		{name: "too many ids", body: `{"accountIds":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101],"models":[{"model":"gpt-5","enabled":true}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true}}
+			providers.accountModels[7] = []provider.AccountModel{{AccountID: 7, Provider: "openai", Model: "old-model", Enabled: true}}
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-models", strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+			}
+			if len(providers.replacedModelIDs) != 0 {
+				t.Fatalf("replaced model ids = %+v, want no replacements", providers.replacedModelIDs)
 			}
 		})
 	}

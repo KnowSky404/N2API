@@ -492,6 +492,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleBulkResetProviderAccountStatus(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleBulkReplaceProviderAccountModels(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleProviderStatus(w, r, providers)
 	}))
@@ -1005,6 +1009,45 @@ func handleBulkResetProviderAccountStatus(w http.ResponseWriter, r *http.Request
 		accounts = append(accounts, account)
 	}
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+type bulkProviderAccountModelsResponse struct {
+	AccountID int64                   `json:"accountId"`
+	Models    []provider.AccountModel `json:"models"`
+}
+
+func handleBulkReplaceProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	var req struct {
+		AccountIDs []int64                      `json:"accountIds"`
+		Models     []provider.AccountModelInput `json:"models"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if len(req.Models) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	accountIDs, ok := parseBulkProviderAccountIDs(w, req.AccountIDs)
+	if !ok {
+		return
+	}
+
+	accounts := make([]bulkProviderAccountModelsResponse, 0, len(accountIDs))
+	for _, id := range accountIDs {
+		models, err := providers.ReplaceAccountModels(r.Context(), id, req.Models)
+		if err != nil {
+			writeProviderAccountError(w, err)
+			return
+		}
+		accounts = append(accounts, bulkProviderAccountModelsResponse{AccountID: id, Models: models})
+	}
+	writeJSON(w, http.StatusOK, map[string][]bulkProviderAccountModelsResponse{"accounts": accounts})
 }
 
 func handleDeleteProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
