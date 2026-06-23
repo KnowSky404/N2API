@@ -10,6 +10,8 @@
     disconnectProviderAccount,
     formatDate,
     getActiveKeys,
+    getRoutableModelCount,
+    getSchedulableProviderAccounts,
     getStatusItems,
     health,
     loadModelSettings,
@@ -19,6 +21,7 @@
     loginForm,
     logout,
     modelSettings,
+    modelRouting,
     provider,
     providerAccounts,
     providerConnectForm,
@@ -35,6 +38,8 @@
 
   const statusItems = $derived(getStatusItems());
   const activeKeys = $derived(getActiveKeys());
+  const schedulableAccounts = $derived(getSchedulableProviderAccounts());
+  const routableModelCount = $derived(getRoutableModelCount());
 </script>
 
 <svelte:head>
@@ -97,10 +102,18 @@
   <article class="rounded-lg border border-[#ededed] bg-white p-6">
     <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Gateway overview</h2>
     <p class="mt-2 text-sm text-[#6e6e6e]">Provider capacity and client access at a glance.</p>
-    <div class="mt-5 grid gap-4 sm:grid-cols-2">
+    <div class="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
 <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
   <p class="text-sm font-medium text-[#6e6e6e]">Provider accounts</p>
   <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : providerAccounts.items.length}</p>
+</div>
+<div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+  <p class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</p>
+  <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableAccounts.length}</p>
+</div>
+<div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+  <p class="text-sm font-medium text-[#6e6e6e]">Routable models</p>
+  <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{modelRouting.loading ? 'Loading' : routableModelCount}</p>
 </div>
 <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
   <p class="text-sm font-medium text-[#6e6e6e]">Active API keys</p>

@@ -364,6 +364,30 @@ export function getActiveKeys() {
   return apiKeys.items.filter((key) => !key.revokedAt);
 }
 
+/** @param {string | null | undefined} value */
+function isFutureTimestamp(value) {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now();
+}
+
+/** @param {Partial<ProviderAccount>} account */
+function isProviderAccountSchedulable(account) {
+  if (!account.enabled) return false;
+  if (isFutureTimestamp(account.rateLimitedUntil) || isFutureTimestamp(account.circuitOpenUntil)) return false;
+  return !['disabled', 'expired', 'rate_limited', 'circuit_open'].includes(account.status ?? '');
+}
+
+/** @param {ProviderAccount[]} [accounts] */
+export function getSchedulableProviderAccounts(accounts = providerAccounts.items) {
+  return accounts.filter((account) => isProviderAccountSchedulable(account));
+}
+
+/** @param {Array<Partial<ModelRoutingModel>>} [models] */
+export function getRoutableModelCount(models = modelRouting.models) {
+  return models.filter((model) => Number(model.enabledCount ?? 0) > 0).length;
+}
+
 /** @param {number | null | undefined} value */
 export function gatewayLimitLabel(value) {
   const limit = Number(value ?? 0);

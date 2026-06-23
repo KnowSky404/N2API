@@ -14,6 +14,8 @@ const expectedFiles = [
 
 const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
 const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
+const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
+const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {
   for (const file of expectedFiles) {
@@ -74,4 +76,22 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /account\.schedulable/);
   assert.match(modelsPage, /account\.unschedulableReason/);
   assert.match(modelsPage, /No schedulable account/);
+});
+
+test('dashboard shows gateway scheduling capacity', () => {
+  for (const label of ['Provider accounts', 'Schedulable accounts', 'Routable models', 'Active API keys']) {
+    assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
+  }
+
+  assert.match(dashboardPage, /getSchedulableProviderAccounts/);
+  assert.match(dashboardPage, /getRoutableModelCount/);
+  assert.match(dashboardPage, /modelRouting/);
+});
+
+test('admin state derives schedulable gateway capacity', () => {
+  assert.match(adminState, /export function getSchedulableProviderAccounts/);
+  assert.match(adminState, /rateLimitedUntil/);
+  assert.match(adminState, /circuitOpenUntil/);
+  assert.match(adminState, /export function getRoutableModelCount/);
+  assert.match(adminState, /enabledCount/);
 });
