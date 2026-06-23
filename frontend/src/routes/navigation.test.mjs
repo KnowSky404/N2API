@@ -17,6 +17,7 @@ const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'ut
 const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
 const gatewayPage = readFileSync('src/routes/gateway/+page.svelte', 'utf8');
 const providersPage = readFileSync('src/routes/providers/+page.svelte', 'utf8');
+const apiKeysPage = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
 const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
@@ -143,6 +144,17 @@ test('providers page summarizes account scheduling capacity', () => {
   assert.match(providersPage, /getUnschedulableProviderAccountSummary/);
   assert.match(providersPage, /schedulableProviderAccounts\.length/);
   assert.match(providersPage, /unschedulableProviderAccountSummary/);
+});
+
+test('api keys page shows per-key usage distribution', () => {
+  for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost']) {
+    assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
+  }
+
+  assert.match(apiKeysPage, /loadUsageSummary\('24h', 'client_key'\)/);
+  assert.match(apiKeysPage, /usage24hClientKeys/);
+  assert.match(apiKeysPage, /formatTokens/);
+  assert.match(apiKeysPage, /formatCostMicrousd/);
 });
 
 test('dashboard shows gateway scheduling capacity', () => {

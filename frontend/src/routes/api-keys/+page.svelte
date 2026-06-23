@@ -4,12 +4,15 @@
     apiKeyModelWarnings,
     copySecret,
     createKey,
+    formatCostMicrousd,
     formatDate,
+    formatTokens,
     gatewayLimitLabel,
     gatewaySettings,
     getActiveKeys,
     loadGatewaySettings,
     loadModelRouting,
+    loadUsageSummary,
     login,
     loginForm,
     modelListText,
@@ -19,9 +22,11 @@
     saveModelSettings,
     session,
     updateAPIKeyModelPolicy,
+    usage,
   } from '$lib/admin-state.svelte.js';
 
   const activeKeys = $derived(getActiveKeys());
+  const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   let modelRoutingRequested = $state(false);
 
   $effect(() => {
@@ -33,6 +38,7 @@
       modelRoutingRequested = true;
       void loadModelRouting();
       void loadGatewaySettings();
+      void loadUsageSummary('24h', 'client_key');
     }
   });
 
@@ -196,6 +202,46 @@ All routable models
       </p>
     {/if}
   </form>
+
+  <section class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 class="text-base font-semibold text-[#0d0d0d]">24h key usage</h3>
+        <p class="mt-1 text-sm text-[#6e6e6e]">Gateway traffic distribution by client API key.</p>
+      </div>
+      {#if usage.loading}
+        <span class="text-sm text-[#6e6e6e]">Loading...</span>
+      {/if}
+    </div>
+    {#if usage.error}
+      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
+    {:else if !usage24hClientKeys || usage24hClientKeys.rows.length === 0}
+      <p class="mt-4 text-sm text-[#6e6e6e]">No API key usage in the last 24h.</p>
+    {:else}
+      <div class="mt-4 overflow-x-auto rounded-lg border border-[#ededed] bg-white">
+        <table class="w-full min-w-[640px] text-left text-sm">
+          <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+            <tr>
+              <th class="px-4 py-3 font-medium">API key</th>
+              <th class="px-4 py-3 font-medium">Requests</th>
+              <th class="px-4 py-3 font-medium">Tokens</th>
+              <th class="px-4 py-3 font-medium">Estimated cost</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#ededed]">
+            {#each usage24hClientKeys.rows.slice(0, 8) as row}
+              <tr>
+                <td class="px-4 py-3 font-medium text-[#0d0d0d]">{row.label || row.id}</td>
+                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
+                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
+                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </section>
 
   {#if apiKeys.oneTimeSecret}
     <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
