@@ -256,13 +256,14 @@ type AccountUpdate struct {
 }
 
 type SelectedAccount struct {
-	AccountID          int64
-	Provider           string
-	AccountType        string
-	DisplayName        string
-	AuthorizationToken string
-	BaseURL            string
-	ChatGPTAccountID   string
+	AccountID             int64
+	Provider              string
+	AccountType           string
+	DisplayName           string
+	AuthorizationToken    string
+	BaseURL               string
+	ChatGPTAccountID      string
+	MaxConcurrentRequests int
 }
 
 type SelectionPreview struct {
@@ -719,13 +720,16 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
 		return Account{}, ErrInvalidInput
 	}
 	if update.LoadFactor != nil && (*update.LoadFactor < 1 || *update.LoadFactor > 100) {
+		return Account{}, ErrInvalidInput
+	}
+	if update.MaxConcurrentRequests != nil && *update.MaxConcurrentRequests < 0 {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Name != nil {
@@ -1411,11 +1415,12 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 		accountType = AccountTypeCodexOAuth
 	}
 	selected := SelectedAccount{
-		AccountID:        account.ID,
-		Provider:         valueOrDefault(strings.TrimSpace(account.Provider), s.cfg.Provider),
-		AccountType:      accountType,
-		DisplayName:      accountDisplayName(account),
-		ChatGPTAccountID: strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
+		AccountID:             account.ID,
+		Provider:              valueOrDefault(strings.TrimSpace(account.Provider), s.cfg.Provider),
+		AccountType:           accountType,
+		DisplayName:           accountDisplayName(account),
+		ChatGPTAccountID:      strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
+		MaxConcurrentRequests: account.MaxConcurrentRequests,
 	}
 	switch accountType {
 	case AccountTypeCodexOAuth:

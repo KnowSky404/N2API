@@ -1308,6 +1308,22 @@ func TestSelectAccountForModelUsesLoadFactorWithinPriority(t *testing.T) {
 	}
 }
 
+func TestSelectedAccountIncludesMaxConcurrentRequests(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 1, "access-token")
+	account.MaxConcurrentRequests = 2
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
+	}
+	if selected.MaxConcurrentRequests != 2 {
+		t.Fatalf("MaxConcurrentRequests = %d, want 2", selected.MaxConcurrentRequests)
+	}
+}
+
 func TestUpdateAccountCanRenameLocalAccountLabel(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
@@ -1376,6 +1392,18 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 	}
 	if account.Status != AccountStatusActive || account.LastError != "" || account.CircuitOpenUntil != nil || account.FailureCount != 0 {
 		t.Fatalf("account status after credential rotation = %+v, want local failure state cleared", account)
+	}
+}
+
+func TestUpdateAccountRejectsNegativeMaxConcurrentRequests(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	enabled := true
+	maxConcurrentRequests := -1
+
+	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{Enabled: &enabled, MaxConcurrentRequests: &maxConcurrentRequests}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateAccount error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -2272,6 +2300,9 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 		}
 		if update.LoadFactor != nil {
 			r.accounts[i].LoadFactor = *update.LoadFactor
+		}
+		if update.MaxConcurrentRequests != nil {
+			r.accounts[i].MaxConcurrentRequests = *update.MaxConcurrentRequests
 		}
 		if update.Name != nil {
 			r.accounts[i].Name = *update.Name
