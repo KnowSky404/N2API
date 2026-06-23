@@ -53,6 +53,47 @@ func TestAutoTestRunnerDisabledDoesNotProbe(t *testing.T) {
 	}
 }
 
+func TestAutoTestRunnerConfigSourceCanEnableAfterDisabledCycle(t *testing.T) {
+	service := newFakeAutoTestService()
+	var reads atomic.Int64
+	runner := NewAutoTestRunnerWithConfigSource(service, func(context.Context) (AutoTestRunnerConfig, error) {
+		if reads.Add(1) == 1 {
+			return AutoTestRunnerConfig{
+				Enabled:  false,
+				Interval: 10 * time.Millisecond,
+			}, nil
+		}
+		return AutoTestRunnerConfig{
+			Enabled:  true,
+			Interval: 10 * time.Millisecond,
+		}, nil
+	}, slog.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+
+	go func() {
+		runner.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-service.started:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not observe enabled config and start probe")
+	}
+	if reads.Load() < 2 {
+		t.Fatalf("config source reads = %d, want at least 2", reads.Load())
+	}
+	service.release <- struct{}{}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not stop after cancellation")
+	}
+}
+
 func TestAutoTestRunnerRunsImmediateCycle(t *testing.T) {
 	service := newFakeAutoTestService()
 	runner := NewAutoTestRunner(service, AutoTestRunnerConfig{

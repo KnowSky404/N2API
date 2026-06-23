@@ -30,9 +30,11 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 	text := string(source)
 	for _, want := range []string{
 		"signal.NotifyContext",
-		"provider.NewAutoTestRunner",
+		"provider.NewAutoTestRunnerWithConfigSource",
+		"adminService.GetGatewaySettings",
 		"ProviderAccountAutoTestEnabled",
 		"ProviderAccountAutoTestInterval",
+		"ProviderAccountAutoTestIntervalSeconds",
 		"go autoTestRunner.Run(ctx)",
 		"server.Shutdown",
 	} {

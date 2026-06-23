@@ -157,11 +157,13 @@ func main() {
 	adminService := admin.NewService(adminRepo, admin.Config{
 		SessionTTL: 7 * 24 * time.Hour,
 		DefaultGatewaySettings: admin.GatewaySettings{
-			MaxConcurrentGatewayRequests:    cfg.GatewayMaxConcurrentRequests,
-			MaxConcurrentRequestsPerAccount: cfg.GatewayMaxConcurrentRequestsPerAccount,
-			MaxConcurrentRequestsPerKey:     cfg.GatewayMaxConcurrentRequestsPerKey,
-			RequestsPerMinutePerKey:         cfg.GatewayRequestsPerMinutePerKey,
-			TokensPerMinutePerKey:           cfg.GatewayTokensPerMinutePerKey,
+			MaxConcurrentGatewayRequests:           cfg.GatewayMaxConcurrentRequests,
+			MaxConcurrentRequestsPerAccount:        cfg.GatewayMaxConcurrentRequestsPerAccount,
+			MaxConcurrentRequestsPerKey:            cfg.GatewayMaxConcurrentRequestsPerKey,
+			RequestsPerMinutePerKey:                cfg.GatewayRequestsPerMinutePerKey,
+			TokensPerMinutePerKey:                  cfg.GatewayTokensPerMinutePerKey,
+			ProviderAccountAutoTestEnabled:         cfg.ProviderAccountAutoTestEnabled,
+			ProviderAccountAutoTestIntervalSeconds: int(cfg.ProviderAccountAutoTestInterval / time.Second),
 		},
 	})
 	if err := adminService.BootstrapAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
@@ -181,9 +183,15 @@ func main() {
 		Secret:                cfg.EncryptionSecret,
 		AllowHTTPAPIUpstreams: cfg.AllowHTTPAPIUpstreams,
 	})
-	autoTestRunner := provider.NewAutoTestRunner(providerService, provider.AutoTestRunnerConfig{
-		Enabled:  cfg.ProviderAccountAutoTestEnabled,
-		Interval: cfg.ProviderAccountAutoTestInterval,
+	autoTestRunner := provider.NewAutoTestRunnerWithConfigSource(providerService, func(ctx context.Context) (provider.AutoTestRunnerConfig, error) {
+		settings, err := adminService.GetGatewaySettings(ctx)
+		if err != nil {
+			return provider.AutoTestRunnerConfig{}, err
+		}
+		return provider.AutoTestRunnerConfig{
+			Enabled:  settings.ProviderAccountAutoTestEnabled,
+			Interval: time.Duration(settings.ProviderAccountAutoTestIntervalSeconds) * time.Second,
+		}, nil
 	}, slog.Default())
 	go autoTestRunner.Run(ctx)
 
