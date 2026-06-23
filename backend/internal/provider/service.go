@@ -60,6 +60,9 @@ const (
 const (
 	AccountTestStatusPassed = "passed"
 	AccountTestStatusFailed = "failed"
+
+	defaultAccountTestResultsLimit = 20
+	maxAccountTestResultsLimit     = 100
 )
 
 const (
@@ -1052,6 +1055,22 @@ func (s *Service) TestAccounts(ctx context.Context) ([]Account, error) {
 		tested = append(tested, updated)
 	}
 	return tested, nil
+}
+
+func (s *Service) ListAccountTestResults(ctx context.Context, id int64, limit int) ([]AccountTestResult, error) {
+	if id <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if _, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = defaultAccountTestResultsLimit
+	}
+	if limit > maxAccountTestResultsLimit {
+		limit = maxAccountTestResultsLimit
+	}
+	return s.repo.ListAccountTestResults(ctx, s.cfg.Provider, id, limit)
 }
 
 func (s *Service) PauseAccountScheduling(ctx context.Context, id int64, duration time.Duration) (Account, error) {

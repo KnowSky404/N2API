@@ -62,6 +62,7 @@ type ProviderService interface {
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccounts(ctx context.Context) ([]provider.Account, error)
+	ListAccountTestResults(ctx context.Context, accountID int64, limit int) ([]provider.AccountTestResult, error)
 	PauseAccountScheduling(ctx context.Context, id int64, duration time.Duration) (provider.Account, error)
 	ResetAccountStatus(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
@@ -515,6 +516,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleTestProviderAccount(w, r, providers)
 	}))
 
+	mux.HandleFunc("GET /api/admin/provider-accounts/{id}/test-results", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleListProviderAccountTestResults(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/pause", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handlePauseProviderAccountScheduling(w, r, providers)
 	}))
@@ -569,6 +574,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleTestProviderAccount(w, r, providers)
+	}))
+
+	mux.HandleFunc("GET /api/admin/providers/openai/accounts/{id}/test-results", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleListProviderAccountTestResults(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/pause", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -946,6 +955,34 @@ func handleTestAllProviderAccounts(w http.ResponseWriter, r *http.Request, provi
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+func handleListProviderAccountTestResults(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	limit := 0
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		limit = parsed
+	}
+
+	results, err := providers.ListAccountTestResults(r.Context(), id, limit)
+	if err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]provider.AccountTestResult{"results": results})
 }
 
 func handlePauseProviderAccountScheduling(w http.ResponseWriter, r *http.Request, providers ProviderService) {

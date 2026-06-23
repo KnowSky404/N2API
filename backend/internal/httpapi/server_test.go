@@ -58,6 +58,7 @@ type fakeProviderService struct {
 	createdAPIUpstream    provider.APIUpstreamInput
 	accounts              []provider.Account
 	accountModels         map[int64][]provider.AccountModel
+	accountTestResults    []provider.AccountTestResult
 	exposedModels         []provider.ExposedModel
 	selectionPreview      provider.SelectionPreview
 	previewModel          string
@@ -66,6 +67,7 @@ type fakeProviderService struct {
 	lastAccountUpdate     provider.AccountUpdate
 	updateErr             error
 	accountModelsErr      error
+	accountTestResultsErr error
 	replaceModelsErr      error
 	exposedModelsErr      error
 	refreshErr            error
@@ -77,6 +79,8 @@ type fakeProviderService struct {
 	disconnected          bool
 	refreshedAccountID    int64
 	testedAccountID       int64
+	testResultsAccountID  int64
+	testResultsLimit      int
 	testedAllAccounts     bool
 	pausedAccountID       int64
 	pauseDuration         time.Duration
@@ -376,6 +380,21 @@ func (s *fakeProviderService) ListAccountModels(_ context.Context, accountID int
 		return nil, provider.ErrNotConnected
 	}
 	return append([]provider.AccountModel(nil), models...), nil
+}
+
+func (s *fakeProviderService) ListAccountTestResults(_ context.Context, accountID int64, limit int) ([]provider.AccountTestResult, error) {
+	s.testResultsAccountID = accountID
+	s.testResultsLimit = limit
+	if s.accountTestResultsErr != nil {
+		return nil, s.accountTestResultsErr
+	}
+	results := make([]provider.AccountTestResult, 0, len(s.accountTestResults))
+	for _, result := range s.accountTestResults {
+		if result.AccountID == accountID {
+			results = append(results, result)
+		}
+	}
+	return results, nil
 }
 
 func (s *fakeProviderService) ReplaceAccountModels(_ context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error) {
@@ -1234,6 +1253,7 @@ func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
 		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
 		{name: "pause", method: http.MethodPost, path: "/api/admin/provider-accounts/7/pause", body: `{"durationSeconds":300}`},
 		{name: "reset status", method: http.MethodPost, path: "/api/admin/provider-accounts/7/reset-status"},
+		{name: "list test results", method: http.MethodGet, path: "/api/admin/provider-accounts/7/test-results?limit=2"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
 	} {
@@ -1267,6 +1287,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
 		{name: "pause", method: http.MethodPost, path: "/api/admin/provider-accounts/7/pause", body: `{"durationSeconds":300}`},
 		{name: "reset status", method: http.MethodPost, path: "/api/admin/provider-accounts/7/reset-status"},
+		{name: "list test results", method: http.MethodGet, path: "/api/admin/provider-accounts/7/test-results?limit=2"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
 	} {
@@ -1796,6 +1817,89 @@ func TestAdminCanTestAllUnifiedProviderAccounts(t *testing.T) {
 	}
 	if len(body.Accounts) != 2 || body.Accounts[1].ID != 8 || body.Accounts[1].Status != provider.AccountStatusActive || body.Accounts[1].LastError != "" {
 		t.Fatalf("accounts = %+v, want all tested accounts with cleared local failures", body.Accounts)
+	}
+}
+
+func TestAdminCanListUnifiedProviderAccountTestResults(t *testing.T) {
+	checkedAt := time.Unix(2000, 0).UTC()
+	createdAt := time.Unix(2001, 0).UTC()
+	providers := newFakeProviderService()
+	providers.accountTestResults = []provider.AccountTestResult{
+		{
+			ID:        11,
+			AccountID: 7,
+			Provider:  "openai",
+			Status:    provider.AccountTestStatusFailed,
+			Message:   "quota window",
+			CheckedAt: checkedAt,
+			CreatedAt: createdAt,
+		},
+		{
+			ID:        12,
+			AccountID: 8,
+			Provider:  "openai",
+			Status:    provider.AccountTestStatusPassed,
+			CheckedAt: checkedAt,
+			CreatedAt: createdAt,
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/provider-accounts/7/test-results?limit=2", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.testResultsAccountID != 7 || providers.testResultsLimit != 2 {
+		t.Fatalf("test results call = id:%d limit:%d, want account 7 limit 2", providers.testResultsAccountID, providers.testResultsLimit)
+	}
+	var body struct {
+		Results []provider.AccountTestResult `json:"results"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Results) != 1 || body.Results[0].ID != 11 || body.Results[0].Message != "quota window" || !body.Results[0].CheckedAt.Equal(checkedAt) {
+		t.Fatalf("results = %+v, want account 7 failed result", body.Results)
+	}
+}
+
+func TestAdminListProviderAccountTestResultsMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		err  error
+		want int
+		code string
+	}{
+		{name: "bad id", path: "/api/admin/provider-accounts/not-a-number/test-results", want: http.StatusBadRequest, code: "bad_request"},
+		{name: "bad limit", path: "/api/admin/provider-accounts/7/test-results?limit=bad", want: http.StatusBadRequest, code: "bad_request"},
+		{name: "not found", path: "/api/admin/provider-accounts/7/test-results", err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.accountTestResultsErr = tc.err
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.want)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != tc.code {
+				t.Fatalf("error = %q, want %q", body["error"], tc.code)
+			}
+		})
 	}
 }
 

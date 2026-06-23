@@ -1136,6 +1136,45 @@ func TestTestAccountsProbesEveryProviderAccount(t *testing.T) {
 	}
 }
 
+func TestListAccountTestResultsValidatesAndNormalizesLimit(t *testing.T) {
+	baseTime := time.Now().UTC().Truncate(time.Second)
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 1, true, 1, "token")}
+	for i := 0; i < 101; i++ {
+		checkedAt := baseTime.Add(time.Duration(i) * time.Second)
+		repo.accountTestResults = append(repo.accountTestResults, AccountTestResult{
+			ID:        int64(i + 1),
+			AccountID: 1,
+			Provider:  "openai",
+			Status:    AccountTestStatusPassed,
+			CheckedAt: checkedAt,
+			CreatedAt: checkedAt,
+		})
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.ListAccountTestResults(context.Background(), 0, 20); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid id error = %v, want ErrInvalidInput", err)
+	}
+	defaulted, err := service.ListAccountTestResults(context.Background(), 1, 0)
+	if err != nil {
+		t.Fatalf("ListAccountTestResults default limit returned error: %v", err)
+	}
+	if len(defaulted) != 20 {
+		t.Fatalf("default result count = %d, want 20", len(defaulted))
+	}
+	capped, err := service.ListAccountTestResults(context.Background(), 1, 500)
+	if err != nil {
+		t.Fatalf("ListAccountTestResults capped limit returned error: %v", err)
+	}
+	if len(capped) != 100 {
+		t.Fatalf("capped result count = %d, want 100", len(capped))
+	}
+	if capped[0].ID != 101 || capped[99].ID != 2 {
+		t.Fatalf("capped ordering = first:%d last:%d, want newest-first IDs 101..2", capped[0].ID, capped[99].ID)
+	}
+}
+
 func TestPauseAccountSchedulingTemporarilyOpensCircuit(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 3, "access-token")}
