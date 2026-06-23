@@ -254,12 +254,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key request rate limit exceeded")
 		return
 	}
-	if retryAfter, ok := p.allowAPIKeyTokens(key.ID); !ok {
-		errorCode = "rate_limit_exceeded"
-		setRetryAfterHeader(recorder.Header(), retryAfter)
-		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key token rate limit exceeded")
-		return
-	}
 
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
 		if err := p.writeLocalModels(r.Context(), recorder, key); err != nil {
@@ -271,6 +265,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.accounts == nil {
 		errorCode = "service_unavailable"
 		writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "gateway service unavailable")
+		return
+	}
+	if retryAfter, ok := p.allowAPIKeyTokens(key.ID); !ok {
+		errorCode = "rate_limit_exceeded"
+		setRetryAfterHeader(recorder.Header(), retryAfter)
+		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key token rate limit exceeded")
 		return
 	}
 

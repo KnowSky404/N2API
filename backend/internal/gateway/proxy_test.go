@@ -922,6 +922,63 @@ func TestProxyRejectsWhenAPIKeyTokenRateLimitIsExceeded(t *testing.T) {
 	}
 }
 
+func TestProxyModelsBypassesAPIKeyTokenRateLimit(t *testing.T) {
+	var transportCalls int32
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&transportCalls, 1)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"id":"chatcmpl_123",
+				"usage":{"prompt_tokens":8,"completion_tokens":7,"total_tokens":15}
+			}`)),
+			Request: r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "token limited key"}}, tokens, Config{
+		UpstreamBaseURL:          "https://upstream.example.test",
+		MaxTokensPerMinutePerKey: 10,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5"},
+			exposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}},
+		},
+	}, client)
+	proxy.tokenLimiter.now = func() time.Time {
+		return time.Date(2026, 6, 23, 12, 0, 1, 0, time.UTC)
+	}
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	firstReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRecorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(firstRecorder, firstReq)
+
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("first status = %d body=%s, want 200", firstRecorder.Code, firstRecorder.Body.String())
+	}
+	modelsReq := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	modelsReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	modelsRecorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(modelsRecorder, modelsReq)
+
+	if modelsRecorder.Code != http.StatusOK {
+		t.Fatalf("models status = %d body=%s, want 200", modelsRecorder.Code, modelsRecorder.Body.String())
+	}
+	if !strings.Contains(modelsRecorder.Body.String(), `"id":"gpt-5"`) {
+		t.Fatalf("models body = %q, want gpt-5", modelsRecorder.Body.String())
+	}
+	if got := atomic.LoadInt32(&transportCalls); got != 1 {
+		t.Fatalf("transport calls = %d, want only the chat request upstream", got)
+	}
+	if tokens.calls != 1 {
+		t.Fatalf("account selections = %d, want only the chat request selection", tokens.calls)
+	}
+}
+
 func TestProxyRejectsUnlistedModelForSelectedAPIKeyBeforeAccountSelection(t *testing.T) {
 	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	auth := &fakeAPIKeyAuthenticator{key: admin.APIKey{
