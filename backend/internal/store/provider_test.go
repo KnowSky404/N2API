@@ -133,6 +133,29 @@ func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
 	}
 }
 
+func TestMarkAccountUsedClearsTemporaryFailureStateColumns(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	for _, required := range []string{
+		"LAST_ERROR = ''",
+		"LAST_ERROR_AT = NULL",
+		"STATUS = 'ACTIVE'",
+		"STATUS_REASON = ''",
+		"FAILURE_COUNT = 0",
+		"CIRCUIT_OPEN_UNTIL = NULL",
+		"RATE_LIMITED_UNTIL = NULL",
+		"LAST_REFRESH_ERROR = ''",
+		"LAST_REFRESH_ERROR_AT = NULL",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("MarkAccountUsed must clear temporary failure state, missing %q", required)
+		}
+	}
+}
+
 func TestReplaceAccountModelsNormalizesAndListsRows(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

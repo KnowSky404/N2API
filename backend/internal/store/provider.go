@@ -479,6 +479,7 @@ func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName s
 			status_reason = '',
 			failure_count = 0,
 			circuit_open_until = NULL,
+			rate_limited_until = NULL,
 			updated_at = now()
 		WHERE provider = $1
 			AND id = $2
