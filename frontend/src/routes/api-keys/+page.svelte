@@ -5,7 +5,10 @@
     copySecret,
     createKey,
     formatDate,
+    gatewayLimitLabel,
+    gatewaySettings,
     getActiveKeys,
+    loadGatewaySettings,
     loadModelRouting,
     login,
     loginForm,
@@ -28,6 +31,7 @@
     if (!modelRoutingRequested) {
       modelRoutingRequested = true;
       void loadModelRouting();
+      void loadGatewaySettings();
     }
   });
 
@@ -108,6 +112,45 @@
 </button>
     </div>
   </form>
+
+  <section class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h3 class="text-base font-semibold text-[#0d0d0d]">Gateway runtime limits</h3>
+        <p class="mt-1 text-sm text-[#6e6e6e]">Current concurrency and rate guards loaded from the running service.</p>
+      </div>
+    </div>
+    {#if gatewaySettings.error}
+      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        {gatewaySettings.error}
+      </p>
+    {:else if gatewaySettings.loading || !gatewaySettings.data}
+      <p class="mt-4 text-sm text-[#6e6e6e]">Loading gateway runtime limits...</p>
+    {:else}
+      <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div class="rounded-md border border-[#ededed] bg-white p-3">
+          <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Gateway concurrency</dt>
+          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentGatewayRequests)}</dd>
+        </div>
+        <div class="rounded-md border border-[#ededed] bg-white p-3">
+          <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per account concurrency</dt>
+          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerAccount)}</dd>
+        </div>
+        <div class="rounded-md border border-[#ededed] bg-white p-3">
+          <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per key concurrency</dt>
+          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerKey)}</dd>
+        </div>
+        <div class="rounded-md border border-[#ededed] bg-white p-3">
+          <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Requests per minute</dt>
+          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.requestsPerMinutePerKey)}</dd>
+        </div>
+        <div class="rounded-md border border-[#ededed] bg-white p-3">
+          <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Tokens per minute</dt>
+          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.tokensPerMinutePerKey)}</dd>
+        </div>
+      </dl>
+    {/if}
+  </section>
 
   <form class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={saveModelSettings}>
     <div class="grid gap-4 lg:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]">

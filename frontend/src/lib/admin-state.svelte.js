@@ -150,6 +150,15 @@ import { copyText } from '$lib/clipboard.js';
  * @property {ModelRoutingAccount[]} accounts
  */
 
+/**
+ * @typedef {object} GatewaySettingsData
+ * @property {number} maxConcurrentGatewayRequests
+ * @property {number} maxConcurrentRequestsPerAccount
+ * @property {number} maxConcurrentRequestsPerKey
+ * @property {number} requestsPerMinutePerKey
+ * @property {number} tokensPerMinutePerKey
+ */
+
 export const health = $state({
   loading: true,
   error: '',
@@ -189,6 +198,12 @@ export const apiKeys = $state({
   items: [],
   newKeyName: '',
   oneTimeSecret: ''
+});
+/** @type {{ loading: boolean, error: string, data: GatewaySettingsData | null }} */
+export const gatewaySettings = $state({
+  loading: false,
+  error: '',
+  data: null
 });
 /** @type {{ loading: boolean, error: string, items: RequestLog[] }} */
 export const requestLogs = $state({
@@ -344,6 +359,12 @@ export function getStatusItems() {
 
 export function getActiveKeys() {
   return apiKeys.items.filter((key) => !key.revokedAt);
+}
+
+/** @param {number | null | undefined} value */
+export function gatewayLimitLabel(value) {
+  const limit = Number(value ?? 0);
+  return limit > 0 ? String(limit) : 'Disabled';
 }
 
 /**
@@ -1012,6 +1033,32 @@ export async function loadKeys() {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     apiKeys.loading = false;
+  }
+}
+
+export async function loadGatewaySettings() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  gatewaySettings.loading = true;
+  gatewaySettings.error = '';
+
+  try {
+    const payload = await requestJSON('/api/admin/gateway-settings');
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.data = {
+      maxConcurrentGatewayRequests: Number(payload.maxConcurrentGatewayRequests ?? 0),
+      maxConcurrentRequestsPerAccount: Number(payload.maxConcurrentRequestsPerAccount ?? 0),
+      maxConcurrentRequestsPerKey: Number(payload.maxConcurrentRequestsPerKey ?? 0),
+      requestsPerMinutePerKey: Number(payload.requestsPerMinutePerKey ?? 0),
+      tokensPerMinutePerKey: Number(payload.tokensPerMinutePerKey ?? 0)
+    };
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.error = error instanceof Error ? error.message : 'Failed to load gateway settings';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.loading = false;
   }
 }
 

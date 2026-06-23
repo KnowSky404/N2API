@@ -184,6 +184,20 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.match(apiKeysSource, /No schedulable account/);
 });
 
+test('api keys page surfaces gateway runtime limits', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /gatewaySettings/);
+  assert.match(adminStateSource, /\/api\/admin\/gateway-settings/);
+  assert.match(apiKeysSource, /Gateway runtime limits/);
+  assert.match(apiKeysSource, /Gateway concurrency/);
+  assert.match(apiKeysSource, /Per account concurrency/);
+  assert.match(apiKeysSource, /Per key concurrency/);
+  assert.match(apiKeysSource, /Requests per minute/);
+  assert.match(apiKeysSource, /Tokens per minute/);
+  assert.match(apiKeysSource, /loadGatewaySettings/);
+});
+
 test('models page points model access management to api keys', () => {
   assert.match(modelsSource, /API Keys/);
   assert.match(modelsSource, /href="\/api-keys"/);
