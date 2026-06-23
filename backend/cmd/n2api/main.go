@@ -42,13 +42,14 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 		return gateway.SelectedAccount{}, err
 	}
 	return gateway.SelectedAccount{
-		AccountID:          selected.AccountID,
-		Provider:           selected.Provider,
-		AccountType:        selected.AccountType,
-		DisplayName:        selected.DisplayName,
-		AuthorizationToken: selected.AuthorizationToken,
-		BaseURL:            selected.BaseURL,
-		ChatGPTAccountID:   selected.ChatGPTAccountID,
+		AccountID:             selected.AccountID,
+		Provider:              selected.Provider,
+		AccountType:           selected.AccountType,
+		DisplayName:           selected.DisplayName,
+		AuthorizationToken:    selected.AuthorizationToken,
+		BaseURL:               selected.BaseURL,
+		ChatGPTAccountID:      selected.ChatGPTAccountID,
+		MaxConcurrentRequests: selected.MaxConcurrentRequests,
 	}, nil
 }
 

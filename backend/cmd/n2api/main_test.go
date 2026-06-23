@@ -17,8 +17,16 @@ func TestGatewayAccountProviderMapsDisplayNameForRequestLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile main.go returned error: %v", err)
 	}
-	if !strings.Contains(string(source), "DisplayName:        selected.DisplayName") {
-		t.Fatal("gatewayAccountProvider must map provider selected account display name to gateway selected account")
+	text := string(source)
+	for _, want := range []string{
+		"DisplayName:",
+		"selected.DisplayName",
+		"MaxConcurrentRequests:",
+		"selected.MaxConcurrentRequests",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("gatewayAccountProvider mapping missing %q", want)
+		}
 	}
 }
 

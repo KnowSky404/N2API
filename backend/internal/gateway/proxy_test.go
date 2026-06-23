@@ -710,6 +710,75 @@ func TestProxyRetriesAnotherAccountWhenSelectedAccountConcurrencyLimitIsFull(t *
 	}
 }
 
+func TestProxyUsesSelectedAccountConcurrencyOverride(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan struct{})
+	var transportCalls int32
+	var secondAuthorization string
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AuthorizationToken: "first-token", MaxConcurrentRequests: 1},
+		{AccountID: 1, AuthorizationToken: "first-token", MaxConcurrentRequests: 1},
+		{AccountID: 2, AuthorizationToken: "second-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		call := atomic.AddInt32(&transportCalls, 1)
+		if call == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		} else {
+			secondAuthorization = r.Header.Get("Authorization")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL:                 "https://upstream.example.test",
+		MaxConcurrentRequestsPerAccount: 5,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5"},
+		},
+	}, client)
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	firstReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRecorder := httptest.NewRecorder()
+	go func() {
+		defer close(firstDone)
+		proxy.ServeHTTP(firstRecorder, firstReq)
+	}()
+	<-firstStarted
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	secondReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondRecorder := httptest.NewRecorder()
+	proxy.ServeHTTP(secondRecorder, secondReq)
+
+	close(releaseFirst)
+	<-firstDone
+	if secondRecorder.Code != http.StatusOK {
+		t.Fatalf("second status = %d body=%s, want 200", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	if tokens.calls != 3 {
+		t.Fatalf("account selections = %d, want first request plus override retry selection", tokens.calls)
+	}
+	if !slices.Equal(tokens.exclusions[2], []int64{1}) {
+		t.Fatalf("third selection exclusions = %+v, want busy account 1 excluded", tokens.exclusions[2])
+	}
+	if secondAuthorization != "Bearer second-token" {
+		t.Fatalf("second upstream Authorization = %q, want fallback account token", secondAuthorization)
+	}
+	if !slices.Equal(tokens.used, []int64{1, 2}) {
+		t.Fatalf("used accounts = %+v, want acquired accounts 1 and 2", tokens.used)
+	}
+}
+
 func TestProxyRejectsWhenAllSelectedAccountsHitConcurrencyLimit(t *testing.T) {
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})

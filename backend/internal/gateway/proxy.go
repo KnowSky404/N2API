@@ -32,13 +32,14 @@ type APIKeyAuthenticator interface {
 }
 
 type SelectedAccount struct {
-	AccountID          int64
-	Provider           string
-	AccountType        string
-	DisplayName        string
-	AuthorizationToken string
-	BaseURL            string
-	ChatGPTAccountID   string
+	AccountID             int64
+	Provider              string
+	AccountType           string
+	DisplayName           string
+	AuthorizationToken    string
+	BaseURL               string
+	ChatGPTAccountID      string
+	MaxConcurrentRequests int
 }
 
 type AccountProvider interface {
@@ -348,7 +349,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 			return
 		}
-		releaseAccount, ok := p.tryAcquireAccountSlot(selected.AccountID, settings.MaxConcurrentRequestsPerAccount)
+		accountLimit := effectiveAccountConcurrencyLimit(selected.MaxConcurrentRequests, settings.MaxConcurrentRequestsPerAccount)
+		releaseAccount, ok := p.tryAcquireAccountSlot(selected.AccountID, accountLimit)
 		if !ok {
 			accountConcurrencyLimited = true
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
@@ -446,6 +448,13 @@ func (p *Proxy) allowAPIKeyTokens(keyID int64, tokensPerMinute, defaultTokensPer
 func effectiveAPIKeyLimit(keyLimit, defaultLimit int) int {
 	if keyLimit > 0 {
 		return keyLimit
+	}
+	return defaultLimit
+}
+
+func effectiveAccountConcurrencyLimit(accountLimit, defaultLimit int) int {
+	if accountLimit > 0 {
+		return accountLimit
 	}
 	return defaultLimit
 }
