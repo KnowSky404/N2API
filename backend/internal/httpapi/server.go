@@ -476,6 +476,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleTestAllProviderAccounts(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-update", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleBulkUpdateProviderAccounts(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleProviderStatus(w, r, providers)
 	}))
@@ -832,6 +836,49 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+}
+
+func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	var req struct {
+		AccountIDs []int64 `json:"accountIds"`
+		Enabled    *bool   `json:"enabled"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if req.Enabled == nil || len(req.AccountIDs) == 0 || len(req.AccountIDs) > 100 {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	accountIDs := make([]int64, 0, len(req.AccountIDs))
+	seen := map[int64]struct{}{}
+	for _, id := range req.AccountIDs {
+		if id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		accountIDs = append(accountIDs, id)
+	}
+
+	accounts := make([]provider.Account, 0, len(accountIDs))
+	for _, id := range accountIDs {
+		account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{Enabled: req.Enabled})
+		if err != nil {
+			writeProviderAccountError(w, err)
+			return
+		}
+		accounts = append(accounts, account)
+	}
+	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
 func handleDeleteProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {

@@ -65,6 +65,8 @@ type fakeProviderService struct {
 	previewSessionID      string
 	previewExcludedIDs    []int64
 	lastAccountUpdate     provider.AccountUpdate
+	accountUpdateIDs      []int64
+	accountUpdates        []provider.AccountUpdate
 	updateErr             error
 	accountModelsErr      error
 	accountTestResultsErr error
@@ -454,6 +456,8 @@ func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state st
 
 func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update provider.AccountUpdate) (provider.Account, error) {
 	s.lastAccountUpdate = update
+	s.accountUpdateIDs = append(s.accountUpdateIDs, id)
+	s.accountUpdates = append(s.accountUpdates, update)
 	if s.updateErr != nil {
 		return provider.Account{}, s.updateErr
 	}
@@ -1474,6 +1478,72 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	}
 	if providers.lastAccountUpdate.LoadFactor == nil || *providers.lastAccountUpdate.LoadFactor != 5 {
 		t.Fatalf("load factor update = %+v, want 5", providers.lastAccountUpdate.LoadFactor)
+	}
+}
+
+func TestAdminCanBulkDisableUnifiedProviderAccounts(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1},
+		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-update", strings.NewReader(`{"accountIds":[7,8,7],"enabled":false}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !reflect.DeepEqual(providers.accountUpdateIDs, []int64{7, 8}) {
+		t.Fatalf("updated ids = %+v, want [7 8]", providers.accountUpdateIDs)
+	}
+	for index, update := range providers.accountUpdates {
+		if update.Enabled == nil || *update.Enabled {
+			t.Fatalf("update %d enabled = %+v, want false", index, update.Enabled)
+		}
+	}
+	var body struct {
+		Accounts []provider.Account `json:"accounts"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Accounts) != 2 || body.Accounts[0].Enabled || body.Accounts[1].Enabled {
+		t.Fatalf("accounts = %+v, want two disabled accounts", body.Accounts)
+	}
+}
+
+func TestAdminBulkProviderAccountUpdateValidatesInput(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "empty ids", body: `{"accountIds":[],"enabled":false}`},
+		{name: "bad id", body: `{"accountIds":[0],"enabled":false}`},
+		{name: "missing enabled", body: `{"accountIds":[7]}`},
+		{name: "too many ids", body: `{"accountIds":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101],"enabled":false}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true}}
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-update", strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+			}
+			if len(providers.accountUpdateIDs) != 0 {
+				t.Fatalf("updated ids = %+v, want no updates", providers.accountUpdateIDs)
+			}
+		})
 	}
 }
 
