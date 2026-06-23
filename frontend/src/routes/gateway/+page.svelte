@@ -8,7 +8,10 @@
     getGatewayReadinessIssues,
     getRoutableModelCount,
     getSchedulableProviderAccounts,
+    loadAPIKeys,
     loadGatewaySettings,
+    loadModelRouting,
+    loadProviderAccounts,
     loadUsageSummary,
     login,
     loginForm,
@@ -45,6 +48,9 @@
     if (!gatewayRequested) {
       gatewayRequested = true;
       void loadGatewaySettings();
+      void loadProviderAccounts();
+      void loadModelRouting();
+      void loadAPIKeys();
       void loadUsageSummary('24h', 'model');
       void loadUsageSummary('24h', 'provider_account');
       void loadUsageSummary('24h', 'client_key');
