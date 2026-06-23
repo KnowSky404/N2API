@@ -1513,9 +1513,9 @@ export async function testProviderAccount(account) {
 }
 
 export async function testSelectedProviderAccounts() {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-  const accountIds = Object.keys(selectedProviderAccountIds)
+	const version = sessionVersion;
+	if (!isCurrentAuthenticated(version)) return;
+	const accountIds = Object.keys(selectedProviderAccountIds)
     .map((id) => Number(id))
     .filter((id) => Number.isFinite(id) && id > 0);
   if (accountIds.length === 0) {
@@ -1544,12 +1544,82 @@ export async function testSelectedProviderAccounts() {
     providerAccounts.error = message;
   } finally {
     if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
-  }
+	}
+}
+
+export async function pauseSelectedProviderAccounts() {
+	const version = sessionVersion;
+	if (!isCurrentAuthenticated(version)) return;
+	const durationSeconds = validateProviderAccountPauseDuration();
+	if (durationSeconds === null) return;
+	const accountIds = Object.keys(selectedProviderAccountIds)
+		.map((id) => Number(id))
+		.filter((id) => Number.isFinite(id) && id > 0);
+	if (accountIds.length === 0) {
+		providerAccounts.error = 'Select at least one provider account';
+		return;
+	}
+
+	providerAccounts.saving = true;
+	providerAccounts.error = '';
+	try {
+		await requestJSON('/api/admin/provider-accounts/bulk-pause', {
+			method: 'POST',
+			body: JSON.stringify({ accountIds, durationSeconds })
+		});
+		if (!isCurrentAuthenticated(version)) return;
+		clearProviderAccountSelection();
+		await loadProviderAccounts();
+		await loadModelRouting();
+	} catch (error) {
+		if (!isCurrentAuthenticated(version)) return;
+		const message = error instanceof Error ? error.message : 'Selected account pause failed';
+		providerAccounts.error = message;
+		await loadProviderAccounts();
+		if (!isCurrentAuthenticated(version)) return;
+		providerAccounts.error = message;
+	} finally {
+		if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+	}
+}
+
+export async function resetSelectedProviderAccountStatus() {
+	const version = sessionVersion;
+	if (!isCurrentAuthenticated(version)) return;
+	const accountIds = Object.keys(selectedProviderAccountIds)
+		.map((id) => Number(id))
+		.filter((id) => Number.isFinite(id) && id > 0);
+	if (accountIds.length === 0) {
+		providerAccounts.error = 'Select at least one provider account';
+		return;
+	}
+
+	providerAccounts.saving = true;
+	providerAccounts.error = '';
+	try {
+		await requestJSON('/api/admin/provider-accounts/bulk-reset-status', {
+			method: 'POST',
+			body: JSON.stringify({ accountIds })
+		});
+		if (!isCurrentAuthenticated(version)) return;
+		clearProviderAccountSelection();
+		await loadProviderAccounts();
+		await loadModelRouting();
+	} catch (error) {
+		if (!isCurrentAuthenticated(version)) return;
+		const message = error instanceof Error ? error.message : 'Selected account status reset failed';
+		providerAccounts.error = message;
+		await loadProviderAccounts();
+		if (!isCurrentAuthenticated(version)) return;
+		providerAccounts.error = message;
+	} finally {
+		if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+	}
 }
 
 export async function testAllProviderAccounts() {
-  const version = sessionVersion;
-  providerAccounts.saving = true;
+	const version = sessionVersion;
+	providerAccounts.saving = true;
   providerAccounts.error = '';
   try {
     await requestJSON('/api/admin/provider-accounts/test', {

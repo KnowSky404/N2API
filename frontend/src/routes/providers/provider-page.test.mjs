@@ -199,6 +199,16 @@ test('provider account state can test selected accounts', () => {
   assert.match(adminStateSource, /refreshExpandedAccountTestResults/);
 });
 
+test('provider account state can bulk pause and reset selected accounts', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /pauseSelectedProviderAccounts/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-pause/);
+  assert.match(adminStateSource, /resetSelectedProviderAccountStatus/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-reset-status/);
+  assert.match(adminStateSource, /clearProviderAccountSelection/);
+});
+
 test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {
   const warnings = apiKeyModelWarnings(
     {
@@ -328,8 +338,12 @@ test('provider account table exposes bulk selection controls', () => {
   assert.match(source, /bulkUpdateSelectedProviderAccountScheduling/);
   assert.match(source, /providerAccountBulkSchedulingForm/);
   assert.match(source, /testSelectedProviderAccounts/);
+  assert.match(source, /pauseSelectedProviderAccounts/);
+  assert.match(source, /resetSelectedProviderAccountStatus/);
   assert.match(source, /clearProviderAccountSelection/);
   assert.match(source, />\s*Test selected\s*</);
+  assert.match(source, />\s*Pause selected\s*</);
+  assert.match(source, />\s*Reset selected\s*</);
   assert.match(source, />\s*Enable selected\s*</);
   assert.match(source, />\s*Disable selected\s*</);
   assert.match(source, />\s*Apply scheduling\s*</);
