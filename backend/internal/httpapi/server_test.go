@@ -293,13 +293,17 @@ func (s *fakeProviderService) CreateAPIUpstreamAccount(_ context.Context, input 
 	if strings.TrimSpace(input.Name) == "" || strings.TrimSpace(input.BaseURL) == "" || strings.TrimSpace(input.APIKey) == "" {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
 	account := provider.Account{
 		ID:          int64(len(s.accounts) + 1),
 		Provider:    "openai",
 		AccountType: provider.AccountTypeAPIUpstream,
 		Name:        strings.TrimSpace(input.Name),
 		DisplayName: strings.TrimSpace(input.Name),
-		Enabled:     input.Enabled,
+		Enabled:     enabled,
 		Priority:    input.Priority,
 		Status:      provider.AccountStatusActive,
 		Credential: provider.AccountCredential{
@@ -1193,7 +1197,7 @@ func TestCreateAPIUpstreamAccount(t *testing.T) {
 	if providers.createdAPIUpstream.Name != " Upstream " || providers.createdAPIUpstream.BaseURL != "https://upstream.example.test/v1/" || providers.createdAPIUpstream.APIKey != " secret " {
 		t.Fatalf("created input = %+v", providers.createdAPIUpstream)
 	}
-	if !providers.createdAPIUpstream.Enabled || providers.createdAPIUpstream.Priority != 8 || len(providers.createdAPIUpstream.Models) != 2 {
+	if providers.createdAPIUpstream.Enabled == nil || !*providers.createdAPIUpstream.Enabled || providers.createdAPIUpstream.Priority != 8 || len(providers.createdAPIUpstream.Models) != 2 {
 		t.Fatalf("created input scheduling/models = %+v", providers.createdAPIUpstream)
 	}
 	var body struct {
@@ -1222,8 +1226,17 @@ func TestCreateAPIUpstreamAccountDefaultsEnabledWhenOmitted(t *testing.T) {
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
 	}
-	if !providers.createdAPIUpstream.Enabled {
-		t.Fatalf("created input enabled = false, want omitted enabled to default true: %+v", providers.createdAPIUpstream)
+	if providers.createdAPIUpstream.Enabled != nil {
+		t.Fatalf("created input enabled = %v, want omitted enabled to remain nil for service defaulting", *providers.createdAPIUpstream.Enabled)
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !body.Account.Enabled {
+		t.Fatalf("response account enabled = false, want service default true")
 	}
 }
 
@@ -1239,8 +1252,8 @@ func TestCreateAPIUpstreamAccountPreservesExplicitDisabled(t *testing.T) {
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
 	}
-	if providers.createdAPIUpstream.Enabled {
-		t.Fatalf("created input enabled = true, want explicit false to be preserved: %+v", providers.createdAPIUpstream)
+	if providers.createdAPIUpstream.Enabled == nil || *providers.createdAPIUpstream.Enabled {
+		t.Fatalf("created input enabled = %+v, want explicit false to be preserved", providers.createdAPIUpstream.Enabled)
 	}
 }
 
@@ -2522,6 +2535,22 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 	if body.SelectedAccountID != 8 || len(body.Candidates) != 2 || !body.Candidates[0].Selected {
 		t.Fatalf("preview = %+v, want selected sticky candidate", body)
+	}
+}
+
+func TestModelRoutingPreviewRequiresModel(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?sessionId=workspace-123", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "bad_request") {
+		t.Fatalf("body = %q, want bad_request", recorder.Body.String())
 	}
 }
 

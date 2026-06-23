@@ -432,15 +432,11 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		enabled := true
-		if req.Enabled != nil {
-			enabled = *req.Enabled
-		}
 		account, err := providers.CreateAPIUpstreamAccount(r.Context(), provider.APIUpstreamInput{
 			Name:     req.Name,
 			BaseURL:  req.BaseURL,
 			APIKey:   req.APIKey,
-			Enabled:  enabled,
+			Enabled:  req.Enabled,
 			Priority: req.Priority,
 			Models:   req.Models,
 		})

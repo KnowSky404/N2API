@@ -1327,7 +1327,7 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 		Name:     "  OpenAI proxy  ",
 		BaseURL:  "https://upstream.example.test/v1/ ",
 		APIKey:   " upstream-secret ",
-		Enabled:  true,
+		Enabled:  boolPtr(true),
 		Priority: 12,
 		Models: []string{
 			" gpt-5 ",
@@ -1368,6 +1368,26 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 	}
 	if got := modelNamesAndEnabled(models); strings.Join(got, ",") != "gpt-4.1:true,gpt-5:true" {
 		t.Fatalf("models = %v, want enabled normalized models", got)
+	}
+}
+
+func TestCreateAPIUpstreamAccountDefaultsEnabledWhenOmitted(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:    "OpenAI proxy",
+		BaseURL: "https://upstream.example.test/v1",
+		APIKey:  "upstream-secret",
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+	if !repo.lastSavedAccount.Enabled {
+		t.Fatalf("raw saved account.Enabled = false, want service to default omitted enabled before persistence")
+	}
+	if !account.Enabled {
+		t.Fatalf("account.Enabled = false, want omitted enabled to default true")
 	}
 }
 
@@ -1486,6 +1506,7 @@ type memoryRepo struct {
 	markAccountErrorErr error
 	markAccountUsedErr  error
 	replaceModelsErr    error
+	lastSavedAccount    Account
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -1577,6 +1598,7 @@ func (r *memoryRepo) FindAccountByIdentity(ctx context.Context, providerName str
 
 func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account, error) {
 	r.saveCount++
+	r.lastSavedAccount = account
 	normalizeMemoryAccount(&account)
 	now := time.Now()
 	for i := range r.accounts {

@@ -205,7 +205,7 @@ type APIUpstreamInput struct {
 	Name     string   `json:"name"`
 	BaseURL  string   `json:"baseUrl"`
 	APIKey   string   `json:"apiKey"`
-	Enabled  bool     `json:"enabled"`
+	Enabled  *bool    `json:"enabled"`
 	Priority int      `json:"priority"`
 	Models   []string `json:"models"`
 }
@@ -717,12 +717,16 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	if err != nil {
 		return Account{}, err
 	}
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
 	account, err := s.repo.SaveAccount(ctx, Account{
 		Provider:    s.cfg.Provider,
 		AccountType: AccountTypeAPIUpstream,
 		Name:        name,
 		DisplayName: name,
-		Enabled:     input.Enabled,
+		Enabled:     enabled,
 		Priority:    input.Priority,
 		Status:      AccountStatusActive,
 		Credential: AccountCredential{
