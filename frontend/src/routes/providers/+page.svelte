@@ -51,6 +51,7 @@
     toggleProviderAccountSelection,
     updateProviderAccount,
     updateProviderAccountLoadFactor,
+    updateProviderAccountMaxConcurrentRequests,
     updateProviderAccountName,
     updateProviderAccountPriority,
     usage
@@ -700,6 +701,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           disabled={providerAccounts.saving}
         />
       </label>
+      <label class="grid w-40 gap-1 text-xs font-medium text-[#3c3c3c]">
+        Bulk max concurrency
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+          type="number"
+          min="0"
+          step="1"
+          bind:value={providerAccountBulkSchedulingForm.maxConcurrentRequests}
+          disabled={providerAccounts.saving}
+        />
+      </label>
       <button
         class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
@@ -737,7 +749,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
   </div>
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1320px] text-left text-sm">
+    <table class="w-full min-w-[1420px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="w-12 px-4 py-3 font-medium">Select</th>
@@ -767,6 +779,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         Load factor<span class="text-[11px]">{sortIndicator('loadFactor')}</span>
       </button>
     </th>
+    <th class="w-32 px-4 py-3 font-medium">Max concurrency</th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('expires')}>
       <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('expires')}>
         Token expiry<span class="text-[11px]">{sortIndicator('expires')}</span>
@@ -789,15 +802,15 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">Loading provider accounts...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="13">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">No provider accounts connected yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="13">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">No accounts match your search.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="13">No accounts match your search.</td>
     </tr>
   {:else}
     {#each filteredProviderAccounts as account}
@@ -957,6 +970,21 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             value={account.loadFactor || 1}
             disabled={providerAccounts.saving}
             onchange={(event) => updateProviderAccountLoadFactor(account, event)}
+          />
+        </td>
+        <td class="px-4 py-3 align-middle">
+          <label class="sr-only" for={`provider-account-max-concurrency-${account.id}`}>
+            Max concurrency for {accountLabel(account)}
+          </label>
+          <input
+            id={`provider-account-max-concurrency-${account.id}`}
+            class="w-24 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+            type="number"
+            min="0"
+            step="1"
+            value={account.maxConcurrentRequests || 0}
+            disabled={providerAccounts.saving}
+            onchange={(event) => updateProviderAccountMaxConcurrentRequests(account, event)}
           />
         </td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
@@ -1128,7 +1156,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       </tr>
       {#if historyState.expanded}
         <tr class="bg-[#fafafa]">
-          <td class="px-4 py-4" colspan="12">
+          <td class="px-4 py-4" colspan="13">
             <div class="rounded-lg border border-[#ededed] bg-white p-4">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="text-sm font-semibold text-[#0d0d0d]">Recent test history</h3>

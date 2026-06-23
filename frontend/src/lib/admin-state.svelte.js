@@ -37,6 +37,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} enabled
  * @property {number} priority
  * @property {number} loadFactor
+ * @property {number} maxConcurrentRequests
  * @property {string} status
  * @property {string} statusReason
  * @property {string | null} circuitOpenUntil
@@ -256,7 +257,7 @@ export const provider = $state({
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
 export const providerConnectForm = $state({ name: '', priority: 100, enabled: true });
 export const providerAccountPauseForm = $state({ durationSeconds: 300 });
-export const providerAccountBulkSchedulingForm = $state({ priority: '', loadFactor: '' });
+export const providerAccountBulkSchedulingForm = $state({ priority: '', loadFactor: '', maxConcurrentRequests: '' });
 export const providerAccountBulkModelsForm = $state({ text: '' });
 export const providerOAuth = $state({ authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
 export const apiUpstreamForm = $state({
@@ -492,6 +493,7 @@ export function clearProviderAccountSelection() {
 export function clearProviderAccountBulkSchedulingForm() {
   providerAccountBulkSchedulingForm.priority = '';
   providerAccountBulkSchedulingForm.loadFactor = '';
+  providerAccountBulkSchedulingForm.maxConcurrentRequests = '';
 }
 
 export function clearProviderAccountBulkModelsForm() {
@@ -1277,7 +1279,7 @@ export async function completeProviderCallback() {
 
 /**
  * @param {ProviderAccount} account
- * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'name' | 'baseUrl'>> & { apiKey?: string }} patch
+ * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'maxConcurrentRequests' | 'name' | 'baseUrl'>> & { apiKey?: string }} patch
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
@@ -1351,10 +1353,11 @@ export async function bulkUpdateSelectedProviderAccountScheduling() {
     return;
   }
 
-  /** @type {{ accountIds: number[], priority?: number, loadFactor?: number }} */
+  /** @type {{ accountIds: number[], priority?: number, loadFactor?: number, maxConcurrentRequests?: number }} */
   const payload = { accountIds };
   const priorityText = String(providerAccountBulkSchedulingForm.priority ?? '').trim();
   const loadFactorText = String(providerAccountBulkSchedulingForm.loadFactor ?? '').trim();
+  const maxConcurrentRequestsText = String(providerAccountBulkSchedulingForm.maxConcurrentRequests ?? '').trim();
   if (priorityText) {
     const priority = Number(priorityText);
     if (!/^\d+$/.test(priorityText) || !Number.isInteger(priority) || priority < 0) {
@@ -1371,8 +1374,16 @@ export async function bulkUpdateSelectedProviderAccountScheduling() {
     }
     payload.loadFactor = loadFactor;
   }
-  if (payload.priority === undefined && payload.loadFactor === undefined) {
-    providerAccounts.error = 'Enter a bulk priority or load factor';
+  if (maxConcurrentRequestsText) {
+    const maxConcurrentRequests = Number(maxConcurrentRequestsText);
+    if (!/^\d+$/.test(maxConcurrentRequestsText) || !Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 0) {
+      providerAccounts.error = 'Bulk max concurrency must be a non-negative whole number';
+      return;
+    }
+    payload.maxConcurrentRequests = maxConcurrentRequests;
+  }
+  if (payload.priority === undefined && payload.loadFactor === undefined && payload.maxConcurrentRequests === undefined) {
+    providerAccounts.error = 'Enter a bulk priority, load factor, or max concurrency';
     return;
   }
 
@@ -1530,6 +1541,23 @@ export async function updateProviderAccountLoadFactor(account, event) {
   }
 
   await updateProviderAccount(account, { loadFactor });
+}
+
+/**
+ * @param {ProviderAccount} account
+ * @param {Event & { currentTarget: HTMLInputElement }} event
+ */
+export async function updateProviderAccountMaxConcurrentRequests(account, event) {
+  const rawValue = event.currentTarget.value.trim();
+  const maxConcurrentRequests = Number(rawValue);
+
+  if (!/^\d+$/.test(rawValue) || !Number.isInteger(maxConcurrentRequests) || maxConcurrentRequests < 0) {
+    providerAccounts.error = 'Max concurrency must be a non-negative whole number';
+    event.currentTarget.value = String(account.maxConcurrentRequests || 0);
+    return;
+  }
+
+  await updateProviderAccount(account, { maxConcurrentRequests });
 }
 
 /** @param {ProviderAccount} account */
