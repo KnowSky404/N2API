@@ -10,6 +10,8 @@
     formatDate,
     getAccountModelsState,
     getProviderStateLabel,
+    getSchedulableProviderAccounts,
+    getUnschedulableProviderAccountSummary,
     loadProviderAccounts,
     login,
     loginForm,
@@ -34,6 +36,8 @@
   let accountSort = $state({ key: 'priority', direction: 'asc' });
 
   const providerStateLabel = $derived(getProviderStateLabel());
+  const schedulableProviderAccounts = $derived(getSchedulableProviderAccounts());
+  const unschedulableProviderAccountSummary = $derived(getUnschedulableProviderAccountSummary());
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
       providerAccounts.items.filter((account) => {
@@ -234,6 +238,28 @@ class={[
 </p>
     </article>
   </div>
+
+  <section class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+    <h3 class="text-base font-semibold text-[#0d0d0d]">Scheduling capacity</h3>
+    <div class="mt-3 grid gap-3 sm:grid-cols-2">
+      <article class="rounded-md border border-[#ededed] bg-white p-3">
+        <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Schedulable</p>
+        <p class="mt-2 text-lg font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableProviderAccounts.length}</p>
+      </article>
+      <article class="rounded-md border border-[#ededed] bg-white p-3">
+        <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Blocked</p>
+        <p class="mt-2 text-lg font-semibold text-[#0d0d0d]">
+          {providerAccounts.loading ? 'Loading' : providerAccounts.items.length - schedulableProviderAccounts.length}
+        </p>
+        {#if !providerAccounts.loading && unschedulableProviderAccountSummary.length > 0}
+          <p class="mt-3 text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Blocked reasons</p>
+          <p class="mt-2 text-xs text-[#6e6e6e]">
+            {unschedulableProviderAccountSummary.map((item) => `${item.reasonLabel}: ${item.count}`).join(' · ')}
+          </p>
+        {/if}
+      </article>
+    </div>
+  </section>
 
   <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
     <p class="text-sm text-[#6e6e6e]">

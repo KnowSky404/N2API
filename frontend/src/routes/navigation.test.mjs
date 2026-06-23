@@ -16,6 +16,7 @@ const expectedFiles = [
 const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
 const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
 const gatewayPage = readFileSync('src/routes/gateway/+page.svelte', 'utf8');
+const providersPage = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
@@ -131,6 +132,17 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /account\.schedulable/);
   assert.match(modelsPage, /account\.unschedulableReason/);
   assert.match(modelsPage, /No schedulable account/);
+});
+
+test('providers page summarizes account scheduling capacity', () => {
+  for (const label of ['Scheduling capacity', 'Schedulable', 'Blocked', 'Blocked reasons']) {
+    assert.match(providersPage, new RegExp(label.replace(' ', '\\s+')), `providers page should include ${label}`);
+  }
+
+  assert.match(providersPage, /getSchedulableProviderAccounts/);
+  assert.match(providersPage, /getUnschedulableProviderAccountSummary/);
+  assert.match(providersPage, /schedulableProviderAccounts\.length/);
+  assert.match(providersPage, /unschedulableProviderAccountSummary/);
 });
 
 test('dashboard shows gateway scheduling capacity', () => {
