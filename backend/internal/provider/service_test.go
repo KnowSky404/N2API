@@ -1304,6 +1304,42 @@ func TestSelectAccountForModelAndSessionKeepsStickySelectionInsideHighestPriorit
 	}
 }
 
+func TestSelectAccountForModelAndSessionDoesNotPromoteErroredPriorityPeer(t *testing.T) {
+	now := time.Now()
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "errored-token"),
+		testAccount(t, 2, true, 1, "clean-token"),
+	}
+	repo.accounts[0].LastError = "temporary failure"
+	repo.accounts[0].LastErrorAt = &now
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	sessionID := ""
+	for i := 0; i < 100; i++ {
+		candidate := "workspace-" + strconv.Itoa(i)
+		if stickyAccountIndex(candidate, 2) == 0 {
+			sessionID = candidate
+			break
+		}
+	}
+	if sessionID == "" {
+		t.Fatal("could not find deterministic sticky session fixture")
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", sessionID)
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSession returned error: %v", err)
+	}
+	if selected.AccountID != 2 {
+		t.Fatalf("selected account = %d, want clean account 2 before errored peer", selected.AccountID)
+	}
+}
+
 func TestPreviewAccountSelectionUsesStickySessionWithoutMarkingAccountUsed(t *testing.T) {
 	older := time.Now().Add(-time.Hour)
 	repo := newMemoryRepo()

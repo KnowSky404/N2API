@@ -1053,8 +1053,9 @@ func stickySessionCandidates(accounts []Account, sessionID string) []Account {
 	}
 
 	priority := accounts[0].Priority
+	hasError := accounts[0].LastErrorAt != nil
 	groupEnd := 0
-	for groupEnd < len(accounts) && accounts[groupEnd].Priority == priority {
+	for groupEnd < len(accounts) && accounts[groupEnd].Priority == priority && (accounts[groupEnd].LastErrorAt != nil) == hasError {
 		groupEnd++
 	}
 	if groupEnd <= 1 {
