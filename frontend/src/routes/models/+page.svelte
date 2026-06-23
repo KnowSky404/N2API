@@ -66,6 +66,11 @@
         .entries()
     )
   );
+  const selectedPreviewAccount = $derived(
+    modelRoutingPreview.result?.candidates.find((account) => account.selected) ??
+      modelRoutingPreview.result?.candidates.find((account) => account.id === modelRoutingPreview.result?.selectedAccountId) ??
+      null
+  );
 </script>
 
 <svelte:head>
@@ -234,7 +239,14 @@
             <div>
               <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Selected account</p>
               <p class="mt-1 text-sm font-semibold text-[#0d0d0d]">
-                Account {modelRoutingPreview.result.selectedAccountId}
+                {#if selectedPreviewAccount}
+                  {selectedPreviewAccount.displayName || `Account ${selectedPreviewAccount.id}`}
+                  <span class="font-normal text-[#6e6e6e]">
+                    {accountTypeLabel(selectedPreviewAccount.accountType)} · ID {selectedPreviewAccount.id}
+                  </span>
+                {:else}
+                  Account {modelRoutingPreview.result.selectedAccountId}
+                {/if}
                 {#if modelRoutingPreview.result.sessionId}
                   for session {modelRoutingPreview.result.sessionId}
                 {/if}
