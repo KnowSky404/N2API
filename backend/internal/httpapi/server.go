@@ -878,8 +878,9 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 		if err != nil {
 			return admin.ModelRoutingStatus{}, err
 		}
-		accountEnabled := provider.AccountSchedulable(account, now)
+		accountReady := provider.AccountSchedulable(account, now)
 		for _, model := range models {
+			modelEnabled := model.Enabled
 			index, ok := modelIndexes[model.Model]
 			if !ok {
 				status.Models = append(status.Models, admin.ModelRoutingModel{
@@ -893,18 +894,21 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 				}
 			}
 			status.Models[index].ConfiguredCount++
-			if accountEnabled && model.Enabled {
+			schedulable := accountReady && modelEnabled
+			if schedulable {
 				status.Models[index].EnabledCount++
-				status.Models[index].Accounts = append(status.Models[index].Accounts, admin.ModelRoutingAccount{
-					ID:          account.ID,
-					DisplayName: account.DisplayName,
-					AccountType: account.AccountType,
-					Enabled:     account.Enabled,
-					Priority:    account.Priority,
-					Status:      account.Status,
-					LastUsedAt:  account.LastUsedAt,
-				})
 			}
+			status.Models[index].Accounts = append(status.Models[index].Accounts, admin.ModelRoutingAccount{
+				ID:                  account.ID,
+				DisplayName:         account.DisplayName,
+				AccountType:         account.AccountType,
+				Enabled:             account.Enabled,
+				Priority:            account.Priority,
+				Status:              account.Status,
+				LastUsedAt:          account.LastUsedAt,
+				Schedulable:         schedulable,
+				UnschedulableReason: modelRoutingUnschedulableReason(account, modelEnabled, now),
+			})
 		}
 	}
 	for i := range status.Models {
@@ -932,6 +936,39 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 	return status, nil
 }
 
+func modelRoutingUnschedulableReason(account provider.Account, modelEnabled bool, now time.Time) string {
+	if !modelEnabled {
+		return "model disabled"
+	}
+	if !account.Enabled {
+		return "account disabled"
+	}
+	switch account.Status {
+	case "", provider.AccountStatusActive:
+	case provider.AccountStatusRateLimited:
+		if account.RateLimitedUntil == nil || account.RateLimitedUntil.After(now) {
+			return "rate limited"
+		}
+	case provider.AccountStatusCircuitOpen:
+		if account.CircuitOpenUntil == nil || account.CircuitOpenUntil.After(now) {
+			return "circuit open"
+		}
+	case provider.AccountStatusDisabled:
+		return "account disabled"
+	case provider.AccountStatusExpired:
+		return "account expired"
+	default:
+		return "status " + account.Status
+	}
+	if account.RateLimitedUntil != nil && account.RateLimitedUntil.After(now) {
+		return "rate limited"
+	}
+	if account.CircuitOpenUntil != nil && account.CircuitOpenUntil.After(now) {
+		return "circuit open"
+	}
+	return ""
+}
+
 func sortModelRoutingAccounts(accounts []admin.ModelRoutingAccount, sourceAccounts []provider.Account) {
 	accountIndexes := make(map[int64]provider.Account, len(sourceAccounts))
 	for _, account := range sourceAccounts {
@@ -940,6 +977,9 @@ func sortModelRoutingAccounts(accounts []admin.ModelRoutingAccount, sourceAccoun
 	sort.SliceStable(accounts, func(i, j int) bool {
 		left := accountIndexes[accounts[i].ID]
 		right := accountIndexes[accounts[j].ID]
+		if accounts[i].Schedulable != accounts[j].Schedulable {
+			return accounts[i].Schedulable
+		}
 		if left.Priority != right.Priority {
 			return left.Priority < right.Priority
 		}

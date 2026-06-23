@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -2198,6 +2199,75 @@ func TestModelRoutingStatusEnabledCountUsesSchedulableAccountRules(t *testing.T)
 	}
 }
 
+func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5"}}
+	now := time.Now()
+	future := now.Add(time.Hour)
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Disabled", Enabled: false, Status: provider.AccountStatusActive},
+		{ID: 8, Provider: "openai", DisplayName: "Expired", Enabled: true, Status: provider.AccountStatusExpired},
+		{ID: 9, Provider: "openai", DisplayName: "Limited", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
+		{ID: 10, Provider: "openai", DisplayName: "Model off", Enabled: true, Status: provider.AccountStatusActive},
+	}
+	for _, account := range providers.accounts {
+		providers.accountModels[account.ID] = []provider.AccountModel{
+			{AccountID: account.ID, Provider: "openai", Model: "gpt-5", Enabled: account.ID != 10, Source: provider.AccountModelSourceManual},
+		}
+	}
+	providers.exposedModels = []provider.ExposedModel{}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Models []struct {
+			Model    string `json:"model"`
+			Accounts []struct {
+				ID                  int64  `json:"id"`
+				Schedulable         bool   `json:"schedulable"`
+				UnschedulableReason string `json:"unschedulableReason"`
+			} `json:"accounts"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 1 || body.Models[0].Model != "gpt-5" {
+		t.Fatalf("models = %+v, want gpt-5 only", body.Models)
+	}
+	reasons := map[int64]string{}
+	schedulable := map[int64]bool{}
+	for _, account := range body.Models[0].Accounts {
+		reasons[account.ID] = account.UnschedulableReason
+		schedulable[account.ID] = account.Schedulable
+	}
+	wantReasons := map[int64]string{
+		7:  "account disabled",
+		8:  "account expired",
+		9:  "rate limited",
+		10: "model disabled",
+	}
+	if !slices.Equal(slices.Sorted(maps.Keys(reasons)), []int64{7, 8, 9, 10}) {
+		t.Fatalf("account ids = %+v, want all configured accounts", reasons)
+	}
+	for id, want := range wantReasons {
+		if schedulable[id] {
+			t.Fatalf("account %d schedulable = true, want false", id)
+		}
+		if reasons[id] != want {
+			t.Fatalf("account %d reason = %q, want %q", id, reasons[id], want)
+		}
+	}
+}
+
 func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5"}}
@@ -2240,6 +2310,7 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 				Priority    int    `json:"priority"`
 				Status      string `json:"status"`
 				LastUsedAt  string `json:"lastUsedAt"`
+				Schedulable bool   `json:"schedulable"`
 			} `json:"accounts"`
 		} `json:"models"`
 	}
@@ -2250,11 +2321,21 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 		t.Fatalf("models = %+v, want gpt-5 only", body.Models)
 	}
 	accounts := body.Models[0].Accounts
-	if len(accounts) != 3 {
-		t.Fatalf("accounts = %+v, want three schedulable model accounts", accounts)
+	if len(accounts) != 5 {
+		t.Fatalf("accounts = %+v, want five configured model accounts", accounts)
 	}
 	if accounts[0].ID != 8 || accounts[1].ID != 7 || accounts[2].ID != 9 {
 		t.Fatalf("account order = %+v, want last-used then priority order [8 7 9]", accounts)
+	}
+	for index, account := range accounts[:3] {
+		if !account.Schedulable {
+			t.Fatalf("account %d at index %d schedulable = false, want true", account.ID, index)
+		}
+	}
+	for index, account := range accounts[3:] {
+		if account.Schedulable {
+			t.Fatalf("account %d at trailing index %d schedulable = true, want false", account.ID, index)
+		}
 	}
 	if accounts[0].DisplayName != "Older same priority" || accounts[0].AccountType != provider.AccountTypeAPIUpstream || !accounts[0].Enabled || accounts[0].Priority != 1 || accounts[0].Status != provider.AccountStatusActive {
 		t.Fatalf("first account summary = %+v", accounts[0])

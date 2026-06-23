@@ -169,12 +169,21 @@
                     {#if model.accounts?.length}
                       <div class="flex flex-wrap gap-2">
                         {#each model.accounts as account}
-                          <span class="inline-flex max-w-[260px] items-center gap-2 rounded-md border border-[#ededed] bg-[#fafafa] px-2.5 py-1.5 text-xs text-[#3c3c3c]">
+                          <span
+                            class={[
+                              'inline-flex max-w-[300px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
+                              account.schedulable
+                                ? 'border-[#ededed] bg-[#fafafa] text-[#3c3c3c]'
+                                : 'border-amber-200 bg-amber-50 text-amber-800'
+                            ]}
+                          >
                             <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
                             <span class="text-[#6e6e6e]">{accountTypeLabel(account.accountType)}</span>
                             <span class="text-[#6e6e6e]">Priority {account.priority}</span>
                             <span class="text-[#6e6e6e]">Used {formatDate(account.lastUsedAt)}</span>
-                            <span class="text-[#6e6e6e]">{statusLabel(account.status)}</span>
+                            <span class={account.schedulable ? 'text-[#6e6e6e]' : 'font-medium text-amber-800'}>
+                              {account.schedulable ? statusLabel(account.status) : account.unschedulableReason}
+                            </span>
                           </span>
                         {/each}
                       </div>

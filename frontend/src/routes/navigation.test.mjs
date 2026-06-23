@@ -13,6 +13,7 @@ const expectedFiles = [
 ];
 
 const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
+const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {
   for (const file of expectedFiles) {
@@ -67,4 +68,10 @@ test('request logs page includes usage accounting UI', () => {
   for (const label of ['Usage summary', 'Estimated cost', 'Input tokens', 'Output tokens', 'Pricing']) {
     assert.match(requestLogsPage, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
   }
+});
+
+test('models page shows scheduling diagnostics for routing candidates', () => {
+  assert.match(modelsPage, /account\.schedulable/);
+  assert.match(modelsPage, /account\.unschedulableReason/);
+  assert.match(modelsPage, /No schedulable account/);
 });

@@ -153,13 +153,15 @@ type ModelRoutingModel struct {
 }
 
 type ModelRoutingAccount struct {
-	ID          int64      `json:"id"`
-	DisplayName string     `json:"displayName"`
-	AccountType string     `json:"accountType"`
-	Enabled     bool       `json:"enabled"`
-	Priority    int        `json:"priority"`
-	Status      string     `json:"status"`
-	LastUsedAt  *time.Time `json:"lastUsedAt"`
+	ID                  int64      `json:"id"`
+	DisplayName         string     `json:"displayName"`
+	AccountType         string     `json:"accountType"`
+	Enabled             bool       `json:"enabled"`
+	Priority            int        `json:"priority"`
+	Status              string     `json:"status"`
+	LastUsedAt          *time.Time `json:"lastUsedAt"`
+	Schedulable         bool       `json:"schedulable"`
+	UnschedulableReason string     `json:"unschedulableReason"`
 }
 
 type CreatedAPIKey struct {

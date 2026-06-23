@@ -140,6 +140,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} priority
  * @property {string} status
  * @property {string | null} lastUsedAt
+ * @property {boolean} schedulable
+ * @property {string} unschedulableReason
  */
 
 /**
