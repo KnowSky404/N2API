@@ -25,6 +25,8 @@
   function statusLabel(value) {
     return value ? value.replaceAll('_', ' ') : 'active';
   }
+
+  const blockedModels = $derived(modelRouting.models.filter((model) => model.enabledCount === 0));
 </script>
 
 <svelte:head>
@@ -105,6 +107,26 @@
           <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Routable</p>
           <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{modelRouting.models.filter((model) => model.enabledCount > 0).length}</p>
         </div>
+      </div>
+      <div class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+        <h3 class="text-sm font-semibold text-[#0d0d0d]">Routing readiness</h3>
+        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Blocked models</p>
+            <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{blockedModels.length}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Ready models</p>
+            <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{modelRouting.models.length - blockedModels.length}</p>
+          </div>
+        </div>
+        {#if blockedModels.length > 0}
+          <p class="mt-3 text-sm text-amber-800">
+            {blockedModels.map((model) => model.model).join(', ')} cannot receive model-routed traffic yet.
+          </p>
+        {:else}
+          <p class="mt-3 text-sm text-[#0a7a5e]">All configured routing models have at least one schedulable account.</p>
+        {/if}
       </div>
     </section>
 
