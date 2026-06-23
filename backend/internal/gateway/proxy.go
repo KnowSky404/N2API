@@ -294,7 +294,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if !allowed {
 			errorCode = "model_not_found"
-			writeOpenAIError(recorder, http.StatusBadRequest, errorCode, "requested model is not available")
+			writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
 			return
 		}
 	}
