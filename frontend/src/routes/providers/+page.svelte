@@ -2,6 +2,8 @@
   import {
     accountLabel,
     accountTypeLabel,
+    bulkUpdateSelectedProviderAccounts,
+    clearProviderAccountSelection,
     completeProviderCallback,
     connectProvider,
     copyAuthorizationURL,
@@ -32,11 +34,13 @@
     resetProviderAccountStatus,
     saveAccountModels,
     session,
+    selectedProviderAccountIds,
     setAccountModelEnabled,
     statusLabel,
     testAllProviderAccounts,
     testProviderAccount,
     toggleAccountTestHistory,
+    toggleProviderAccountSelection,
     updateProviderAccount,
     updateProviderAccountLoadFactor,
     updateProviderAccountName,
@@ -52,6 +56,7 @@
   const schedulableProviderAccounts = $derived(getSchedulableProviderAccounts());
   const unschedulableProviderAccountSummary = $derived(getUnschedulableProviderAccountSummary());
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
+  const selectedProviderAccountCount = $derived(Object.keys(selectedProviderAccountIds).length);
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
       providerAccounts.items.filter((account) => {
@@ -609,15 +614,45 @@ Search
   bind:value={accountSearch}
 />
     </label>
-    <p class="pb-2 text-sm text-[#6e6e6e]">
+    <div class="flex flex-wrap items-center justify-end gap-2 pb-1">
+      <p class="mr-2 text-sm text-[#6e6e6e]">
 Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
-    </p>
+        {#if selectedProviderAccountCount > 0}
+          · {selectedProviderAccountCount} selected
+        {/if}
+      </p>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
+        onclick={() => bulkUpdateSelectedProviderAccounts(true)}
+      >
+        Enable selected
+      </button>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
+        onclick={() => bulkUpdateSelectedProviderAccounts(false)}
+      >
+        Disable selected
+      </button>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
+        onclick={clearProviderAccountSelection}
+      >
+        Clear selection
+      </button>
+    </div>
   </div>
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
     <table class="w-full min-w-[1320px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
+    <th class="w-12 px-4 py-3 font-medium">Select</th>
     <th class="px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('account')}>
       <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('account')}>
         Account<span class="text-[11px]">{sortIndicator('account')}</span>
@@ -666,15 +701,15 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">Loading provider accounts...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">No provider accounts connected yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">No accounts match your search.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">No accounts match your search.</td>
     </tr>
   {:else}
     {#each filteredProviderAccounts as account}
@@ -682,6 +717,18 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       {@const historyState = getAccountTestResultsState(account.id)}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
       <tr class="bg-white align-top">
+        <td class="px-4 py-3 align-middle">
+          <label class="inline-flex items-center">
+            <input
+              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
+              type="checkbox"
+              checked={Boolean(selectedProviderAccountIds[account.id])}
+              disabled={providerAccounts.saving}
+              onchange={(event) => toggleProviderAccountSelection(account.id, event.currentTarget.checked)}
+            />
+            <span class="sr-only">Select {accountLabel(account)}</span>
+          </label>
+        </td>
         <td class="px-4 py-3 align-middle" title={accountHoverDetail(account)}>
           <label class="sr-only" for={`provider-account-name-${account.id}`}>
             Account name for {accountLabel(account)}
@@ -993,7 +1040,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       </tr>
       {#if historyState.expanded}
         <tr class="bg-[#fafafa]">
-          <td class="px-4 py-4" colspan="11">
+          <td class="px-4 py-4" colspan="12">
             <div class="rounded-lg border border-[#ededed] bg-white p-4">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="text-sm font-semibold text-[#0d0d0d]">Recent test history</h3>

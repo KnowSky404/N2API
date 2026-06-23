@@ -301,6 +301,18 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /sticky right-0/);
 });
 
+test('provider account table exposes bulk selection controls', () => {
+  assert.match(source, /selectedProviderAccountIds/);
+  assert.match(source, /toggleProviderAccountSelection/);
+  assert.match(source, /bulkUpdateSelectedProviderAccounts\(true\)/);
+  assert.match(source, /bulkUpdateSelectedProviderAccounts\(false\)/);
+  assert.match(source, /clearProviderAccountSelection/);
+  assert.match(source, />\s*Enable selected\s*</);
+  assert.match(source, />\s*Disable selected\s*</);
+  assert.match(source, />\s*Clear selection\s*</);
+  assert.match(source, /Select \{accountLabel\(account\)\}/);
+});
+
 test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /role="switch"/);
   assert.match(source, /Load factor/);
