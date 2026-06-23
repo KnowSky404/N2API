@@ -17,6 +17,7 @@ type AdminRepository struct {
 }
 
 const modelSettingsKey = "model_settings"
+const usagePricingKey = "usage_pricing"
 
 func NewAdminRepository(pool *pgxpool.Pool) *AdminRepository {
 	return &AdminRepository{pool: pool}
@@ -517,6 +518,45 @@ func (r *AdminRepository) GetModelSettings(ctx context.Context) (admin.ModelSett
 		return admin.ModelSettings{}, err
 	}
 	return settings, nil
+}
+
+func (r *AdminRepository) GetUsagePricing(ctx context.Context) (admin.UsagePricing, error) {
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `
+		SELECT value
+		FROM settings
+		WHERE key = $1
+	`, usagePricingKey).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.UsagePricing{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.UsagePricing{}, err
+	}
+
+	var pricing admin.UsagePricing
+	if err := json.Unmarshal(raw, &pricing); err != nil {
+		return admin.UsagePricing{}, err
+	}
+	return pricing, nil
+}
+
+func (r *AdminRepository) SaveUsagePricing(ctx context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error) {
+	value, err := json.Marshal(pricing)
+	if err != nil {
+		return admin.UsagePricing{}, err
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE
+		SET value = EXCLUDED.value,
+			updated_at = now()
+	`, usagePricingKey, value)
+	if err != nil {
+		return admin.UsagePricing{}, err
+	}
+	return pricing, nil
 }
 
 func (r *AdminRepository) SaveModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error) {

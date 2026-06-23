@@ -40,6 +40,7 @@ type fakeAdminService struct {
 	usageSummary       admin.UsageSummary
 	usageRange         string
 	usageGroupBy       string
+	usagePricing       admin.UsagePricing
 }
 
 type fakeProviderService struct {
@@ -171,6 +172,18 @@ func (s *fakeAdminService) GetUsageSummary(_ context.Context, rangeName, groupBy
 		return admin.UsageSummary{}, admin.ErrInvalidInput
 	}
 	return s.usageSummary, nil
+}
+
+func (s *fakeAdminService) GetUsagePricing(_ context.Context) (admin.UsagePricing, error) {
+	return s.usagePricing, nil
+}
+
+func (s *fakeAdminService) UpdateUsagePricing(_ context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error) {
+	if strings.TrimSpace(pricing.Currency) != "USD" || strings.TrimSpace(pricing.Unit) != "1M_tokens" || len(pricing.Models) == 0 {
+		return admin.UsagePricing{}, admin.ErrInvalidInput
+	}
+	s.usagePricing = pricing
+	return pricing, nil
 }
 
 func (s *fakeAdminService) GetModelSettings(_ context.Context) (admin.ModelSettings, error) {
@@ -1818,6 +1831,84 @@ func TestUsageSummaryRejectsInvalidQuery(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUsagePricingRequiresSessionAndReturnsPricing(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.usagePricing = admin.UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]admin.UsagePrice{
+			"gpt-5": {InputMicrousdPerMillion: 1_000_000},
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/usage-pricing", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/usage-pricing", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body admin.UsagePricing
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Currency != "USD" || body.Models["gpt-5"].InputMicrousdPerMillion != 1_000_000 {
+		t.Fatalf("usage pricing = %+v", body)
+	}
+}
+
+func TestUpdateUsagePricingReturnsSavedPricing(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/usage-pricing", strings.NewReader(`{"version":1,"currency":"USD","unit":"1M_tokens","models":{"gpt-5":{"inputMicrousdPerMillion":1000000,"cachedInputMicrousdPerMillion":100000,"outputMicrousdPerMillion":4000000}}}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body admin.UsagePricing
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Models["gpt-5"].OutputMicrousdPerMillion != 4_000_000 {
+		t.Fatalf("usage pricing = %+v", body)
+	}
+}
+
+func TestUpdateUsagePricingReturnsBadRequestForInvalidInput(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/usage-pricing", strings.NewReader(`{"version":1,"currency":"EUR","unit":"1M_tokens","models":{"gpt-5":{}}}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "invalid_input" {
+		t.Fatalf("error = %q, want invalid_input", body["error"])
 	}
 }
 

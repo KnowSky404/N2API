@@ -33,6 +33,39 @@ func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
 	}
 }
 
+func TestAdminRepositoryUsagePricingSettings(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+
+	if _, err := repo.GetUsagePricing(ctx); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("GetUsagePricing empty error = %v, want ErrNotFound", err)
+	}
+
+	saved, err := repo.SaveUsagePricing(ctx, admin.UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]admin.UsagePrice{
+			"gpt-5": {
+				InputMicrousdPerMillion:       1_000_000,
+				CachedInputMicrousdPerMillion: 100_000,
+				OutputMicrousdPerMillion:      4_000_000,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveUsagePricing returned error: %v", err)
+	}
+
+	found, err := repo.GetUsagePricing(ctx)
+	if err != nil {
+		t.Fatalf("GetUsagePricing returned error: %v", err)
+	}
+	if found.Currency != saved.Currency || found.Unit != saved.Unit || found.Models["gpt-5"].OutputMicrousdPerMillion != 4_000_000 {
+		t.Fatalf("pricing = %+v, want saved pricing", found)
+	}
+}
+
 func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()

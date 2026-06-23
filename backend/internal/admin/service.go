@@ -15,6 +15,7 @@ const (
 	sessionTokenName          = "admin_session"
 	apiKeyTokenName           = "n2api"
 	defaultModel              = "gpt-4.1"
+	defaultUsagePricingModel  = "gpt-5"
 	maxModels                 = 100
 	maxModelNameLen           = 128
 	APIKeyModelPolicyAll      = "all"
@@ -98,6 +99,20 @@ type UsageSummaryRow struct {
 	EstimatedCostMicrousd int64  `json:"estimatedCostMicrousd"`
 }
 
+type UsagePricing struct {
+	Version   int                   `json:"version"`
+	Currency  string                `json:"currency"`
+	Unit      string                `json:"unit"`
+	UpdatedAt time.Time             `json:"updatedAt"`
+	Models    map[string]UsagePrice `json:"models"`
+}
+
+type UsagePrice struct {
+	InputMicrousdPerMillion       int64 `json:"inputMicrousdPerMillion"`
+	CachedInputMicrousdPerMillion int64 `json:"cachedInputMicrousdPerMillion"`
+	OutputMicrousdPerMillion      int64 `json:"outputMicrousdPerMillion"`
+}
+
 type ModelSettings struct {
 	DefaultModel  string   `json:"defaultModel"`
 	AllowedModels []string `json:"allowedModels"`
@@ -150,6 +165,8 @@ type Repository interface {
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error)
 	GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (UsageSummary, error)
+	GetUsagePricing(ctx context.Context) (UsagePricing, error)
+	SaveUsagePricing(ctx context.Context, pricing UsagePricing) (UsagePricing, error)
 	GetModelSettings(ctx context.Context) (ModelSettings, error)
 	SaveModelSettings(ctx context.Context, settings ModelSettings) (ModelSettings, error)
 }
@@ -420,6 +437,26 @@ func (s *UsageSummary) recalculateTotals() {
 	}
 }
 
+func (s *Service) GetUsagePricing(ctx context.Context) (UsagePricing, error) {
+	pricing, err := s.repo.GetUsagePricing(ctx)
+	if err == nil {
+		return normalizeUsagePricing(pricing)
+	}
+	if errors.Is(err, ErrNotFound) {
+		return defaultUsagePricing(), nil
+	}
+	return UsagePricing{}, err
+}
+
+func (s *Service) UpdateUsagePricing(ctx context.Context, pricing UsagePricing) (UsagePricing, error) {
+	normalized, err := normalizeUsagePricing(pricing)
+	if err != nil {
+		return UsagePricing{}, err
+	}
+	normalized.UpdatedAt = time.Now().UTC()
+	return s.repo.SaveUsagePricing(ctx, normalized)
+}
+
 func (s *Service) GetModelSettings(ctx context.Context) (ModelSettings, error) {
 	settings, err := s.repo.GetModelSettings(ctx)
 	if err == nil {
@@ -459,6 +496,59 @@ func (s *Service) IsModelAllowed(ctx context.Context, model string) (bool, error
 		}
 	}
 	return false, nil
+}
+
+func defaultUsagePricing() UsagePricing {
+	return UsagePricing{
+		Version:   1,
+		Currency:  "USD",
+		Unit:      "1M_tokens",
+		UpdatedAt: time.Now().UTC(),
+		Models: map[string]UsagePrice{
+			defaultUsagePricingModel: {},
+		},
+	}
+}
+
+func normalizeUsagePricing(pricing UsagePricing) (UsagePricing, error) {
+	version := pricing.Version
+	if version == 0 {
+		version = 1
+	}
+	currency := strings.ToUpper(strings.TrimSpace(pricing.Currency))
+	if currency == "" {
+		currency = "USD"
+	}
+	unit := strings.TrimSpace(pricing.Unit)
+	if unit == "" {
+		unit = "1M_tokens"
+	}
+	if version != 1 || currency != "USD" || unit != "1M_tokens" || len(pricing.Models) == 0 {
+		return UsagePricing{}, ErrInvalidInput
+	}
+
+	models := make(map[string]UsagePrice, len(pricing.Models))
+	for rawModel, price := range pricing.Models {
+		model := strings.TrimSpace(rawModel)
+		if model == "" || len(model) > maxModelNameLen {
+			return UsagePricing{}, ErrInvalidInput
+		}
+		if price.InputMicrousdPerMillion < 0 || price.CachedInputMicrousdPerMillion < 0 || price.OutputMicrousdPerMillion < 0 {
+			return UsagePricing{}, ErrInvalidInput
+		}
+		models[model] = price
+	}
+	if len(models) == 0 {
+		return UsagePricing{}, ErrInvalidInput
+	}
+
+	return UsagePricing{
+		Version:   version,
+		Currency:  currency,
+		Unit:      unit,
+		UpdatedAt: pricing.UpdatedAt,
+		Models:    models,
+	}, nil
 }
 
 func defaultModelSettings() ModelSettings {

@@ -415,6 +415,69 @@ func TestUpdateModelSettingsRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestUsagePricingDefaultAndUpdate(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	pricing, err := service.GetUsagePricing(context.Background())
+	if err != nil {
+		t.Fatalf("GetUsagePricing returned error: %v", err)
+	}
+	if pricing.Version != 1 || pricing.Currency != "USD" || pricing.Unit != "1M_tokens" {
+		t.Fatalf("default pricing = %+v, want version 1 USD per 1M_tokens", pricing)
+	}
+	if len(pricing.Models) == 0 {
+		t.Fatal("default pricing models is empty")
+	}
+
+	updated, err := service.UpdateUsagePricing(context.Background(), UsagePricing{
+		Version:  1,
+		Currency: " usd ",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			" gpt-5 ": {
+				InputMicrousdPerMillion:       1_000_000,
+				CachedInputMicrousdPerMillion: 100_000,
+				OutputMicrousdPerMillion:      4_000_000,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateUsagePricing returned error: %v", err)
+	}
+	if updated.Currency != "USD" || updated.Unit != "1M_tokens" || updated.Version != 1 {
+		t.Fatalf("updated pricing metadata = %+v", updated)
+	}
+	if updated.UpdatedAt.IsZero() {
+		t.Fatal("UpdatedAt is zero")
+	}
+	if _, ok := updated.Models["gpt-5"]; !ok {
+		t.Fatalf("Models = %+v, want trimmed gpt-5 key", updated.Models)
+	}
+}
+
+func TestUpdateUsagePricingRejectsInvalidInput(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	for _, tc := range []struct {
+		name    string
+		pricing UsagePricing
+	}{
+		{name: "bad currency", pricing: UsagePricing{Version: 1, Currency: "EUR", Unit: "1M_tokens", Models: map[string]UsagePrice{"gpt-5": {}}}},
+		{name: "bad unit", pricing: UsagePricing{Version: 1, Currency: "USD", Unit: "tokens", Models: map[string]UsagePrice{"gpt-5": {}}}},
+		{name: "empty models", pricing: UsagePricing{Version: 1, Currency: "USD", Unit: "1M_tokens"}},
+		{name: "empty model name", pricing: UsagePricing{Version: 1, Currency: "USD", Unit: "1M_tokens", Models: map[string]UsagePrice{" ": {}}}},
+		{name: "negative rate", pricing: UsagePricing{Version: 1, Currency: "USD", Unit: "1M_tokens", Models: map[string]UsagePrice{"gpt-5": {InputMicrousdPerMillion: -1}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := service.UpdateUsagePricing(context.Background(), tc.pricing); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("UpdateUsagePricing error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
 func TestModelPolicyHelpersReturnDefaultAndAllowedStatus(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -486,6 +549,7 @@ type memoryRepo struct {
 	lastUsageSince   time.Time
 	lastUsageGroupBy string
 	modelSettings    ModelSettings
+	usagePricing     UsagePricing
 }
 
 type memorySession struct {
@@ -660,4 +724,16 @@ func (r *memoryRepo) GetModelSettings(_ context.Context) (ModelSettings, error) 
 func (r *memoryRepo) SaveModelSettings(_ context.Context, settings ModelSettings) (ModelSettings, error) {
 	r.modelSettings = settings
 	return settings, nil
+}
+
+func (r *memoryRepo) GetUsagePricing(_ context.Context) (UsagePricing, error) {
+	if r.usagePricing.Version == 0 {
+		return UsagePricing{}, ErrNotFound
+	}
+	return r.usagePricing, nil
+}
+
+func (r *memoryRepo) SaveUsagePricing(_ context.Context, pricing UsagePricing) (UsagePricing, error) {
+	r.usagePricing = pricing
+	return pricing, nil
 }
