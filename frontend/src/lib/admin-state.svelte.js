@@ -1596,6 +1596,41 @@ export async function testSelectedProviderAccounts() {
 	}
 }
 
+export async function refreshSelectedProviderAccounts() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const accountIds = Object.keys(selectedProviderAccountIds)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (accountIds.length === 0) {
+    providerAccounts.error = 'Select at least one provider account';
+    return;
+  }
+
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  try {
+    await requestJSON('/api/admin/provider-accounts/bulk-refresh', {
+      method: 'POST',
+      body: JSON.stringify({ accountIds })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    clearProviderAccountSelection();
+    await loadProvider();
+    await loadProviderAccounts();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    const message = error instanceof Error ? error.message : 'Selected account refresh failed';
+    providerAccounts.error = message;
+    await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = message;
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
 export async function pauseSelectedProviderAccounts() {
 	const version = sessionVersion;
 	if (!isCurrentAuthenticated(version)) return;
