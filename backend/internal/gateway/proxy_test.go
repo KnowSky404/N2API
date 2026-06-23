@@ -661,6 +661,42 @@ func TestProxyRoutesAPIUpstreamAccountToConfiguredBaseURLAndToken(t *testing.T) 
 	}
 }
 
+func TestProxyDoesNotDuplicateV1ForAPIUpstreamBaseURL(t *testing.T) {
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("default upstream should not be called for API upstream account")
+	}))
+	defer defaultUpstream.Close()
+	var gotPath string
+	apiUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"resp_123"}`))
+	}))
+	defer apiUpstream.Close()
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID:          9,
+		AccountType:        provider.AccountTypeAPIUpstream,
+		AuthorizationToken: "sk-upstream",
+		BaseURL:            apiUpstream.URL + "/v1",
+	}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		UpstreamBaseURL: defaultUpstream.URL,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if gotPath != "/v1/responses/resp_123" {
+		t.Fatalf("path = %q, want single /v1 responses path", gotPath)
+	}
+}
+
 func TestProxyRoutesAPIUpstreamResponsesCreateWithoutCodexTransform(t *testing.T) {
 	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("default upstream should not be called for API upstream responses create")

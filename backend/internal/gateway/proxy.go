@@ -452,7 +452,7 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 			return nil, err
 		}
 	} else if selectedBaseURL := strings.TrimRight(strings.TrimSpace(selected.BaseURL), "/"); selectedBaseURL != "" {
-		upstreamBaseURL = selectedBaseURL
+		upstreamBaseURL, upstreamPath = upstreamURLBaseAndPath(selectedBaseURL, upstreamPath)
 	}
 	upstreamURL, err := url.Parse(upstreamBaseURL + upstreamPath)
 	if err != nil {
@@ -474,6 +474,15 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req, nil
+}
+
+func upstreamURLBaseAndPath(baseURL, routePath string) (string, string) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	routePath = "/" + strings.TrimLeft(strings.TrimSpace(routePath), "/")
+	if strings.HasSuffix(baseURL, "/v1") && strings.HasPrefix(routePath, "/v1/") {
+		return strings.TrimSuffix(baseURL, "/v1"), routePath
+	}
+	return baseURL, routePath
 }
 
 func normalizeCodexResponsesBody(body io.ReadCloser) (io.ReadCloser, error) {
