@@ -60,6 +60,7 @@ type ProviderService interface {
 	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
+	TestAccount(ctx context.Context, id int64) (provider.Account, error)
 	ResetAccountStatus(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
 	Disconnect(ctx context.Context) error
@@ -504,6 +505,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleRefreshProviderAccount(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleTestProviderAccount(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleResetProviderAccountStatus(w, r, providers)
 	}))
@@ -550,6 +555,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleRefreshProviderAccount(w, r, providers)
+	}))
+
+	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleTestProviderAccount(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -863,6 +872,25 @@ func handleRefreshProviderAccount(w http.ResponseWriter, r *http.Request, provid
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+}
+
+func handleTestProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	account, err := providers.TestAccount(r.Context(), id)
+	if err != nil {
+		writeProviderAccountError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})

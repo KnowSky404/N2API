@@ -948,6 +948,53 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 	return s.probeLatestAccountStatus(ctx, refreshed, tokens.AccessToken)
 }
 
+func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
+	if id <= 0 {
+		return Account{}, ErrInvalidInput
+	}
+
+	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
+	if err != nil {
+		return Account{}, err
+	}
+
+	selected, err := s.selectedAccount(ctx, account)
+	if err != nil {
+		if markErr := s.recordSelectionFailure(ctx, account.ID, err); markErr != nil {
+			return Account{}, markErr
+		}
+		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
+	}
+	if s.prober == nil || strings.TrimSpace(selected.AuthorizationToken) == "" {
+		return account, nil
+	}
+
+	cfg := s.cfg
+	if selected.AccountType == AccountTypeAPIUpstream {
+		cfg.APIBaseURL = selected.BaseURL
+		cfg.ProbeChatGPTAccountID = ""
+	} else {
+		cfg.ProbeChatGPTAccountID = strings.TrimSpace(selected.ChatGPTAccountID)
+	}
+
+	result, err := s.prober.ProbeAccountStatus(ctx, cfg, selected.AuthorizationToken)
+	if err != nil {
+		now := time.Now()
+		until := now.Add(defaultCircuitOpen)
+		if markErr := s.repo.RecordAccountStatus(ctx, s.cfg.Provider, account.ID, AccountStatusCircuitOpen, err.Error(), now, nil, &until); markErr != nil {
+			return Account{}, markErr
+		}
+		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
+	}
+	if isAccountFailureStatus(result.statusCode) {
+		if err := s.RecordAccountFailure(ctx, account.ID, result.statusCode, result.retryAfter, result.message); err != nil {
+			return Account{}, err
+		}
+		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
+	}
+	return s.ResetAccountStatus(ctx, account.ID)
+}
+
 func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account, accessToken string) (Account, error) {
 	if s.prober == nil || strings.TrimSpace(accessToken) == "" {
 		return account, nil

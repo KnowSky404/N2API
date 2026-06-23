@@ -1035,6 +1035,62 @@ func TestRefreshAccountProbesLatestStatusAfterTokenRefresh(t *testing.T) {
 	}
 }
 
+func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 3, "unused-oauth-token")
+	account.AccountType = AccountTypeAPIUpstream
+	account.Credential.CredentialType = CredentialTypeAPIKey
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "upstream-secret")
+	account.Credential.BaseURL = "https://upstream.example.test"
+	account.Status = AccountStatusCircuitOpen
+	account.StatusReason = "previous failure"
+	account.LastError = "previous failure"
+	now := time.Now()
+	circuitOpenUntil := now.Add(time.Minute)
+	account.LastErrorAt = &now
+	account.CircuitOpenUntil = &circuitOpenUntil
+	account.FailureCount = 2
+	repo.accounts = []Account{account}
+	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
+	service := newConfiguredService(repo, client)
+
+	tested, err := service.TestAccount(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("TestAccount returned error: %v", err)
+	}
+
+	if client.gotAccessToken != "upstream-secret" || client.gotConfig.APIBaseURL != "https://upstream.example.test" || client.gotConfig.ProbeChatGPTAccountID != "" {
+		t.Fatalf("probe call token=%q apiBase=%q chatgpt=%q", client.gotAccessToken, client.gotConfig.APIBaseURL, client.gotConfig.ProbeChatGPTAccountID)
+	}
+	if tested.Status != AccountStatusActive || tested.StatusReason != "" || tested.LastError != "" || tested.LastErrorAt != nil || tested.CircuitOpenUntil != nil || tested.FailureCount != 0 {
+		t.Fatalf("tested account = %+v, want local failure state cleared", tested)
+	}
+}
+
+func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 3, "unused-oauth-token")
+	account.AccountType = AccountTypeAPIUpstream
+	account.Credential.CredentialType = CredentialTypeAPIKey
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "upstream-secret")
+	account.Credential.BaseURL = "https://upstream.example.test"
+	repo.accounts = []Account{account}
+	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusTooManyRequests, retryAfter: "120", message: "quota window"}}
+	service := newConfiguredService(repo, client)
+
+	tested, err := service.TestAccount(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("TestAccount returned error: %v", err)
+	}
+
+	if tested.Status != AccountStatusRateLimited || tested.StatusReason != "quota window" || tested.LastError != "quota window" {
+		t.Fatalf("tested account = %+v, want rate limited failure state", tested)
+	}
+	if tested.RateLimitedUntil == nil || !tested.RateLimitedUntil.After(time.Now().Add(100*time.Second)) {
+		t.Fatalf("RateLimitedUntil = %v, want retry-after window", tested.RateLimitedUntil)
+	}
+}
+
 func TestRecordAccountFailureMapsUpstreamStatusesToAccountState(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
@@ -2357,6 +2413,29 @@ func (c *captureExchangeOAuthClient) ExchangeCode(ctx context.Context, cfg Confi
 
 func (c *captureExchangeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
 	return TokenResponse{}, errors.New("unexpected refresh")
+}
+
+type captureProbeOAuthClient struct {
+	probe          probeResult
+	gotConfig      Config
+	gotAccessToken string
+}
+
+func (c *captureProbeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
+	return TokenResponse{}, errors.New("unexpected exchange")
+}
+
+func (c *captureProbeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
+	return TokenResponse{}, errors.New("unexpected refresh")
+}
+
+func (c *captureProbeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
+	c.gotConfig = cfg
+	c.gotAccessToken = accessToken
+	if c.probe.statusCode == 0 {
+		return probeResult{statusCode: http.StatusOK}, nil
+	}
+	return c.probe, nil
 }
 
 func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {

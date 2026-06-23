@@ -30,6 +30,7 @@
     session,
     setAccountModelEnabled,
     statusLabel,
+    testProviderAccount,
     updateProviderAccount,
     updateProviderAccountLoadFactor,
     updateProviderAccountName,
@@ -861,6 +862,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         </td>
         <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
           <div class="flex justify-end gap-1.5 whitespace-nowrap">
+            <button
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={providerAccounts.saving}
+              onclick={() => testProviderAccount(account)}
+              title="Test account"
+              aria-label="Test account"
+            >
+              <span aria-hidden="true">T</span>
+              <span class="sr-only">Test account</span>
+            </button>
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"

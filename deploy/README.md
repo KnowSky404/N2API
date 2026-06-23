@@ -27,6 +27,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - Use **Refresh** to force a token refresh for one account and clear stale transient state after a successful refresh.
 - Use **Reauthorize** on an existing row to bind a fresh OAuth login back to that account instead of creating a second row.
 - API upstream credentials can be updated from the account row. Rotating the encrypted API key or base URL clears local failure status so the account can be scheduled again with the new upstream settings.
+- Use **Test account** before sending client traffic through an account. The action probes one provider account with its current OAuth token or API upstream key, clears local failure status on success, and records upstream failure status for 401/403/429/5xx probe responses.
 - Disabled accounts are kept in PostgreSQL but are not selected for gateway traffic.
 - Connected accounts with no configured models are kept in PostgreSQL and can be edited later, but they do not receive model-routed POST traffic.
 - During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so routing does not assume false account capability.

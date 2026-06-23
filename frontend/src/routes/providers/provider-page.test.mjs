@@ -207,6 +207,8 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /role="switch"/);
   assert.match(source, /Load factor/);
   assert.match(source, /updateProviderAccountLoadFactor/);
+  assert.match(source, /testProviderAccount/);
+  assert.match(source, /sr-only">Test account/);
   assert.match(source, /sr-only">Refresh account/);
   assert.match(source, /title=\{accountHoverDetail\(account\)\}/);
   assert.match(source, /title=\{statusHoverDetail\(account\)\}/);

@@ -120,3 +120,22 @@ func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Test account",
+			"probes one provider account",
+			"records upstream failure status",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account test probe documentation", path, want)
+			}
+		}
+	}
+}

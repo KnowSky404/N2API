@@ -74,6 +74,7 @@ type fakeProviderService struct {
 	callbackState         string
 	disconnected          bool
 	refreshedAccountID    int64
+	testedAccountID       int64
 	resetStatusAccountID  int64
 	disconnectedAccountID int64
 }
@@ -496,6 +497,24 @@ func (s *fakeProviderService) RefreshAccount(_ context.Context, id int64) (provi
 			account.StatusReason = ""
 			s.accounts[i] = account
 			s.refreshedAccountID = id
+			return account, nil
+		}
+	}
+	return provider.Account{}, provider.ErrNotConnected
+}
+
+func (s *fakeProviderService) TestAccount(_ context.Context, id int64) (provider.Account, error) {
+	for i, account := range s.accounts {
+		if account.ID == id {
+			account.Status = provider.AccountStatusActive
+			account.StatusReason = ""
+			account.LastError = ""
+			account.LastErrorAt = nil
+			account.RateLimitedUntil = nil
+			account.CircuitOpenUntil = nil
+			account.FailureCount = 0
+			s.accounts[i] = account
+			s.testedAccountID = id
 			return account, nil
 		}
 	}
@@ -1168,6 +1187,7 @@ func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
 		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
+		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
 		{name: "reset status", method: http.MethodPost, path: "/api/admin/provider-accounts/7/reset-status"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
@@ -1198,6 +1218,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
+		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
 		{name: "reset status", method: http.MethodPost, path: "/api/admin/provider-accounts/7/reset-status"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
@@ -1640,6 +1661,45 @@ func TestAdminCanRefreshUnifiedProviderAccount(t *testing.T) {
 	}
 	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastRefreshAt == nil {
 		t.Fatalf("account = %+v, want refreshed active account 7", body.Account)
+	}
+}
+
+func TestAdminCanTestUnifiedProviderAccount(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{
+		ID:               7,
+		Provider:         "openai",
+		DisplayName:      "Account A",
+		Enabled:          true,
+		Priority:         10,
+		Status:           provider.AccountStatusCircuitOpen,
+		StatusReason:     "previous failure",
+		LastError:        "previous failure",
+		CircuitOpenUntil: &future,
+		FailureCount:     2,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/test", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.testedAccountID != 7 {
+		t.Fatalf("testedAccountID = %d, want 7", providers.testedAccountID)
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastError != "" || body.Account.CircuitOpenUntil != nil || body.Account.FailureCount != 0 {
+		t.Fatalf("account = %+v, want tested active account 7", body.Account)
 	}
 }
 
