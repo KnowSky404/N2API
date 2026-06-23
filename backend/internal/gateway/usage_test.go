@@ -41,3 +41,18 @@ func TestParseUsageFromResponsesJSON(t *testing.T) {
 		t.Fatalf("usage tokens = %+v, want parsed responses tokens", usage)
 	}
 }
+
+func TestSSEUsageObserverParsesResponseCompletedEvent(t *testing.T) {
+	observer := NewSSEUsageObserver("/v1/responses")
+
+	observer.Observe([]byte(": keep-alive\n\n"))
+	observer.Observe([]byte("data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5\",\"usage\":{\"input_tokens\":5,\"output_tokens\":7,\"total_tokens\":12,\"input_tokens_details\":{\"cached_tokens\":2},\"output_tokens_details\":{\"reasoning_tokens\":3}}}}\n\n"))
+
+	usage := observer.Usage()
+	if usage.Source != "stream" || usage.Model != "gpt-5" {
+		t.Fatalf("usage identity = %+v, want stream gpt-5", usage)
+	}
+	if usage.InputTokens != 5 || usage.OutputTokens != 7 || usage.TotalTokens != 12 || usage.CachedInputTokens != 2 || usage.ReasoningTokens != 3 {
+		t.Fatalf("usage tokens = %+v, want parsed stream tokens", usage)
+	}
+}

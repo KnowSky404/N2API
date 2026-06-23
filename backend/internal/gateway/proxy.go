@@ -289,8 +289,7 @@ func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route stri
 		return Usage{Source: "missing"}
 	}
 	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
-		_, _ = io.Copy(flushWriter{ResponseWriter: w}, resp.Body)
-		return Usage{Source: "missing"}
+		return copyStreamingResponse(w, resp.Body, route)
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -298,6 +297,26 @@ func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route stri
 	}
 	_, _ = w.Write(body)
 	return ParseUsageFromJSON(route, body)
+}
+
+func copyStreamingResponse(w http.ResponseWriter, body io.Reader, route string) Usage {
+	observer := NewSSEUsageObserver(route)
+	buffer := make([]byte, 32*1024)
+	writer := flushWriter{ResponseWriter: w}
+	for {
+		n, readErr := body.Read(buffer)
+		if n > 0 {
+			chunk := buffer[:n]
+			observer.Observe(chunk)
+			if _, writeErr := writer.Write(chunk); writeErr != nil {
+				return observer.Usage()
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	return observer.Usage()
 }
 
 func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) {

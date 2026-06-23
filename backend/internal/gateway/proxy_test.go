@@ -979,6 +979,44 @@ func TestProxyLogsNonStreamingUsage(t *testing.T) {
 	}
 }
 
+func TestProxyLogsStreamingUsage(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: io.NopCloser(strings.NewReader("event: response.completed\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":4,\"total_tokens\":7}}}\n\n")),
+			Request: r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hello","stream":true}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "response.completed") {
+		t.Fatalf("body = %s, want passthrough SSE event", recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.UsageSource != "stream" || entry.InputTokens != 3 || entry.OutputTokens != 4 || entry.TotalTokens != 7 {
+		t.Fatalf("logged usage = %+v, want parsed streaming usage", entry)
+	}
+}
+
 func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{errs: []error{provider.ErrNotConnected}}, Config{

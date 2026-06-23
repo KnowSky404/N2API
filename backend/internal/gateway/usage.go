@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 )
@@ -49,6 +50,79 @@ func ParseUsageFromJSON(route string, raw []byte) Usage {
 		}
 		return usage
 	}
+}
+
+type SSEUsageObserver struct {
+	route string
+	buf   []byte
+	usage Usage
+}
+
+func NewSSEUsageObserver(route string) *SSEUsageObserver {
+	return &SSEUsageObserver{route: route, usage: Usage{Source: "missing"}}
+}
+
+func (o *SSEUsageObserver) Observe(chunk []byte) {
+	if o == nil || len(chunk) == 0 {
+		return
+	}
+	o.buf = append(o.buf, chunk...)
+	for {
+		index := bytes.Index(o.buf, []byte("\n\n"))
+		if index < 0 {
+			return
+		}
+		event := append([]byte(nil), o.buf[:index]...)
+		o.buf = o.buf[index+2:]
+		o.observeEvent(event)
+	}
+}
+
+func (o *SSEUsageObserver) Usage() Usage {
+	if o == nil {
+		return Usage{Source: "missing"}
+	}
+	return o.usage
+}
+
+func (o *SSEUsageObserver) observeEvent(event []byte) {
+	for _, line := range bytes.Split(event, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+			continue
+		}
+		usage := ParseUsageFromSSEData(o.route, data)
+		if usage.Source != "missing" {
+			o.usage = usage
+		}
+	}
+}
+
+func ParseUsageFromSSEData(route string, raw []byte) Usage {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return Usage{Source: "missing"}
+	}
+	if response, ok := payload["response"].(map[string]any); ok {
+		raw, err := json.Marshal(response)
+		if err != nil {
+			return Usage{Source: "missing"}
+		}
+		usage := ParseUsageFromJSON(route, raw)
+		if usage.Source != "missing" {
+			usage.Source = "stream"
+		}
+		return usage
+	}
+	usage := ParseUsageFromJSON(route, raw)
+	if usage.Source != "missing" {
+		usage.Source = "stream"
+	}
+	return usage
 }
 
 func parseChatUsage(payload map[string]any) Usage {
