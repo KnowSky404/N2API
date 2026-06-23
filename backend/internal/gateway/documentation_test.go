@@ -198,3 +198,22 @@ func TestGatewayDocumentationMentionsProviderAccountTestResults(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayDocumentationMentionsRoutingPreviewExclusions(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Excluded account IDs",
+			"account excluded",
+			"Routing diagnostics",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in routing preview exclusion documentation", path, want)
+			}
+		}
+	}
+}
