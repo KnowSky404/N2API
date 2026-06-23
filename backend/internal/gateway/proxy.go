@@ -60,25 +60,37 @@ type RequestLogger interface {
 	CreateRequestLog(ctx context.Context, entry RequestLog) error
 }
 
+type UsagePricer interface {
+	EstimateUsageCost(ctx context.Context, usage Usage) (UsageCostEstimate, error)
+}
+
+type UsageCostEstimate struct {
+	Matched      bool
+	CostMicrousd int64
+	Snapshot     map[string]any
+}
+
 type RequestLog struct {
-	RequestID           string
-	ClientKeyID         int64
-	Provider            string
-	ProviderAccountID   int64
-	ProviderAccountType string
-	Model               string
-	Route               string
-	Method              string
-	StatusCode          int
-	Latency             time.Duration
-	Error               string
-	InputTokens         int
-	OutputTokens        int
-	TotalTokens         int
-	CachedInputTokens   int
-	ReasoningTokens     int
-	UsageSource         string
-	CreatedAt           time.Time
+	RequestID             string
+	ClientKeyID           int64
+	Provider              string
+	ProviderAccountID     int64
+	ProviderAccountType   string
+	Model                 string
+	Route                 string
+	Method                string
+	StatusCode            int
+	Latency               time.Duration
+	Error                 string
+	InputTokens           int
+	OutputTokens          int
+	TotalTokens           int
+	CachedInputTokens     int
+	ReasoningTokens       int
+	UsageSource           string
+	EstimatedCostMicrousd int64
+	PricingSnapshot       map[string]any
+	CreatedAt             time.Time
 }
 
 type Config struct {
@@ -86,6 +98,7 @@ type Config struct {
 	CodexResponsesBaseURL string
 	Logger                RequestLogger
 	ModelProvider         ModelProvider
+	UsagePricer           UsagePricer
 }
 
 type Proxy struct {
@@ -96,6 +109,7 @@ type Proxy struct {
 	codexBaseURL    string
 	logger          RequestLogger
 	models          ModelProvider
+	usagePricer     UsagePricer
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -122,6 +136,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		codexBaseURL:    codexBaseURL,
 		logger:          cfg.Logger,
 		models:          cfg.ModelProvider,
+		usagePricer:     cfg.UsagePricer,
 	}
 }
 
@@ -159,25 +174,28 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if observedUsage.Model == "" {
 			observedUsage.Model = requestModel
 		}
+		costEstimate := p.estimateUsageCost(r.Context(), observedUsage)
 		p.logRequest(r.Context(), RequestLog{
-			RequestID:           newRequestID(),
-			ClientKeyID:         key.ID,
-			Provider:            "openai",
-			ProviderAccountID:   loggedAccount.AccountID,
-			ProviderAccountType: loggedAccount.AccountType,
-			Model:               requestModel,
-			Route:               r.URL.Path,
-			Method:              r.Method,
-			StatusCode:          recorder.statusCode(),
-			Latency:             time.Since(startedAt),
-			Error:               errorCode,
-			InputTokens:         observedUsage.InputTokens,
-			OutputTokens:        observedUsage.OutputTokens,
-			TotalTokens:         observedUsage.TotalTokens,
-			CachedInputTokens:   observedUsage.CachedInputTokens,
-			ReasoningTokens:     observedUsage.ReasoningTokens,
-			UsageSource:         observedUsage.Source,
-			CreatedAt:           startedAt,
+			RequestID:             newRequestID(),
+			ClientKeyID:           key.ID,
+			Provider:              "openai",
+			ProviderAccountID:     loggedAccount.AccountID,
+			ProviderAccountType:   loggedAccount.AccountType,
+			Model:                 requestModel,
+			Route:                 r.URL.Path,
+			Method:                r.Method,
+			StatusCode:            recorder.statusCode(),
+			Latency:               time.Since(startedAt),
+			Error:                 errorCode,
+			InputTokens:           observedUsage.InputTokens,
+			OutputTokens:          observedUsage.OutputTokens,
+			TotalTokens:           observedUsage.TotalTokens,
+			CachedInputTokens:     observedUsage.CachedInputTokens,
+			ReasoningTokens:       observedUsage.ReasoningTokens,
+			UsageSource:           observedUsage.Source,
+			EstimatedCostMicrousd: costEstimate.CostMicrousd,
+			PricingSnapshot:       costEstimate.Snapshot,
+			CreatedAt:             startedAt,
 		})
 	}()
 
@@ -317,6 +335,20 @@ func copyStreamingResponse(w http.ResponseWriter, body io.Reader, route string) 
 		}
 	}
 	return observer.Usage()
+}
+
+func (p *Proxy) estimateUsageCost(ctx context.Context, usage Usage) UsageCostEstimate {
+	if p.usagePricer == nil {
+		return UsageCostEstimate{Snapshot: map[string]any{"matched": false}}
+	}
+	estimate, err := p.usagePricer.EstimateUsageCost(ctx, usage)
+	if err != nil {
+		return UsageCostEstimate{Snapshot: map[string]any{"matched": false, "error": "pricing_error"}}
+	}
+	if estimate.Snapshot == nil {
+		estimate.Snapshot = map[string]any{"matched": estimate.Matched}
+	}
+	return estimate
 }
 
 func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) {

@@ -478,6 +478,66 @@ func TestUpdateUsagePricingRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestEstimateUsageCostUsesConfiguredModelPricing(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5": {
+				InputMicrousdPerMillion:       1_000_000,
+				CachedInputMicrousdPerMillion: 100_000,
+				OutputMicrousdPerMillion:      4_000_000,
+			},
+		},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	estimate, err := service.EstimateUsageCost(context.Background(), UsageCostInput{
+		Model:             "gpt-5",
+		InputTokens:       1_000,
+		CachedInputTokens: 200,
+		OutputTokens:      500,
+	})
+	if err != nil {
+		t.Fatalf("EstimateUsageCost returned error: %v", err)
+	}
+	if !estimate.Matched {
+		t.Fatal("Matched = false, want true")
+	}
+	if estimate.CostMicrousd != 2820 {
+		t.Fatalf("CostMicrousd = %d, want 2820", estimate.CostMicrousd)
+	}
+	if estimate.Snapshot["matched"] != true || estimate.Snapshot["model"] != "gpt-5" {
+		t.Fatalf("Snapshot = %+v, want matched gpt-5", estimate.Snapshot)
+	}
+}
+
+func TestEstimateUsageCostReturnsUnmatchedSnapshot(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5": {},
+		},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	estimate, err := service.EstimateUsageCost(context.Background(), UsageCostInput{Model: "unknown-model", InputTokens: 100})
+	if err != nil {
+		t.Fatalf("EstimateUsageCost returned error: %v", err)
+	}
+	if estimate.Matched || estimate.CostMicrousd != 0 {
+		t.Fatalf("estimate = %+v, want unmatched zero cost", estimate)
+	}
+	if estimate.Snapshot["matched"] != false || estimate.Snapshot["model"] != "unknown-model" {
+		t.Fatalf("Snapshot = %+v, want unmatched unknown-model", estimate.Snapshot)
+	}
+}
+
 func TestModelPolicyHelpersReturnDefaultAndAllowedStatus(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})

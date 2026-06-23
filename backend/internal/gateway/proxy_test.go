@@ -105,6 +105,20 @@ func (l *fakeRequestLogger) CreateRequestLog(_ context.Context, entry RequestLog
 	return nil
 }
 
+type fakeUsagePricer struct {
+	estimate UsageCostEstimate
+	err      error
+	usage    Usage
+}
+
+func (p *fakeUsagePricer) EstimateUsageCost(_ context.Context, usage Usage) (UsageCostEstimate, error) {
+	p.usage = usage
+	if p.err != nil {
+		return UsageCostEstimate{}, p.err
+	}
+	return p.estimate, nil
+}
+
 func TestProxyRequiresBearerAPIKey(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("upstream should not be called without client API key")
@@ -1014,6 +1028,51 @@ func TestProxyLogsStreamingUsage(t *testing.T) {
 	entry := logger.entries[0]
 	if entry.UsageSource != "stream" || entry.InputTokens != 3 || entry.OutputTokens != 4 || entry.TotalTokens != 7 {
 		t.Fatalf("logged usage = %+v, want parsed streaming usage", entry)
+	}
+}
+
+func TestProxyLogsEstimatedUsageCost(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	pricer := &fakeUsagePricer{estimate: UsageCostEstimate{
+		Matched:      true,
+		CostMicrousd: 1234,
+		Snapshot:     map[string]any{"matched": true, "model": "gpt-5"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"model":"gpt-5",
+				"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}
+			}`)),
+			Request: r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger, UsagePricer: pricer},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hello"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if pricer.usage.Model != "gpt-5" || pricer.usage.InputTokens != 10 || pricer.usage.OutputTokens != 5 || pricer.usage.TotalTokens != 15 {
+		t.Fatalf("priced usage = %+v, want parsed response usage", pricer.usage)
+	}
+	if entry.EstimatedCostMicrousd != 1234 || entry.PricingSnapshot["matched"] != true || entry.PricingSnapshot["model"] != "gpt-5" {
+		t.Fatalf("entry cost/snapshot = %d/%+v, want priced log entry", entry.EstimatedCostMicrousd, entry.PricingSnapshot)
 	}
 }
 

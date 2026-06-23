@@ -113,6 +113,22 @@ type UsagePrice struct {
 	OutputMicrousdPerMillion      int64 `json:"outputMicrousdPerMillion"`
 }
 
+type UsageCostInput struct {
+	Model             string
+	InputTokens       int
+	OutputTokens      int
+	TotalTokens       int
+	CachedInputTokens int
+	ReasoningTokens   int
+	Source            string
+}
+
+type UsageCostEstimate struct {
+	Matched      bool
+	CostMicrousd int64
+	Snapshot     map[string]any
+}
+
 type ModelSettings struct {
 	DefaultModel  string   `json:"defaultModel"`
 	AllowedModels []string `json:"allowedModels"`
@@ -457,6 +473,33 @@ func (s *Service) UpdateUsagePricing(ctx context.Context, pricing UsagePricing) 
 	return s.repo.SaveUsagePricing(ctx, normalized)
 }
 
+func (s *Service) EstimateUsageCost(ctx context.Context, usage UsageCostInput) (UsageCostEstimate, error) {
+	pricing, err := s.GetUsagePricing(ctx)
+	if err != nil {
+		return UsageCostEstimate{}, err
+	}
+	price, ok := pricing.Models[strings.TrimSpace(usage.Model)]
+	snapshot := map[string]any{
+		"matched":   ok,
+		"model":     strings.TrimSpace(usage.Model),
+		"currency":  pricing.Currency,
+		"unit":      pricing.Unit,
+		"version":   pricing.Version,
+		"updatedAt": pricing.UpdatedAt,
+	}
+	if !ok {
+		return UsageCostEstimate{Matched: false, Snapshot: snapshot}, nil
+	}
+	snapshot["inputMicrousdPerMillion"] = price.InputMicrousdPerMillion
+	snapshot["cachedInputMicrousdPerMillion"] = price.CachedInputMicrousdPerMillion
+	snapshot["outputMicrousdPerMillion"] = price.OutputMicrousdPerMillion
+	return UsageCostEstimate{
+		Matched:      true,
+		CostMicrousd: estimateCostMicrousd(usage, price),
+		Snapshot:     snapshot,
+	}, nil
+}
+
 func (s *Service) GetModelSettings(ctx context.Context) (ModelSettings, error) {
 	settings, err := s.repo.GetModelSettings(ctx)
 	if err == nil {
@@ -549,6 +592,27 @@ func normalizeUsagePricing(pricing UsagePricing) (UsagePricing, error) {
 		UpdatedAt: pricing.UpdatedAt,
 		Models:    models,
 	}, nil
+}
+
+func estimateCostMicrousd(usage UsageCostInput, price UsagePrice) int64 {
+	cachedInput := usage.CachedInputTokens
+	if cachedInput < 0 {
+		cachedInput = 0
+	}
+	billableInput := usage.InputTokens - cachedInput
+	if billableInput < 0 {
+		billableInput = 0
+	}
+	return costPartMicrousd(billableInput, price.InputMicrousdPerMillion) +
+		costPartMicrousd(cachedInput, price.CachedInputMicrousdPerMillion) +
+		costPartMicrousd(usage.OutputTokens, price.OutputMicrousdPerMillion)
+}
+
+func costPartMicrousd(tokens int, rateMicrousdPerMillion int64) int64 {
+	if tokens <= 0 || rateMicrousdPerMillion <= 0 {
+		return 0
+	}
+	return (int64(tokens)*rateMicrousdPerMillion + 500_000) / 1_000_000
 }
 
 func defaultModelSettings() ModelSettings {

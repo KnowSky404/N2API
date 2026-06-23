@@ -87,6 +87,32 @@ func (p gatewayModelProvider) ListExposedModels(ctx context.Context) ([]gateway.
 	return exposed, nil
 }
 
+type gatewayUsagePricer struct {
+	admins *admin.Service
+}
+
+var _ gateway.UsagePricer = gatewayUsagePricer{}
+
+func (p gatewayUsagePricer) EstimateUsageCost(ctx context.Context, usage gateway.Usage) (gateway.UsageCostEstimate, error) {
+	estimate, err := p.admins.EstimateUsageCost(ctx, admin.UsageCostInput{
+		Model:             usage.Model,
+		InputTokens:       usage.InputTokens,
+		OutputTokens:      usage.OutputTokens,
+		TotalTokens:       usage.TotalTokens,
+		CachedInputTokens: usage.CachedInputTokens,
+		ReasoningTokens:   usage.ReasoningTokens,
+		Source:            usage.Source,
+	})
+	if err != nil {
+		return gateway.UsageCostEstimate{}, err
+	}
+	return gateway.UsageCostEstimate{
+		Matched:      estimate.Matched,
+		CostMicrousd: estimate.CostMicrousd,
+		Snapshot:     estimate.Snapshot,
+	}, nil
+}
+
 func main() {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -132,6 +158,7 @@ func main() {
 			admins:    adminService,
 			providers: providerService,
 		},
+		UsagePricer: gatewayUsagePricer{admins: adminService},
 	})
 
 	server := &http.Server{
