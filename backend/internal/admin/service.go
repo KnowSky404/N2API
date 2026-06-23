@@ -45,14 +45,16 @@ type Session struct {
 }
 
 type APIKey struct {
-	ID            int64      `json:"id"`
-	Name          string     `json:"name"`
-	Prefix        string     `json:"prefix"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	LastUsedAt    *time.Time `json:"lastUsedAt"`
-	RevokedAt     *time.Time `json:"revokedAt"`
-	ModelPolicy   string     `json:"modelPolicy"`
-	AllowedModels []string   `json:"allowedModels"`
+	ID                int64      `json:"id"`
+	Name              string     `json:"name"`
+	Prefix            string     `json:"prefix"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	LastUsedAt        *time.Time `json:"lastUsedAt"`
+	RevokedAt         *time.Time `json:"revokedAt"`
+	ModelPolicy       string     `json:"modelPolicy"`
+	AllowedModels     []string   `json:"allowedModels"`
+	RequestsPerMinute int        `json:"requestsPerMinute"`
+	TokensPerMinute   int        `json:"tokensPerMinute"`
 }
 
 type RequestLog struct {

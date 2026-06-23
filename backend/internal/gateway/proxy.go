@@ -160,14 +160,8 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if cfg.MaxConcurrentRequestsPerKey > 0 {
 		keyLimiter = newAPIKeyConcurrencyLimiter(cfg.MaxConcurrentRequestsPerKey)
 	}
-	var rateLimiter *apiKeyRateLimiter
-	if cfg.MaxRequestsPerMinutePerKey > 0 {
-		rateLimiter = newAPIKeyRateLimiter(cfg.MaxRequestsPerMinutePerKey, time.Now)
-	}
-	var tokenLimiter *apiKeyTokenLimiter
-	if cfg.MaxTokensPerMinutePerKey > 0 {
-		tokenLimiter = newAPIKeyTokenLimiter(cfg.MaxTokensPerMinutePerKey, time.Now)
-	}
+	rateLimiter := newAPIKeyRateLimiter(cfg.MaxRequestsPerMinutePerKey, time.Now)
+	tokenLimiter := newAPIKeyTokenLimiter(cfg.MaxTokensPerMinutePerKey, time.Now)
 	return &Proxy{
 		auth:            auth,
 		accounts:        accounts,
@@ -220,7 +214,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if observedUsage.Model == "" {
 			observedUsage.Model = requestModel
 		}
-		p.recordAPIKeyUsage(key.ID, observedUsage.TotalTokens)
+		p.recordAPIKeyUsage(key.ID, observedUsage.TotalTokens, key.TokensPerMinute)
 		costEstimate := p.estimateUsageCost(r.Context(), observedUsage)
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:             newRequestID(),
@@ -248,7 +242,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	if retryAfter, ok := p.allowAPIKeyRequest(key.ID); !ok {
+	if retryAfter, ok := p.allowAPIKeyRequest(key.ID, key.RequestsPerMinute); !ok {
 		errorCode = "rate_limit_exceeded"
 		setRetryAfterHeader(recorder.Header(), retryAfter)
 		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key request rate limit exceeded")
@@ -267,7 +261,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "gateway service unavailable")
 		return
 	}
-	if retryAfter, ok := p.allowAPIKeyTokens(key.ID); !ok {
+	if retryAfter, ok := p.allowAPIKeyTokens(key.ID, key.TokensPerMinute); !ok {
 		errorCode = "rate_limit_exceeded"
 		setRetryAfterHeader(recorder.Header(), retryAfter)
 		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key token rate limit exceeded")
@@ -425,18 +419,18 @@ func (p *Proxy) tryAcquireGatewaySlot() (func(), bool) {
 	}
 }
 
-func (p *Proxy) allowAPIKeyRequest(keyID int64) (int, bool) {
+func (p *Proxy) allowAPIKeyRequest(keyID int64, requestsPerMinute int) (int, bool) {
 	if p.rateLimiter == nil {
 		return 0, true
 	}
-	return p.rateLimiter.Allow(keyID)
+	return p.rateLimiter.Allow(keyID, requestsPerMinute)
 }
 
-func (p *Proxy) allowAPIKeyTokens(keyID int64) (int, bool) {
+func (p *Proxy) allowAPIKeyTokens(keyID int64, tokensPerMinute int) (int, bool) {
 	if p.tokenLimiter == nil {
 		return 0, true
 	}
-	return p.tokenLimiter.Allow(keyID)
+	return p.tokenLimiter.Allow(keyID, tokensPerMinute)
 }
 
 func setRetryAfterHeader(header http.Header, seconds int) {
@@ -446,11 +440,11 @@ func setRetryAfterHeader(header http.Header, seconds int) {
 	header.Set("Retry-After", strconv.Itoa(seconds))
 }
 
-func (p *Proxy) recordAPIKeyUsage(keyID int64, tokens int) {
+func (p *Proxy) recordAPIKeyUsage(keyID int64, tokens, tokensPerMinute int) {
 	if p.tokenLimiter == nil || tokens <= 0 {
 		return
 	}
-	p.tokenLimiter.Record(keyID, tokens)
+	p.tokenLimiter.Record(keyID, tokens, tokensPerMinute)
 }
 
 func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
@@ -529,10 +523,10 @@ func (l *apiKeyConcurrencyLimiter) Acquire(keyID int64) (func(), bool) {
 }
 
 type apiKeyRateLimiter struct {
-	limit int
-	now   func() time.Time
-	mu    sync.Mutex
-	keys  map[int64]apiKeyRateWindow
+	defaultLimit int
+	now          func() time.Time
+	mu           sync.Mutex
+	keys         map[int64]apiKeyRateWindow
 }
 
 type apiKeyRateWindow struct {
@@ -542,14 +536,15 @@ type apiKeyRateWindow struct {
 
 func newAPIKeyRateLimiter(limit int, now func() time.Time) *apiKeyRateLimiter {
 	return &apiKeyRateLimiter{
-		limit: limit,
-		now:   now,
-		keys:  map[int64]apiKeyRateWindow{},
+		defaultLimit: limit,
+		now:          now,
+		keys:         map[int64]apiKeyRateWindow{},
 	}
 }
 
-func (l *apiKeyRateLimiter) Allow(keyID int64) (int, bool) {
-	if l == nil || l.limit <= 0 {
+func (l *apiKeyRateLimiter) Allow(keyID int64, limit int) (int, bool) {
+	effectiveLimit := l.effectiveLimit(limit)
+	if effectiveLimit <= 0 {
 		return 0, true
 	}
 	now := l.now()
@@ -562,7 +557,7 @@ func (l *apiKeyRateLimiter) Allow(keyID int64) (int, bool) {
 		l.keys[keyID] = apiKeyRateWindow{start: windowStart, count: 1}
 		return 0, true
 	}
-	if window.count >= l.limit {
+	if window.count >= effectiveLimit {
 		return secondsUntilNextMinute(now), false
 	}
 	window.count++
@@ -570,11 +565,21 @@ func (l *apiKeyRateLimiter) Allow(keyID int64) (int, bool) {
 	return 0, true
 }
 
+func (l *apiKeyRateLimiter) effectiveLimit(limit int) int {
+	if l == nil {
+		return 0
+	}
+	if limit > 0 {
+		return limit
+	}
+	return l.defaultLimit
+}
+
 type apiKeyTokenLimiter struct {
-	limit int
-	now   func() time.Time
-	mu    sync.Mutex
-	keys  map[int64]apiKeyTokenWindow
+	defaultLimit int
+	now          func() time.Time
+	mu           sync.Mutex
+	keys         map[int64]apiKeyTokenWindow
 }
 
 type apiKeyTokenWindow struct {
@@ -584,14 +589,15 @@ type apiKeyTokenWindow struct {
 
 func newAPIKeyTokenLimiter(limit int, now func() time.Time) *apiKeyTokenLimiter {
 	return &apiKeyTokenLimiter{
-		limit: limit,
-		now:   now,
-		keys:  map[int64]apiKeyTokenWindow{},
+		defaultLimit: limit,
+		now:          now,
+		keys:         map[int64]apiKeyTokenWindow{},
 	}
 }
 
-func (l *apiKeyTokenLimiter) Allow(keyID int64) (int, bool) {
-	if l == nil || l.limit <= 0 {
+func (l *apiKeyTokenLimiter) Allow(keyID int64, limit int) (int, bool) {
+	effectiveLimit := l.effectiveLimit(limit)
+	if effectiveLimit <= 0 {
 		return 0, true
 	}
 	now := l.now()
@@ -602,14 +608,14 @@ func (l *apiKeyTokenLimiter) Allow(keyID int64) (int, bool) {
 	if window.start.IsZero() || !window.start.Equal(windowStart) {
 		return 0, true
 	}
-	if window.tokens >= l.limit {
+	if window.tokens >= effectiveLimit {
 		return secondsUntilNextMinute(now), false
 	}
 	return 0, true
 }
 
-func (l *apiKeyTokenLimiter) Record(keyID int64, tokens int) {
-	if l == nil || l.limit <= 0 || tokens <= 0 {
+func (l *apiKeyTokenLimiter) Record(keyID int64, tokens, limit int) {
+	if l.effectiveLimit(limit) <= 0 || tokens <= 0 {
 		return
 	}
 	now := l.now()
@@ -623,6 +629,16 @@ func (l *apiKeyTokenLimiter) Record(keyID int64, tokens int) {
 	}
 	window.tokens += tokens
 	l.keys[keyID] = window
+}
+
+func (l *apiKeyTokenLimiter) effectiveLimit(limit int) int {
+	if l == nil {
+		return 0
+	}
+	if limit > 0 {
+		return limit
+	}
+	return l.defaultLimit
 }
 
 func secondsUntilNextMinute(now time.Time) int {
