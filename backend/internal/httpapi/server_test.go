@@ -1788,6 +1788,51 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 }
 
+func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
+	cfg := config.Config{
+		GatewayMaxConcurrentRequests:           10,
+		GatewayMaxConcurrentRequestsPerAccount: 2,
+		GatewayMaxConcurrentRequestsPerKey:     3,
+		GatewayRequestsPerMinutePerKey:         60,
+		GatewayTokensPerMinutePerKey:           60000,
+	}
+	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/gateway-settings", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/gateway-settings", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		MaxConcurrentGatewayRequests    int `json:"maxConcurrentGatewayRequests"`
+		MaxConcurrentRequestsPerAccount int `json:"maxConcurrentRequestsPerAccount"`
+		MaxConcurrentRequestsPerKey     int `json:"maxConcurrentRequestsPerKey"`
+		RequestsPerMinutePerKey         int `json:"requestsPerMinutePerKey"`
+		TokensPerMinutePerKey           int `json:"tokensPerMinutePerKey"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.MaxConcurrentGatewayRequests != 10 ||
+		body.MaxConcurrentRequestsPerAccount != 2 ||
+		body.MaxConcurrentRequestsPerKey != 3 ||
+		body.RequestsPerMinutePerKey != 60 ||
+		body.TokensPerMinutePerKey != 60000 {
+		t.Fatalf("gateway settings = %+v, want configured runtime limits", body)
+	}
+}
+
 func TestUsageSummaryRequiresSessionAndReturnsSummary(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.usageSummary = admin.UsageSummary{Range: "7d", GroupBy: "model", TotalRequests: 2}

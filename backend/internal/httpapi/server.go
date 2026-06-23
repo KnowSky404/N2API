@@ -275,6 +275,16 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
 	}))
 
+	mux.HandleFunc("GET /api/admin/gateway-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		writeJSON(w, http.StatusOK, map[string]int{
+			"maxConcurrentGatewayRequests":    cfg.GatewayMaxConcurrentRequests,
+			"maxConcurrentRequestsPerAccount": cfg.GatewayMaxConcurrentRequestsPerAccount,
+			"maxConcurrentRequestsPerKey":     cfg.GatewayMaxConcurrentRequestsPerKey,
+			"requestsPerMinutePerKey":         cfg.GatewayRequestsPerMinutePerKey,
+			"tokensPerMinutePerKey":           cfg.GatewayTokensPerMinutePerKey,
+		})
+	}))
+
 	mux.HandleFunc("GET /api/admin/usage-summary", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		summary, err := admins.GetUsageSummary(r.Context(), r.URL.Query().Get("range"), r.URL.Query().Get("groupBy"))
 		if err != nil {
