@@ -20,15 +20,16 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Providers', 'Models', 'API Keys', 'Request Logs', 'Sign out']) {
+  for (const label of ['Dashboard', 'Providers', 'API Keys', 'Request Logs', 'Sign out']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
+  assert.doesNotMatch(layout, /label:\s*'Models'/);
 });
 
-test('primary navigation exposes model routing page', () => {
+test('primary navigation moves model policy ownership to API keys', () => {
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
 
-  assert.match(layout, /href:\s*'\/models'/);
+  assert.doesNotMatch(layout, /href:\s*'\/models'/);
   assert.match(layout, /href:\s*'\/api-keys'/);
 });
 
