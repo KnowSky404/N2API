@@ -39,6 +39,7 @@
     statusLabel,
     testAllProviderAccounts,
     testProviderAccount,
+    testSelectedProviderAccounts,
     toggleAccountTestHistory,
     toggleProviderAccountSelection,
     updateProviderAccount,
@@ -621,6 +622,14 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           · {selectedProviderAccountCount} selected
         {/if}
       </p>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
+        onclick={testSelectedProviderAccounts}
+      >
+        Test selected
+      </button>
       <button
         class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"

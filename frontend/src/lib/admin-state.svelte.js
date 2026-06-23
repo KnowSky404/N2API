@@ -1446,6 +1446,41 @@ export async function testProviderAccount(account) {
   }
 }
 
+export async function testSelectedProviderAccounts() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const accountIds = Object.keys(selectedProviderAccountIds)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (accountIds.length === 0) {
+    providerAccounts.error = 'Select at least one provider account';
+    return;
+  }
+
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  try {
+    await requestJSON('/api/admin/provider-accounts/bulk-test', {
+      method: 'POST',
+      body: JSON.stringify({ accountIds })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    clearProviderAccountSelection();
+    await loadProviderAccounts();
+    await loadModelRouting();
+    await refreshExpandedAccountTestResults();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    const message = error instanceof Error ? error.message : 'Selected account tests failed';
+    providerAccounts.error = message;
+    await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = message;
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
 export async function testAllProviderAccounts() {
   const version = sessionVersion;
   providerAccounts.saving = true;
