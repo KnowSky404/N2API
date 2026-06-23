@@ -7,6 +7,7 @@ globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
   apiKeyModelWarnings,
+  getGatewayReadinessIssues,
   mergeAccountModelChanges,
   parseAccountModelsText,
   parseModelLines,
@@ -109,6 +110,35 @@ test('apiKeyModelWarnings ignores all-model policy and revoked keys', () => {
   assert.deepEqual(apiKeyModelWarnings({ modelPolicy: 'all', allowedModels: ['gpt-5'] }, routing), []);
   assert.deepEqual(
     apiKeyModelWarnings({ modelPolicy: 'selected', allowedModels: ['gpt-5'], revokedAt: '2026-06-23T00:00:00Z' }, routing),
+    []
+  );
+});
+
+test('getGatewayReadinessIssues reports missing gateway prerequisites', () => {
+  assert.deepEqual(
+    getGatewayReadinessIssues({
+      providerAccounts: [],
+      activeKeys: [],
+      routableModelCount: 0,
+      schedulableAccounts: []
+    }),
+    [
+      'No provider account is connected.',
+      'No provider account is currently schedulable.',
+      'No model has a schedulable provider account.',
+      'No active API key can call the gateway.'
+    ]
+  );
+});
+
+test('getGatewayReadinessIssues is clear when gateway can serve traffic', () => {
+  assert.deepEqual(
+    getGatewayReadinessIssues({
+      providerAccounts: [{ id: 7, enabled: true, status: 'active' }],
+      activeKeys: [{ id: 11, revokedAt: null }],
+      routableModelCount: 1,
+      schedulableAccounts: [{ id: 7, enabled: true, status: 'active' }]
+    }),
     []
   );
 });

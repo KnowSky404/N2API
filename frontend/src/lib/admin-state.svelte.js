@@ -412,6 +412,37 @@ export function getRoutableModelCount(models = modelRouting.models) {
   return models.filter((model) => Number(model.enabledCount ?? 0) > 0).length;
 }
 
+/**
+ * @param {{
+ *   providerAccounts?: ProviderAccount[],
+ *   schedulableAccounts?: ProviderAccount[],
+ *   routableModelCount?: number,
+ *   activeKeys?: APIKey[]
+ * }} [state]
+ */
+export function getGatewayReadinessIssues(state = {}) {
+  const accounts = state.providerAccounts ?? providerAccounts.items;
+  const schedulable = state.schedulableAccounts ?? getSchedulableProviderAccounts(accounts);
+  const routableCount = Number(state.routableModelCount ?? getRoutableModelCount());
+  const keys = state.activeKeys ?? getActiveKeys();
+  const issues = [];
+
+  if (accounts.length === 0) {
+    issues.push('No provider account is connected.');
+  }
+  if (schedulable.length === 0) {
+    issues.push('No provider account is currently schedulable.');
+  }
+  if (routableCount === 0) {
+    issues.push('No model has a schedulable provider account.');
+  }
+  if (keys.length === 0) {
+    issues.push('No active API key can call the gateway.');
+  }
+
+  return issues;
+}
+
 /** @param {number | null | undefined} value */
 export function gatewayLimitLabel(value) {
   const limit = Number(value ?? 0);

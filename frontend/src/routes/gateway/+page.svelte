@@ -5,6 +5,7 @@
     gatewayLimitLabel,
     gatewaySettings,
     getActiveKeys,
+    getGatewayReadinessIssues,
     getRoutableModelCount,
     getSchedulableProviderAccounts,
     loadGatewaySettings,
@@ -22,6 +23,14 @@
   const activeKeys = $derived(getActiveKeys());
   const routableModelCount = $derived(getRoutableModelCount());
   const schedulableAccounts = $derived(getSchedulableProviderAccounts());
+  const readinessIssues = $derived(
+    getGatewayReadinessIssues({
+      providerAccounts: providerAccounts.items,
+      schedulableAccounts,
+      routableModelCount,
+      activeKeys
+    })
+  );
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   const usage24hSessions = $derived(usage.summaries['24h:session'] ?? null);
@@ -151,6 +160,17 @@
           <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{activeKeys.length}</dd>
         </div>
       </dl>
+      {#if readinessIssues.length > 0}
+        <div class="mt-4 space-y-2">
+          {#each readinessIssues as issue}
+            <p class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{issue}</p>
+          {/each}
+        </div>
+      {:else}
+        <p class="mt-4 rounded-md border border-[#cbe7dd] bg-[#e8f5f0] px-3 py-2 text-sm text-[#0a7a5e]">
+          Gateway has the minimum account, model, and API key prerequisites for routing traffic.
+        </p>
+      {/if}
     </section>
 
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
