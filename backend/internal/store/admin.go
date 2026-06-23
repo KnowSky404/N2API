@@ -392,6 +392,7 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			l.cached_input_tokens,
 			l.reasoning_tokens,
 			l.usage_source,
+			l.estimated_cost_microusd,
 			l.created_at
 		FROM request_logs l
 		LEFT JOIN client_api_keys k ON k.id = l.client_key_id
@@ -427,6 +428,7 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			&log.CachedInputTokens,
 			&log.ReasoningTokens,
 			&log.UsageSource,
+			&log.EstimatedCostMicrousd,
 			&log.CreatedAt,
 		); err != nil {
 			return nil, err

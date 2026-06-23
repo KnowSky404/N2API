@@ -56,26 +56,27 @@ type APIKey struct {
 }
 
 type RequestLog struct {
-	ID                  int64     `json:"id"`
-	RequestID           string    `json:"requestId"`
-	ClientKey           string    `json:"clientKey"`
-	Provider            string    `json:"provider"`
-	ProviderAccountID   int64     `json:"providerAccountId"`
-	ProviderAccountType string    `json:"providerAccountType"`
-	ProviderAccountName string    `json:"providerAccountName"`
-	Model               string    `json:"model"`
-	Route               string    `json:"route"`
-	Method              string    `json:"method"`
-	StatusCode          int       `json:"statusCode"`
-	LatencyMS           int       `json:"latencyMs"`
-	Error               string    `json:"error"`
-	InputTokens         int       `json:"inputTokens"`
-	OutputTokens        int       `json:"outputTokens"`
-	TotalTokens         int       `json:"totalTokens"`
-	CachedInputTokens   int       `json:"cachedInputTokens"`
-	ReasoningTokens     int       `json:"reasoningTokens"`
-	UsageSource         string    `json:"usageSource"`
-	CreatedAt           time.Time `json:"createdAt"`
+	ID                    int64     `json:"id"`
+	RequestID             string    `json:"requestId"`
+	ClientKey             string    `json:"clientKey"`
+	Provider              string    `json:"provider"`
+	ProviderAccountID     int64     `json:"providerAccountId"`
+	ProviderAccountType   string    `json:"providerAccountType"`
+	ProviderAccountName   string    `json:"providerAccountName"`
+	Model                 string    `json:"model"`
+	Route                 string    `json:"route"`
+	Method                string    `json:"method"`
+	StatusCode            int       `json:"statusCode"`
+	LatencyMS             int       `json:"latencyMs"`
+	Error                 string    `json:"error"`
+	InputTokens           int       `json:"inputTokens"`
+	OutputTokens          int       `json:"outputTokens"`
+	TotalTokens           int       `json:"totalTokens"`
+	CachedInputTokens     int       `json:"cachedInputTokens"`
+	ReasoningTokens       int       `json:"reasoningTokens"`
+	UsageSource           string    `json:"usageSource"`
+	EstimatedCostMicrousd int64     `json:"estimatedCostMicrousd"`
+	CreatedAt             time.Time `json:"createdAt"`
 }
 
 type UsageSummary struct {

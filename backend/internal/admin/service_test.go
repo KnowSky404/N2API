@@ -297,7 +297,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	repo.logs = []RequestLog{
-		{ID: 2, RequestID: "req_2", Route: "/v1/chat/completions", StatusCode: 200, ProviderAccountID: 7, ProviderAccountType: "api_upstream", ProviderAccountName: "Upstream A", Model: "gpt-5", InputTokens: 12, OutputTokens: 3, TotalTokens: 15, UsageSource: "chat_completions"},
+		{ID: 2, RequestID: "req_2", Route: "/v1/chat/completions", StatusCode: 200, ProviderAccountID: 7, ProviderAccountType: "api_upstream", ProviderAccountName: "Upstream A", Model: "gpt-5", InputTokens: 12, OutputTokens: 3, TotalTokens: 15, EstimatedCostMicrousd: 1234, UsageSource: "chat_completions"},
 		{ID: 1, RequestID: "req_1", Route: "/v1/models", StatusCode: 503},
 	}
 
@@ -319,6 +319,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if logs[0].InputTokens != 12 || logs[0].OutputTokens != 3 || logs[0].TotalTokens != 15 || logs[0].UsageSource != "chat_completions" {
 		t.Fatalf("log usage = %+v, want token usage fields", logs[0])
+	}
+	if logs[0].EstimatedCostMicrousd != 1234 {
+		t.Fatalf("log cost = %d, want 1234", logs[0].EstimatedCostMicrousd)
 	}
 
 	if _, err := service.ListRequestLogs(context.Background(), 500); err != nil {
