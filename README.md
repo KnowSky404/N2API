@@ -71,6 +71,8 @@ Provider accounts are gateway exits. N2API supports Codex OAuth accounts and API
 
 Configure model capability on each provider account row. The API Keys page controls the gateway default model, the global routable model list, and client-key model access; these settings do not grant capability to accounts that do not list that model.
 
+API upstream credentials can be updated after account creation. Use the provider account row to rotate the encrypted upstream API key or base URL; saving new credentials clears local failure status so a previously rate-limited, expired, or circuit-open API upstream can be scheduled again with the new settings.
+
 ## API Key Model Access
 
 Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it. `/v1/models` is also filtered by the authenticated API key: `all` keys see the full routable list, while `selected` keys see the intersection of their selected models and currently routable models.
@@ -85,7 +87,7 @@ The API Keys page shows the concurrency and rate guards loaded by the running ba
 - `N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY`
 - `N2API_GATEWAY_TOKENS_PER_MINUTE_PER_KEY`
 
-All five limits are local to the running process. Set a value to `0` to disable that guard. Per-account concurrency makes busy accounts temporarily ineligible so the gateway can pick another eligible account when possible; if every eligible account is busy, the gateway returns a local 429. Per-key request and observed-token minute limits use fixed one-minute windows, and local 429 responses include `Retry-After` with the seconds remaining until the next window.
+All five gateway default limits are local to the running process. Set a gateway default value to `0` to disable that guard. Per-key values set to `0` inherit the matching gateway default and do not disable that guard for only one key. Per-account concurrency makes busy accounts temporarily ineligible so the gateway can pick another eligible account when possible; if every eligible account is busy, the gateway returns a local 429. Per-key request and observed-token minute limits use fixed one-minute windows, and local 429 responses include `Retry-After` with the seconds remaining until the next window.
 
 For sticky session routing, POST bodies may include `session_id`. Header-based clients can send `session_id` or the proxy-friendly `X-N2API-Session-ID`; the body value takes precedence when both are present. If N2API is behind Nginx and clients send the `session_id` header, set `underscores_in_headers on;` in the relevant `http` or `server` block so Nginx does not drop that header before it reaches the gateway.
 
