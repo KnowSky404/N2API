@@ -69,10 +69,19 @@ type ProviderService interface {
 	Disconnect(ctx context.Context) error
 }
 
+type ProviderAccountAutoTestStatusSource interface {
+	ProviderAccountAutoTestStatus() provider.AutoTestStatus
+}
+
+type gatewaySettingsResponse struct {
+	admin.GatewaySettings
+	ProviderAccountAutoTestStatus provider.AutoTestStatus `json:"providerAccountAutoTestStatus,omitempty"`
+}
+
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
 	mux := http.NewServeMux()
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
-	gateway, webFS := parseServerOptions(options...)
+	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -321,7 +330,14 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		writeJSON(w, http.StatusOK, settings)
+		if autoTestStatusSource == nil {
+			writeJSON(w, http.StatusOK, settings)
+			return
+		}
+		writeJSON(w, http.StatusOK, gatewaySettingsResponse{
+			GatewaySettings:               settings,
+			ProviderAccountAutoTestStatus: autoTestStatusSource.ProviderAccountAutoTestStatus(),
+		})
 	}))
 
 	mux.HandleFunc("PUT /api/admin/gateway-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -1596,9 +1612,10 @@ func clientIP(r *http.Request) string {
 	return remoteAddr
 }
 
-func parseServerOptions(options ...any) (http.Handler, fs.FS) {
+func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAutoTestStatusSource) {
 	var gateway http.Handler
 	var webFS fs.FS
+	var autoTestStatusSource ProviderAccountAutoTestStatusSource
 	for _, option := range options {
 		switch value := option.(type) {
 		case http.Handler:
@@ -1609,9 +1626,13 @@ func parseServerOptions(options ...any) (http.Handler, fs.FS) {
 			if webFS == nil {
 				webFS = value
 			}
+		case ProviderAccountAutoTestStatusSource:
+			if autoTestStatusSource == nil {
+				autoTestStatusSource = value
+			}
 		}
 	}
-	return gateway, webFS
+	return gateway, webFS, autoTestStatusSource
 }
 
 func serveWeb(w http.ResponseWriter, r *http.Request, webFS fs.FS) bool {

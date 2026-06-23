@@ -213,7 +213,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, os.DirFS("frontend/build")),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, os.DirFS("frontend/build")),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

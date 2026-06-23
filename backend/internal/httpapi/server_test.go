@@ -29,6 +29,14 @@ func (h staticHealth) Ping(ctx context.Context) error {
 	return h.err
 }
 
+type fakeAutoTestStatusSource struct {
+	status provider.AutoTestStatus
+}
+
+func (s fakeAutoTestStatusSource) ProviderAccountAutoTestStatus() provider.AutoTestStatus {
+	return s.status
+}
+
 type fakeAdminService struct {
 	keys               []admin.APIKey
 	logs               []admin.RequestLog
@@ -2897,6 +2905,40 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		!body.ProviderAccountAutoTestEnabled ||
 		body.ProviderAccountAutoTestIntervalSeconds != 120 {
 		t.Fatalf("gateway settings = %+v, want configured runtime limits", body)
+	}
+}
+
+func TestGatewaySettingsIncludesProviderAccountAutoTestStatus(t *testing.T) {
+	admins := newFakeAdminService()
+	started := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+	finished := started.Add(3 * time.Second)
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService(), fakeAutoTestStatusSource{
+		status: provider.AutoTestStatus{
+			Running:          true,
+			LastStartedAt:    &started,
+			LastFinishedAt:   &finished,
+			LastAccountCount: 3,
+			LastError:        "probe failed",
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/gateway-settings", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		ProviderAccountAutoTestStatus provider.AutoTestStatus `json:"providerAccountAutoTestStatus"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	status := body.ProviderAccountAutoTestStatus
+	if !status.Running || status.LastStartedAt == nil || status.LastFinishedAt == nil || status.LastAccountCount != 3 || status.LastError != "probe failed" {
+		t.Fatalf("auto test status = %+v, want provided status", status)
 	}
 }
 

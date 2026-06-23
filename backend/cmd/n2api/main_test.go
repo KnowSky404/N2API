@@ -36,6 +36,7 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",
 		"go autoTestRunner.Run(ctx)",
+		"autoTestRunner, os.DirFS(\"frontend/build\")",
 		"server.Shutdown",
 	} {
 		if !strings.Contains(text, want) {
