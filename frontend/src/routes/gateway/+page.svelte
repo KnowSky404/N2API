@@ -4,16 +4,24 @@
     formatTokens,
     gatewayLimitLabel,
     gatewaySettings,
+    getActiveKeys,
+    getRoutableModelCount,
+    getSchedulableProviderAccounts,
     loadGatewaySettings,
     loadUsageSummary,
     login,
     loginForm,
+    modelRouting,
+    providerAccounts,
     session,
     usage
   } from '$lib/admin-state.svelte.js';
 
   let gatewayRequested = $state(false);
 
+  const activeKeys = $derived(getActiveKeys());
+  const routableModelCount = $derived(getRoutableModelCount());
+  const schedulableAccounts = $derived(getSchedulableProviderAccounts());
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   const usage24hSessions = $derived(usage.summaries['24h:session'] ?? null);
@@ -118,6 +126,31 @@
           Use these links to adjust account capacity, client key access, routing candidates, and recent gateway traffic.
         </p>
       </div>
+    </section>
+
+    <section class="rounded-lg border border-[#ededed] bg-white p-6">
+      <div>
+        <h3 class="text-base font-semibold text-[#0d0d0d]">Gateway readiness</h3>
+        <p class="mt-1 text-sm text-[#6e6e6e]">Core capacity signals required before this gateway can serve daily traffic reliably.</p>
+      </div>
+      <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+          <dt class="text-sm font-medium text-[#6e6e6e]">Provider accounts</dt>
+          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : providerAccounts.items.length}</dd>
+        </div>
+        <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+          <dt class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</dt>
+          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableAccounts.length}</dd>
+        </div>
+        <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+          <dt class="text-sm font-medium text-[#6e6e6e]">Routable models</dt>
+          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{modelRouting.loading ? 'Loading' : routableModelCount}</dd>
+        </div>
+        <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+          <dt class="text-sm font-medium text-[#6e6e6e]">Active API keys</dt>
+          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{activeKeys.length}</dd>
+        </div>
+      </dl>
     </section>
 
     <section class="rounded-lg border border-[#ededed] bg-white p-6">

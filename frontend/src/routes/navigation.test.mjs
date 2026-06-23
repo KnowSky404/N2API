@@ -44,6 +44,11 @@ test('gateway page manages runtime limits and usage visibility', () => {
   for (const label of [
     'Gateway management',
     'Gateway actions',
+    'Gateway readiness',
+    'Provider accounts',
+    'Schedulable accounts',
+    'Routable models',
+    'Active API keys',
     'Runtime limits',
     'Gateway concurrency',
     'Per account concurrency',
@@ -63,6 +68,9 @@ test('gateway page manages runtime limits and usage visibility', () => {
   }
 
   assert.match(gatewayPage, /loadGatewaySettings/);
+  assert.match(gatewayPage, /getSchedulableProviderAccounts/);
+  assert.match(gatewayPage, /getRoutableModelCount/);
+  assert.match(gatewayPage, /getActiveKeys/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'session'\)/);
