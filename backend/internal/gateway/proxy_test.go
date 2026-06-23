@@ -375,6 +375,50 @@ func TestProxyRoutesRequestWithSessionIDHeaderForStickySelection(t *testing.T) {
 	}
 }
 
+func TestProxyRoutesRequestWithN2APISessionHeaderForStickySelection(t *testing.T) {
+	const requestBody = `{"model":"gpt-5","messages":[]}`
+	var gotBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_123"}`))
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: upstream.URL,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-N2API-Session-ID", " workspace-header-456 ")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 1 || len(tokens.models) != 1 || tokens.models[0] != "gpt-5" {
+		t.Fatalf("requested models = %+v, calls=%d; want gpt-5", tokens.models, tokens.calls)
+	}
+	if !slices.Equal(tokens.sessions, []string{"workspace-header-456"}) {
+		t.Fatalf("sessions = %+v, want trimmed header workspace-header-456", tokens.sessions)
+	}
+	if gotBody != requestBody {
+		t.Fatalf("upstream body = %q, want original body", gotBody)
+	}
+}
+
 func TestProxyPrefersBodySessionIDOverHeaderForStickySelection(t *testing.T) {
 	const requestBody = `{"model":"gpt-5","session_id":" body-session ","messages":[]}`
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

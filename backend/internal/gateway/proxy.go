@@ -906,7 +906,10 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 }
 
 func stickySessionIDFromHeader(header http.Header) string {
-	return strings.TrimSpace(header.Get("session_id"))
+	if sessionID := strings.TrimSpace(header.Get("session_id")); sessionID != "" {
+		return sessionID
+	}
+	return strings.TrimSpace(header.Get("X-N2API-Session-ID"))
 }
 
 func routeRequiresModel(r *http.Request) bool {
