@@ -49,6 +49,7 @@
   const routableModelCount = $derived(getRoutableModelCount());
   const usage24h = $derived(usage.summaries['24h:model'] ?? null);
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
+  const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
 </script>
 
 <svelte:head>
@@ -223,6 +224,25 @@
         {:else}
           <div class="divide-y divide-[#ededed]">
             {#each usage24hProviderAccounts.rows.slice(0, 5) as row}
+              <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+                <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
+                  {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
+                </span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <div class="mt-5 rounded-lg border border-[#ededed]">
+        <div class="border-b border-[#ededed] bg-[#f5f5f5] px-4 py-3">
+          <h3 class="text-sm font-semibold text-[#0d0d0d]">Top client keys</h3>
+        </div>
+        {#if !usage24hClientKeys || usage24hClientKeys.rows.length === 0}
+          <p class="px-4 py-4 text-sm text-[#6e6e6e]">No usage in this range.</p>
+        {:else}
+          <div class="divide-y divide-[#ededed]">
+            {#each usage24hClientKeys.rows.slice(0, 5) as row}
               <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
                 <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
                 <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
