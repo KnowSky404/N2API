@@ -89,6 +89,33 @@ func TestLoadOpenAIAPIBaseURLConfig(t *testing.T) {
 	}
 }
 
+func TestLoadHTTPAPIUpstreamOptInConfig(t *testing.T) {
+	defaultCfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if defaultCfg.AllowHTTPAPIUpstreams {
+		t.Fatal("AllowHTTPAPIUpstreams = true, want default false")
+	}
+
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                   "postgres://example",
+		"N2API_ENCRYPTION_SECRET":        "encryption-secret",
+		"N2API_ADMIN_PASSWORD":           "admin-password",
+		"N2API_ALLOW_HTTP_API_UPSTREAMS": "true",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.AllowHTTPAPIUpstreams {
+		t.Fatal("AllowHTTPAPIUpstreams = false, want true")
+	}
+}
+
 func TestLoadGatewayConcurrencyLimitConfig(t *testing.T) {
 	defaultCfg, err := Load(mapLookup(map[string]string{
 		"DATABASE_URL":            "postgres://example",

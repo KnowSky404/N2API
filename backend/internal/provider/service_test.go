@@ -801,6 +801,76 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithInvalidBaseURL(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelSkipsAPIUpstreamWithHTTPBaseURLUnlessAllowed(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		{
+			ID:          11,
+			Provider:    "openai",
+			AccountType: AccountTypeAPIUpstream,
+			Name:        "Plaintext upstream",
+			Credential: AccountCredential{
+				CredentialType:  CredentialTypeAPIKey,
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-http"),
+				BaseURL:         "http://upstream.example.test/v1",
+			},
+			Enabled:  true,
+			Priority: 1,
+			Status:   AccountStatusActive,
+			Metadata: map[string]string{},
+		},
+		{
+			ID:          12,
+			Provider:    "openai",
+			AccountType: AccountTypeAPIUpstream,
+			Name:        "HTTPS upstream",
+			Credential: AccountCredential{
+				CredentialType:  CredentialTypeAPIKey,
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-https"),
+				BaseURL:         "https://upstream.example.test/v1",
+			},
+			Enabled:  true,
+			Priority: 2,
+			Status:   AccountStatusActive,
+			Metadata: map[string]string{},
+		},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
+	}
+	if selected.AccountID != 12 || selected.AuthorizationToken != "sk-https" {
+		t.Fatalf("selected = %+v, want HTTPS fallback upstream 12", selected)
+	}
+	if repo.accounts[0].Status != AccountStatusCircuitOpen || repo.accounts[0].LastError == "" {
+		t.Fatalf("HTTP upstream status = %+v, want circuit_open with error", repo.accounts[0])
+	}
+
+	repo.accounts[0].Status = AccountStatusActive
+	repo.accounts[0].LastError = ""
+	repo.accounts[0].LastErrorAt = nil
+	repo.accounts[0].CircuitOpenUntil = nil
+	allowed := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:              "openai",
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		RedirectURL:           "http://localhost/oauth/openai/callback",
+		AuthURL:               "https://auth.example.test/authorize",
+		TokenURL:              "https://auth.example.test/token",
+		Secret:                "encryption-secret",
+		AllowHTTPAPIUpstreams: true,
+	})
+	selected, err = allowed.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SelectAccountForModel with HTTP allowed returned error: %v", err)
+	}
+	if selected.AccountID != 11 || selected.BaseURL != "http://upstream.example.test/v1" {
+		t.Fatalf("selected = %+v, want HTTP upstream 11 when explicitly allowed", selected)
+	}
+}
+
 func TestSelectAccountForModelSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
 	repo := newMemoryRepo()
 	now := time.Now()
@@ -1528,6 +1598,7 @@ func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
 		{name: "invalid base URL", input: APIUpstreamInput{Name: valid.Name, BaseURL: "://bad", APIKey: valid.APIKey}},
 		{name: "relative base URL", input: APIUpstreamInput{Name: valid.Name, BaseURL: "/v1", APIKey: valid.APIKey}},
 		{name: "host without scheme", input: APIUpstreamInput{Name: valid.Name, BaseURL: "upstream.example.test", APIKey: valid.APIKey}},
+		{name: "http scheme without opt-in", input: APIUpstreamInput{Name: valid.Name, BaseURL: "http://upstream.example.test/v1", APIKey: valid.APIKey}},
 		{name: "file scheme", input: APIUpstreamInput{Name: valid.Name, BaseURL: "file:///tmp/upstream", APIKey: valid.APIKey}},
 		{name: "mailto scheme", input: APIUpstreamInput{Name: valid.Name, BaseURL: "mailto:test@example.com", APIKey: valid.APIKey}},
 		{name: "https without host", input: APIUpstreamInput{Name: valid.Name, BaseURL: "https:///v1", APIKey: valid.APIKey}},
@@ -1538,6 +1609,32 @@ func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
 				t.Fatalf("CreateAPIUpstreamAccount error = %v, want ErrInvalidInput", err)
 			}
 		})
+	}
+}
+
+func TestCreateAPIUpstreamAccountAllowsHTTPBaseURLWhenConfigured(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:              "openai",
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		RedirectURL:           "http://localhost/oauth/openai/callback",
+		AuthURL:               "https://auth.example.test/authorize",
+		TokenURL:              "https://auth.example.test/token",
+		Secret:                "encryption-secret",
+		AllowHTTPAPIUpstreams: true,
+	})
+
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:    "Local upstream",
+		BaseURL: "http://127.0.0.1:8080/v1",
+		APIKey:  "secret",
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+	if account.Credential.BaseURL != "http://127.0.0.1:8080" {
+		t.Fatalf("BaseURL = %q, want normalized HTTP upstream", account.Credential.BaseURL)
 	}
 }
 

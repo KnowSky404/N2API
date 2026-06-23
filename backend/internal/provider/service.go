@@ -86,6 +86,7 @@ type Config struct {
 	StateTTL              time.Duration
 	RefreshWindow         time.Duration
 	CodeVerifier          string
+	AllowHTTPAPIUpstreams bool
 }
 
 type Status struct {
@@ -709,7 +710,7 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	if err != nil ||
 		!parsedBaseURL.IsAbs() ||
 		parsedBaseURL.Host == "" ||
-		(parsedBaseURL.Scheme != "http" && parsedBaseURL.Scheme != "https") {
+		!s.apiUpstreamSchemeAllowed(parsedBaseURL.Scheme) {
 		return Account{}, ErrInvalidInput
 	}
 
@@ -1152,13 +1153,24 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 		if err != nil ||
 			!parsedBaseURL.IsAbs() ||
 			parsedBaseURL.Host == "" ||
-			(parsedBaseURL.Scheme != "http" && parsedBaseURL.Scheme != "https") {
+			!s.apiUpstreamSchemeAllowed(parsedBaseURL.Scheme) {
 			return SelectedAccount{}, ErrInvalidInput
 		}
 		selected.BaseURL = baseURL
 		return selected, nil
 	default:
 		return SelectedAccount{}, fmt.Errorf("unsupported account type %q", accountType)
+	}
+}
+
+func (s *Service) apiUpstreamSchemeAllowed(scheme string) bool {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "https":
+		return true
+	case "http":
+		return s.cfg.AllowHTTPAPIUpstreams
+	default:
+		return false
 	}
 }
 

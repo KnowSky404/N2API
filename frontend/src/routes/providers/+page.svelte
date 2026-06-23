@@ -413,6 +413,7 @@ Base URL
   bind:value={apiUpstreamForm.baseUrl}
   required
 />
+<span class="text-xs font-normal text-[#6e6e6e]">HTTPS is required unless HTTP upstreams are explicitly enabled in the server environment.</span>
     </label>
     <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
 API key

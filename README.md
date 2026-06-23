@@ -38,6 +38,7 @@ cp .env.example .env
 Edit `.env` and set real secrets before running the full stack.
 For OpenAI/Codex OAuth, the default configuration uses the Codex-compatible OpenAI OAuth client with PKCE, so you normally do not need to create an OAuth app or set `OPENAI_OAUTH_CLIENT_SECRET`.
 `OPENAI_API_BASE_URL` defaults to `https://api.openai.com` and can be changed for compatible upstreams.
+API upstream accounts require HTTPS by default. Set `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only when you intentionally route to a trusted local or private HTTP upstream.
 
 Backend:
 

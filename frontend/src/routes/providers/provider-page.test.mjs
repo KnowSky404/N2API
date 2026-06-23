@@ -225,6 +225,7 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /Codex OAuth/);
   assert.match(source, /API upstream/);
   assert.match(source, /Base URL/);
+  assert.match(source, /HTTPS is required unless HTTP upstreams are explicitly enabled/);
   assert.match(source, /updateProviderAccountName\(account, event\)/);
   assert.match(source, /provider-account-name-\$\{account\.id\}/);
   assert.match(source, /Rename \$\{accountLabel\(account\)\}/);

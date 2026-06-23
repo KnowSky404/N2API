@@ -167,14 +167,15 @@ func main() {
 
 	providerRepo := store.NewProviderRepository(pool)
 	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
-		Provider:     "openai",
-		ClientID:     cfg.OpenAIOAuthClientID,
-		ClientSecret: cfg.OpenAIOAuthSecret,
-		RedirectURL:  cfg.OpenAIOAuthRedirectURL,
-		AuthURL:      cfg.OpenAIOAuthAuthURL,
-		TokenURL:     cfg.OpenAIOAuthTokenURL,
-		APIBaseURL:   cfg.OpenAIAPIBaseURL,
-		Secret:       cfg.EncryptionSecret,
+		Provider:              "openai",
+		ClientID:              cfg.OpenAIOAuthClientID,
+		ClientSecret:          cfg.OpenAIOAuthSecret,
+		RedirectURL:           cfg.OpenAIOAuthRedirectURL,
+		AuthURL:               cfg.OpenAIOAuthAuthURL,
+		TokenURL:              cfg.OpenAIOAuthTokenURL,
+		APIBaseURL:            cfg.OpenAIAPIBaseURL,
+		Secret:                cfg.EncryptionSecret,
+		AllowHTTPAPIUpstreams: cfg.AllowHTTPAPIUpstreams,
 	})
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL:                 cfg.OpenAIAPIBaseURL,

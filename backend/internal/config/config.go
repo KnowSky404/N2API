@@ -20,6 +20,7 @@ type Config struct {
 	OpenAIOAuthAuthURL                     string
 	OpenAIOAuthTokenURL                    string
 	OpenAIAPIBaseURL                       string
+	AllowHTTPAPIUpstreams                  bool
 	GatewayMaxConcurrentRequests           int
 	GatewayMaxConcurrentRequestsPerAccount int
 	GatewayMaxConcurrentRequestsPerKey     int
@@ -50,6 +51,11 @@ func Load(lookup func(string) string) (Config, error) {
 		OpenAIOAuthTokenURL:    valueOrDefault(lookup("OPENAI_OAUTH_TOKEN_URL"), defaultOpenAIOAuthTokenURL),
 		OpenAIAPIBaseURL:       valueOrDefault(lookup("OPENAI_API_BASE_URL"), "https://api.openai.com"),
 	}
+	allowHTTPAPIUpstreams, err := parseBool(lookup("N2API_ALLOW_HTTP_API_UPSTREAMS"), "N2API_ALLOW_HTTP_API_UPSTREAMS")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AllowHTTPAPIUpstreams = allowHTTPAPIUpstreams
 
 	port, err := parsePort(valueOrDefault(lookup("N2API_PORT"), "3000"))
 	if err != nil {
@@ -127,6 +133,17 @@ func parseNonNegativeInt(value, name string) (int, error) {
 	}
 	if parsed < 0 {
 		return 0, fmt.Errorf("%s must be greater than or equal to 0", name)
+	}
+	return parsed, nil
+}
+
+func parseBool(value, name string) (bool, error) {
+	if value == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean: %w", name, err)
 	}
 	return parsed, nil
 }
