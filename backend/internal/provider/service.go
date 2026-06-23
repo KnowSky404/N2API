@@ -73,13 +73,14 @@ const (
 )
 
 var (
-	ErrNotConfigured       = errors.New("provider not configured")
-	ErrNotConnected        = errors.New("provider not connected")
-	ErrInvalidState        = errors.New("invalid oauth state")
-	ErrInvalidInput        = errors.New("invalid provider input")
-	ErrAccountsDisabled    = errors.New("provider accounts disabled")
-	ErrAccountsUnavailable = errors.New("provider accounts unavailable")
-	ErrModelUnavailable    = errors.New("model unavailable")
+	ErrNotConfigured          = errors.New("provider not configured")
+	ErrNotConnected           = errors.New("provider not connected")
+	ErrInvalidState           = errors.New("invalid oauth state")
+	ErrInvalidInput           = errors.New("invalid provider input")
+	ErrAccountsDisabled       = errors.New("provider accounts disabled")
+	ErrAccountsUnavailable    = errors.New("provider accounts unavailable")
+	ErrModelUnavailable       = errors.New("model unavailable")
+	ErrSessionBindingNotFound = errors.New("provider session binding not found")
 )
 
 type Config struct {
@@ -193,6 +194,17 @@ type AccountTestResult struct {
 	Message   string    `json:"message"`
 	CheckedAt time.Time `json:"checkedAt"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type SessionBinding struct {
+	ID         int64     `json:"id"`
+	Provider   string    `json:"provider"`
+	Model      string    `json:"model"`
+	SessionID  string    `json:"sessionId"`
+	AccountID  int64     `json:"accountId"`
+	LastUsedAt time.Time `json:"lastUsedAt"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 type AccountCredential struct {
@@ -345,6 +357,8 @@ type Repository interface {
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
+	FindSessionBinding(ctx context.Context, provider string, model string, sessionID string) (SessionBinding, error)
+	UpsertSessionBinding(ctx context.Context, provider string, model string, sessionID string, accountID int64) error
 	CreateState(ctx context.Context, state OAuthState) error
 	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
 }

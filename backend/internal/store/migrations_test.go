@@ -324,6 +324,25 @@ func TestProviderAccountMaxConcurrentRequestsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestProviderSessionBindingsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00020_provider_session_bindings.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS provider_session_bindings",
+		"provider_session_bindings_provider_model_session_unique",
+		"UNIQUE (provider, model, session_id)",
+		"REFERENCES provider_accounts(id) ON DELETE CASCADE",
+		"provider_session_bindings_provider_account_idx",
+		"DROP TABLE IF EXISTS provider_session_bindings",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestProviderAccountTestResultsMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00017_provider_account_test_results.sql")
 	if err != nil {
@@ -428,10 +447,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 19 {
-		t.Fatalf("migration sources = %d, want 19", len(sources))
+	if len(sources) != 20 {
+		t.Fatalf("migration sources = %d, want 20", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[18].Path != "00019_provider_account_max_concurrent_requests.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[19].Path != "00020_provider_session_bindings.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

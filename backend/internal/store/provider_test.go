@@ -147,6 +147,35 @@ func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryUpsertsAndFindsSessionBinding(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	saved := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "session-binding-account",
+		DisplayName:           "Session Binding Account",
+		EncryptedAccessToken:  "access-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              5,
+		Status:                provider.AccountStatusActive,
+	})
+
+	if err := repo.UpsertSessionBinding(ctx, "openai", "gpt-5", "workspace-123", saved.ID); err != nil {
+		t.Fatalf("UpsertSessionBinding returned error: %v", err)
+	}
+	binding, err := repo.FindSessionBinding(ctx, "openai", "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("FindSessionBinding returned error: %v", err)
+	}
+	if binding.AccountID != saved.ID || binding.Model != "gpt-5" || binding.SessionID != "workspace-123" {
+		t.Fatalf("binding = %+v, want saved account binding", binding)
+	}
+}
+
 func TestProviderRepositoryUpdatesAPIUpstreamCredential(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

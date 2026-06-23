@@ -2093,6 +2093,7 @@ type memoryRepo struct {
 	accounts           []Account
 	accountModels      map[int64][]AccountModel
 	accountTestResults []AccountTestResult
+	sessionBindings    map[string]SessionBinding
 	states             []OAuthState
 
 	saveCount           int
@@ -2105,8 +2106,9 @@ type memoryRepo struct {
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		accountModels: make(map[int64][]AccountModel),
-		nextID:        1,
+		accountModels:   make(map[int64][]AccountModel),
+		sessionBindings: make(map[string]SessionBinding),
+		nextID:          1,
 	}
 }
 
@@ -2553,6 +2555,36 @@ func (r *memoryRepo) ListEligibleAccountsForModel(ctx context.Context, providerN
 		}
 	}
 	return eligible, nil
+}
+
+func (r *memoryRepo) FindSessionBinding(ctx context.Context, providerName string, model string, sessionID string) (SessionBinding, error) {
+	binding, ok := r.sessionBindings[sessionBindingKey(providerName, model, sessionID)]
+	if !ok {
+		return SessionBinding{}, ErrSessionBindingNotFound
+	}
+	return binding, nil
+}
+
+func (r *memoryRepo) UpsertSessionBinding(ctx context.Context, providerName string, model string, sessionID string, accountID int64) error {
+	now := time.Now()
+	key := sessionBindingKey(providerName, model, sessionID)
+	binding := r.sessionBindings[key]
+	if binding.ID == 0 {
+		binding.ID = int64(len(r.sessionBindings) + 1)
+		binding.CreatedAt = now
+	}
+	binding.Provider = providerName
+	binding.Model = model
+	binding.SessionID = sessionID
+	binding.AccountID = accountID
+	binding.LastUsedAt = now
+	binding.UpdatedAt = now
+	r.sessionBindings[key] = binding
+	return nil
+}
+
+func sessionBindingKey(providerName string, model string, sessionID string) string {
+	return providerName + "\x00" + model + "\x00" + sessionID
 }
 
 func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {

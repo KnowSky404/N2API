@@ -309,6 +309,48 @@ func (r *ProviderRepository) FindAccountByIdentity(ctx context.Context, provider
 	return account, nil
 }
 
+func (r *ProviderRepository) FindSessionBinding(ctx context.Context, providerName, model, sessionID string) (provider.SessionBinding, error) {
+	var binding provider.SessionBinding
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, provider, model, session_id, account_id, last_used_at, created_at, updated_at
+		FROM provider_session_bindings
+		WHERE provider = $1
+			AND model = $2
+			AND session_id = $3
+	`, providerName, model, sessionID).Scan(
+		&binding.ID,
+		&binding.Provider,
+		&binding.Model,
+		&binding.SessionID,
+		&binding.AccountID,
+		&binding.LastUsedAt,
+		&binding.CreatedAt,
+		&binding.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.SessionBinding{}, provider.ErrSessionBindingNotFound
+	}
+	if err != nil {
+		return provider.SessionBinding{}, err
+	}
+	return binding, nil
+}
+
+func (r *ProviderRepository) UpsertSessionBinding(ctx context.Context, providerName, model, sessionID string, accountID int64) error {
+	_, err := r.pool.Exec(ctx, `
+		INSERT INTO provider_session_bindings (
+			provider, model, session_id, account_id, last_used_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, now(), now())
+		ON CONFLICT (provider, model, session_id)
+		DO UPDATE SET
+			account_id = EXCLUDED.account_id,
+			last_used_at = now(),
+			updated_at = now()
+	`, providerName, model, sessionID, accountID)
+	return err
+}
+
 func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.Account) (provider.Account, error) {
 	normalizeAccountForSave(&account)
 	tx, err := r.pool.Begin(ctx)
