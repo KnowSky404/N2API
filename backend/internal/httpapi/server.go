@@ -440,24 +440,26 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		var req struct {
-			Name     string   `json:"name"`
-			BaseURL  string   `json:"baseUrl"`
-			APIKey   string   `json:"apiKey"`
-			Enabled  *bool    `json:"enabled"`
-			Priority int      `json:"priority"`
-			Models   []string `json:"models"`
+			Name       string   `json:"name"`
+			BaseURL    string   `json:"baseUrl"`
+			APIKey     string   `json:"apiKey"`
+			Enabled    *bool    `json:"enabled"`
+			Priority   int      `json:"priority"`
+			LoadFactor int      `json:"loadFactor"`
+			Models     []string `json:"models"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
 		account, err := providers.CreateAPIUpstreamAccount(r.Context(), provider.APIUpstreamInput{
-			Name:     req.Name,
-			BaseURL:  req.BaseURL,
-			APIKey:   req.APIKey,
-			Enabled:  req.Enabled,
-			Priority: req.Priority,
-			Models:   req.Models,
+			Name:       req.Name,
+			BaseURL:    req.BaseURL,
+			APIKey:     req.APIKey,
+			Enabled:    req.Enabled,
+			Priority:   req.Priority,
+			LoadFactor: req.LoadFactor,
+			Models:     req.Models,
 		})
 		if err != nil {
 			writeProviderAccountError(w, err)
@@ -744,17 +746,18 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 	}
 
 	var req struct {
-		Enabled  *bool   `json:"enabled"`
-		Priority *int    `json:"priority"`
-		Name     *string `json:"name"`
-		BaseURL  *string `json:"baseUrl"`
-		APIKey   *string `json:"apiKey"`
+		Enabled    *bool   `json:"enabled"`
+		Priority   *int    `json:"priority"`
+		LoadFactor *int    `json:"loadFactor"`
+		Name       *string `json:"name"`
+		BaseURL    *string `json:"baseUrl"`
+		APIKey     *string `json:"apiKey"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if req.Enabled == nil && req.Priority == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil {
+	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
@@ -762,6 +765,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 	account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
 		Enabled:            req.Enabled,
 		Priority:           req.Priority,
+		LoadFactor:         req.LoadFactor,
 		Name:               req.Name,
 		APIUpstreamBaseURL: req.BaseURL,
 		APIUpstreamAPIKey:  req.APIKey,
@@ -1008,6 +1012,7 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 				AccountType:         account.AccountType,
 				Enabled:             account.Enabled,
 				Priority:            account.Priority,
+				LoadFactor:          normalizedProviderAccountLoadFactor(account.LoadFactor),
 				Status:              account.Status,
 				StatusReason:        account.StatusReason,
 				LastError:           account.LastError,
@@ -1093,6 +1098,9 @@ func sortModelRoutingAccounts(accounts []admin.ModelRoutingAccount, sourceAccoun
 		if left.Priority != right.Priority {
 			return left.Priority < right.Priority
 		}
+		if normalizedProviderAccountLoadFactor(left.LoadFactor) != normalizedProviderAccountLoadFactor(right.LoadFactor) {
+			return normalizedProviderAccountLoadFactor(left.LoadFactor) > normalizedProviderAccountLoadFactor(right.LoadFactor)
+		}
 		leftHasError := left.LastErrorAt != nil
 		rightHasError := right.LastErrorAt != nil
 		if leftHasError != rightHasError {
@@ -1109,6 +1117,13 @@ func sortModelRoutingAccounts(accounts []admin.ModelRoutingAccount, sourceAccoun
 		}
 		return left.ID < right.ID
 	})
+}
+
+func normalizedProviderAccountLoadFactor(value int) int {
+	if value <= 0 {
+		return 1
+	}
+	return value
 }
 
 func decodeCallbackURL(w http.ResponseWriter, r *http.Request) (string, string, error) {

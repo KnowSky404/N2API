@@ -22,7 +22,7 @@ func NewProviderRepository(pool *pgxpool.Pool) *ProviderRepository {
 
 const providerAccountColumns = `
 	a.id, a.provider, a.account_type, a.subject, a.name, a.display_name, a.enabled, a.priority,
-	a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
+	a.load_factor, a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
 	a.user_agent_hash, a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until,
 	a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
@@ -45,6 +45,7 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.DisplayName,
 		&account.Enabled,
 		&account.Priority,
+		&account.LoadFactor,
 		&account.LastUsedAt,
 		&account.LastError,
 		&account.LastErrorAt,
@@ -97,6 +98,9 @@ func scanProviderAccountModel(row pgx.Row) (provider.AccountModel, error) {
 func normalizeAccountForSave(account *provider.Account) {
 	if strings.TrimSpace(account.AccountType) == "" {
 		account.AccountType = provider.AccountTypeCodexOAuth
+	}
+	if account.LoadFactor <= 0 {
+		account.LoadFactor = 1
 	}
 	if strings.TrimSpace(account.Credential.CredentialType) == "" {
 		switch account.AccountType {
@@ -200,6 +204,7 @@ func (r *ProviderRepository) ListAccounts(ctx context.Context, providerName stri
 		WHERE a.provider = $1
 		ORDER BY
 			a.priority ASC,
+			a.load_factor DESC,
 			(a.last_error_at IS NOT NULL) ASC,
 			a.last_used_at ASC NULLS FIRST,
 			a.id ASC
@@ -241,6 +246,7 @@ func (r *ProviderRepository) FindAccount(ctx context.Context, providerName strin
 		WHERE a.provider = $1
 		ORDER BY
 			a.priority ASC,
+			a.load_factor DESC,
 			(a.last_error_at IS NOT NULL) ASC,
 			a.last_used_at ASC NULLS FIRST,
 			a.id ASC
@@ -318,6 +324,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 				display_name = $6,
 				enabled = $7,
 				priority = CASE WHEN $8 = 0 THEN 100 ELSE $8 END,
+				load_factor = CASE WHEN $17 = 0 THEN 1 ELSE $17 END,
 				last_error = '',
 				last_error_at = NULL,
 				status = COALESCE(NULLIF($9, ''), 'active'),
@@ -348,6 +355,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			account.FailureCount,
 			account.CircuitOpenUntil,
 			account.RateLimitedUntil,
+			account.LoadFactor,
 		).Scan(&updatedID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return provider.Account{}, provider.ErrNotConnected
@@ -371,7 +379,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 	var savedID int64
 	err = tx.QueryRow(ctx, `
 		INSERT INTO provider_accounts (
-			provider, account_type, subject, name, display_name, enabled, priority, last_error,
+			provider, account_type, subject, name, display_name, enabled, priority, load_factor, last_error,
 			status, status_reason, fingerprint_hash, user_agent_hash, ip_hash, failure_count,
 			circuit_open_until, rate_limited_until, updated_at
 		)
@@ -379,13 +387,15 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			$1, $2, $3, $4, $5,
 			$6,
 			CASE WHEN $7 = 0 THEN 100 ELSE $7 END,
-			'', COALESCE(NULLIF($8, ''), 'active'), $9, $10, $11, $12, $13,
-			$14, $15, now()
+			CASE WHEN $8 = 0 THEN 1 ELSE $8 END,
+			'', COALESCE(NULLIF($9, ''), 'active'), $10, $11, $12, $13, $14,
+			$15, $16, now()
 		)
 		ON CONFLICT (provider, account_type, subject) WHERE subject <> ''
 		DO UPDATE SET
 			name = EXCLUDED.name,
 			display_name = EXCLUDED.display_name,
+			load_factor = EXCLUDED.load_factor,
 			last_error = '',
 			last_error_at = NULL,
 			status = EXCLUDED.status,
@@ -405,6 +415,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 		account.DisplayName,
 		account.Enabled,
 		account.Priority,
+		account.LoadFactor,
 		account.Status,
 		account.StatusReason,
 		account.FingerprintHash,
@@ -443,6 +454,7 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 		SET
 			enabled = COALESCE($3, enabled),
 			priority = COALESCE($4, priority),
+			load_factor = COALESCE($8, load_factor),
 			name = CASE WHEN $7 THEN $6 ELSE name END,
 			last_error = CASE WHEN $5 THEN '' ELSE last_error END,
 			last_error_at = CASE WHEN $5 THEN NULL ELSE last_error_at END,
@@ -455,7 +467,7 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 		WHERE provider = $1
 			AND id = $2
 		RETURNING id
-	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus, update.Name, update.Name != nil)
+	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus, update.Name, update.Name != nil, update.LoadFactor)
 	var updatedID int64
 	err = row.Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -822,6 +834,7 @@ func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, p
 			AND ($4::bigint[] IS NULL OR cardinality($4::bigint[]) = 0 OR NOT (a.id = ANY($4::bigint[])))
 		ORDER BY
 			a.priority ASC,
+			a.load_factor DESC,
 			(a.last_error_at IS NOT NULL) ASC,
 			a.last_used_at ASC NULLS FIRST,
 			a.id ASC

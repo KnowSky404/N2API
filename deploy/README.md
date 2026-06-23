@@ -20,7 +20,7 @@ Start the stack, log in as admin, and use Provider accounts to connect one or mo
 The default OAuth flow uses the Codex-compatible OpenAI OAuth client with PKCE, so the OAuth client id, client secret, auth URL, and token URL can usually stay blank in `.env`.
 Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback` unless you are using your own registered OpenAI OAuth client. The built-in Codex-compatible client expects that local callback URI; after OpenAI redirects there, copy the browser URL back into N2API's callback field.
 
-- Use the account form to set a display name, priority, and whether the account should be enabled after OAuth login.
+- Use the account row to set a display name, priority, and load factor. OAuth account creation also lets you choose whether the account should be enabled after login.
 - Configure supported models on each connected account. These per-account model rows describe account capability for gateway routing.
 - Use API Keys to control which configured models are exposed to clients and which model is used as the default when a POST request omits `model`. Global routable model settings do not make an account eligible for a model it has not configured.
 - Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it.
@@ -31,6 +31,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - Connected accounts with no configured models are kept in PostgreSQL and can be edited later, but they do not receive model-routed POST traffic.
 - During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so routing does not assume false account capability.
 - Lower priority numbers are selected before higher priority numbers.
+- Within the same priority and health class, a higher load factor is considered before a lower load factor. Keep weak or quota-sensitive accounts at load factor `1`; raise stronger accounts when they should carry more traffic.
 - Rate-limited, circuit-open, expired, and disabled accounts are skipped during gateway account selection.
 - Upstream 429 responses mark the account as rate-limited, 401/403 mark it expired, and 5xx responses open a short circuit window before traffic tries another account.
 - `/v1/models` returns the aggregate exposed models for the authenticated API key. All-model keys see the routable list after applying the global allowed-model list; selected-model keys see the intersection of their selected models and currently routable models.

@@ -101,3 +101,22 @@ func TestGatewayDocumentationMentionsSingleAccountModelBackfill(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"load factor",
+			"same priority",
+			"higher load factor",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account load factor documentation", path, want)
+			}
+		}
+	}
+}

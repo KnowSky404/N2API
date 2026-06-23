@@ -169,6 +169,7 @@ type ModelRoutingAccount struct {
 	AccountType         string     `json:"accountType"`
 	Enabled             bool       `json:"enabled"`
 	Priority            int        `json:"priority"`
+	LoadFactor          int        `json:"loadFactor"`
 	Status              string     `json:"status"`
 	StatusReason        string     `json:"statusReason"`
 	LastError           string     `json:"lastError"`

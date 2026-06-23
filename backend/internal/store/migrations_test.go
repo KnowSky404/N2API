@@ -289,6 +289,25 @@ func TestSingleAccountModelBackfillMigrationIsConservative(t *testing.T) {
 	}
 }
 
+func TestProviderAccountLoadFactorMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00016_provider_account_load_factor.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE provider_accounts ADD COLUMN IF NOT EXISTS load_factor INTEGER NOT NULL DEFAULT 1",
+		"provider_accounts_load_factor_positive",
+		"load_factor BETWEEN 1 AND 100",
+		"provider_accounts_schedulable_idx",
+		"priority, load_factor DESC, last_used_at, id",
+		"ALTER TABLE provider_accounts DROP COLUMN IF EXISTS load_factor",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestRequestLogModelAttributionMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00010_request_log_model_attribution.sql")
 	if err != nil {
@@ -356,10 +375,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 15 {
-		t.Fatalf("migration sources = %d, want 15", len(sources))
+	if len(sources) != 16 {
+		t.Fatalf("migration sources = %d, want 16", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[14].Path != "00015_single_account_model_backfill.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[15].Path != "00016_provider_account_load_factor.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

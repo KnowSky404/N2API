@@ -189,6 +189,41 @@ func TestProviderRepositoryUpdatesAPIUpstreamCredential(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryUpdatesAccountLoadFactor(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	saved := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "load-factor-account",
+		DisplayName:           "Load Factor Account",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              5,
+		LoadFactor:            1,
+		Status:                provider.AccountStatusActive,
+	})
+	loadFactor := 10
+
+	updated, err := repo.UpdateAccount(ctx, "openai", saved.ID, provider.AccountUpdate{LoadFactor: &loadFactor})
+	if err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if updated.LoadFactor != 10 {
+		t.Fatalf("updated load factor = %d, want 10", updated.LoadFactor)
+	}
+
+	found, err := repo.FindAccountByID(ctx, "openai", saved.ID)
+	if err != nil {
+		t.Fatalf("FindAccountByID returned error: %v", err)
+	}
+	if found.LoadFactor != 10 {
+		t.Fatalf("found load factor = %d, want persisted 10", found.LoadFactor)
+	}
+}
+
 func TestMarkAccountUsedClearsTemporaryFailureStateColumns(t *testing.T) {
 	source, err := os.ReadFile("provider.go")
 	if err != nil {
@@ -479,6 +514,17 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		Status:                "rate_limited",
 		RateLimitedUntil:      &past,
 	})
+	highLoadSamePriority := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "high-load-same-priority",
+		DisplayName:           "High Load Same Priority",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Priority:              6,
+		LoadFactor:            20,
+		Status:                "active",
+	})
 	circuitOpenFuture := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
 		Subject:               "circuit-open-future",
@@ -553,6 +599,7 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		rateLimitedFuture,
 		rateLimitedNull,
 		rateLimitedPast,
+		highLoadSamePriority,
 		circuitOpenFuture,
 		circuitOpenNull,
 		circuitOpenPast,
@@ -576,7 +623,7 @@ func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 		t.Fatalf("ListEligibleAccountsForModel returned error: %v", err)
 	}
 	gotIDs := accountIDs(eligible)
-	wantIDs := []int64{expired.ID, rateLimitedPast.ID, circuitOpenPast.ID, cleanSameUse.ID, errorSameUse.ID, nullLastUsed.ID, first.ID}
+	wantIDs := []int64{expired.ID, highLoadSamePriority.ID, rateLimitedPast.ID, circuitOpenPast.ID, cleanSameUse.ID, errorSameUse.ID, nullLastUsed.ID, first.ID}
 	if !reflect.DeepEqual(gotIDs, wantIDs) {
 		t.Fatalf("eligible account IDs = %v, want %v", gotIDs, wantIDs)
 	}

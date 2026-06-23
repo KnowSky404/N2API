@@ -36,6 +36,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} baseUrl
  * @property {boolean} enabled
  * @property {number} priority
+ * @property {number} loadFactor
  * @property {string} status
  * @property {string} statusReason
  * @property {string | null} circuitOpenUntil
@@ -141,6 +142,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} accountType
  * @property {boolean} enabled
  * @property {number} priority
+ * @property {number} loadFactor
  * @property {string} status
  * @property {string} statusReason
  * @property {string} lastError
@@ -175,6 +177,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} displayName
  * @property {string} accountType
  * @property {number} priority
+ * @property {number} loadFactor
  * @property {string} status
  * @property {string | null} lastUsedAt
  * @property {number} scheduleRank
@@ -217,6 +220,7 @@ export const apiUpstreamForm = $state({
   baseUrl: '',
   apiKey: '',
   priority: 100,
+  loadFactor: 1,
   enabled: true,
   modelsText: '',
   submitting: false,
@@ -683,6 +687,7 @@ function resetAPIUpstreamForm() {
     baseUrl: '',
     apiKey: '',
     priority: 100,
+    loadFactor: 1,
     enabled: true,
     modelsText: '',
     submitting: false,
@@ -1044,7 +1049,7 @@ export async function completeProviderCallback() {
 
 /**
  * @param {ProviderAccount} account
- * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'name' | 'baseUrl'>> & { apiKey?: string }} patch
+ * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'name' | 'baseUrl'>> & { apiKey?: string }} patch
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
@@ -1108,6 +1113,7 @@ export async function createAPIUpstreamAccount() {
         baseUrl: apiUpstreamForm.baseUrl,
         apiKey: apiUpstreamForm.apiKey,
         priority: Number(apiUpstreamForm.priority) || 100,
+        loadFactor: Number(apiUpstreamForm.loadFactor) || 1,
         enabled: apiUpstreamForm.enabled,
         models: parseModelLines(apiUpstreamForm.modelsText)
       })
@@ -1139,6 +1145,23 @@ export async function updateProviderAccountPriority(account, event) {
   }
 
   await updateProviderAccount(account, { priority });
+}
+
+/**
+ * @param {ProviderAccount} account
+ * @param {Event & { currentTarget: HTMLInputElement }} event
+ */
+export async function updateProviderAccountLoadFactor(account, event) {
+  const rawValue = event.currentTarget.value.trim();
+  const loadFactor = Number(rawValue);
+
+  if (!/^\d+$/.test(rawValue) || loadFactor < 1 || loadFactor > 100) {
+    providerAccounts.error = 'Load factor must be a whole number from 1 to 100';
+    event.currentTarget.value = String(account.loadFactor || 1);
+    return;
+  }
+
+  await updateProviderAccount(account, { loadFactor });
 }
 
 /** @param {ProviderAccount} account */

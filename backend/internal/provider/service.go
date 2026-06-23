@@ -152,6 +152,7 @@ type Account struct {
 	LastRefreshAt         *time.Time        `json:"lastRefreshAt"`
 	Enabled               bool              `json:"enabled"`
 	Priority              int               `json:"priority"`
+	LoadFactor            int               `json:"loadFactor"`
 	LastUsedAt            *time.Time        `json:"lastUsedAt"`
 	LastError             string            `json:"lastError"`
 	LastErrorAt           *time.Time        `json:"lastErrorAt"`
@@ -204,12 +205,13 @@ type AccountModelInput struct {
 }
 
 type APIUpstreamInput struct {
-	Name     string   `json:"name"`
-	BaseURL  string   `json:"baseUrl"`
-	APIKey   string   `json:"apiKey"`
-	Enabled  *bool    `json:"enabled"`
-	Priority int      `json:"priority"`
-	Models   []string `json:"models"`
+	Name       string   `json:"name"`
+	BaseURL    string   `json:"baseUrl"`
+	APIKey     string   `json:"apiKey"`
+	Enabled    *bool    `json:"enabled"`
+	Priority   int      `json:"priority"`
+	LoadFactor int      `json:"loadFactor"`
+	Models     []string `json:"models"`
 }
 
 type ExposedModel struct {
@@ -220,6 +222,7 @@ type ExposedModel struct {
 type AccountUpdate struct {
 	Enabled                    *bool
 	Priority                   *int
+	LoadFactor                 *int
 	ClearStatus                bool
 	Name                       *string
 	APIUpstreamBaseURL         *string
@@ -249,6 +252,7 @@ type SelectionCandidate struct {
 	DisplayName         string     `json:"displayName"`
 	AccountType         string     `json:"accountType"`
 	Priority            int        `json:"priority"`
+	LoadFactor          int        `json:"loadFactor"`
 	Status              string     `json:"status"`
 	LastUsedAt          *time.Time `json:"lastUsedAt"`
 	ScheduleRank        int        `json:"scheduleRank"`
@@ -685,10 +689,13 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
+		return Account{}, ErrInvalidInput
+	}
+	if update.LoadFactor != nil && (*update.LoadFactor < 1 || *update.LoadFactor > 100) {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Name != nil {
@@ -770,6 +777,7 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 		DisplayName: name,
 		Enabled:     enabled,
 		Priority:    input.Priority,
+		LoadFactor:  normalizedLoadFactor(input.LoadFactor),
 		Status:      AccountStatusActive,
 		Credential: AccountCredential{
 			CredentialType:  CredentialTypeAPIKey,
@@ -1159,6 +1167,7 @@ func selectionCandidate(account Account, scheduleRank int, selected bool, schedu
 		DisplayName:         accountDisplayName(account),
 		AccountType:         account.AccountType,
 		Priority:            account.Priority,
+		LoadFactor:          normalizedLoadFactor(account.LoadFactor),
 		Status:              valueOrDefault(account.Status, AccountStatusActive),
 		LastUsedAt:          account.LastUsedAt,
 		ScheduleRank:        scheduleRank,
@@ -1174,9 +1183,13 @@ func stickySessionCandidates(accounts []Account, sessionID string) []Account {
 	}
 
 	priority := accounts[0].Priority
+	loadFactor := normalizedLoadFactor(accounts[0].LoadFactor)
 	hasError := accounts[0].LastErrorAt != nil
 	groupEnd := 0
-	for groupEnd < len(accounts) && accounts[groupEnd].Priority == priority && (accounts[groupEnd].LastErrorAt != nil) == hasError {
+	for groupEnd < len(accounts) &&
+		accounts[groupEnd].Priority == priority &&
+		normalizedLoadFactor(accounts[groupEnd].LoadFactor) == loadFactor &&
+		(accounts[groupEnd].LastErrorAt != nil) == hasError {
 		groupEnd++
 	}
 	if groupEnd <= 1 {
@@ -1890,6 +1903,13 @@ func decodeIDTokenClaims(idToken string) (idTokenClaims, error) {
 func valueOrDefault(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
+	}
+	return value
+}
+
+func normalizedLoadFactor(value int) int {
+	if value <= 0 {
+		return 1
 	}
 	return value
 }

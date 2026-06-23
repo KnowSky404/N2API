@@ -199,11 +199,14 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /placeholder="Search accounts"/);
   assert.match(source, /aria-sort=/);
   assert.match(source, /sortProviderAccounts/);
+  assert.match(source, /loadFactor/);
   assert.match(source, /sticky right-0/);
 });
 
 test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /role="switch"/);
+  assert.match(source, /Load factor/);
+  assert.match(source, /updateProviderAccountLoadFactor/);
   assert.match(source, /sr-only">Refresh account/);
   assert.match(source, /title=\{accountHoverDetail\(account\)\}/);
   assert.match(source, /title=\{statusHoverDetail\(account\)\}/);
@@ -230,6 +233,8 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /name="apiKey"/);
   assert.match(source, /Leave blank to keep current key/);
   assert.match(source, /Save upstream/);
+  assert.match(source, /Scheduling capacity/);
+  assert.match(source, /loadFactor/);
   assert.match(source, /updateAPIUpstreamCredential\(account, event\)/);
   assert.match(source, /updateProviderAccountName\(account, event\)/);
   assert.match(source, /provider-account-name-\$\{account\.id\}/);
@@ -350,6 +355,7 @@ test('models page surfaces model routing candidates', () => {
   assert.match(modelsSource, /model\.accounts/);
   assert.match(modelsSource, /account\.displayName/);
   assert.match(modelsSource, /Priority \{account\.priority\}/);
+  assert.match(modelsSource, /Load \{account\.loadFactor/);
   assert.match(modelsSource, /account\.accountType/);
   assert.match(modelsSource, /account\.status/);
   assert.match(modelsSource, /routingAccountHoverDetail/);

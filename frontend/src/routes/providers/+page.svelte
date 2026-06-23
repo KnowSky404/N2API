@@ -31,6 +31,7 @@
     setAccountModelEnabled,
     statusLabel,
     updateProviderAccount,
+    updateProviderAccountLoadFactor,
     updateProviderAccountName,
     updateProviderAccountPriority,
     usage
@@ -107,6 +108,7 @@
     if (key === 'status') return statusLabel(account.status);
     if (key === 'enabled') return account.enabled ? 0 : 1;
     if (key === 'priority') return account.priority ?? 0;
+    if (key === 'loadFactor') return account.loadFactor ?? 1;
     if (key === 'expires') return Date.parse(account.accessTokenExpiresAt ?? '') || 0;
     if (key === 'refresh') return Date.parse(account.lastRefreshAt ?? '') || 0;
     if (key === 'used') return Date.parse(account.lastUsedAt ?? '') || 0;
@@ -413,13 +415,13 @@ type="submit"
   </form>
 
   <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_120px_auto]"
+    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_120px_120px_auto]"
     onsubmit={(event) => {
       event.preventDefault();
       createAPIUpstreamAccount();
     }}
   >
-    <div class="lg:col-span-5">
+    <div class="lg:col-span-6">
       <h3 class="text-base font-semibold text-[#0d0d0d]">API upstream</h3>
       <p class="mt-1 text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
     </div>
@@ -464,6 +466,17 @@ Priority
   bind:value={apiUpstreamForm.priority}
 />
     </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Load factor
+<input
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  type="number"
+  min="1"
+  max="100"
+  step="1"
+  bind:value={apiUpstreamForm.loadFactor}
+/>
+    </label>
     <label class="inline-flex h-10 self-end whitespace-nowrap items-center gap-2 text-sm font-medium text-[#3c3c3c]">
 <input
   class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
@@ -472,7 +485,7 @@ Priority
 />
 Enabled
     </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-4">
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-5">
 Manual models
 <textarea
   class="min-h-20 w-full min-w-0 resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -589,6 +602,11 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         Priority<span class="text-[11px]">{sortIndicator('priority')}</span>
       </button>
     </th>
+    <th class="w-28 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('loadFactor')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('loadFactor')}>
+        Load factor<span class="text-[11px]">{sortIndicator('loadFactor')}</span>
+      </button>
+    </th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('expires')}>
       <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('expires')}>
         Token expiry<span class="text-[11px]">{sortIndicator('expires')}</span>
@@ -611,15 +629,15 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="10">Loading provider accounts...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="10">No provider accounts connected yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="10">No accounts match your search.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">No accounts match your search.</td>
     </tr>
   {:else}
     {#each filteredProviderAccounts as account}
@@ -738,6 +756,22 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             value={account.priority}
             disabled={providerAccounts.saving}
             onchange={(event) => updateProviderAccountPriority(account, event)}
+          />
+        </td>
+        <td class="px-4 py-3 align-middle">
+          <label class="sr-only" for={`provider-account-load-factor-${account.id}`}>
+            Load factor for {accountLabel(account)}
+          </label>
+          <input
+            id={`provider-account-load-factor-${account.id}`}
+            class="w-24 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            value={account.loadFactor || 1}
+            disabled={providerAccounts.saving}
+            onchange={(event) => updateProviderAccountLoadFactor(account, event)}
           />
         </td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>

@@ -44,6 +44,7 @@
       account.displayName || `Account ${account.id}`,
       accountTypeLabel(account.accountType),
       `Priority ${account.priority}`,
+      `Load ${account.loadFactor || 1}`,
       account.schedulable ? statusLabel(account.status) : account.unschedulableReason,
       account.statusReason,
       lastError
@@ -276,6 +277,7 @@
                 <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
                 <span>{accountTypeLabel(account.accountType)}</span>
                 <span>Priority {account.priority}</span>
+                <span>Load {account.loadFactor || 1}</span>
                 <span>Used {formatDate(account.lastUsedAt)}</span>
                 {#if account.selected}
                   <span class="font-medium text-[#0a7a5e]">Selected</span>
@@ -364,6 +366,7 @@
                             <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
                             <span class="text-[#6e6e6e]">{accountTypeLabel(account.accountType)}</span>
                             <span class="text-[#6e6e6e]">Priority {account.priority}</span>
+                            <span class="text-[#6e6e6e]">Load {account.loadFactor || 1}</span>
                             <span class="text-[#6e6e6e]">Used {formatDate(account.lastUsedAt)}</span>
                             <span class={account.schedulable ? 'text-[#6e6e6e]' : 'font-medium text-amber-800'}>
                               {account.schedulable ? statusLabel(account.status) : account.unschedulableReason}

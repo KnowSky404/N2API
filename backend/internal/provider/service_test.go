@@ -1129,6 +1129,24 @@ func TestSelectAccountForModelUsesPriorityOrder(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelUsesLoadFactorWithinPriority(t *testing.T) {
+	repo := newMemoryRepo()
+	first := testAccount(t, 1, true, 1, "low-capacity-token")
+	first.LoadFactor = 1
+	second := testAccount(t, 2, true, 1, "high-capacity-token")
+	second.LoadFactor = 5
+	repo.accounts = []Account{first, second}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.AuthorizationToken != "high-capacity-token" {
+		t.Fatalf("selected = %+v, want high load factor account", selected)
+	}
+}
+
 func TestUpdateAccountCanRenameLocalAccountLabel(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
@@ -1896,6 +1914,9 @@ func (r *memoryRepo) ListAccounts(ctx context.Context, providerName string) ([]A
 		if accounts[i].Priority != accounts[j].Priority {
 			return accounts[i].Priority < accounts[j].Priority
 		}
+		if normalizedLoadFactor(accounts[i].LoadFactor) != normalizedLoadFactor(accounts[j].LoadFactor) {
+			return normalizedLoadFactor(accounts[i].LoadFactor) > normalizedLoadFactor(accounts[j].LoadFactor)
+		}
 		iHasError := accounts[i].LastErrorAt != nil
 		jHasError := accounts[j].LastErrorAt != nil
 		if iHasError != jHasError {
@@ -2069,6 +2090,9 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 		}
 		if update.Priority != nil {
 			r.accounts[i].Priority = *update.Priority
+		}
+		if update.LoadFactor != nil {
+			r.accounts[i].LoadFactor = *update.LoadFactor
 		}
 		if update.Name != nil {
 			r.accounts[i].Name = *update.Name
@@ -2443,6 +2467,7 @@ func testExpiredAccount(t *testing.T, id int64, enabled bool, priority int, acce
 		AccessTokenExpiresAt:  &expiresAt,
 		Enabled:               enabled,
 		Priority:              priority,
+		LoadFactor:            1,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
