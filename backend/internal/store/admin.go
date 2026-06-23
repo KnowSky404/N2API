@@ -18,6 +18,7 @@ type AdminRepository struct {
 
 const modelSettingsKey = "model_settings"
 const usagePricingKey = "usage_pricing"
+const gatewaySettingsKey = "gateway_settings"
 
 func NewAdminRepository(pool *pgxpool.Pool) *AdminRepository {
 	return &AdminRepository{pool: pool}
@@ -629,6 +630,45 @@ func (r *AdminRepository) SaveModelSettings(ctx context.Context, settings admin.
 	`, modelSettingsKey, value)
 	if err != nil {
 		return admin.ModelSettings{}, err
+	}
+	return settings, nil
+}
+
+func (r *AdminRepository) GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error) {
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `
+		SELECT value
+		FROM settings
+		WHERE key = $1
+	`, gatewaySettingsKey).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.GatewaySettings{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.GatewaySettings{}, err
+	}
+
+	var settings admin.GatewaySettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return admin.GatewaySettings{}, err
+	}
+	return settings, nil
+}
+
+func (r *AdminRepository) SaveGatewaySettings(ctx context.Context, settings admin.GatewaySettings) (admin.GatewaySettings, error) {
+	value, err := json.Marshal(settings)
+	if err != nil {
+		return admin.GatewaySettings{}, err
+	}
+	_, err = r.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE
+		SET value = EXCLUDED.value,
+			updated_at = now()
+	`, gatewaySettingsKey, value)
+	if err != nil {
+		return admin.GatewaySettings{}, err
 	}
 	return settings, nil
 }

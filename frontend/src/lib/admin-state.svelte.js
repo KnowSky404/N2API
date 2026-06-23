@@ -228,10 +228,12 @@ export const apiKeys = $state({
   newKeyName: '',
   oneTimeSecret: ''
 });
-/** @type {{ loading: boolean, error: string, data: GatewaySettingsData | null }} */
+/** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, data: GatewaySettingsData | null }} */
 export const gatewaySettings = $state({
   loading: false,
+  saving: false,
   error: '',
+  saved: false,
   data: null
 });
 /** @type {{ loading: boolean, error: string, items: RequestLog[] }} */
@@ -592,6 +594,16 @@ function clearAPIKeys() {
   });
 }
 
+function clearGatewaySettings() {
+  replaceState(gatewaySettings, {
+    loading: false,
+    saving: false,
+    error: '',
+    saved: false,
+    data: null
+  });
+}
+
 function clearRequestLogs() {
   replaceState(requestLogs, {
     loading: false,
@@ -718,6 +730,7 @@ export async function loadSession() {
       clearProvider();
       clearAPIKeys();
       clearModelSettings();
+      clearGatewaySettings();
       clearRequestLogs();
       clearUsage();
       return;
@@ -764,6 +777,7 @@ export async function loadSession() {
     clearProvider();
     clearAPIKeys();
     clearModelSettings();
+    clearGatewaySettings();
     clearRequestLogs();
     clearUsage();
   }
@@ -797,6 +811,7 @@ export async function logout() {
   clearProvider();
   clearAPIKeys();
   clearModelSettings();
+  clearGatewaySettings();
   clearRequestLogs();
   clearUsage();
   loginForm.password = '';
@@ -1221,6 +1236,7 @@ export async function loadGatewaySettings() {
 
   gatewaySettings.loading = true;
   gatewaySettings.error = '';
+  gatewaySettings.saved = false;
 
   try {
     const payload = await requestJSON('/api/admin/gateway-settings');
@@ -1238,6 +1254,52 @@ export async function loadGatewaySettings() {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     gatewaySettings.loading = false;
+  }
+}
+
+export async function updateGatewaySettings() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || !gatewaySettings.data) return;
+
+  const payload = {
+    maxConcurrentGatewayRequests: Number(gatewaySettings.data.maxConcurrentGatewayRequests),
+    maxConcurrentRequestsPerAccount: Number(gatewaySettings.data.maxConcurrentRequestsPerAccount),
+    maxConcurrentRequestsPerKey: Number(gatewaySettings.data.maxConcurrentRequestsPerKey),
+    requestsPerMinutePerKey: Number(gatewaySettings.data.requestsPerMinutePerKey),
+    tokensPerMinutePerKey: Number(gatewaySettings.data.tokensPerMinutePerKey)
+  };
+  if (
+    Object.values(payload).some((value) => !Number.isInteger(value) || value < 0)
+  ) {
+    gatewaySettings.error = 'Gateway limits must be non-negative whole numbers';
+    gatewaySettings.saved = false;
+    return;
+  }
+
+  gatewaySettings.saving = true;
+  gatewaySettings.error = '';
+  gatewaySettings.saved = false;
+
+  try {
+    const saved = await requestJSON('/api/admin/gateway-settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.data = {
+      maxConcurrentGatewayRequests: Number(saved.maxConcurrentGatewayRequests ?? 0),
+      maxConcurrentRequestsPerAccount: Number(saved.maxConcurrentRequestsPerAccount ?? 0),
+      maxConcurrentRequestsPerKey: Number(saved.maxConcurrentRequestsPerKey ?? 0),
+      requestsPerMinutePerKey: Number(saved.requestsPerMinutePerKey ?? 0),
+      tokensPerMinutePerKey: Number(saved.tokensPerMinutePerKey ?? 0)
+    };
+    gatewaySettings.saved = true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.error = error instanceof Error ? error.message : 'Failed to update gateway settings';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.saving = false;
   }
 }
 

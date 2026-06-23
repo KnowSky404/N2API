@@ -29,7 +29,8 @@ var (
 )
 
 type Config struct {
-	SessionTTL time.Duration
+	SessionTTL             time.Duration
+	DefaultGatewaySettings GatewaySettings
 }
 
 type Admin struct {
@@ -139,6 +140,14 @@ type ModelSettings struct {
 	AllowedModels []string `json:"allowedModels"`
 }
 
+type GatewaySettings struct {
+	MaxConcurrentGatewayRequests    int `json:"maxConcurrentGatewayRequests"`
+	MaxConcurrentRequestsPerAccount int `json:"maxConcurrentRequestsPerAccount"`
+	MaxConcurrentRequestsPerKey     int `json:"maxConcurrentRequestsPerKey"`
+	RequestsPerMinutePerKey         int `json:"requestsPerMinutePerKey"`
+	TokensPerMinutePerKey           int `json:"tokensPerMinutePerKey"`
+}
+
 type ModelRoutingStatus struct {
 	DefaultModel  string              `json:"defaultModel"`
 	AllowedModels []string            `json:"allowedModels"`
@@ -197,11 +206,14 @@ type Repository interface {
 	SaveUsagePricing(ctx context.Context, pricing UsagePricing) (UsagePricing, error)
 	GetModelSettings(ctx context.Context) (ModelSettings, error)
 	SaveModelSettings(ctx context.Context, settings ModelSettings) (ModelSettings, error)
+	GetGatewaySettings(ctx context.Context) (GatewaySettings, error)
+	SaveGatewaySettings(ctx context.Context, settings GatewaySettings) (GatewaySettings, error)
 }
 
 type Service struct {
-	repo       Repository
-	sessionTTL time.Duration
+	repo                   Repository
+	sessionTTL             time.Duration
+	defaultGatewaySettings GatewaySettings
 }
 
 func NewService(repo Repository, cfg Config) *Service {
@@ -211,8 +223,9 @@ func NewService(repo Repository, cfg Config) *Service {
 	}
 
 	return &Service{
-		repo:       repo,
-		sessionTTL: sessionTTL,
+		repo:                   repo,
+		sessionTTL:             sessionTTL,
+		defaultGatewaySettings: cfg.DefaultGatewaySettings,
 	}
 }
 
@@ -538,6 +551,25 @@ func (s *Service) UpdateModelSettings(ctx context.Context, settings ModelSetting
 	return s.repo.SaveModelSettings(ctx, normalized)
 }
 
+func (s *Service) GetGatewaySettings(ctx context.Context) (GatewaySettings, error) {
+	settings, err := s.repo.GetGatewaySettings(ctx)
+	if err == nil {
+		return normalizeGatewaySettings(settings)
+	}
+	if errors.Is(err, ErrNotFound) {
+		return normalizeGatewaySettings(s.defaultGatewaySettings)
+	}
+	return GatewaySettings{}, err
+}
+
+func (s *Service) UpdateGatewaySettings(ctx context.Context, settings GatewaySettings) (GatewaySettings, error) {
+	normalized, err := normalizeGatewaySettings(settings)
+	if err != nil {
+		return GatewaySettings{}, err
+	}
+	return s.repo.SaveGatewaySettings(ctx, normalized)
+}
+
 func (s *Service) DefaultModel(ctx context.Context) (string, error) {
 	settings, err := s.GetModelSettings(ctx)
 	if err != nil {
@@ -690,4 +722,15 @@ func normalizeModelList(models []string) ([]string, error) {
 		}
 	}
 	return normalized, nil
+}
+
+func normalizeGatewaySettings(settings GatewaySettings) (GatewaySettings, error) {
+	if settings.MaxConcurrentGatewayRequests < 0 ||
+		settings.MaxConcurrentRequestsPerAccount < 0 ||
+		settings.MaxConcurrentRequestsPerKey < 0 ||
+		settings.RequestsPerMinutePerKey < 0 ||
+		settings.TokensPerMinutePerKey < 0 {
+		return GatewaySettings{}, ErrInvalidInput
+	}
+	return settings, nil
 }

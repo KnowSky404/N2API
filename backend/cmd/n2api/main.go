@@ -150,7 +150,16 @@ func main() {
 	}
 
 	adminRepo := store.NewAdminRepository(pool)
-	adminService := admin.NewService(adminRepo, admin.Config{SessionTTL: 7 * 24 * time.Hour})
+	adminService := admin.NewService(adminRepo, admin.Config{
+		SessionTTL: 7 * 24 * time.Hour,
+		DefaultGatewaySettings: admin.GatewaySettings{
+			MaxConcurrentGatewayRequests:    cfg.GatewayMaxConcurrentRequests,
+			MaxConcurrentRequestsPerAccount: cfg.GatewayMaxConcurrentRequestsPerAccount,
+			MaxConcurrentRequestsPerKey:     cfg.GatewayMaxConcurrentRequestsPerKey,
+			RequestsPerMinutePerKey:         cfg.GatewayRequestsPerMinutePerKey,
+			TokensPerMinutePerKey:           cfg.GatewayTokensPerMinutePerKey,
+		},
+	})
 	if err := adminService.BootstrapAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		slog.Error("admin bootstrap failed", "error", err)
 		os.Exit(1)
@@ -174,6 +183,7 @@ func main() {
 		MaxConcurrentRequestsPerKey:     cfg.GatewayMaxConcurrentRequestsPerKey,
 		MaxRequestsPerMinutePerKey:      cfg.GatewayRequestsPerMinutePerKey,
 		MaxTokensPerMinutePerKey:        cfg.GatewayTokensPerMinutePerKey,
+		SettingsProvider:                adminService,
 		Logger:                          store.NewGatewayRepository(pool),
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,

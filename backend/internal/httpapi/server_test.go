@@ -46,6 +46,8 @@ type fakeAdminService struct {
 	usageRange         string
 	usageGroupBy       string
 	usagePricing       admin.UsagePricing
+	gatewaySettings    admin.GatewaySettings
+	gatewaySettingsErr error
 }
 
 type fakeProviderService struct {
@@ -235,6 +237,25 @@ func (s *fakeAdminService) UpdateModelSettings(_ context.Context, settings admin
 	}
 	s.modelSettings = settings
 	return s.modelSettings, nil
+}
+
+func (s *fakeAdminService) GetGatewaySettings(_ context.Context) (admin.GatewaySettings, error) {
+	if s.gatewaySettingsErr != nil {
+		return admin.GatewaySettings{}, s.gatewaySettingsErr
+	}
+	return s.gatewaySettings, nil
+}
+
+func (s *fakeAdminService) UpdateGatewaySettings(_ context.Context, settings admin.GatewaySettings) (admin.GatewaySettings, error) {
+	if settings.MaxConcurrentGatewayRequests < 0 ||
+		settings.MaxConcurrentRequestsPerAccount < 0 ||
+		settings.MaxConcurrentRequestsPerKey < 0 ||
+		settings.RequestsPerMinutePerKey < 0 ||
+		settings.TokensPerMinutePerKey < 0 {
+		return admin.GatewaySettings{}, admin.ErrInvalidInput
+	}
+	s.gatewaySettings = settings
+	return s.gatewaySettings, nil
 }
 
 func (s *fakeAdminService) DefaultModel(ctx context.Context) (string, error) {
@@ -2016,6 +2037,14 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 }
 
 func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.gatewaySettings = admin.GatewaySettings{
+		MaxConcurrentGatewayRequests:    10,
+		MaxConcurrentRequestsPerAccount: 2,
+		MaxConcurrentRequestsPerKey:     3,
+		RequestsPerMinutePerKey:         60,
+		TokensPerMinutePerKey:           60000,
+	}
 	cfg := config.Config{
 		GatewayMaxConcurrentRequests:           10,
 		GatewayMaxConcurrentRequestsPerAccount: 2,
@@ -2023,7 +2052,7 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		GatewayRequestsPerMinutePerKey:         60,
 		GatewayTokensPerMinutePerKey:           60000,
 	}
-	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	server := NewServer(cfg, staticHealth{}, admins, newFakeProviderService())
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/gateway-settings", nil))
@@ -2057,6 +2086,94 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		body.RequestsPerMinutePerKey != 60 ||
 		body.TokensPerMinutePerKey != 60000 {
 		t.Fatalf("gateway settings = %+v, want configured runtime limits", body)
+	}
+}
+
+func TestGatewaySettingsPrefersStoredAdminSettings(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.gatewaySettings = admin.GatewaySettings{
+		MaxConcurrentGatewayRequests:    4,
+		MaxConcurrentRequestsPerAccount: 5,
+		MaxConcurrentRequestsPerKey:     6,
+		RequestsPerMinutePerKey:         70,
+		TokensPerMinutePerKey:           70000,
+	}
+	cfg := config.Config{
+		GatewayMaxConcurrentRequests:           10,
+		GatewayMaxConcurrentRequestsPerAccount: 2,
+		GatewayMaxConcurrentRequestsPerKey:     3,
+		GatewayRequestsPerMinutePerKey:         60,
+		GatewayTokensPerMinutePerKey:           60000,
+	}
+	server := NewServer(cfg, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/gateway-settings", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body admin.GatewaySettings
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body != admins.gatewaySettings {
+		t.Fatalf("gateway settings = %+v, want stored %+v", body, admins.gatewaySettings)
+	}
+}
+
+func TestGatewaySettingsUpdatesStoredLimits(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/gateway-settings", strings.NewReader(`{
+		"maxConcurrentGatewayRequests": 4,
+		"maxConcurrentRequestsPerAccount": 5,
+		"maxConcurrentRequestsPerKey": 6,
+		"requestsPerMinutePerKey": 70,
+		"tokensPerMinutePerKey": 70000
+	}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	want := admin.GatewaySettings{
+		MaxConcurrentGatewayRequests:    4,
+		MaxConcurrentRequestsPerAccount: 5,
+		MaxConcurrentRequestsPerKey:     6,
+		RequestsPerMinutePerKey:         70,
+		TokensPerMinutePerKey:           70000,
+	}
+	if admins.gatewaySettings != want {
+		t.Fatalf("stored gateway settings = %+v, want %+v", admins.gatewaySettings, want)
+	}
+	var body admin.GatewaySettings
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body != want {
+		t.Fatalf("response gateway settings = %+v, want %+v", body, want)
+	}
+}
+
+func TestGatewaySettingsRejectsInvalidLimits(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/gateway-settings", strings.NewReader(`{"maxConcurrentGatewayRequests": -1}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "invalid_input") {
+		t.Fatalf("body = %q, want invalid_input", recorder.Body.String())
 	}
 }
 

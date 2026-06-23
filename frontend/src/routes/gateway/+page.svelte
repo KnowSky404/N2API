@@ -15,6 +15,7 @@
     modelRouting,
     providerAccounts,
     session,
+    updateGatewaySettings,
     usage
   } from '$lib/admin-state.svelte.js';
 
@@ -193,28 +194,87 @@
       {:else if gatewaySettings.loading || !gatewaySettings.data}
         <p class="mt-4 text-sm text-[#6e6e6e]">Loading gateway runtime limits...</p>
       {:else}
-        <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <form
+          class="mt-4"
+          onsubmit={(event) => {
+            event.preventDefault();
+            updateGatewaySettings();
+          }}
+        >
+        <dl class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
             <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Gateway concurrency</dt>
-            <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentGatewayRequests)}</dd>
+            <dd class="mt-2">
+              <input
+                class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                type="number"
+                min="0"
+                bind:value={gatewaySettings.data.maxConcurrentGatewayRequests}
+              />
+              <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentGatewayRequests)}</span>
+            </dd>
           </div>
           <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
             <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per account concurrency</dt>
-            <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerAccount)}</dd>
+            <dd class="mt-2">
+              <input
+                class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                type="number"
+                min="0"
+                bind:value={gatewaySettings.data.maxConcurrentRequestsPerAccount}
+              />
+              <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerAccount)}</span>
+            </dd>
           </div>
           <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
             <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per key concurrency</dt>
-            <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerKey)}</dd>
+            <dd class="mt-2">
+              <input
+                class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                type="number"
+                min="0"
+                bind:value={gatewaySettings.data.maxConcurrentRequestsPerKey}
+              />
+              <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerKey)}</span>
+            </dd>
           </div>
           <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
             <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Requests per minute</dt>
-            <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.requestsPerMinutePerKey)}</dd>
+            <dd class="mt-2">
+              <input
+                class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                type="number"
+                min="0"
+                bind:value={gatewaySettings.data.requestsPerMinutePerKey}
+              />
+              <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.requestsPerMinutePerKey)}</span>
+            </dd>
           </div>
           <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
             <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Tokens per minute</dt>
-            <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.tokensPerMinutePerKey)}</dd>
+            <dd class="mt-2">
+              <input
+                class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                type="number"
+                min="0"
+                bind:value={gatewaySettings.data.tokensPerMinutePerKey}
+              />
+              <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.tokensPerMinutePerKey)}</span>
+            </dd>
           </div>
         </dl>
+        <div class="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={gatewaySettings.saving}
+          >
+            {gatewaySettings.saving ? 'Saving' : 'Save runtime limits'}
+          </button>
+          {#if gatewaySettings.saved}
+            <span class="text-sm text-[#0a7a5e]">Runtime limits saved.</span>
+          {/if}
+        </div>
+        </form>
       {/if}
     </section>
 

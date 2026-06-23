@@ -42,6 +42,8 @@ type AdminService interface {
 	UpdateUsagePricing(ctx context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error)
 	GetModelSettings(ctx context.Context) (admin.ModelSettings, error)
 	UpdateModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error)
+	GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error)
+	UpdateGatewaySettings(ctx context.Context, settings admin.GatewaySettings) (admin.GatewaySettings, error)
 	DefaultModel(ctx context.Context) (string, error)
 	IsModelAllowed(ctx context.Context, model string) (bool, error)
 }
@@ -310,13 +312,30 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/gateway-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		writeJSON(w, http.StatusOK, map[string]int{
-			"maxConcurrentGatewayRequests":    cfg.GatewayMaxConcurrentRequests,
-			"maxConcurrentRequestsPerAccount": cfg.GatewayMaxConcurrentRequestsPerAccount,
-			"maxConcurrentRequestsPerKey":     cfg.GatewayMaxConcurrentRequestsPerKey,
-			"requestsPerMinutePerKey":         cfg.GatewayRequestsPerMinutePerKey,
-			"tokensPerMinutePerKey":           cfg.GatewayTokensPerMinutePerKey,
-		})
+		settings, err := admins.GetGatewaySettings(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+	}))
+
+	mux.HandleFunc("PUT /api/admin/gateway-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		var req admin.GatewaySettings
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		settings, err := admins.UpdateGatewaySettings(r.Context(), req)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
 	}))
 
 	mux.HandleFunc("GET /api/admin/usage-summary", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

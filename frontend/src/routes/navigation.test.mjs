@@ -80,6 +80,15 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'session'\)/);
   assert.match(gatewayPage, /gatewayLimitLabel/);
+  assert.match(gatewayPage, /updateGatewaySettings/);
+  assert.match(gatewayPage, /Save runtime limits/);
+  assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.maxConcurrentGatewayRequests\}/);
+  assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.maxConcurrentRequestsPerAccount\}/);
+  assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.maxConcurrentRequestsPerKey\}/);
+  assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.requestsPerMinutePerKey\}/);
+  assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.tokensPerMinutePerKey\}/);
+  assert.match(adminState, /export async function updateGatewaySettings/);
+  assert.match(adminState, /\/api\/admin\/gateway-settings/);
   assert.match(gatewayPage, /formatCostMicrousd/);
 });
 

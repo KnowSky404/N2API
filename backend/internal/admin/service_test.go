@@ -466,6 +466,53 @@ func TestUpdateModelSettingsRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestGatewaySettingsDefaultsToDisabledAndSavesLimits(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	settings, err := service.GetGatewaySettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetGatewaySettings returned error: %v", err)
+	}
+	if settings != (GatewaySettings{}) {
+		t.Fatalf("default gateway settings = %+v, want disabled zero limits", settings)
+	}
+
+	saved, err := service.UpdateGatewaySettings(context.Background(), GatewaySettings{
+		MaxConcurrentGatewayRequests:    10,
+		MaxConcurrentRequestsPerAccount: 2,
+		MaxConcurrentRequestsPerKey:     3,
+		RequestsPerMinutePerKey:         60,
+		TokensPerMinutePerKey:           60000,
+	})
+	if err != nil {
+		t.Fatalf("UpdateGatewaySettings returned error: %v", err)
+	}
+	if saved.MaxConcurrentGatewayRequests != 10 ||
+		saved.MaxConcurrentRequestsPerAccount != 2 ||
+		saved.MaxConcurrentRequestsPerKey != 3 ||
+		saved.RequestsPerMinutePerKey != 60 ||
+		saved.TokensPerMinutePerKey != 60000 {
+		t.Fatalf("saved gateway settings = %+v", saved)
+	}
+
+	found, err := service.GetGatewaySettings(context.Background())
+	if err != nil {
+		t.Fatalf("GetGatewaySettings after save returned error: %v", err)
+	}
+	if found != saved {
+		t.Fatalf("found gateway settings = %+v, want %+v", found, saved)
+	}
+}
+
+func TestGatewaySettingsRejectsNegativeLimits(t *testing.T) {
+	service := NewService(newMemoryRepo(), Config{SessionTTL: time.Hour})
+
+	if _, err := service.UpdateGatewaySettings(context.Background(), GatewaySettings{MaxConcurrentGatewayRequests: -1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateGatewaySettings error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestUsagePricingDefaultAndUpdate(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -660,6 +707,7 @@ type memoryRepo struct {
 	lastUsageSince   time.Time
 	lastUsageGroupBy string
 	modelSettings    ModelSettings
+	gatewaySettings  GatewaySettings
 	usagePricing     UsagePricing
 }
 
@@ -845,6 +893,18 @@ func (r *memoryRepo) GetModelSettings(_ context.Context) (ModelSettings, error) 
 
 func (r *memoryRepo) SaveModelSettings(_ context.Context, settings ModelSettings) (ModelSettings, error) {
 	r.modelSettings = settings
+	return settings, nil
+}
+
+func (r *memoryRepo) GetGatewaySettings(_ context.Context) (GatewaySettings, error) {
+	if r.gatewaySettings == (GatewaySettings{}) {
+		return GatewaySettings{}, ErrNotFound
+	}
+	return r.gatewaySettings, nil
+}
+
+func (r *memoryRepo) SaveGatewaySettings(_ context.Context, settings GatewaySettings) (GatewaySettings, error) {
+	r.gatewaySettings = settings
 	return settings, nil
 }
 
