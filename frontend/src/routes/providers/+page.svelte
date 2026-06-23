@@ -22,6 +22,7 @@
     apiUpstreamForm,
     provider,
     providerAccounts,
+    providerAccountPauseForm,
     providerConnectForm,
     providerOAuth,
     pauseProviderAccount,
@@ -310,7 +311,7 @@ class={[
 
   <section class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
     <h3 class="text-base font-semibold text-[#0d0d0d]">Scheduling capacity</h3>
-    <div class="mt-3 grid gap-3 sm:grid-cols-2">
+    <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_16rem]">
       <article class="rounded-md border border-[#ededed] bg-white p-3">
         <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Schedulable</p>
         <p class="mt-2 text-lg font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableProviderAccounts.length}</p>
@@ -327,6 +328,18 @@ class={[
           </p>
         {/if}
       </article>
+      <label class="rounded-md border border-[#ededed] bg-white p-3 text-sm font-medium text-[#3c3c3c] sm:col-span-2 xl:col-span-1">
+        Pause duration seconds
+        <input
+          class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          type="number"
+          min="60"
+          max="86400"
+          step="1"
+          bind:value={providerAccountPauseForm.durationSeconds}
+        />
+        <span class="mt-1 block text-xs font-normal text-[#6e6e6e]">Used by each Pause scheduling action.</span>
+      </label>
     </div>
   </section>
 

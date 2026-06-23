@@ -280,6 +280,13 @@ test('provider account rows use compact controls and hover details', () => {
   assert.doesNotMatch(source, />\s*\{account\.lastError\}\s*</);
 });
 
+test('provider accounts page exposes configurable scheduling pause duration', () => {
+  assert.match(source, /Pause duration seconds/);
+  assert.match(source, /providerAccountPauseForm\.durationSeconds/);
+  assert.match(source, /min="60"/);
+  assert.match(source, /max="86400"/);
+});
+
 test('provider account rows expose expandable test history', () => {
   assert.match(source, /toggleAccountTestHistory\(account\.id\)/);
   assert.match(source, /getAccountTestResultsState\(account\.id\)/);
