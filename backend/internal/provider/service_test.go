@@ -1613,6 +1613,93 @@ func TestSelectAccountForModelAndSessionUsesStickyHashAcrossCandidateOrder(t *te
 	}
 }
 
+func TestSelectAccountForModelAndSessionPersistsAndReusesBinding(t *testing.T) {
+	now := time.Now()
+	recent := now.Add(-time.Minute)
+	older := now.Add(-time.Hour)
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 1, "second-token"),
+	}
+	for i := range repo.accounts {
+		repo.accounts[i].LastUsedAt = &older
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSession returned error: %v", err)
+	}
+	binding := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]
+	if binding.AccountID != selected.AccountID {
+		t.Fatalf("stored binding = %+v, want selected account %d", binding, selected.AccountID)
+	}
+
+	repo.accounts[0].LastUsedAt = nil
+	repo.accounts[1].LastUsedAt = &recent
+	again, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSession after reorder returned error: %v", err)
+	}
+	if again.AccountID != selected.AccountID {
+		t.Fatalf("sticky account = %d after reorder, want stored binding account %d", again.AccountID, selected.AccountID)
+	}
+}
+
+func TestSelectAccountForModelAndSessionRebindsWhenBoundAccountExcluded(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 1, "fallback-token"),
+	}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")] = SessionBinding{
+		ID:        1,
+		Provider:  "openai",
+		Model:     "gpt-5",
+		SessionID: "workspace-123",
+		AccountID: 1,
+		CreatedAt: time.Now().Add(-time.Hour),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123", 1)
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSession returned error: %v", err)
+	}
+	if selected.AccountID != 2 {
+		t.Fatalf("selected account = %d, want fallback account 2", selected.AccountID)
+	}
+	binding := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]
+	if binding.AccountID != 2 {
+		t.Fatalf("stored binding = %+v, want rebound account 2", binding)
+	}
+}
+
+func TestSelectAccountForModelDoesNotCreateSessionBinding(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+	}
+	repo.accountModels[1] = []AccountModel{{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); err != nil {
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
+	}
+	if len(repo.sessionBindings) != 0 {
+		t.Fatalf("session bindings = %+v, want none for non-session selection", repo.sessionBindings)
+	}
+}
+
 func TestSelectAccountForModelAndSessionKeepsStickySelectionInsideHighestPriorityGroup(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{

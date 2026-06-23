@@ -1208,6 +1208,7 @@ func (s *Service) SelectAccountForModel(ctx context.Context, model string, exclu
 }
 
 func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
@@ -1220,8 +1221,18 @@ func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, se
 	if err != nil {
 		return SelectedAccount{}, err
 	}
-	accounts = stickySessionCandidates(accounts, sessionID)
-	return s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+	accounts, _, err = s.stickySessionCandidates(ctx, accounts, model, sessionID)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	selected, err := s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	if err := s.repo.UpsertSessionBinding(ctx, s.cfg.Provider, model, sessionID, selected.AccountID); err != nil {
+		return SelectedAccount{}, fmt.Errorf("upsert provider session binding: %w", err)
+	}
+	return selected, nil
 }
 
 func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
@@ -1236,7 +1247,7 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 		return SelectionPreview{}, err
 	}
 	if sessionID != "" {
-		accounts = stickySessionCandidates(accounts, sessionID)
+		accounts = stickySessionHashCandidates(accounts, sessionID)
 	}
 	if len(accounts) == 0 {
 		blocked := s.unschedulableSelectionCandidates(ctx, model, nil, excludedAccountIDs, now)
@@ -1346,7 +1357,30 @@ func selectionCandidate(account Account, scheduleRank int, selected bool, schedu
 	}
 }
 
-func stickySessionCandidates(accounts []Account, sessionID string) []Account {
+func (s *Service) stickySessionCandidates(ctx context.Context, accounts []Account, model, sessionID string) ([]Account, int64, error) {
+	if len(accounts) <= 1 {
+		return accounts, 0, nil
+	}
+	binding, err := s.repo.FindSessionBinding(ctx, s.cfg.Provider, model, sessionID)
+	if err != nil && !errors.Is(err, ErrSessionBindingNotFound) {
+		return nil, 0, err
+	}
+	if err == nil {
+		for i, account := range accounts {
+			if account.ID != binding.AccountID {
+				continue
+			}
+			ordered := make([]Account, 0, len(accounts))
+			ordered = append(ordered, account)
+			ordered = append(ordered, accounts[:i]...)
+			ordered = append(ordered, accounts[i+1:]...)
+			return ordered, binding.AccountID, nil
+		}
+	}
+	return stickySessionHashCandidates(accounts, sessionID), 0, nil
+}
+
+func stickySessionHashCandidates(accounts []Account, sessionID string) []Account {
 	if len(accounts) <= 1 {
 		return accounts
 	}
