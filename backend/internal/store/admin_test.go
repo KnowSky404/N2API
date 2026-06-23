@@ -59,12 +59,18 @@ func TestListRequestLogsPrefersProviderAccountNameSnapshot(t *testing.T) {
 }
 
 func TestUsageSummaryProviderAccountGroupPrefersLoggedNameSnapshot(t *testing.T) {
-	_, labelExpr, joinSQL, ok := usageSummaryGroupSQL("provider_account")
+	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL("provider_account")
 	if !ok {
 		t.Fatal("usageSummaryGroupSQL(provider_account) ok = false, want true")
 	}
+	if !strings.Contains(groupExpr, "l.provider") || !strings.Contains(groupExpr, "l.provider_account_id") {
+		t.Fatalf("provider account group expression = %q, want provider plus account id", groupExpr)
+	}
 	if !strings.Contains(labelExpr, "NULLIF(l.provider_account_name, '')") {
 		t.Fatalf("provider account label expression = %q, want logged name snapshot first", labelExpr)
+	}
+	if !strings.Contains(labelExpr, "l.provider") || !strings.Contains(labelExpr, " / ") {
+		t.Fatalf("provider account label expression = %q, want provider-prefixed label", labelExpr)
 	}
 	if !strings.Contains(joinSQL, "LEFT JOIN provider_accounts") {
 		t.Fatalf("provider account join SQL = %q, want current account fallback join", joinSQL)

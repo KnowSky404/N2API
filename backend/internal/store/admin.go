@@ -543,7 +543,9 @@ func usageSummaryGroupSQL(groupBy string) (groupExpr, labelExpr, joinSQL string,
 	case "client_key":
 		return "COALESCE(k.id::text, 'unknown')", "COALESCE(k.name || ' (' || k.prefix || ')', 'Unknown key')", "LEFT JOIN client_api_keys k ON k.id = l.client_key_id", true
 	case "provider_account":
-		return "COALESCE(l.provider_account_id::text, 'unassigned')", "COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, 'Unassigned')", "LEFT JOIN provider_accounts a ON a.id = l.provider_account_id", true
+		providerExpr := "COALESCE(NULLIF(l.provider, ''), NULLIF(a.provider, ''), 'unknown')"
+		accountLabelExpr := "COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, 'Unassigned')"
+		return providerExpr + " || '/' || COALESCE(l.provider_account_id::text, 'unassigned')", providerExpr + " || ' / ' || " + accountLabelExpr, "LEFT JOIN provider_accounts a ON a.id = l.provider_account_id", true
 	case "model":
 		return "COALESCE(NULLIF(l.model, ''), 'unknown')", "COALESCE(NULLIF(l.model, ''), 'Unknown model')", "", true
 	case "session":
