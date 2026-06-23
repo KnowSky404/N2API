@@ -2361,7 +2361,7 @@ func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 	providers.accounts = []provider.Account{
 		{ID: 7, Provider: "openai", DisplayName: "Disabled", Enabled: false, Status: provider.AccountStatusActive},
 		{ID: 8, Provider: "openai", DisplayName: "Expired", Enabled: true, Status: provider.AccountStatusExpired},
-		{ID: 9, Provider: "openai", DisplayName: "Limited", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
+		{ID: 9, Provider: "openai", DisplayName: "Limited", Enabled: true, Status: provider.AccountStatusRateLimited, StatusReason: "quota window", LastError: "upstream quota", LastErrorAt: &now, RateLimitedUntil: &future},
 		{ID: 10, Provider: "openai", DisplayName: "Model off", Enabled: true, Status: provider.AccountStatusActive},
 	}
 	for _, account := range providers.accounts {
@@ -2387,6 +2387,8 @@ func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 				ID                  int64  `json:"id"`
 				Schedulable         bool   `json:"schedulable"`
 				UnschedulableReason string `json:"unschedulableReason"`
+				StatusReason        string `json:"statusReason"`
+				LastError           string `json:"lastError"`
 			} `json:"accounts"`
 		} `json:"models"`
 	}
@@ -2398,9 +2400,13 @@ func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 	}
 	reasons := map[int64]string{}
 	schedulable := map[int64]bool{}
+	statusReasons := map[int64]string{}
+	lastErrors := map[int64]string{}
 	for _, account := range body.Models[0].Accounts {
 		reasons[account.ID] = account.UnschedulableReason
 		schedulable[account.ID] = account.Schedulable
+		statusReasons[account.ID] = account.StatusReason
+		lastErrors[account.ID] = account.LastError
 	}
 	wantReasons := map[int64]string{
 		7:  "account disabled",
@@ -2418,6 +2424,9 @@ func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 		if reasons[id] != want {
 			t.Fatalf("account %d reason = %q, want %q", id, reasons[id], want)
 		}
+	}
+	if statusReasons[9] != "quota window" || lastErrors[9] != "upstream quota" {
+		t.Fatalf("account 9 diagnostics = statusReason:%q lastError:%q", statusReasons[9], lastErrors[9])
 	}
 }
 

@@ -35,6 +35,23 @@
     return value ? value.replaceAll('_', ' ') : 'active';
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingAccount} account */
+  function routingAccountHoverDetail(account) {
+    const lastError = account.lastError
+      ? `${account.lastError}${account.lastErrorAt ? ` - ${formatDate(account.lastErrorAt)}` : ''}`
+      : '';
+    return [
+      account.displayName || `Account ${account.id}`,
+      accountTypeLabel(account.accountType),
+      `Priority ${account.priority}`,
+      account.schedulable ? statusLabel(account.status) : account.unschedulableReason,
+      account.statusReason,
+      lastError
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
   const blockedModels = $derived(modelRouting.models.filter((model) => model.enabledCount === 0));
   const blockedReasonSummary = $derived(
     Array.from(
@@ -320,6 +337,7 @@
                                 ? 'border-[#ededed] bg-[#fafafa] text-[#3c3c3c]'
                                 : 'border-amber-200 bg-amber-50 text-amber-800'
                             ]}
+                            title={routingAccountHoverDetail(account)}
                           >
                             <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">Schedule rank #{account.scheduleRank}</span>
                             <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
