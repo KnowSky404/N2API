@@ -94,6 +94,20 @@ func TestListAccountModelsChecksParentAccountExists(t *testing.T) {
 	}
 }
 
+func TestHasEnabledAccountsChecksEnabledProviderRows(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	if !strings.Contains(sql, "SELECT EXISTS") ||
+		!strings.Contains(sql, "FROM PROVIDER_ACCOUNTS") ||
+		!strings.Contains(sql, "WHERE PROVIDER = $1") ||
+		!strings.Contains(sql, "AND ENABLED = TRUE") {
+		t.Fatal("HasEnabledAccounts must check for enabled provider account rows")
+	}
+}
+
 func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

@@ -264,6 +264,7 @@ type organizationClaim struct {
 
 type Repository interface {
 	ListAccounts(ctx context.Context, provider string) ([]Account, error)
+	HasEnabledAccounts(ctx context.Context, provider string) (bool, error)
 	FindAccount(ctx context.Context, provider string) (Account, error)
 	FindAccountByID(ctx context.Context, provider string, id int64) (Account, error)
 	FindAccountByIdentity(ctx context.Context, provider string, identities AccountIdentities) (Account, error)
@@ -1068,6 +1069,13 @@ func (s *Service) selectionCandidates(ctx context.Context, model string, exclude
 		}
 		notFoundErr := ErrAccountsUnavailable
 		if len(accounts) == 0 {
+			hasEnabled, err := s.repo.HasEnabledAccounts(ctx, s.cfg.Provider)
+			if err != nil {
+				return nil, false, ErrAccountsUnavailable, err
+			}
+			if !hasEnabled {
+				return accounts, false, ErrAccountsDisabled, nil
+			}
 			if len(excluded) > 0 {
 				availableWithoutExclusions, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, nil, now)
 				if err != nil {

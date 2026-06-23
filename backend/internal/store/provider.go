@@ -219,6 +219,19 @@ func (r *ProviderRepository) ListAccounts(ctx context.Context, providerName stri
 	return accounts, rows.Err()
 }
 
+func (r *ProviderRepository) HasEnabledAccounts(ctx context.Context, providerName string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM provider_accounts
+			WHERE provider = $1
+				AND enabled = true
+		)
+	`, providerName).Scan(&exists)
+	return exists, err
+}
+
 func (r *ProviderRepository) FindAccount(ctx context.Context, providerName string) (provider.Account, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT `+providerAccountColumns+`

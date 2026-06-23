@@ -1012,6 +1012,21 @@ func TestSelectAccountForModelReturnsModelUnavailableWhenNoAccountSupportsModel(
 	}
 }
 
+func TestSelectAccountForModelReturnsAccountsDisabledWhenAllModelAccountsDisabled(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, false, 1, "access-token"),
+	}
+	repo.accountModels = map[int64][]AccountModel{
+		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); !errors.Is(err, ErrAccountsDisabled) {
+		t.Fatalf("SelectAccountForModel error = %v, want ErrAccountsDisabled", err)
+	}
+}
+
 func TestSelectAccountForModelReturnsAccountsUnavailableWhenOnlyModelAccountExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -1331,6 +1346,15 @@ func (r *memoryRepo) ListAccounts(ctx context.Context, providerName string) ([]A
 		return accounts[i].ID < accounts[j].ID
 	})
 	return accounts, nil
+}
+
+func (r *memoryRepo) HasEnabledAccounts(ctx context.Context, providerName string) (bool, error) {
+	for _, account := range r.accounts {
+		if account.Provider == providerName && account.Enabled {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *memoryRepo) FindAccount(ctx context.Context, providerName string) (Account, error) {
