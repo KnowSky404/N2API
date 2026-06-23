@@ -106,6 +106,16 @@ test('dashboard shows gateway runtime scheduling limits', () => {
   assert.match(adminState, /await loadGatewaySettings\(\)/);
 });
 
+test('dashboard shows 24h gateway usage snapshot', () => {
+  for (const label of ['24h usage', 'Requests', 'Tokens', 'Estimated cost']) {
+    assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
+  }
+
+  assert.match(dashboardPage, /usage\.summaries\['24h:/);
+  assert.match(dashboardPage, /formatTokens/);
+  assert.match(dashboardPage, /formatCostMicrousd/);
+});
+
 test('admin state derives schedulable gateway capacity', () => {
   assert.match(adminState, /export function getSchedulableProviderAccounts/);
   assert.match(adminState, /export function getUnschedulableProviderAccountSummary/);

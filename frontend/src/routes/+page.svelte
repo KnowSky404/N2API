@@ -8,7 +8,9 @@
     copySecret,
     createKey,
     disconnectProviderAccount,
+    formatCostMicrousd,
     formatDate,
+    formatTokens,
     gatewayLimitLabel,
     gatewaySettings,
     getActiveKeys,
@@ -36,7 +38,8 @@
     session,
     statusLabel,
     updateProviderAccount,
-    updateProviderAccountPriority
+    updateProviderAccountPriority,
+    usage
   } from '$lib/admin-state.svelte.js';
 
   const statusItems = $derived(getStatusItems());
@@ -44,6 +47,7 @@
   const schedulableAccounts = $derived(getSchedulableProviderAccounts());
   const unschedulableAccountSummary = $derived(getUnschedulableProviderAccountSummary());
   const routableModelCount = $derived(getRoutableModelCount());
+  const usage24h = $derived(usage.summaries['24h:model'] ?? null);
 </script>
 
 <svelte:head>
@@ -167,6 +171,30 @@
         </dl>
       {/if}
     </div>
+  </article>
+  <article class="rounded-lg border border-[#ededed] bg-white p-6">
+    <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">24h usage</h2>
+    <p class="mt-2 text-sm text-[#6e6e6e]">Gateway usage and estimated spend in the last day.</p>
+    {#if usage.error}
+      <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
+    {:else if usage.loading && !usage24h}
+      <p class="mt-5 text-sm text-[#6e6e6e]">Loading usage summary...</p>
+    {:else}
+      <dl class="mt-5 grid gap-4 sm:grid-cols-3">
+        <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <dt class="text-sm font-medium text-[#6e6e6e]">Requests</dt>
+          <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(usage24h?.totalRequests)}</dd>
+        </div>
+        <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <dt class="text-sm font-medium text-[#6e6e6e]">Tokens</dt>
+          <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(usage24h?.totalTokens)}</dd>
+        </div>
+        <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <dt class="text-sm font-medium text-[#6e6e6e]">Estimated cost</dt>
+          <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatCostMicrousd(usage24h?.estimatedCostMicrousd)}</dd>
+        </div>
+      </dl>
+    {/if}
   </article>
   <article class="rounded-lg border border-[#ededed] bg-white p-6">
     <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Recent activity</h2>
