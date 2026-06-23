@@ -293,6 +293,26 @@ func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsProviderAccountAutoTestStatus(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Auto-test status",
+			"last finished",
+			"last error",
+			"accounts tested",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account auto test status documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountSchedulingPause(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
