@@ -1907,6 +1907,48 @@ func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 	}
 }
 
+func TestProxyLogsFinalRetryableUpstreamStatusAsError(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "rate-limited-token"},
+		{AccountID: 8, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "rate-limited-token"},
+		{AccountID: 9, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "rate-limited-token"},
+		{AccountID: 10, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "rate-limited-token"},
+		{AccountID: 11, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "rate-limited-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"60"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"upstream rate limited"}}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		Logger:          logger,
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body=%s, want upstream 429", recorder.Code, recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.StatusCode != http.StatusTooManyRequests || entry.Error != "upstream_rate_limited" {
+		t.Fatalf("log status/error = %d/%q, want 429/upstream_rate_limited", entry.StatusCode, entry.Error)
+	}
+	if entry.ProviderAccountID != 11 {
+		t.Fatalf("logged account = %d, want final attempted account 11", entry.ProviderAccountID)
+	}
+}
+
 func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	transportCalls := 0
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}

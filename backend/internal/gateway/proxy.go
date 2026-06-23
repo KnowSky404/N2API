@@ -387,6 +387,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				lastRetryableResp = upstreamResp
 				continue
 			}
+			errorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
 		}
 		defer releaseAccount()
 		defer upstreamResp.Body.Close()
@@ -756,6 +757,22 @@ func retryableUpstreamStatus(statusCode int) bool {
 		statusCode == http.StatusForbidden ||
 		statusCode == http.StatusTooManyRequests ||
 		statusCode >= http.StatusInternalServerError
+}
+
+func upstreamStatusErrorCode(statusCode int) string {
+	switch statusCode {
+	case http.StatusUnauthorized:
+		return "upstream_unauthorized"
+	case http.StatusForbidden:
+		return "upstream_forbidden"
+	case http.StatusTooManyRequests:
+		return "upstream_rate_limited"
+	default:
+		if statusCode >= http.StatusInternalServerError {
+			return "upstream_unavailable"
+		}
+		return "upstream_error"
+	}
 }
 
 func captureFailureMessage(resp *http.Response) string {
