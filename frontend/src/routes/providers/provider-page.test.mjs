@@ -21,13 +21,17 @@ const {
   parseModelLines,
   pruneAccountModelStates,
   pruneAccountTestResultStates,
+  pruneSelectedProviderAccounts,
   providerAccountPauseForm,
+  selectedProviderAccountIds,
   removeAccountModel,
   session,
   setAccountModelEnabled,
   shouldApplyAccountModelsResponse,
   shouldApplyAccountTestResultsResponse,
+  toggleProviderAccountSelection,
   updateAPIKeyLimits,
+  clearProviderAccountSelection,
   validateProviderAccountPauseDuration
 } = await import('../../lib/admin-state.svelte.js');
 
@@ -149,6 +153,31 @@ test('pruneAccountTestResultStates removes state for missing accounts', () => {
   pruneAccountTestResultStates(accountTestResults, [8, 12]);
 
   assert.deepEqual(Object.keys(accountTestResults), ['8', '12']);
+});
+
+test('provider account bulk selection state toggles, clears, and prunes ids', () => {
+  clearProviderAccountSelection();
+
+  toggleProviderAccountSelection(7, true);
+  toggleProviderAccountSelection(8, true);
+  toggleProviderAccountSelection(8, false);
+  assert.deepEqual(Object.keys(selectedProviderAccountIds), ['7']);
+
+  toggleProviderAccountSelection(9, true);
+  pruneSelectedProviderAccounts([9, 12]);
+  assert.deepEqual(Object.keys(selectedProviderAccountIds), ['9']);
+
+  clearProviderAccountSelection();
+  assert.deepEqual(Object.keys(selectedProviderAccountIds), []);
+});
+
+test('provider account state can bulk update selected account enabled state', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /bulkUpdateSelectedProviderAccounts/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-update/);
+  assert.match(adminStateSource, /accountIds/);
+  assert.match(adminStateSource, /clearProviderAccountSelection/);
 });
 
 test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {

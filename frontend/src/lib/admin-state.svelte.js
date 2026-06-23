@@ -314,6 +314,8 @@ export const modelSettings = $state({
 export const accountModels = $state({});
 /** @type {Record<string, AccountTestResultsState>} */
 export const accountTestResults = $state({});
+/** @type {Record<string, boolean>} */
+export const selectedProviderAccountIds = $state({});
 /** @type {{ loading: boolean, error: string, defaultModel: string, allowedModels: string[], models: ModelRoutingModel[], warnings: string[] }} */
 export const modelRouting = $state({
   loading: false,
@@ -442,6 +444,36 @@ export function pruneAccountTestResultStates(states, accountIds) {
     if (!accountKeys.has(key)) {
       delete states[key];
     }
+  }
+}
+
+/** @param {Array<number | string>} accountIds */
+export function pruneSelectedProviderAccounts(accountIds) {
+  const accountKeys = new Set(accountIds.map((id) => String(id)));
+  for (const key of Object.keys(selectedProviderAccountIds)) {
+    if (!accountKeys.has(key)) {
+      delete selectedProviderAccountIds[key];
+    }
+  }
+}
+
+/**
+ * @param {number | string} accountId
+ * @param {boolean} selected
+ */
+export function toggleProviderAccountSelection(accountId, selected) {
+  const key = String(accountId);
+  if (!key || key === '0') return;
+  if (selected) {
+    selectedProviderAccountIds[key] = true;
+    return;
+  }
+  delete selectedProviderAccountIds[key];
+}
+
+export function clearProviderAccountSelection() {
+  for (const key of Object.keys(selectedProviderAccountIds)) {
+    delete selectedProviderAccountIds[key];
   }
 }
 
@@ -937,6 +969,7 @@ export async function loadProviderAccounts() {
     const payload = await requestJSON('/api/admin/provider-accounts');
     if (!isCurrentAuthenticated(version)) return;
     providerAccounts.items = payload.accounts ?? [];
+    pruneSelectedProviderAccounts(providerAccounts.items.map((account) => account.id));
     pruneAccountModelStates(
       accountModels,
       providerAccounts.items.map((account) => account.id)
@@ -1231,6 +1264,41 @@ export async function updateProviderAccount(account, patch) {
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Account update failed';
+    providerAccounts.error = message;
+    await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = message;
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
+/** @param {boolean} enabled */
+export async function bulkUpdateSelectedProviderAccounts(enabled) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const accountIds = Object.keys(selectedProviderAccountIds)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (accountIds.length === 0) {
+    providerAccounts.error = 'Select at least one provider account';
+    return;
+  }
+
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  try {
+    await requestJSON('/api/admin/provider-accounts/bulk-update', {
+      method: 'POST',
+      body: JSON.stringify({ accountIds, enabled })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    clearProviderAccountSelection();
+    await loadProviderAccounts();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    const message = error instanceof Error ? error.message : 'Bulk account update failed';
     providerAccounts.error = message;
     await loadProviderAccounts();
     if (!isCurrentAuthenticated(version)) return;
