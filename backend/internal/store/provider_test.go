@@ -170,6 +170,35 @@ func TestMarkAccountUsedClearsTemporaryFailureStateColumns(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountClearStatusClearsLocalFailureStateColumns(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	for _, required := range []string{
+		"LAST_ERROR = CASE WHEN $5 THEN '' ELSE LAST_ERROR END",
+		"LAST_ERROR_AT = CASE WHEN $5 THEN NULL ELSE LAST_ERROR_AT END",
+		"STATUS = CASE WHEN $5 THEN 'ACTIVE' ELSE STATUS END",
+		"STATUS_REASON = CASE WHEN $5 THEN '' ELSE STATUS_REASON END",
+		"FAILURE_COUNT = CASE WHEN $5 THEN 0 ELSE FAILURE_COUNT END",
+		"CIRCUIT_OPEN_UNTIL = CASE WHEN $5 THEN NULL ELSE CIRCUIT_OPEN_UNTIL END",
+		"RATE_LIMITED_UNTIL = CASE WHEN $5 THEN NULL ELSE RATE_LIMITED_UNTIL END",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("UpdateAccount ClearStatus must clear local failure state, missing %q", required)
+		}
+	}
+	for _, preserved := range []string{
+		"LAST_REFRESH_ERROR = CASE WHEN $5",
+		"LAST_REFRESH_ERROR_AT = CASE WHEN $5",
+	} {
+		if strings.Contains(sql, preserved) {
+			t.Fatalf("UpdateAccount ClearStatus must preserve refresh diagnostics, found %q", preserved)
+		}
+	}
+}
+
 func TestReplaceAccountModelsNormalizesAndListsRows(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
