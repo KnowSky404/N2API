@@ -141,11 +141,13 @@ type ModelSettings struct {
 }
 
 type GatewaySettings struct {
-	MaxConcurrentGatewayRequests    int `json:"maxConcurrentGatewayRequests"`
-	MaxConcurrentRequestsPerAccount int `json:"maxConcurrentRequestsPerAccount"`
-	MaxConcurrentRequestsPerKey     int `json:"maxConcurrentRequestsPerKey"`
-	RequestsPerMinutePerKey         int `json:"requestsPerMinutePerKey"`
-	TokensPerMinutePerKey           int `json:"tokensPerMinutePerKey"`
+	MaxConcurrentGatewayRequests           int  `json:"maxConcurrentGatewayRequests"`
+	MaxConcurrentRequestsPerAccount        int  `json:"maxConcurrentRequestsPerAccount"`
+	MaxConcurrentRequestsPerKey            int  `json:"maxConcurrentRequestsPerKey"`
+	RequestsPerMinutePerKey                int  `json:"requestsPerMinutePerKey"`
+	TokensPerMinutePerKey                  int  `json:"tokensPerMinutePerKey"`
+	ProviderAccountAutoTestEnabled         bool `json:"providerAccountAutoTestEnabled"`
+	ProviderAccountAutoTestIntervalSeconds int  `json:"providerAccountAutoTestIntervalSeconds"`
 }
 
 type ModelRoutingStatus struct {
@@ -730,7 +732,14 @@ func normalizeGatewaySettings(settings GatewaySettings) (GatewaySettings, error)
 		settings.MaxConcurrentRequestsPerAccount < 0 ||
 		settings.MaxConcurrentRequestsPerKey < 0 ||
 		settings.RequestsPerMinutePerKey < 0 ||
-		settings.TokensPerMinutePerKey < 0 {
+		settings.TokensPerMinutePerKey < 0 ||
+		settings.ProviderAccountAutoTestIntervalSeconds < 0 {
+		return GatewaySettings{}, ErrInvalidInput
+	}
+	if settings.ProviderAccountAutoTestIntervalSeconds == 0 {
+		settings.ProviderAccountAutoTestIntervalSeconds = 300
+	}
+	if settings.ProviderAccountAutoTestEnabled && settings.ProviderAccountAutoTestIntervalSeconds < 60 {
 		return GatewaySettings{}, ErrInvalidInput
 	}
 	return settings, nil

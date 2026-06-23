@@ -256,8 +256,13 @@ func (s *fakeAdminService) UpdateGatewaySettings(_ context.Context, settings adm
 		settings.MaxConcurrentRequestsPerAccount < 0 ||
 		settings.MaxConcurrentRequestsPerKey < 0 ||
 		settings.RequestsPerMinutePerKey < 0 ||
-		settings.TokensPerMinutePerKey < 0 {
+		settings.TokensPerMinutePerKey < 0 ||
+		settings.ProviderAccountAutoTestIntervalSeconds < 0 ||
+		(settings.ProviderAccountAutoTestEnabled && settings.ProviderAccountAutoTestIntervalSeconds < 60) {
 		return admin.GatewaySettings{}, admin.ErrInvalidInput
+	}
+	if settings.ProviderAccountAutoTestIntervalSeconds == 0 {
+		settings.ProviderAccountAutoTestIntervalSeconds = 300
 	}
 	s.gatewaySettings = settings
 	return s.gatewaySettings, nil
@@ -2287,11 +2292,13 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.gatewaySettings = admin.GatewaySettings{
-		MaxConcurrentGatewayRequests:    10,
-		MaxConcurrentRequestsPerAccount: 2,
-		MaxConcurrentRequestsPerKey:     3,
-		RequestsPerMinutePerKey:         60,
-		TokensPerMinutePerKey:           60000,
+		MaxConcurrentGatewayRequests:           10,
+		MaxConcurrentRequestsPerAccount:        2,
+		MaxConcurrentRequestsPerKey:            3,
+		RequestsPerMinutePerKey:                60,
+		TokensPerMinutePerKey:                  60000,
+		ProviderAccountAutoTestEnabled:         true,
+		ProviderAccountAutoTestIntervalSeconds: 120,
 	}
 	cfg := config.Config{
 		GatewayMaxConcurrentRequests:           10,
@@ -2299,6 +2306,8 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		GatewayMaxConcurrentRequestsPerKey:     3,
 		GatewayRequestsPerMinutePerKey:         60,
 		GatewayTokensPerMinutePerKey:           60000,
+		ProviderAccountAutoTestEnabled:         true,
+		ProviderAccountAutoTestInterval:        120 * time.Second,
 	}
 	server := NewServer(cfg, staticHealth{}, admins, newFakeProviderService())
 	recorder := httptest.NewRecorder()
@@ -2319,11 +2328,13 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
 	}
 	var body struct {
-		MaxConcurrentGatewayRequests    int `json:"maxConcurrentGatewayRequests"`
-		MaxConcurrentRequestsPerAccount int `json:"maxConcurrentRequestsPerAccount"`
-		MaxConcurrentRequestsPerKey     int `json:"maxConcurrentRequestsPerKey"`
-		RequestsPerMinutePerKey         int `json:"requestsPerMinutePerKey"`
-		TokensPerMinutePerKey           int `json:"tokensPerMinutePerKey"`
+		MaxConcurrentGatewayRequests           int  `json:"maxConcurrentGatewayRequests"`
+		MaxConcurrentRequestsPerAccount        int  `json:"maxConcurrentRequestsPerAccount"`
+		MaxConcurrentRequestsPerKey            int  `json:"maxConcurrentRequestsPerKey"`
+		RequestsPerMinutePerKey                int  `json:"requestsPerMinutePerKey"`
+		TokensPerMinutePerKey                  int  `json:"tokensPerMinutePerKey"`
+		ProviderAccountAutoTestEnabled         bool `json:"providerAccountAutoTestEnabled"`
+		ProviderAccountAutoTestIntervalSeconds int  `json:"providerAccountAutoTestIntervalSeconds"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
@@ -2332,7 +2343,9 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		body.MaxConcurrentRequestsPerAccount != 2 ||
 		body.MaxConcurrentRequestsPerKey != 3 ||
 		body.RequestsPerMinutePerKey != 60 ||
-		body.TokensPerMinutePerKey != 60000 {
+		body.TokensPerMinutePerKey != 60000 ||
+		!body.ProviderAccountAutoTestEnabled ||
+		body.ProviderAccountAutoTestIntervalSeconds != 120 {
 		t.Fatalf("gateway settings = %+v, want configured runtime limits", body)
 	}
 }
@@ -2380,7 +2393,9 @@ func TestGatewaySettingsUpdatesStoredLimits(t *testing.T) {
 		"maxConcurrentRequestsPerAccount": 5,
 		"maxConcurrentRequestsPerKey": 6,
 		"requestsPerMinutePerKey": 70,
-		"tokensPerMinutePerKey": 70000
+		"tokensPerMinutePerKey": 70000,
+		"providerAccountAutoTestEnabled": true,
+		"providerAccountAutoTestIntervalSeconds": 180
 	}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
@@ -2391,11 +2406,13 @@ func TestGatewaySettingsUpdatesStoredLimits(t *testing.T) {
 		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
 	}
 	want := admin.GatewaySettings{
-		MaxConcurrentGatewayRequests:    4,
-		MaxConcurrentRequestsPerAccount: 5,
-		MaxConcurrentRequestsPerKey:     6,
-		RequestsPerMinutePerKey:         70,
-		TokensPerMinutePerKey:           70000,
+		MaxConcurrentGatewayRequests:           4,
+		MaxConcurrentRequestsPerAccount:        5,
+		MaxConcurrentRequestsPerKey:            6,
+		RequestsPerMinutePerKey:                70,
+		TokensPerMinutePerKey:                  70000,
+		ProviderAccountAutoTestEnabled:         true,
+		ProviderAccountAutoTestIntervalSeconds: 180,
 	}
 	if admins.gatewaySettings != want {
 		t.Fatalf("stored gateway settings = %+v, want %+v", admins.gatewaySettings, want)

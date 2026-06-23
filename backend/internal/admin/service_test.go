@@ -468,22 +468,34 @@ func TestUpdateModelSettingsRejectsInvalidInput(t *testing.T) {
 
 func TestGatewaySettingsDefaultsToDisabledAndSavesLimits(t *testing.T) {
 	repo := newMemoryRepo()
-	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service := NewService(repo, Config{
+		SessionTTL: time.Hour,
+		DefaultGatewaySettings: GatewaySettings{
+			ProviderAccountAutoTestEnabled:         true,
+			ProviderAccountAutoTestIntervalSeconds: 120,
+		},
+	})
 
 	settings, err := service.GetGatewaySettings(context.Background())
 	if err != nil {
 		t.Fatalf("GetGatewaySettings returned error: %v", err)
 	}
-	if settings != (GatewaySettings{}) {
-		t.Fatalf("default gateway settings = %+v, want disabled zero limits", settings)
+	wantDefault := GatewaySettings{
+		ProviderAccountAutoTestEnabled:         true,
+		ProviderAccountAutoTestIntervalSeconds: 120,
+	}
+	if settings != wantDefault {
+		t.Fatalf("default gateway settings = %+v, want %+v", settings, wantDefault)
 	}
 
 	saved, err := service.UpdateGatewaySettings(context.Background(), GatewaySettings{
-		MaxConcurrentGatewayRequests:    10,
-		MaxConcurrentRequestsPerAccount: 2,
-		MaxConcurrentRequestsPerKey:     3,
-		RequestsPerMinutePerKey:         60,
-		TokensPerMinutePerKey:           60000,
+		MaxConcurrentGatewayRequests:           10,
+		MaxConcurrentRequestsPerAccount:        2,
+		MaxConcurrentRequestsPerKey:            3,
+		RequestsPerMinutePerKey:                60,
+		TokensPerMinutePerKey:                  60000,
+		ProviderAccountAutoTestEnabled:         true,
+		ProviderAccountAutoTestIntervalSeconds: 120,
 	})
 	if err != nil {
 		t.Fatalf("UpdateGatewaySettings returned error: %v", err)
@@ -492,7 +504,9 @@ func TestGatewaySettingsDefaultsToDisabledAndSavesLimits(t *testing.T) {
 		saved.MaxConcurrentRequestsPerAccount != 2 ||
 		saved.MaxConcurrentRequestsPerKey != 3 ||
 		saved.RequestsPerMinutePerKey != 60 ||
-		saved.TokensPerMinutePerKey != 60000 {
+		saved.TokensPerMinutePerKey != 60000 ||
+		!saved.ProviderAccountAutoTestEnabled ||
+		saved.ProviderAccountAutoTestIntervalSeconds != 120 {
 		t.Fatalf("saved gateway settings = %+v", saved)
 	}
 
@@ -510,6 +524,34 @@ func TestGatewaySettingsRejectsNegativeLimits(t *testing.T) {
 
 	if _, err := service.UpdateGatewaySettings(context.Background(), GatewaySettings{MaxConcurrentGatewayRequests: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpdateGatewaySettings error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestGatewaySettingsNormalizesMissingAutoTestInterval(t *testing.T) {
+	service := NewService(newMemoryRepo(), Config{SessionTTL: time.Hour})
+
+	saved, err := service.UpdateGatewaySettings(context.Background(), GatewaySettings{})
+	if err != nil {
+		t.Fatalf("UpdateGatewaySettings returned error: %v", err)
+	}
+	if saved.ProviderAccountAutoTestEnabled {
+		t.Fatal("ProviderAccountAutoTestEnabled = true, want false")
+	}
+	if saved.ProviderAccountAutoTestIntervalSeconds != 300 {
+		t.Fatalf("ProviderAccountAutoTestIntervalSeconds = %d, want 300", saved.ProviderAccountAutoTestIntervalSeconds)
+	}
+}
+
+func TestGatewaySettingsRejectsInvalidAutoTestSchedule(t *testing.T) {
+	service := NewService(newMemoryRepo(), Config{SessionTTL: time.Hour})
+
+	for _, settings := range []GatewaySettings{
+		{ProviderAccountAutoTestIntervalSeconds: -1},
+		{ProviderAccountAutoTestEnabled: true, ProviderAccountAutoTestIntervalSeconds: 30},
+	} {
+		if _, err := service.UpdateGatewaySettings(context.Background(), settings); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("UpdateGatewaySettings(%+v) error = %v, want ErrInvalidInput", settings, err)
+		}
 	}
 }
 
