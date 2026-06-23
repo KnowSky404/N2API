@@ -29,6 +29,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - API upstream credentials can be updated from the account row. Rotating the encrypted API key or base URL clears local failure status so the account can be scheduled again with the new upstream settings.
 - Disabled accounts are kept in PostgreSQL but are not selected for gateway traffic.
 - Connected accounts with no configured models are kept in PostgreSQL and can be edited later, but they do not receive model-routed POST traffic.
+- During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so routing does not assume false account capability.
 - Lower priority numbers are selected before higher priority numbers.
 - Rate-limited, circuit-open, expired, and disabled accounts are skipped during gateway account selection.
 - Upstream 429 responses mark the account as rate-limited, 401/403 mark it expired, and 5xx responses open a short circuit window before traffic tries another account.

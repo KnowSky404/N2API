@@ -82,3 +82,22 @@ func TestGatewayDocumentationMentionsAPIUpstreamCredentialRotation(t *testing.T)
 		}
 	}
 }
+
+func TestGatewayDocumentationMentionsSingleAccountModelBackfill(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"single connected provider account",
+			"backfills",
+			"global allowed model list",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in single-account model backfill documentation", path, want)
+			}
+		}
+	}
+}

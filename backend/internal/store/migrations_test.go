@@ -247,6 +247,48 @@ func TestClientAPIKeyLimitsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestSingleAccountModelBackfillMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00015_single_account_model_backfill.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"provider_accounts",
+		"provider_account_models",
+		"settings",
+		"key = 'model_settings'",
+		"value->'allowedModels'",
+		"HAVING COUNT(*) = 1",
+		"NOT EXISTS",
+		"backfilled_from",
+		"single_account_model_backfill",
+		"ON CONFLICT (account_id, model) DO NOTHING",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
+func TestSingleAccountModelBackfillMigrationIsConservative(t *testing.T) {
+	sql, err := MigrationSQL("00015_single_account_model_backfill.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"GROUP BY provider",
+		"HAVING COUNT(*) = 1",
+		"WHERE existing.account_id = single_provider_accounts.account_id",
+		"WHERE allowed_models.model <> ''",
+		"DELETE FROM provider_account_models",
+		"metadata->>'backfilled_from' = 'single_account_model_backfill'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration conservative guard missing %q", want)
+		}
+	}
+}
+
 func TestRequestLogModelAttributionMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00010_request_log_model_attribution.sql")
 	if err != nil {
@@ -314,10 +356,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 14 {
-		t.Fatalf("migration sources = %d, want 14", len(sources))
+	if len(sources) != 15 {
+		t.Fatalf("migration sources = %d, want 15", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[13].Path != "00014_client_api_key_limits.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[14].Path != "00015_single_account_model_backfill.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
