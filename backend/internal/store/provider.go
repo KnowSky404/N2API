@@ -22,7 +22,7 @@ func NewProviderRepository(pool *pgxpool.Pool) *ProviderRepository {
 
 const providerAccountColumns = `
 	a.id, a.provider, a.account_type, a.subject, a.name, a.display_name, a.enabled, a.priority,
-	a.load_factor, a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
+	a.load_factor, a.max_concurrent_requests, a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
 	a.user_agent_hash, a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until,
 	a.last_test_at, a.last_test_status, a.last_test_error, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
@@ -46,6 +46,7 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.Enabled,
 		&account.Priority,
 		&account.LoadFactor,
+		&account.MaxConcurrentRequests,
 		&account.LastUsedAt,
 		&account.LastError,
 		&account.LastErrorAt,
@@ -328,6 +329,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 				enabled = $7,
 				priority = CASE WHEN $8 = 0 THEN 100 ELSE $8 END,
 				load_factor = CASE WHEN $17 = 0 THEN 1 ELSE $17 END,
+				max_concurrent_requests = $18,
 				last_error = '',
 				last_error_at = NULL,
 				status = COALESCE(NULLIF($9, ''), 'active'),
@@ -359,6 +361,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			account.CircuitOpenUntil,
 			account.RateLimitedUntil,
 			account.LoadFactor,
+			account.MaxConcurrentRequests,
 		).Scan(&updatedID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return provider.Account{}, provider.ErrNotConnected
@@ -382,7 +385,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 	var savedID int64
 	err = tx.QueryRow(ctx, `
 		INSERT INTO provider_accounts (
-			provider, account_type, subject, name, display_name, enabled, priority, load_factor, last_error,
+			provider, account_type, subject, name, display_name, enabled, priority, load_factor, max_concurrent_requests, last_error,
 			status, status_reason, fingerprint_hash, user_agent_hash, ip_hash, failure_count,
 			circuit_open_until, rate_limited_until, updated_at
 		)
@@ -391,8 +394,9 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			$6,
 			CASE WHEN $7 = 0 THEN 100 ELSE $7 END,
 			CASE WHEN $8 = 0 THEN 1 ELSE $8 END,
-			'', COALESCE(NULLIF($9, ''), 'active'), $10, $11, $12, $13, $14,
-			$15, $16, now()
+			$9,
+			'', COALESCE(NULLIF($10, ''), 'active'), $11, $12, $13, $14, $15,
+			$16, $17, now()
 		)
 		ON CONFLICT (provider, account_type, subject) WHERE subject <> ''
 		DO UPDATE SET
@@ -419,6 +423,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 		account.Enabled,
 		account.Priority,
 		account.LoadFactor,
+		account.MaxConcurrentRequests,
 		account.Status,
 		account.StatusReason,
 		account.FingerprintHash,
@@ -458,6 +463,7 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 			enabled = COALESCE($3, enabled),
 			priority = COALESCE($4, priority),
 			load_factor = COALESCE($8, load_factor),
+			max_concurrent_requests = COALESCE($9, max_concurrent_requests),
 			name = CASE WHEN $7 THEN $6 ELSE name END,
 			last_error = CASE WHEN $5 THEN '' ELSE last_error END,
 			last_error_at = CASE WHEN $5 THEN NULL ELSE last_error_at END,
@@ -470,7 +476,7 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 		WHERE provider = $1
 			AND id = $2
 		RETURNING id
-	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus, update.Name, update.Name != nil, update.LoadFactor)
+	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus, update.Name, update.Name != nil, update.LoadFactor, update.MaxConcurrentRequests)
 	var updatedID int64
 	err = row.Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {

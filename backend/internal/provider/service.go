@@ -163,6 +163,7 @@ type Account struct {
 	Enabled               bool              `json:"enabled"`
 	Priority              int               `json:"priority"`
 	LoadFactor            int               `json:"loadFactor"`
+	MaxConcurrentRequests int               `json:"maxConcurrentRequests"`
 	LastUsedAt            *time.Time        `json:"lastUsedAt"`
 	LastError             string            `json:"lastError"`
 	LastErrorAt           *time.Time        `json:"lastErrorAt"`
@@ -246,6 +247,7 @@ type AccountUpdate struct {
 	Enabled                    *bool
 	Priority                   *int
 	LoadFactor                 *int
+	MaxConcurrentRequests      *int
 	ClearStatus                bool
 	Name                       *string
 	APIUpstreamBaseURL         *string

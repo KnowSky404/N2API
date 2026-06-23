@@ -12,7 +12,7 @@
 
 ## File Map
 
-- Create `backend/internal/store/migrations/00018_provider_account_max_concurrent_requests.sql`: add `max_concurrent_requests` with a non-negative check.
+- Create `backend/internal/store/migrations/00019_provider_account_max_concurrent_requests.sql`: add `max_concurrent_requests` with a non-negative check.
 - Modify `backend/internal/store/migrations_test.go`: assert migration SQL includes the column and constraint.
 - Modify `backend/internal/provider/service.go`: add `MaxConcurrentRequests` to `Account`, `AccountUpdate`, and `SelectedAccount`; validate update input; copy selected account value.
 - Modify `backend/internal/store/provider.go`: include the new column in `providerAccountColumns`, scans, saves, and update SQL.
@@ -29,7 +29,7 @@
 ## Task 1: Migration And Store Field
 
 **Files:**
-- Create: `backend/internal/store/migrations/00018_provider_account_max_concurrent_requests.sql`
+- Create: `backend/internal/store/migrations/00019_provider_account_max_concurrent_requests.sql`
 - Modify: `backend/internal/store/migrations_test.go`
 - Modify: `backend/internal/store/provider.go`
 - Modify: `backend/internal/provider/service.go`
@@ -40,7 +40,7 @@ Add a test in `backend/internal/store/migrations_test.go`:
 
 ```go
 func TestProviderAccountMaxConcurrentRequestsMigration(t *testing.T) {
-	content, err := os.ReadFile("migrations/00018_provider_account_max_concurrent_requests.sql")
+	content, err := os.ReadFile("migrations/00019_provider_account_max_concurrent_requests.sql")
 	if err != nil {
 		t.Fatalf("ReadFile migration returned error: %v", err)
 	}
@@ -69,7 +69,7 @@ Expected: FAIL because migration file does not exist or does not contain the col
 
 - [ ] **Step 3: Add migration**
 
-Create `backend/internal/store/migrations/00018_provider_account_max_concurrent_requests.sql`:
+Create `backend/internal/store/migrations/00019_provider_account_max_concurrent_requests.sql`:
 
 ```sql
 -- +goose Up
@@ -125,7 +125,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add backend/internal/store/migrations/00018_provider_account_max_concurrent_requests.sql backend/internal/store/migrations_test.go backend/internal/store/provider.go backend/internal/provider/service.go
+git add backend/internal/store/migrations/00019_provider_account_max_concurrent_requests.sql backend/internal/store/migrations_test.go backend/internal/store/provider.go backend/internal/provider/service.go
 git commit -m "feat: store provider account concurrency limits"
 ```
 

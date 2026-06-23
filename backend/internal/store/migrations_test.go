@@ -308,6 +308,22 @@ func TestProviderAccountLoadFactorMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestProviderAccountMaxConcurrentRequestsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00019_provider_account_max_concurrent_requests.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"max_concurrent_requests INTEGER NOT NULL DEFAULT 0",
+		"provider_accounts_max_concurrent_requests_non_negative",
+		"CHECK (max_concurrent_requests >= 0)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestProviderAccountTestResultsMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00017_provider_account_test_results.sql")
 	if err != nil {
@@ -412,10 +428,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 18 {
-		t.Fatalf("migration sources = %d, want 18", len(sources))
+	if len(sources) != 19 {
+		t.Fatalf("migration sources = %d, want 19", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[17].Path != "00018_provider_account_test_result_history.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[18].Path != "00019_provider_account_max_concurrent_requests.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
