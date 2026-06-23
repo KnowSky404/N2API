@@ -43,6 +43,7 @@ test('primary navigation moves model policy ownership to API keys', () => {
 test('gateway page manages runtime limits and usage visibility', () => {
   for (const label of [
     'Gateway management',
+    'Gateway actions',
     'Runtime limits',
     'Gateway concurrency',
     'Per account concurrency',
@@ -55,6 +56,10 @@ test('gateway page manages runtime limits and usage visibility', () => {
     'Top sessions'
   ]) {
     assert.match(gatewayPage, new RegExp(label.replace(' ', '\\s+')), `gateway page should include ${label}`);
+  }
+
+  for (const href of ['/providers', '/api-keys', '/request-logs', '/models']) {
+    assert.match(gatewayPage, new RegExp(`href="${href}"`), `gateway page should link to ${href}`);
   }
 
   assert.match(gatewayPage, /loadGatewaySettings/);

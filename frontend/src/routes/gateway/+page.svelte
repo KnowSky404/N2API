@@ -90,10 +90,32 @@
 {:else}
   <div class="space-y-6">
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
-      <div>
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
         <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Gateway management</h2>
         <p class="mt-2 max-w-3xl text-sm leading-6 text-[#3c3c3c]">
           Runtime guardrails and short-window traffic distribution for the personal API gateway.
+        </p>
+        </div>
+        <div class="grid gap-2 sm:grid-cols-2 lg:w-[28rem]">
+          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href="/providers">
+            Provider accounts
+          </a>
+          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href="/api-keys">
+            API keys
+          </a>
+          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href="/models">
+            Routing
+          </a>
+          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href="/request-logs">
+            Request logs
+          </a>
+        </div>
+      </div>
+      <div class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+        <h3 class="text-sm font-semibold text-[#0d0d0d]">Gateway actions</h3>
+        <p class="mt-1 text-sm text-[#6e6e6e]">
+          Use these links to adjust account capacity, client key access, routing candidates, and recent gateway traffic.
         </p>
       </div>
     </section>
