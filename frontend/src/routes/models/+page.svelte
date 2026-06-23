@@ -1,5 +1,14 @@
 <script>
-  import { formatDate, loadModelRouting, login, loginForm, modelRouting, session } from '$lib/admin-state.svelte.js';
+  import {
+    formatDate,
+    loadModelRouting,
+    loadModelRoutingPreview,
+    login,
+    loginForm,
+    modelRouting,
+    modelRoutingPreview,
+    session
+  } from '$lib/admin-state.svelte.js';
 
   let modelRoutingRequested = $state(false);
 
@@ -155,6 +164,92 @@
           <p class="mt-3 text-sm text-[#0a7a5e]">All configured routing models have at least one schedulable account.</p>
         {/if}
       </div>
+    </section>
+
+    <section class="rounded-lg border border-[#ededed] bg-white p-6">
+      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        <div>
+          <h3 class="text-lg font-semibold text-[#0d0d0d]">Selection preview</h3>
+          <p class="mt-1 text-sm leading-6 text-[#6e6e6e]">
+            Preview which provider account the gateway would choose for a model and optional sticky session ID without sending traffic or marking an account as used.
+          </p>
+        </div>
+        <form
+          class="grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4"
+          onsubmit={(event) => {
+            event.preventDefault();
+            loadModelRoutingPreview();
+          }}
+        >
+          <label class="block text-sm font-medium text-[#3c3c3c]">
+            Model
+            <input
+              class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelRoutingPreview.model}
+              placeholder={modelRouting.defaultModel || 'gpt-5'}
+              required
+            />
+          </label>
+          <label class="block text-sm font-medium text-[#3c3c3c]">
+            Session ID
+            <input
+              class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelRoutingPreview.sessionId}
+              placeholder="workspace-123"
+            />
+          </label>
+          <button
+            class="justify-self-start rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={modelRoutingPreview.loading}
+          >
+            {modelRoutingPreview.loading ? 'Previewing' : 'Preview selection'}
+          </button>
+        </form>
+      </div>
+
+      {#if modelRoutingPreview.error}
+        <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{modelRoutingPreview.error}</p>
+      {/if}
+
+      {#if modelRoutingPreview.result}
+        <div class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Selected account</p>
+              <p class="mt-1 text-sm font-semibold text-[#0d0d0d]">
+                Account {modelRoutingPreview.result.selectedAccountId}
+                {#if modelRoutingPreview.result.sessionId}
+                  for session {modelRoutingPreview.result.sessionId}
+                {/if}
+              </p>
+            </div>
+            <span class="rounded-md border border-[#d8ece5] bg-[#e8f5f0] px-2.5 py-1 text-xs font-medium text-[#0a7a5e]">
+              Model {modelRoutingPreview.result.model}
+            </span>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-2">
+            {#each modelRoutingPreview.result.candidates as account}
+              <span
+                class={[
+                  'inline-flex max-w-[300px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
+                  account.selected
+                    ? 'border-[#d8ece5] bg-[#e8f5f0] text-[#0a7a5e]'
+                    : 'border-[#ededed] bg-white text-[#3c3c3c]'
+                ]}
+              >
+                <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">Rank #{account.scheduleRank}</span>
+                <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
+                <span>{accountTypeLabel(account.accountType)}</span>
+                <span>Priority {account.priority}</span>
+                <span>Used {formatDate(account.lastUsedAt)}</span>
+                {#if account.selected}
+                  <span class="font-medium text-[#0a7a5e]">Selected</span>
+                {/if}
+              </span>
+            {/each}
+          </div>
+        </div>
+      {/if}
     </section>
 
     <section class="rounded-lg border border-[#ededed] bg-white p-6">

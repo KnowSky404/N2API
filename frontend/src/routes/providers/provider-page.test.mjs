@@ -9,7 +9,9 @@ const {
   apiKeys,
   apiKeyModelWarnings,
   accountModelsText,
+  loadModelRoutingPreview,
   modelListText,
+  modelRoutingPreview,
   getGatewayReadinessIssues,
   mergeAccountModelChanges,
   parseAccountModelsText,
@@ -326,4 +328,41 @@ test('models page surfaces model routing candidates', () => {
   assert.match(modelsSource, /account\.accountType/);
   assert.match(modelsSource, /account\.status/);
   assert.match(modelsSource, /formatDate\(account\.lastUsedAt\)/);
+});
+
+test('admin state can load model routing preview for a sticky session', async () => {
+  session.authenticated = true;
+  modelRoutingPreview.error = '';
+  modelRoutingPreview.model = 'gpt-5';
+  modelRoutingPreview.sessionId = 'workspace-123';
+  let requestPath = '';
+  globalThis.fetch = async (path) => {
+    requestPath = path;
+    return new Response(
+      JSON.stringify({
+        model: 'gpt-5',
+        sessionId: 'workspace-123',
+        selectedAccountId: 8,
+        candidates: [
+          { id: 8, displayName: 'Sticky', priority: 1, scheduleRank: 1, selected: true },
+          { id: 7, displayName: 'Fallback', priority: 1, scheduleRank: 2, selected: false }
+        ]
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  await loadModelRoutingPreview();
+
+  assert.equal(requestPath, '/api/admin/model-routing/preview?model=gpt-5&sessionId=workspace-123');
+  assert.equal(modelRoutingPreview.result.selectedAccountId, 8);
+  assert.equal(modelRoutingPreview.result.candidates[0].selected, true);
+});
+
+test('models page can preview sticky session routing', () => {
+  assert.match(modelsSource, /Selection preview/);
+  assert.match(modelsSource, /modelRoutingPreview/);
+  assert.match(modelsSource, /loadModelRoutingPreview/);
+  assert.match(modelsSource, /Session ID/);
+  assert.match(modelsSource, /Selected account/);
 });

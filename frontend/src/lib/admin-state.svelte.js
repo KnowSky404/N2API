@@ -165,6 +165,26 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} tokensPerMinutePerKey
  */
 
+/**
+ * @typedef {object} SelectionPreviewCandidate
+ * @property {number} id
+ * @property {string} displayName
+ * @property {string} accountType
+ * @property {number} priority
+ * @property {string} status
+ * @property {string | null} lastUsedAt
+ * @property {number} scheduleRank
+ * @property {boolean} selected
+ */
+
+/**
+ * @typedef {object} SelectionPreview
+ * @property {string} model
+ * @property {string} sessionId
+ * @property {number} selectedAccountId
+ * @property {SelectionPreviewCandidate[]} candidates
+ */
+
 export const health = $state({
   loading: true,
   error: '',
@@ -256,6 +276,14 @@ export const modelRouting = $state({
   allowedModels: [],
   models: [],
   warnings: []
+});
+/** @type {{ loading: boolean, error: string, model: string, sessionId: string, result: SelectionPreview | null }} */
+export const modelRoutingPreview = $state({
+  loading: false,
+  error: '',
+  model: '',
+  sessionId: '',
+  result: null
 });
 
 /** @param {string | null | undefined} value */
@@ -606,6 +634,13 @@ function clearModelSettings() {
     allowedModels: [],
     models: [],
     warnings: []
+  });
+  replaceState(modelRoutingPreview, {
+    loading: false,
+    error: '',
+    model: '',
+    sessionId: '',
+    result: null
   });
   replaceState(accountModels, {});
 }
@@ -1302,6 +1337,39 @@ export async function loadModelRouting() {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     modelRouting.loading = false;
+  }
+}
+
+export async function loadModelRoutingPreview() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const model = modelRoutingPreview.model.trim();
+  const sessionId = modelRoutingPreview.sessionId.trim();
+  if (!model) {
+    modelRoutingPreview.error = 'Model is required for selection preview';
+    modelRoutingPreview.result = null;
+    return;
+  }
+
+  modelRoutingPreview.loading = true;
+  modelRoutingPreview.error = '';
+
+  const params = new URLSearchParams({ model });
+  if (sessionId) {
+    params.set('sessionId', sessionId);
+  }
+
+  try {
+    const payload = await requestJSON(`/api/admin/model-routing/preview?${params.toString()}`);
+    if (!isCurrentAuthenticated(version)) return;
+    modelRoutingPreview.result = payload;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    modelRoutingPreview.error = error instanceof Error ? error.message : 'Failed to preview model routing';
+    modelRoutingPreview.result = null;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    modelRoutingPreview.loading = false;
   }
 }
 
