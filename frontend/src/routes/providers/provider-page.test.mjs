@@ -20,12 +20,14 @@ const {
   parseModelLines,
   pruneAccountModelStates,
   pruneAccountTestResultStates,
+  providerAccountPauseForm,
   removeAccountModel,
   session,
   setAccountModelEnabled,
   shouldApplyAccountModelsResponse,
   shouldApplyAccountTestResultsResponse,
-  updateAPIKeyLimits
+  updateAPIKeyLimits,
+  validateProviderAccountPauseDuration
 } = await import('../../lib/admin-state.svelte.js');
 
 const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
@@ -218,6 +220,22 @@ test('provider account state uses unified test-results endpoint', () => {
 
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{accountId\}\/test-results\?limit=20/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{accountId\}\/test-results/);
+});
+
+test('provider account pause duration defaults and validates before request', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.equal(providerAccountPauseForm.durationSeconds, 300);
+  assert.match(adminStateSource, /providerAccountPauseForm = \$state\(\{ durationSeconds: 300 \}\)/);
+  assert.match(adminStateSource, /export function validateProviderAccountPauseDuration/);
+  assert.match(adminStateSource, /durationSeconds: durationSeconds/);
+  assert.match(adminStateSource, /Pause duration must be a whole number between 60 and 86400 seconds/);
+
+  providerAccountPauseForm.durationSeconds = 59;
+  assert.equal(validateProviderAccountPauseDuration(), null);
+  providerAccountPauseForm.durationSeconds = 600;
+  assert.equal(validateProviderAccountPauseDuration(), 600);
+  providerAccountPauseForm.durationSeconds = 300;
 });
 
 test('provider account state preinitializes test history state outside templates', () => {

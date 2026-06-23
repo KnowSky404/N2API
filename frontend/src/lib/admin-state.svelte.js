@@ -245,6 +245,7 @@ export const provider = $state({
 /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
 export const providerConnectForm = $state({ name: '', priority: 100, enabled: true });
+export const providerAccountPauseForm = $state({ durationSeconds: 300 });
 export const providerOAuth = $state({ authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
 export const apiUpstreamForm = $state({
   name: '',
@@ -1376,12 +1377,15 @@ export async function testAllProviderAccounts() {
 /** @param {ProviderAccount} account */
 export async function pauseProviderAccount(account) {
   const version = sessionVersion;
+  const durationSeconds = validateProviderAccountPauseDuration();
+  if (durationSeconds === null) return;
+
   providerAccounts.saving = true;
   providerAccounts.error = '';
   try {
     await requestJSON(`/api/admin/provider-accounts/${account.id}/pause`, {
       method: 'POST',
-      body: JSON.stringify({ durationSeconds: 300 })
+      body: JSON.stringify({ durationSeconds: durationSeconds })
     });
     if (!isCurrentAuthenticated(version)) return;
     await loadProviderAccounts();
@@ -1396,6 +1400,15 @@ export async function pauseProviderAccount(account) {
   } finally {
     if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
   }
+}
+
+export function validateProviderAccountPauseDuration() {
+  const durationSeconds = Number(providerAccountPauseForm.durationSeconds);
+  if (!Number.isInteger(durationSeconds) || durationSeconds < 60 || durationSeconds > 86400) {
+    providerAccounts.error = 'Pause duration must be a whole number between 60 and 86400 seconds';
+    return null;
+  }
+  return durationSeconds;
 }
 
 /** @param {ProviderAccount} account */
