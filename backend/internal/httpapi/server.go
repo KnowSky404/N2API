@@ -812,8 +812,19 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 			status.Models[index].ConfiguredCount++
 			if accountEnabled && model.Enabled {
 				status.Models[index].EnabledCount++
+				status.Models[index].Accounts = append(status.Models[index].Accounts, admin.ModelRoutingAccount{
+					ID:          account.ID,
+					DisplayName: account.DisplayName,
+					AccountType: account.AccountType,
+					Enabled:     account.Enabled,
+					Priority:    account.Priority,
+					Status:      account.Status,
+				})
 			}
 		}
+	}
+	for i := range status.Models {
+		sortModelRoutingAccounts(status.Models[i].Accounts, accounts)
 	}
 	if len(extraModels) > 1 {
 		sort.Strings(extraModels)
@@ -835,6 +846,35 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 		}
 	}
 	return status, nil
+}
+
+func sortModelRoutingAccounts(accounts []admin.ModelRoutingAccount, sourceAccounts []provider.Account) {
+	accountIndexes := make(map[int64]provider.Account, len(sourceAccounts))
+	for _, account := range sourceAccounts {
+		accountIndexes[account.ID] = account
+	}
+	sort.SliceStable(accounts, func(i, j int) bool {
+		left := accountIndexes[accounts[i].ID]
+		right := accountIndexes[accounts[j].ID]
+		if left.Priority != right.Priority {
+			return left.Priority < right.Priority
+		}
+		leftHasError := left.LastErrorAt != nil
+		rightHasError := right.LastErrorAt != nil
+		if leftHasError != rightHasError {
+			return !leftHasError
+		}
+		if left.LastUsedAt == nil && right.LastUsedAt != nil {
+			return true
+		}
+		if left.LastUsedAt != nil && right.LastUsedAt == nil {
+			return false
+		}
+		if left.LastUsedAt != nil && right.LastUsedAt != nil && !left.LastUsedAt.Equal(*right.LastUsedAt) {
+			return left.LastUsedAt.Before(*right.LastUsedAt)
+		}
+		return left.ID < right.ID
+	})
 }
 
 func decodeCallbackURL(w http.ResponseWriter, r *http.Request) (string, string, error) {

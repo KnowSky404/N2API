@@ -80,10 +80,20 @@ type ModelRoutingStatus struct {
 }
 
 type ModelRoutingModel struct {
-	Model           string `json:"model"`
-	Allowed         bool   `json:"allowed"`
-	ConfiguredCount int    `json:"configuredCount"`
-	EnabledCount    int    `json:"enabledCount"`
+	Model           string                `json:"model"`
+	Allowed         bool                  `json:"allowed"`
+	ConfiguredCount int                   `json:"configuredCount"`
+	EnabledCount    int                   `json:"enabledCount"`
+	Accounts        []ModelRoutingAccount `json:"accounts,omitempty"`
+}
+
+type ModelRoutingAccount struct {
+	ID          int64  `json:"id"`
+	DisplayName string `json:"displayName"`
+	AccountType string `json:"accountType"`
+	Enabled     bool   `json:"enabled"`
+	Priority    int    `json:"priority"`
+	Status      string `json:"status"`
 }
 
 type CreatedAPIKey struct {

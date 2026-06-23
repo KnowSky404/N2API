@@ -1875,13 +1875,13 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 	if len(body.Models) != 4 {
 		t.Fatalf("models length = %d, want 4: %+v", len(body.Models), body.Models)
 	}
-	if body.Models[0] != (admin.ModelRoutingModel{Model: "gpt-5", Allowed: true, ConfiguredCount: 2, EnabledCount: 1}) {
+	if body.Models[0].Model != "gpt-5" || !body.Models[0].Allowed || body.Models[0].ConfiguredCount != 2 || body.Models[0].EnabledCount != 1 {
 		t.Fatalf("first model = %+v", body.Models[0])
 	}
-	if body.Models[2] != (admin.ModelRoutingModel{Model: "codex-mini", Allowed: true}) {
+	if body.Models[2].Model != "codex-mini" || !body.Models[2].Allowed || body.Models[2].ConfiguredCount != 0 || body.Models[2].EnabledCount != 0 {
 		t.Fatalf("third model = %+v", body.Models[2])
 	}
-	if body.Models[3] != (admin.ModelRoutingModel{Model: "unallowed-model", ConfiguredCount: 1}) {
+	if body.Models[3].Model != "unallowed-model" || body.Models[3].Allowed || body.Models[3].ConfiguredCount != 1 || body.Models[3].EnabledCount != 0 {
 		t.Fatalf("fourth model = %+v", body.Models[3])
 	}
 	if len(body.Warnings) != 1 || !strings.Contains(body.Warnings[0], "codex-mini") {
@@ -1926,9 +1926,70 @@ func TestModelRoutingStatusEnabledCountUsesSchedulableAccountRules(t *testing.T)
 	if len(body.Models) != 1 {
 		t.Fatalf("models = %+v, want one model", body.Models)
 	}
-	want := admin.ModelRoutingModel{Model: "gpt-5", Allowed: true, ConfiguredCount: 5, EnabledCount: 2}
-	if body.Models[0] != want {
-		t.Fatalf("model = %+v, want %+v", body.Models[0], want)
+	if body.Models[0].Model != "gpt-5" || !body.Models[0].Allowed || body.Models[0].ConfiguredCount != 5 || body.Models[0].EnabledCount != 2 {
+		t.Fatalf("model = %+v, want gpt-5 allowed configured=5 enabled=2", body.Models[0])
+	}
+}
+
+func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5"}}
+	now := time.Now()
+	recent := now.Add(-time.Minute)
+	older := now.Add(-time.Hour)
+	future := now.Add(time.Hour)
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Preferred", Enabled: true, Priority: 1, Status: provider.AccountStatusActive, LastUsedAt: &recent},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Older same priority", Enabled: true, Priority: 1, Status: provider.AccountStatusActive, LastUsedAt: &older},
+		{ID: 9, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Fallback", Enabled: true, Priority: 5, Status: provider.AccountStatusActive},
+		{ID: 10, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Rate limited", Enabled: true, Priority: 0, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
+		{ID: 11, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Model disabled", Enabled: true, Priority: 0, Status: provider.AccountStatusActive},
+	}
+	for _, account := range providers.accounts {
+		providers.accountModels[account.ID] = []provider.AccountModel{
+			{AccountID: account.ID, Provider: "openai", Model: "gpt-5", Enabled: account.ID != 11, Source: provider.AccountModelSourceManual},
+		}
+	}
+	providers.exposedModels = []provider.ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Models []struct {
+			Model    string `json:"model"`
+			Accounts []struct {
+				ID          int64  `json:"id"`
+				DisplayName string `json:"displayName"`
+				AccountType string `json:"accountType"`
+				Enabled     bool   `json:"enabled"`
+				Priority    int    `json:"priority"`
+				Status      string `json:"status"`
+			} `json:"accounts"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 1 || body.Models[0].Model != "gpt-5" {
+		t.Fatalf("models = %+v, want gpt-5 only", body.Models)
+	}
+	accounts := body.Models[0].Accounts
+	if len(accounts) != 3 {
+		t.Fatalf("accounts = %+v, want three schedulable model accounts", accounts)
+	}
+	if accounts[0].ID != 8 || accounts[1].ID != 7 || accounts[2].ID != 9 {
+		t.Fatalf("account order = %+v, want last-used then priority order [8 7 9]", accounts)
+	}
+	if accounts[0].DisplayName != "Older same priority" || accounts[0].AccountType != provider.AccountTypeAPIUpstream || !accounts[0].Enabled || accounts[0].Priority != 1 || accounts[0].Status != provider.AccountStatusActive {
+		t.Fatalf("first account summary = %+v", accounts[0])
 	}
 }
 
