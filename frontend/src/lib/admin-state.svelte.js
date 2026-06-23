@@ -610,6 +610,33 @@ export function formatDate(value) {
   return new Date(value).toLocaleString();
 }
 
+/**
+ * @param {string | null | undefined} value
+ * @param {Date} [now]
+ */
+export function futureTimeRemainingLabel(value, now = new Date()) {
+  const until = Date.parse(String(value ?? ''));
+  const nowTime = now.getTime();
+  if (!Number.isFinite(until) || !Number.isFinite(nowTime) || until <= nowTime) {
+    return '';
+  }
+
+  const totalMinutes = Math.ceil((until - nowTime) / 60000);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m remaining`;
+  }
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes > 0 ? `${totalHours}h ${minutes}m remaining` : `${totalHours}h remaining`;
+  }
+
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours > 0 ? `${days}d ${hours}h remaining` : `${days}d remaining`;
+}
+
 /** @param {number | null | undefined} value */
 export function formatTokens(value) {
   return Number(value ?? 0).toLocaleString();

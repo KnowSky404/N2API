@@ -10,6 +10,7 @@ const {
   apiKeys,
   apiKeyModelWarnings,
   accountModelsText,
+  futureTimeRemainingLabel,
   getAccountTestResultsState,
   loadModelRoutingPreview,
   modelListText,
@@ -100,6 +101,16 @@ test('account model helpers toggle and remove configured rows without changing o
     { model: 'gpt-5', enabled: false },
     { model: 'codex-mini', enabled: true }
   ]);
+});
+
+test('futureTimeRemainingLabel formats scheduling block windows', () => {
+  const now = new Date('2026-06-23T00:00:00Z');
+
+  assert.equal(futureTimeRemainingLabel('2026-06-23T00:05:00Z', now), '5m remaining');
+  assert.equal(futureTimeRemainingLabel('2026-06-23T02:15:00Z', now), '2h 15m remaining');
+  assert.equal(futureTimeRemainingLabel('2026-06-24T03:00:00Z', now), '1d 3h remaining');
+  assert.equal(futureTimeRemainingLabel('2026-06-22T23:59:00Z', now), '');
+  assert.equal(futureTimeRemainingLabel('not-a-date', now), '');
 });
 
 test('shouldApplyAccountModelsResponse rejects stale account model responses', () => {
