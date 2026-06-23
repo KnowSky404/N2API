@@ -7,6 +7,7 @@ globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
   apiKeyModelWarnings,
+  accountModelsText,
   getGatewayReadinessIssues,
   mergeAccountModelChanges,
   parseAccountModelsText,
@@ -51,6 +52,19 @@ test('mergeAccountModelChanges preserves disabled rows and adds textarea rows en
       { model: 'gpt-5-mini', enabled: true },
       { model: 'codex-mini', enabled: true }
     ]
+  );
+});
+
+test('accountModelsText lists configured model names for textarea editing', () => {
+  assert.equal(
+    accountModelsText([
+      { model: 'gpt-5', enabled: true },
+      { model: 'gpt-5-mini', enabled: false },
+      { model: ' codex-mini ', enabled: true },
+      { model: '', enabled: true },
+      { model: 'gpt-5', enabled: true }
+    ]),
+    'gpt-5\ngpt-5-mini\ncodex-mini'
   );
 });
 

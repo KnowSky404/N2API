@@ -816,8 +816,16 @@ function ensureAccountModelsState(accountId) {
 }
 
 /** @param {AccountModel[]} models */
-function accountModelsText(models) {
-  return '';
+export function accountModelsText(models) {
+  const seen = new Set();
+  return models
+    .map((item) => String(item.model ?? '').trim())
+    .filter((model) => {
+      if (!model || seen.has(model)) return false;
+      seen.add(model);
+      return true;
+    })
+    .join('\n');
 }
 
 /** @param {number} accountId */
