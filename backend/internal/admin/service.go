@@ -68,6 +68,12 @@ type RequestLog struct {
 	StatusCode          int       `json:"statusCode"`
 	LatencyMS           int       `json:"latencyMs"`
 	Error               string    `json:"error"`
+	InputTokens         int       `json:"inputTokens"`
+	OutputTokens        int       `json:"outputTokens"`
+	TotalTokens         int       `json:"totalTokens"`
+	CachedInputTokens   int       `json:"cachedInputTokens"`
+	ReasoningTokens     int       `json:"reasoningTokens"`
+	UsageSource         string    `json:"usageSource"`
 	CreatedAt           time.Time `json:"createdAt"`
 }
 

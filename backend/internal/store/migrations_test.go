@@ -215,6 +215,29 @@ func TestRequestLogModelAttributionMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestRequestUsageAccountingMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00011_request_usage_accounting.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS input_tokens INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS output_tokens INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS total_tokens INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS cached_input_tokens INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS estimated_cost_microusd BIGINT NOT NULL DEFAULT 0",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS pricing_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS usage_source TEXT NOT NULL DEFAULT 'missing'",
+		"request_logs_provider_account_usage_idx",
+		"request_logs_model_usage_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountPoolMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00004_oauth_account_pool.sql")
 	if err != nil {
@@ -244,10 +267,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 10 {
-		t.Fatalf("migration sources = %d, want 10", len(sources))
+	if len(sources) != 11 {
+		t.Fatalf("migration sources = %d, want 11", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[9].Path != "00010_request_log_model_attribution.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[10].Path != "00011_request_usage_accounting.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

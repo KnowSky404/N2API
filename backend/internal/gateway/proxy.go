@@ -72,6 +72,12 @@ type RequestLog struct {
 	StatusCode          int
 	Latency             time.Duration
 	Error               string
+	InputTokens         int
+	OutputTokens        int
+	TotalTokens         int
+	CachedInputTokens   int
+	ReasoningTokens     int
+	UsageSource         string
 	CreatedAt           time.Time
 }
 

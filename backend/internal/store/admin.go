@@ -385,6 +385,12 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			l.status_code,
 			l.latency_ms,
 			l.error,
+			l.input_tokens,
+			l.output_tokens,
+			l.total_tokens,
+			l.cached_input_tokens,
+			l.reasoning_tokens,
+			l.usage_source,
 			l.created_at
 		FROM request_logs l
 		LEFT JOIN client_api_keys k ON k.id = l.client_key_id
@@ -414,6 +420,12 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			&log.StatusCode,
 			&log.LatencyMS,
 			&log.Error,
+			&log.InputTokens,
+			&log.OutputTokens,
+			&log.TotalTokens,
+			&log.CachedInputTokens,
+			&log.ReasoningTokens,
+			&log.UsageSource,
 			&log.CreatedAt,
 		); err != nil {
 			return nil, err
