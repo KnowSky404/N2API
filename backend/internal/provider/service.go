@@ -871,6 +871,9 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 	if err != nil {
 		return Account{}, err
 	}
+	if strings.TrimSpace(account.AccountType) == AccountTypeAPIUpstream {
+		return Account{}, ErrInvalidInput
+	}
 	refreshToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedRefreshToken)
 	if err != nil {
 		return Account{}, err

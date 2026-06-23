@@ -859,6 +859,22 @@ func TestRefreshAccountForcesOAuthTokenRefreshAndClearsFailureState(t *testing.T
 	}
 }
 
+func TestRefreshAccountRejectsAPIUpstreamAccount(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 7, true, 3, "upstream-key"),
+	}
+	repo.accounts[0].AccountType = AccountTypeAPIUpstream
+	repo.accounts[0].Credential.CredentialType = CredentialTypeAPIKey
+	repo.accounts[0].EncryptedRefreshToken = ""
+	repo.accounts[0].Credential.EncryptedRefreshToken = ""
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.RefreshAccount(context.Background(), 7); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("RefreshAccount error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestRefreshAccountProbesLatestStatusAfterTokenRefresh(t *testing.T) {
 	repo := newMemoryRepo()
 	expiresAt := time.Now().Add(time.Hour)
