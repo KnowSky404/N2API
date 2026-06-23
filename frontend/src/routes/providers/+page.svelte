@@ -11,6 +11,7 @@
     formatDate,
     formatTokens,
     getAccountModelsState,
+    getAccountTestResultsState,
     getProviderStateLabel,
     getSchedulableProviderAccounts,
     getUnschedulableProviderAccountSummary,
@@ -33,6 +34,7 @@
     statusLabel,
     testAllProviderAccounts,
     testProviderAccount,
+    toggleAccountTestHistory,
     updateProviderAccount,
     updateProviderAccountLoadFactor,
     updateProviderAccountName,
@@ -214,6 +216,13 @@
   /** @param {import('$lib/admin-state.svelte.js').AccountModel[]} models */
   function enabledAccountModelCount(models) {
     return models.filter((model) => model.enabled).length;
+  }
+
+  /** @param {string | null | undefined} status */
+  function testResultStatusClass(status) {
+    if (status === 'passed') return 'bg-[#e8f5f0] text-[#0a7a5e]';
+    if (status === 'failed') return 'bg-amber-50 text-amber-700';
+    return 'bg-[#f5f5f5] text-[#6e6e6e]';
   }
 </script>
 
@@ -656,6 +665,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
   {:else}
     {#each filteredProviderAccounts as account}
       {@const modelState = getAccountModelsState(account.id)}
+      {@const historyState = getAccountTestResultsState(account.id)}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle" title={accountHoverDetail(account)}>
@@ -898,6 +908,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
               class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={providerAccounts.saving}
+              onclick={() => toggleAccountTestHistory(account.id)}
+              title="Test history"
+              aria-label="Test history"
+            >
+              <span aria-hidden="true">H</span>
+              <span class="sr-only">Test history</span>
+            </button>
+            <button
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={providerAccounts.saving}
               onclick={() => pauseProviderAccount(account)}
               title="Pause scheduling"
               aria-label="Pause scheduling"
@@ -952,6 +973,52 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           </div>
         </td>
       </tr>
+      {#if historyState.expanded}
+        <tr class="bg-[#fafafa]">
+          <td class="px-4 py-4" colspan="11">
+            <div class="rounded-lg border border-[#ededed] bg-white p-4">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <h3 class="text-sm font-semibold text-[#0d0d0d]">Recent test history</h3>
+                {#if historyState.loading}
+                  <span class="text-xs text-[#6e6e6e]">Loading test history...</span>
+                {/if}
+              </div>
+              {#if historyState.error}
+                <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{historyState.error}</p>
+              {:else if !historyState.loading && historyState.items.length === 0}
+                <p class="mt-3 text-sm text-[#6e6e6e]">No test history recorded yet.</p>
+              {:else if historyState.items.length > 0}
+                <div class="mt-3 overflow-x-auto rounded-lg border border-[#ededed]">
+                  <table class="w-full min-w-[560px] text-left text-sm">
+                    <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+                      <tr>
+                        <th class="px-3 py-2 font-medium">Checked</th>
+                        <th class="px-3 py-2 font-medium">Status</th>
+                        <th class="px-3 py-2 font-medium">Message</th>
+                        <th class="px-3 py-2 font-medium">Recorded</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-[#ededed]">
+                      {#each historyState.items as result (result.id)}
+                        <tr>
+                          <td class="whitespace-nowrap px-3 py-2 text-[#3c3c3c]">{formatDate(result.checkedAt)}</td>
+                          <td class="px-3 py-2">
+                            <span class={['inline-flex rounded-full px-2 py-0.5 text-xs font-medium', testResultStatusClass(result.status)]}>
+                              {result.status || 'unknown'}
+                            </span>
+                          </td>
+                          <td class="max-w-[28rem] px-3 py-2 text-[#3c3c3c]">{result.message || 'No message'}</td>
+                          <td class="whitespace-nowrap px-3 py-2 text-[#6e6e6e]">{formatDate(result.createdAt)}</td>
+                        </tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                </div>
+              {/if}
+            </div>
+          </td>
+        </tr>
+      {/if}
     {/each}
   {/if}
 </tbody>

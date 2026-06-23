@@ -256,6 +256,18 @@ test('provider account rows use compact controls and hover details', () => {
   assert.doesNotMatch(source, />\s*\{account\.lastError\}\s*</);
 });
 
+test('provider account rows expose expandable test history', () => {
+  assert.match(source, /toggleAccountTestHistory\(account\.id\)/);
+  assert.match(source, /getAccountTestResultsState\(account\.id\)/);
+  assert.match(source, /sr-only">Test history/);
+  assert.match(source, /Loading test history/);
+  assert.match(source, /No test history recorded yet/);
+  assert.match(source, /historyState\.items/);
+  assert.match(source, /result\.checkedAt/);
+  assert.match(source, /result\.createdAt/);
+  assert.match(source, /result\.message/);
+});
+
 test('provider account rows expose manual model controls and routing warning', () => {
   assert.match(source, /Manual models/);
   assert.match(source, /saveAccountModels\(account\.id/);
