@@ -1972,6 +1972,7 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 				Enabled     bool   `json:"enabled"`
 				Priority    int    `json:"priority"`
 				Status      string `json:"status"`
+				LastUsedAt  string `json:"lastUsedAt"`
 			} `json:"accounts"`
 		} `json:"models"`
 	}
@@ -1990,6 +1991,9 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 	}
 	if accounts[0].DisplayName != "Older same priority" || accounts[0].AccountType != provider.AccountTypeAPIUpstream || !accounts[0].Enabled || accounts[0].Priority != 1 || accounts[0].Status != provider.AccountStatusActive {
 		t.Fatalf("first account summary = %+v", accounts[0])
+	}
+	if accounts[0].LastUsedAt != older.Format(time.RFC3339Nano) {
+		t.Fatalf("first account lastUsedAt = %q, want %q", accounts[0].LastUsedAt, older.Format(time.RFC3339Nano))
 	}
 }
 

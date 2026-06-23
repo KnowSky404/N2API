@@ -819,6 +819,7 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 					Enabled:     account.Enabled,
 					Priority:    account.Priority,
 					Status:      account.Status,
+					LastUsedAt:  account.LastUsedAt,
 				})
 			}
 		}

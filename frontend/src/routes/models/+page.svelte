@@ -1,5 +1,5 @@
 <script>
-  import { loadModelRouting, login, loginForm, modelRouting, session } from '$lib/admin-state.svelte.js';
+  import { formatDate, loadModelRouting, login, loginForm, modelRouting, session } from '$lib/admin-state.svelte.js';
 
   let modelRoutingRequested = $state(false);
 
@@ -173,6 +173,7 @@
                             <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
                             <span class="text-[#6e6e6e]">{accountTypeLabel(account.accountType)}</span>
                             <span class="text-[#6e6e6e]">Priority {account.priority}</span>
+                            <span class="text-[#6e6e6e]">Used {formatDate(account.lastUsedAt)}</span>
                             <span class="text-[#6e6e6e]">{statusLabel(account.status)}</span>
                           </span>
                         {/each}

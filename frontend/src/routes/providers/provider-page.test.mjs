@@ -168,4 +168,5 @@ test('models page surfaces model routing candidates', () => {
   assert.match(modelsSource, /Priority \{account\.priority\}/);
   assert.match(modelsSource, /account\.accountType/);
   assert.match(modelsSource, /account\.status/);
+  assert.match(modelsSource, /formatDate\(account\.lastUsedAt\)/);
 });

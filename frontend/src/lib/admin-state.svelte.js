@@ -99,6 +99,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} enabled
  * @property {number} priority
  * @property {string} status
+ * @property {string | null} lastUsedAt
  */
 
 /**
