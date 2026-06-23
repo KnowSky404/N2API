@@ -194,6 +194,25 @@
           <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatCostMicrousd(usage24h?.estimatedCostMicrousd)}</dd>
         </div>
       </dl>
+      <div class="mt-5 rounded-lg border border-[#ededed]">
+        <div class="border-b border-[#ededed] bg-[#f5f5f5] px-4 py-3">
+          <h3 class="text-sm font-semibold text-[#0d0d0d]">Top models</h3>
+        </div>
+        {#if !usage24h || usage24h.rows.length === 0}
+          <p class="px-4 py-4 text-sm text-[#6e6e6e]">No usage in this range.</p>
+        {:else}
+          <div class="divide-y divide-[#ededed]">
+            {#each usage24h.rows.slice(0, 5) as row}
+              <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+                <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
+                  {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
+                </span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
   </article>
   <article class="rounded-lg border border-[#ededed] bg-white p-6">

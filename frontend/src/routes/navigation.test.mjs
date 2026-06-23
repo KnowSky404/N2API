@@ -107,11 +107,12 @@ test('dashboard shows gateway runtime scheduling limits', () => {
 });
 
 test('dashboard shows 24h gateway usage snapshot', () => {
-  for (const label of ['24h usage', 'Requests', 'Tokens', 'Estimated cost']) {
+  for (const label of ['24h usage', 'Top models', 'Requests', 'Tokens', 'Estimated cost']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
   }
 
   assert.match(dashboardPage, /usage\.summaries\['24h:/);
+  assert.match(dashboardPage, /usage24h\.rows/);
   assert.match(dashboardPage, /formatTokens/);
   assert.match(dashboardPage, /formatCostMicrousd/);
 });
