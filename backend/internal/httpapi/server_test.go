@@ -75,6 +75,7 @@ type fakeProviderService struct {
 	disconnected          bool
 	refreshedAccountID    int64
 	testedAccountID       int64
+	testedAllAccounts     bool
 	pausedAccountID       int64
 	pauseDuration         time.Duration
 	resetStatusAccountID  int64
@@ -521,6 +522,19 @@ func (s *fakeProviderService) TestAccount(_ context.Context, id int64) (provider
 		}
 	}
 	return provider.Account{}, provider.ErrNotConnected
+}
+
+func (s *fakeProviderService) TestAccounts(ctx context.Context) ([]provider.Account, error) {
+	tested := make([]provider.Account, 0, len(s.accounts))
+	for _, account := range s.accounts {
+		updated, err := s.TestAccount(ctx, account.ID)
+		if err != nil {
+			return nil, err
+		}
+		tested = append(tested, updated)
+	}
+	s.testedAllAccounts = true
+	return tested, nil
 }
 
 func (s *fakeProviderService) PauseAccountScheduling(_ context.Context, id int64, duration time.Duration) (provider.Account, error) {
@@ -1205,6 +1219,7 @@ func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
 	}{
 		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
 		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
+		{name: "test all", method: http.MethodPost, path: "/api/admin/provider-accounts/test"},
 		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
@@ -1237,6 +1252,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 	}{
 		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
 		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
+		{name: "test all", method: http.MethodPost, path: "/api/admin/provider-accounts/test"},
 		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
@@ -1723,6 +1739,55 @@ func TestAdminCanTestUnifiedProviderAccount(t *testing.T) {
 	}
 	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastError != "" || body.Account.CircuitOpenUntil != nil || body.Account.FailureCount != 0 {
 		t.Fatalf("account = %+v, want tested active account 7", body.Account)
+	}
+}
+
+func TestAdminCanTestAllUnifiedProviderAccounts(t *testing.T) {
+	future := time.Now().Add(time.Hour)
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{
+			ID:          7,
+			Provider:    "openai",
+			DisplayName: "Account A",
+			Enabled:     true,
+			Priority:    10,
+			Status:      provider.AccountStatusActive,
+		},
+		{
+			ID:               8,
+			Provider:         "openai",
+			DisplayName:      "Account B",
+			Enabled:          true,
+			Priority:         20,
+			Status:           provider.AccountStatusCircuitOpen,
+			StatusReason:     "previous failure",
+			LastError:        "previous failure",
+			CircuitOpenUntil: &future,
+			FailureCount:     2,
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/test", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !providers.testedAllAccounts {
+		t.Fatal("testedAllAccounts = false, want true")
+	}
+	var body struct {
+		Accounts []provider.Account `json:"accounts"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Accounts) != 2 || body.Accounts[1].ID != 8 || body.Accounts[1].Status != provider.AccountStatusActive || body.Accounts[1].LastError != "" {
+		t.Fatalf("accounts = %+v, want all tested accounts with cleared local failures", body.Accounts)
 	}
 }
 

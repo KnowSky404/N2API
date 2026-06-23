@@ -200,6 +200,8 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /aria-sort=/);
   assert.match(source, /sortProviderAccounts/);
   assert.match(source, /loadFactor/);
+  assert.match(source, /testAllProviderAccounts/);
+  assert.match(source, />\s*Test all accounts\s*</);
   assert.match(source, /sticky right-0/);
 });
 

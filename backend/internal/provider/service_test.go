@@ -1091,6 +1091,45 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	}
 }
 
+func TestTestAccountsProbesEveryProviderAccount(t *testing.T) {
+	repo := newMemoryRepo()
+	first := testAccount(t, 7, true, 3, "unused-oauth-token")
+	first.AccountType = AccountTypeAPIUpstream
+	first.Credential.CredentialType = CredentialTypeAPIKey
+	first.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "first-secret")
+	first.Credential.BaseURL = "https://first.example.test"
+	second := testAccount(t, 8, true, 4, "unused-oauth-token")
+	second.AccountType = AccountTypeAPIUpstream
+	second.Credential.CredentialType = CredentialTypeAPIKey
+	second.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "second-secret")
+	second.Credential.BaseURL = "https://second.example.test"
+	second.Status = AccountStatusCircuitOpen
+	second.StatusReason = "previous failure"
+	second.LastError = "previous failure"
+	now := time.Now()
+	until := now.Add(time.Minute)
+	second.LastErrorAt = &now
+	second.CircuitOpenUntil = &until
+	repo.accounts = []Account{first, second}
+	client := &captureProbeOAuthClient{probes: []probeResult{{statusCode: http.StatusOK}, {statusCode: http.StatusOK}}}
+	service := newConfiguredService(repo, client)
+
+	tested, err := service.TestAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("TestAccounts returned error: %v", err)
+	}
+
+	if len(tested) != 2 {
+		t.Fatalf("tested account count = %d, want 2", len(tested))
+	}
+	if strings.Join(client.gotAccessTokens, ",") != "first-secret,second-secret" {
+		t.Fatalf("probe tokens = %v, want both API upstream secrets", client.gotAccessTokens)
+	}
+	if tested[1].ID != 8 || tested[1].Status != AccountStatusActive || tested[1].CircuitOpenUntil != nil || tested[1].LastError != "" {
+		t.Fatalf("second tested account = %+v, want cleared active account", tested[1])
+	}
+}
+
 func TestPauseAccountSchedulingTemporarilyOpensCircuit(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 3, "access-token")}
@@ -2437,9 +2476,11 @@ func (c *captureExchangeOAuthClient) RefreshToken(ctx context.Context, cfg Confi
 }
 
 type captureProbeOAuthClient struct {
-	probe          probeResult
-	gotConfig      Config
-	gotAccessToken string
+	probe           probeResult
+	probes          []probeResult
+	gotConfig       Config
+	gotAccessToken  string
+	gotAccessTokens []string
 }
 
 func (c *captureProbeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
@@ -2453,6 +2494,15 @@ func (c *captureProbeOAuthClient) RefreshToken(ctx context.Context, cfg Config, 
 func (c *captureProbeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
 	c.gotConfig = cfg
 	c.gotAccessToken = accessToken
+	c.gotAccessTokens = append(c.gotAccessTokens, accessToken)
+	if len(c.probes) > 0 {
+		probe := c.probes[0]
+		c.probes = c.probes[1:]
+		if probe.statusCode == 0 {
+			return probeResult{statusCode: http.StatusOK}, nil
+		}
+		return probe, nil
+	}
 	if c.probe.statusCode == 0 {
 		return probeResult{statusCode: http.StatusOK}, nil
 	}

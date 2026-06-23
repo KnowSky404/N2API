@@ -997,6 +997,22 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	return s.ResetAccountStatus(ctx, account.ID)
 }
 
+func (s *Service) TestAccounts(ctx context.Context) ([]Account, error) {
+	accounts, err := s.ListAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tested := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		updated, err := s.TestAccount(ctx, account.ID)
+		if err != nil {
+			return nil, err
+		}
+		tested = append(tested, updated)
+	}
+	return tested, nil
+}
+
 func (s *Service) PauseAccountScheduling(ctx context.Context, id int64, duration time.Duration) (Account, error) {
 	if id <= 0 {
 		return Account{}, ErrInvalidInput

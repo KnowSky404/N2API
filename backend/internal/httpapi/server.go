@@ -61,6 +61,7 @@ type ProviderService interface {
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccount(ctx context.Context, id int64) (provider.Account, error)
+	TestAccounts(ctx context.Context) ([]provider.Account, error)
 	PauseAccountScheduling(ctx context.Context, id int64, duration time.Duration) (provider.Account, error)
 	ResetAccountStatus(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
@@ -468,6 +469,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]provider.Account{"account": account})
+	}))
+
+	mux.HandleFunc("POST /api/admin/provider-accounts/test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleTestAllProviderAccounts(w, r, providers)
 	}))
 
 	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -903,6 +908,19 @@ func handleTestProviderAccount(w http.ResponseWriter, r *http.Request, providers
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+}
+
+func handleTestAllProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	accounts, err := providers.TestAccounts(r.Context())
+	if err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
 func handlePauseProviderAccountScheduling(w http.ResponseWriter, r *http.Request, providers ProviderService) {
