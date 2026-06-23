@@ -71,7 +71,7 @@ Provider accounts are gateway exits. N2API supports Codex OAuth accounts and API
 
 Select rows on the Provider accounts page to bulk enable or disable provider accounts. Use **Enable selected** or **Disable selected** to change scheduling eligibility for the selected exits, and **Clear selection** when you want to discard the current selection without changing accounts.
 
-Selected rows can also receive shared scheduling parameters. Set **Bulk priority** or **Bulk load factor**, then use **Apply scheduling** to update those selected provider accounts together; bulk priority and bulk load factor use the same validation as each account row.
+Selected rows can also receive shared scheduling parameters. Set **Bulk priority**, **Bulk load factor**, or **Bulk max concurrency**, then use **Apply scheduling** to update those selected provider accounts together; bulk priority, bulk load factor, and bulk max concurrency fields use the same validation as each account row.
 
 Configure model capability on each provider account row. The API Keys page controls the gateway default model, the global routable model list, and client-key model access; these settings do not grant capability to accounts that do not list that model.
 
@@ -95,7 +95,7 @@ Selected provider accounts can be paused and reset together. Use **Pause selecte
 
 During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so the gateway does not assume every account can serve every globally allowed model.
 
-Lower priority numbers are selected first. Within the same priority and health class, accounts with a higher load factor are considered before lower-capacity accounts; keep weak or quota-sensitive accounts at load factor `1` and raise stronger accounts when you want them to carry more traffic.
+Lower priority numbers are selected first. Within the same priority and health class, accounts with a higher load factor are considered before lower-capacity accounts; keep weak or quota-sensitive accounts at load factor `1` and raise stronger accounts when you want them to carry more traffic. Provider accounts also expose **Max concurrency** for per-account concurrency overrides. A value of `0` inherits the gateway default from Gateway Settings; set a positive value when one account should use its own local concurrency cap.
 
 ## API Key Model Access
 

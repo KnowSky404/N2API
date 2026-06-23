@@ -22,7 +22,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 
 - Use the account row to set a display name, priority, and load factor. OAuth account creation also lets you choose whether the account should be enabled after login.
 - Select rows on the Provider accounts page to bulk enable or disable provider accounts. Use **Enable selected** or **Disable selected** to change scheduling eligibility for the selected exits, and **Clear selection** to discard the selection without changing accounts.
-- Set **Bulk priority** or **Bulk load factor**, then use **Apply scheduling** to update selected provider accounts together; bulk priority and bulk load factor use the same validation as each account row.
+- Set **Bulk priority**, **Bulk load factor**, or **Bulk max concurrency**, then use **Apply scheduling** to update selected provider accounts together; bulk priority, bulk load factor, and bulk max concurrency fields use the same validation as each account row.
 - Configure supported models on each connected account. These per-account model rows describe account capability for gateway routing.
 - Selected provider accounts can also receive the same model capability list. Enter one model per line in **Bulk models**, then use **Apply models** to replace the selected accounts' manual model lists together; this controls which models the scheduler can route to those accounts.
 - Use API Keys to control which configured models are exposed to clients and which model is used as the default when a POST request omits `model`. Global routable model settings do not make an account eligible for a model it has not configured.
@@ -42,6 +42,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so routing does not assume false account capability.
 - Lower priority numbers are selected before higher priority numbers.
 - Within the same priority and health class, a higher load factor is considered before a lower load factor. Keep weak or quota-sensitive accounts at load factor `1`; raise stronger accounts when they should carry more traffic.
+- Provider accounts expose **Max concurrency** as a per-account concurrency override. `0` inherits the gateway default from Gateway Settings; positive values cap that account independently.
 - Rate-limited, circuit-open, expired, and disabled accounts are skipped during gateway account selection.
 - Upstream 429 responses mark the account as rate-limited, 401/403 mark it expired, and 5xx responses open a short circuit window before traffic tries another account.
 - `/v1/models` returns the aggregate exposed models for the authenticated API key. All-model keys see the routable list after applying the global allowed-model list; selected-model keys see the intersection of their selected models and currently routable models.
