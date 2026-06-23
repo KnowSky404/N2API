@@ -438,6 +438,66 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 	return logs, nil
 }
 
+func (r *AdminRepository) GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (admin.UsageSummary, error) {
+	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL(groupBy)
+	if !ok {
+		return admin.UsageSummary{}, admin.ErrInvalidInput
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			`+groupExpr+`,
+			`+labelExpr+`,
+			COUNT(*),
+			COALESCE(SUM(l.input_tokens), 0),
+			COALESCE(SUM(l.output_tokens), 0),
+			COALESCE(SUM(l.total_tokens), 0),
+			COALESCE(SUM(l.estimated_cost_microusd), 0)
+		FROM request_logs l
+		`+joinSQL+`
+		WHERE l.created_at >= $1
+		GROUP BY 1, 2
+		ORDER BY COALESCE(SUM(l.estimated_cost_microusd), 0) DESC, COUNT(*) DESC, `+labelExpr+` ASC
+	`, since)
+	if err != nil {
+		return admin.UsageSummary{}, err
+	}
+	defer rows.Close()
+
+	var summary admin.UsageSummary
+	for rows.Next() {
+		var row admin.UsageSummaryRow
+		if err := rows.Scan(
+			&row.ID,
+			&row.Label,
+			&row.Requests,
+			&row.InputTokens,
+			&row.OutputTokens,
+			&row.TotalTokens,
+			&row.EstimatedCostMicrousd,
+		); err != nil {
+			return admin.UsageSummary{}, err
+		}
+		summary.Rows = append(summary.Rows, row)
+	}
+	if err := rows.Err(); err != nil {
+		return admin.UsageSummary{}, err
+	}
+	return summary, nil
+}
+
+func usageSummaryGroupSQL(groupBy string) (groupExpr, labelExpr, joinSQL string, ok bool) {
+	switch groupBy {
+	case "client_key":
+		return "COALESCE(k.id::text, 'unknown')", "COALESCE(k.name || ' (' || k.prefix || ')', 'Unknown key')", "LEFT JOIN client_api_keys k ON k.id = l.client_key_id", true
+	case "provider_account":
+		return "COALESCE(l.provider_account_id::text, 'unassigned')", "COALESCE(NULLIF(a.display_name, ''), a.name, 'Unassigned')", "LEFT JOIN provider_accounts a ON a.id = l.provider_account_id", true
+	case "model":
+		return "COALESCE(NULLIF(l.model, ''), 'unknown')", "COALESCE(NULLIF(l.model, ''), 'Unknown model')", "", true
+	default:
+		return "", "", "", false
+	}
+}
+
 func (r *AdminRepository) GetModelSettings(ctx context.Context) (admin.ModelSettings, error) {
 	var raw []byte
 	err := r.pool.QueryRow(ctx, `

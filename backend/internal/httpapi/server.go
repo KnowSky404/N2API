@@ -36,6 +36,7 @@ type AdminService interface {
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
 	ListRequestLogs(ctx context.Context, limit int) ([]admin.RequestLog, error)
+	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
 	GetModelSettings(ctx context.Context) (admin.ModelSettings, error)
 	UpdateModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error)
 	DefaultModel(ctx context.Context) (string, error)
@@ -270,6 +271,19 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
+	}))
+
+	mux.HandleFunc("GET /api/admin/usage-summary", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		summary, err := admins.GetUsageSummary(r.Context(), r.URL.Query().Get("range"), r.URL.Query().Get("groupBy"))
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, summary)
 	}))
 
 	mux.HandleFunc("GET /api/admin/model-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

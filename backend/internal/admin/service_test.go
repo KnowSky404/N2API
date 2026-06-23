@@ -329,6 +329,40 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 }
 
+func TestGetUsageSummaryValidatesRangeAndGroup(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	repo.usageSummary = UsageSummary{
+		Rows: []UsageSummaryRow{{ID: "gpt-5", Label: "gpt-5", Requests: 2, InputTokens: 30, OutputTokens: 10, TotalTokens: 40}},
+	}
+
+	summary, err := service.GetUsageSummary(context.Background(), "7d", "model")
+	if err != nil {
+		t.Fatalf("GetUsageSummary returned error: %v", err)
+	}
+	if summary.Range != "7d" || summary.GroupBy != "model" || repo.lastUsageGroupBy != "model" {
+		t.Fatalf("summary metadata = %+v repo group=%q", summary, repo.lastUsageGroupBy)
+	}
+	if summary.TotalRequests != 2 || summary.TotalInputTokens != 30 || summary.TotalOutputTokens != 10 || summary.TotalTokens != 40 {
+		t.Fatalf("summary totals = %+v, want row totals", summary)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		rangeIn string
+		groupBy string
+	}{
+		{name: "bad range", rangeIn: "bad", groupBy: "model"},
+		{name: "bad group", rangeIn: "7d", groupBy: "bad"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := service.GetUsageSummary(context.Background(), tc.rangeIn, tc.groupBy); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("GetUsageSummary error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+}
+
 func TestModelSettingsDefaultAndUpdate(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -440,15 +474,18 @@ func requireBootstrap(t *testing.T, service *Service, username, password string)
 }
 
 type memoryRepo struct {
-	admin         Admin
-	nextAdminID   int64
-	sessions      map[string]memorySession
-	keys          map[int64]memoryAPIKey
-	nextAPIKeyID  int64
-	touchErr      error
-	logs          []RequestLog
-	lastLogLimit  int
-	modelSettings ModelSettings
+	admin            Admin
+	nextAdminID      int64
+	sessions         map[string]memorySession
+	keys             map[int64]memoryAPIKey
+	nextAPIKeyID     int64
+	touchErr         error
+	logs             []RequestLog
+	lastLogLimit     int
+	usageSummary     UsageSummary
+	lastUsageSince   time.Time
+	lastUsageGroupBy string
+	modelSettings    ModelSettings
 }
 
 type memorySession struct {
@@ -605,6 +642,12 @@ func (r *memoryRepo) ListRequestLogs(_ context.Context, limit int) ([]RequestLog
 		limit = len(r.logs)
 	}
 	return append([]RequestLog(nil), r.logs[:limit]...), nil
+}
+
+func (r *memoryRepo) GetUsageSummary(_ context.Context, since time.Time, groupBy string) (UsageSummary, error) {
+	r.lastUsageSince = since
+	r.lastUsageGroupBy = groupBy
+	return r.usageSummary, nil
 }
 
 func (r *memoryRepo) GetModelSettings(_ context.Context) (ModelSettings, error) {

@@ -77,6 +77,27 @@ type RequestLog struct {
 	CreatedAt           time.Time `json:"createdAt"`
 }
 
+type UsageSummary struct {
+	Range                 string            `json:"range"`
+	GroupBy               string            `json:"groupBy"`
+	TotalRequests         int64             `json:"totalRequests"`
+	TotalInputTokens      int64             `json:"totalInputTokens"`
+	TotalOutputTokens     int64             `json:"totalOutputTokens"`
+	TotalTokens           int64             `json:"totalTokens"`
+	EstimatedCostMicrousd int64             `json:"estimatedCostMicrousd"`
+	Rows                  []UsageSummaryRow `json:"rows"`
+}
+
+type UsageSummaryRow struct {
+	ID                    string `json:"id"`
+	Label                 string `json:"label"`
+	Requests              int64  `json:"requests"`
+	InputTokens           int64  `json:"inputTokens"`
+	OutputTokens          int64  `json:"outputTokens"`
+	TotalTokens           int64  `json:"totalTokens"`
+	EstimatedCostMicrousd int64  `json:"estimatedCostMicrousd"`
+}
+
 type ModelSettings struct {
 	DefaultModel  string   `json:"defaultModel"`
 	AllowedModels []string `json:"allowedModels"`
@@ -128,6 +149,7 @@ type Repository interface {
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error)
+	GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (UsageSummary, error)
 	GetModelSettings(ctx context.Context) (ModelSettings, error)
 	SaveModelSettings(ctx context.Context, settings ModelSettings) (ModelSettings, error)
 }
@@ -333,6 +355,69 @@ func (s *Service) ListRequestLogs(ctx context.Context, limit int) ([]RequestLog,
 		limit = 200
 	}
 	return s.repo.ListRequestLogs(ctx, limit)
+}
+
+func (s *Service) GetUsageSummary(ctx context.Context, rangeName, groupBy string) (UsageSummary, error) {
+	rangeName = strings.TrimSpace(rangeName)
+	if rangeName == "" {
+		rangeName = "7d"
+	}
+	groupBy = strings.TrimSpace(groupBy)
+	if groupBy == "" {
+		groupBy = "model"
+	}
+	since, ok := usageSummarySince(rangeName, time.Now())
+	if !ok {
+		return UsageSummary{}, ErrInvalidInput
+	}
+	if !validUsageSummaryGroup(groupBy) {
+		return UsageSummary{}, ErrInvalidInput
+	}
+	summary, err := s.repo.GetUsageSummary(ctx, since, groupBy)
+	if err != nil {
+		return UsageSummary{}, err
+	}
+	summary.Range = rangeName
+	summary.GroupBy = groupBy
+	summary.recalculateTotals()
+	return summary, nil
+}
+
+func usageSummarySince(rangeName string, now time.Time) (time.Time, bool) {
+	switch rangeName {
+	case "24h":
+		return now.Add(-24 * time.Hour), true
+	case "7d":
+		return now.Add(-7 * 24 * time.Hour), true
+	case "30d":
+		return now.Add(-30 * 24 * time.Hour), true
+	default:
+		return time.Time{}, false
+	}
+}
+
+func validUsageSummaryGroup(groupBy string) bool {
+	switch groupBy {
+	case "client_key", "provider_account", "model":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *UsageSummary) recalculateTotals() {
+	s.TotalRequests = 0
+	s.TotalInputTokens = 0
+	s.TotalOutputTokens = 0
+	s.TotalTokens = 0
+	s.EstimatedCostMicrousd = 0
+	for _, row := range s.Rows {
+		s.TotalRequests += row.Requests
+		s.TotalInputTokens += row.InputTokens
+		s.TotalOutputTokens += row.OutputTokens
+		s.TotalTokens += row.TotalTokens
+		s.EstimatedCostMicrousd += row.EstimatedCostMicrousd
+	}
 }
 
 func (s *Service) GetModelSettings(ctx context.Context) (ModelSettings, error) {

@@ -15,6 +15,24 @@ func TestAdminRepositoryImplementsInterface(t *testing.T) {
 	var _ admin.Repository = (*AdminRepository)(nil)
 }
 
+func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
+	for _, groupBy := range []string{"client_key", "provider_account", "model"} {
+		t.Run(groupBy, func(t *testing.T) {
+			groupExpr, labelExpr, _, ok := usageSummaryGroupSQL(groupBy)
+			if !ok {
+				t.Fatalf("usageSummaryGroupSQL(%q) ok = false, want true", groupBy)
+			}
+			if groupExpr == "" || labelExpr == "" {
+				t.Fatalf("usageSummaryGroupSQL(%q) returned empty expressions", groupBy)
+			}
+		})
+	}
+
+	if _, _, _, ok := usageSummaryGroupSQL("status; DROP TABLE request_logs"); ok {
+		t.Fatal("usageSummaryGroupSQL accepted an unknown group")
+	}
+}
+
 func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()

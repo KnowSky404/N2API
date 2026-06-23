@@ -37,6 +37,9 @@ type fakeAdminService struct {
 	modelPolicy        string
 	modelPolicyModels  []string
 	modelPolicyErr     error
+	usageSummary       admin.UsageSummary
+	usageRange         string
+	usageGroupBy       string
 }
 
 type fakeProviderService struct {
@@ -159,6 +162,15 @@ func (s *fakeAdminService) ListRequestLogs(_ context.Context, limit int) ([]admi
 		limit = len(s.logs)
 	}
 	return s.logs[:limit], nil
+}
+
+func (s *fakeAdminService) GetUsageSummary(_ context.Context, rangeName, groupBy string) (admin.UsageSummary, error) {
+	s.usageRange = rangeName
+	s.usageGroupBy = groupBy
+	if rangeName == "bad" || groupBy == "bad" {
+		return admin.UsageSummary{}, admin.ErrInvalidInput
+	}
+	return s.usageSummary, nil
 }
 
 func (s *fakeAdminService) GetModelSettings(_ context.Context) (admin.ModelSettings, error) {
@@ -1760,6 +1772,52 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if len(body.Logs) != 1 || body.Logs[0].RequestID != "req_3" {
 		t.Fatalf("logs = %+v", body.Logs)
+	}
+}
+
+func TestUsageSummaryRequiresSessionAndReturnsSummary(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.usageSummary = admin.UsageSummary{Range: "7d", GroupBy: "model", TotalRequests: 2}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/usage-summary", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/usage-summary?range=30d&groupBy=provider_account", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if admins.usageRange != "30d" || admins.usageGroupBy != "provider_account" {
+		t.Fatalf("usage query = %q/%q, want 30d/provider_account", admins.usageRange, admins.usageGroupBy)
+	}
+	var body admin.UsageSummary
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.TotalRequests != 2 {
+		t.Fatalf("summary = %+v, want total requests 2", body)
+	}
+}
+
+func TestUsageSummaryRejectsInvalidQuery(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/usage-summary?range=bad&groupBy=model", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
 	}
 }
 
