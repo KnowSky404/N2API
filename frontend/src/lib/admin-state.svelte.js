@@ -894,7 +894,7 @@ export async function completeProviderCallback() {
 
 /**
  * @param {ProviderAccount} account
- * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority'>>} patch
+ * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'name'>>} patch
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
@@ -918,6 +918,27 @@ export async function updateProviderAccount(account, patch) {
   } finally {
     if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
   }
+}
+
+/**
+ * @param {ProviderAccount} account
+ * @param {Event & { currentTarget: HTMLInputElement }} event
+ */
+export async function updateProviderAccountName(account, event) {
+  const name = event.currentTarget.value.trim();
+  const current = (account.name || '').trim();
+
+  if (name === current) {
+    event.currentTarget.value = current;
+    return;
+  }
+  if (!name) {
+    providerAccounts.error = 'Account name cannot be empty';
+    event.currentTarget.value = current;
+    return;
+  }
+
+  await updateProviderAccount(account, { name });
 }
 
 export async function createAPIUpstreamAccount() {

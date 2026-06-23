@@ -199,6 +199,22 @@ func TestUpdateAccountClearStatusClearsLocalFailureStateColumns(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountCanSetLocalAccountNameColumn(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	for _, required := range []string{
+		"NAME = CASE WHEN $7 THEN $6 ELSE NAME END",
+		"UPDATE.NAME",
+	} {
+		if !strings.Contains(sql, required) {
+			t.Fatalf("UpdateAccount must support updating local account name, missing %q", required)
+		}
+	}
+}
+
 func TestReplaceAccountModelsNormalizesAndListsRows(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

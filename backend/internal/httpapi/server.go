@@ -644,14 +644,15 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 	}
 
 	var req struct {
-		Enabled  *bool `json:"enabled"`
-		Priority *int  `json:"priority"`
+		Enabled  *bool   `json:"enabled"`
+		Priority *int    `json:"priority"`
+		Name     *string `json:"name"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if req.Enabled == nil && req.Priority == nil {
+	if req.Enabled == nil && req.Priority == nil && req.Name == nil {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
@@ -659,6 +660,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 	account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
 		Enabled:  req.Enabled,
 		Priority: req.Priority,
+		Name:     req.Name,
 	})
 	if err != nil {
 		writeProviderAccountError(w, err)

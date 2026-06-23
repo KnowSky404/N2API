@@ -359,7 +359,7 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 	if s.updateErr != nil {
 		return provider.Account{}, s.updateErr
 	}
-	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus {
+	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus && update.Name == nil {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
@@ -372,6 +372,9 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 			}
 			if update.Priority != nil {
 				account.Priority = *update.Priority
+			}
+			if update.Name != nil {
+				account.Name = strings.TrimSpace(*update.Name)
 			}
 			if update.ClearStatus {
 				account.Status = provider.AccountStatusActive
@@ -1167,7 +1170,7 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"enabled":false,"priority":2}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"name":" Renamed ","enabled":false,"priority":2}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -1182,8 +1185,8 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Account.ID != 7 || body.Account.Enabled || body.Account.Priority != 2 {
-		t.Fatalf("account = %+v, want disabled account 7 priority 2", body.Account)
+	if body.Account.ID != 7 || body.Account.Name != "Renamed" || body.Account.Enabled || body.Account.Priority != 2 {
+		t.Fatalf("account = %+v, want renamed disabled account 7 priority 2", body.Account)
 	}
 }
 

@@ -219,6 +219,7 @@ type AccountUpdate struct {
 	Enabled     *bool
 	Priority    *int
 	ClearStatus bool
+	Name        *string
 }
 
 type SelectedAccount struct {
@@ -659,11 +660,18 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus {
+	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus && update.Name == nil {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
 		return Account{}, ErrInvalidInput
+	}
+	if update.Name != nil {
+		name := strings.TrimSpace(*update.Name)
+		if name == "" || len(name) > 128 {
+			return Account{}, ErrInvalidInput
+		}
+		update.Name = &name
 	}
 	return s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
 }

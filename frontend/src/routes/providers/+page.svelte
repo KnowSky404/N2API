@@ -26,6 +26,7 @@
     setAccountModelEnabled,
     statusLabel,
     updateProviderAccount,
+    updateProviderAccountName,
     updateProviderAccountPriority
   } from '$lib/admin-state.svelte.js';
 
@@ -507,9 +508,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle" title={accountHoverDetail(account)}>
-          <p class="max-w-[18rem] truncate font-medium text-[#0d0d0d]">
-            {accountLabel(account)}
-          </p>
+          <label class="sr-only" for={`provider-account-name-${account.id}`}>
+            Account name for {accountLabel(account)}
+          </label>
+          <input
+            id={`provider-account-name-${account.id}`}
+            class="w-full max-w-[18rem] rounded-md border border-transparent bg-transparent px-0 py-1 text-sm font-medium text-[#0d0d0d] outline-none hover:border-[#e5e5e5] hover:bg-white hover:px-2 focus:border-[#10a37f] focus:bg-white focus:px-2 focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            value={accountLabel(account)}
+            disabled={providerAccounts.saving}
+            aria-label={`Rename ${accountLabel(account)}`}
+            onchange={(event) => updateProviderAccountName(account, event)}
+          />
           {#if accountSecondaryLabel(account)}
             <p class="mt-1 max-w-[18rem] truncate text-[#3c3c3c]">{accountSecondaryLabel(account)}</p>
           {/if}

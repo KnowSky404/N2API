@@ -169,6 +169,9 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /Codex OAuth/);
   assert.match(source, /API upstream/);
   assert.match(source, /Base URL/);
+  assert.match(source, /updateProviderAccountName\(account, event\)/);
+  assert.match(source, /provider-account-name-\$\{account\.id\}/);
+  assert.match(source, /Rename \$\{accountLabel\(account\)\}/);
   assert.match(source, /Manual models/);
   assert.match(source, /resetProviderAccountStatus\(account\)/);
   assert.match(source, /Reset local status/);
@@ -185,6 +188,14 @@ test('admin state can reset provider account local status', () => {
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}\/reset-status/);
   assert.match(adminStateSource, /Account status reset failed/);
   assert.match(adminStateSource, /loadModelRouting/);
+});
+
+test('admin state can update provider account local name', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /updateProviderAccountName/);
+  assert.match(adminStateSource, /Account name cannot be empty/);
+  assert.match(adminStateSource, /updateProviderAccount\(account, \{ name \}\)/);
 });
 
 test('api keys page owns model policy and gateway default model', () => {

@@ -989,6 +989,35 @@ func TestSelectAccountForModelUsesPriorityOrder(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountCanRenameLocalAccountLabel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	name := " Work Codex "
+
+	account, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{Name: &name})
+	if err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if account.Name != "Work Codex" {
+		t.Fatalf("Name = %q, want trimmed Work Codex", account.Name)
+	}
+	if account.DisplayName == "" {
+		t.Fatalf("DisplayName = %q, want provider display name preserved", account.DisplayName)
+	}
+}
+
+func TestUpdateAccountRejectsEmptyLocalAccountLabel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	name := " "
+
+	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{Name: &name}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateAccount error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestSelectAccountForModelSkipsExcludedAccount(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -1598,6 +1627,9 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 		}
 		if update.Priority != nil {
 			r.accounts[i].Priority = *update.Priority
+		}
+		if update.Name != nil {
+			r.accounts[i].Name = *update.Name
 		}
 		if update.ClearStatus {
 			r.accounts[i].Status = AccountStatusActive
