@@ -324,6 +324,7 @@ onclick={loadRequestLogs}
     <th class="px-4 py-3 font-medium">Key</th>
     <th class="px-4 py-3 font-medium">Provider account</th>
     <th class="px-4 py-3 font-medium">Model</th>
+    <th class="px-4 py-3 font-medium">Session</th>
     <th class="px-4 py-3 font-medium">Tokens</th>
     <th class="px-4 py-3 font-medium">Estimated cost</th>
     <th class="px-4 py-3 font-medium">Usage</th>
@@ -337,11 +338,11 @@ onclick={loadRequestLogs}
 <tbody class="divide-y divide-[#ededed]">
   {#if requestLogs.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">Loading request logs...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="13">Loading request logs...</td>
     </tr>
   {:else if requestLogs.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="12">No gateway requests yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="13">No gateway requests yet.</td>
     </tr>
   {:else}
     {#each requestLogs.items as log}
@@ -361,6 +362,9 @@ onclick={loadRequestLogs}
           {/if}
         </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.model || '-'}</td>
+        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">
+          <span class="block max-w-[180px] truncate">{log.sessionId || '-'}</span>
+        </td>
         <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
           {formatTokens(log.inputTokens)} in / {formatTokens(log.outputTokens)} out
           <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total</p>

@@ -45,6 +45,12 @@ test('request logs page shows request model', () => {
   assert.match(requestLogsPage, /log\.model/);
 });
 
+test('request logs page shows sticky session attribution', () => {
+  assert.match(requestLogsPage, />Session</);
+  assert.match(requestLogsPage, /log\.sessionId/);
+  assert.match(requestLogsPage, /colspan="13"/);
+});
+
 test('request logs page shows token usage', () => {
   assert.match(requestLogsPage, />Tokens</);
   assert.match(requestLogsPage, />Usage</);

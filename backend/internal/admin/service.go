@@ -64,6 +64,7 @@ type RequestLog struct {
 	ProviderAccountType   string    `json:"providerAccountType"`
 	ProviderAccountName   string    `json:"providerAccountName"`
 	Model                 string    `json:"model"`
+	SessionID             string    `json:"sessionId"`
 	Route                 string    `json:"route"`
 	Method                string    `json:"method"`
 	StatusCode            int       `json:"statusCode"`

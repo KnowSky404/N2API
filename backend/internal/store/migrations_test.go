@@ -215,6 +215,21 @@ func TestRequestLogProviderAccountNameMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestRequestLogSessionIDMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00013_request_log_session_id.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS session_id",
+		"ALTER TABLE request_logs DROP COLUMN IF EXISTS session_id",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestRequestLogModelAttributionMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00010_request_log_model_attribution.sql")
 	if err != nil {
@@ -282,10 +297,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 12 {
-		t.Fatalf("migration sources = %d, want 12", len(sources))
+	if len(sources) != 13 {
+		t.Fatalf("migration sources = %d, want 13", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[11].Path != "00012_request_log_provider_account_name.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[12].Path != "00013_request_log_session_id.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

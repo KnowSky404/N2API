@@ -1635,6 +1635,39 @@ func TestProxyLogsRequestModel(t *testing.T) {
 	}
 }
 
+func TestProxyLogsStickySessionID(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","session_id":" workspace-123 ","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	if logger.entries[0].SessionID != "workspace-123" {
+		t.Fatalf("logged session ID = %q, want workspace-123", logger.entries[0].SessionID)
+	}
+}
+
 func TestProxyLogsNonStreamingUsage(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
