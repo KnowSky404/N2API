@@ -1792,15 +1792,20 @@ func TestProxyReportsMissingProviderAccount(t *testing.T) {
 
 func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
-	}))
-	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Upstream A", AuthorizationToken: "upstream-token"}}}, Config{
-		UpstreamBaseURL: upstream.URL,
-		Logger:          logger,
-	})
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"object":"list","data":[]}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, Provider: "openrouter", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Upstream A", AuthorizationToken: "upstream-token"}}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		client,
+	)
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
@@ -1814,7 +1819,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 	if entry.RequestID == "" {
 		t.Fatal("RequestID is empty")
 	}
-	if entry.ClientKeyID != 42 || entry.Provider != "openai" || entry.Route != "/v1/responses/resp_123" || entry.Method != http.MethodGet {
+	if entry.ClientKeyID != 42 || entry.Provider != "openrouter" || entry.Route != "/v1/responses/resp_123" || entry.Method != http.MethodGet {
 		t.Fatalf("log entry = %+v", entry)
 	}
 	if entry.ProviderAccountID != 7 || entry.ProviderAccountType != provider.AccountTypeAPIUpstream {

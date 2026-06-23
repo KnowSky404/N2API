@@ -223,7 +223,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:             newRequestID(),
 			ClientKeyID:           key.ID,
-			Provider:              "openai",
+			Provider:              selectedProviderName(loggedAccount),
 			ProviderAccountID:     loggedAccount.AccountID,
 			ProviderAccountType:   loggedAccount.AccountType,
 			ProviderAccountName:   loggedAccount.DisplayName,
@@ -1202,6 +1202,14 @@ func (p *Proxy) logRequest(ctx context.Context, entry RequestLog) {
 		entry.StatusCode = http.StatusOK
 	}
 	_ = p.logger.CreateRequestLog(ctx, entry)
+}
+
+func selectedProviderName(account SelectedAccount) string {
+	providerName := strings.TrimSpace(account.Provider)
+	if providerName != "" {
+		return providerName
+	}
+	return "openai"
 }
 
 func newRequestID() string {
