@@ -8,6 +8,7 @@ mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
   apiKeyModelWarnings,
   accountModelsText,
+  modelListText,
   getGatewayReadinessIssues,
   mergeAccountModelChanges,
   parseAccountModelsText,
@@ -36,6 +37,10 @@ test('parseModelLines trims blanks and dedupes plain model names', () => {
     'gpt-5-mini',
     'codex-mini'
   ]);
+});
+
+test('modelListText normalizes model names for selected API key policy editing', () => {
+  assert.equal(modelListText([' gpt-5 ', '', 'gpt-5-mini', 'gpt-5', ' codex-mini ']), 'gpt-5\ngpt-5-mini\ncodex-mini');
 });
 
 test('mergeAccountModelChanges preserves disabled rows and adds textarea rows enabled', () => {

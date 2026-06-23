@@ -12,6 +12,7 @@
     loadModelRouting,
     login,
     loginForm,
+    modelListText,
     modelRouting,
     modelSettings,
     revokeKey,
@@ -259,7 +260,7 @@ All routable models
               updateAPIKeyModelPolicy(
                 key.id,
                 key.modelPolicy || 'all',
-                key.allowedModelsText ?? (key.allowedModels ?? []).join('\n')
+                key.allowedModelsText ?? modelListText(key.allowedModels ?? [])
               );
             }}
           >
@@ -279,7 +280,7 @@ All routable models
                 id={`api-key-selected-models-${key.id}`}
                 class="min-h-20 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
                 placeholder={'gpt-4.1\ngpt-4.1-mini'}
-                value={key.allowedModelsText ?? (key.allowedModels ?? []).join('\n')}
+                value={key.allowedModelsText ?? modelListText(key.allowedModels ?? [])}
                 disabled={Boolean(key.revokedAt)}
                 oninput={(event) => {
                   key.allowedModelsText = event.currentTarget.value;

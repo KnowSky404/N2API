@@ -282,6 +282,11 @@ export function parseModelLines(text) {
     });
 }
 
+/** @param {Array<string | null | undefined>} models */
+export function modelListText(models) {
+  return parseModelLines((models ?? []).join('\n')).join('\n');
+}
+
 /**
  * @param {Array<Partial<AccountModel> & { model: string, enabled?: boolean }>} models
  * @param {string | null | undefined} text
@@ -817,15 +822,7 @@ function ensureAccountModelsState(accountId) {
 
 /** @param {AccountModel[]} models */
 export function accountModelsText(models) {
-  const seen = new Set();
-  return models
-    .map((item) => String(item.model ?? '').trim())
-    .filter((model) => {
-      if (!model || seen.has(model)) return false;
-      seen.add(model);
-      return true;
-    })
-    .join('\n');
+  return modelListText(models.map((item) => item.model));
 }
 
 /** @param {number} accountId */
