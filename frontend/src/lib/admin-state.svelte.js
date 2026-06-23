@@ -1325,6 +1325,7 @@ export async function bulkUpdateSelectedProviderAccountScheduling() {
     return;
   }
 
+  /** @type {{ accountIds: number[], priority?: number, loadFactor?: number }} */
   const payload = { accountIds };
   const priorityText = String(providerAccountBulkSchedulingForm.priority ?? '').trim();
   const loadFactorText = String(providerAccountBulkSchedulingForm.loadFactor ?? '').trim();
