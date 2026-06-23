@@ -143,6 +143,33 @@ func TestLoadGatewayAccountConcurrencyLimitConfig(t *testing.T) {
 	}
 }
 
+func TestLoadGatewayAPIKeyConcurrencyLimitConfig(t *testing.T) {
+	defaultCfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if defaultCfg.GatewayMaxConcurrentRequestsPerKey != 0 {
+		t.Fatalf("GatewayMaxConcurrentRequestsPerKey = %d, want default disabled 0", defaultCfg.GatewayMaxConcurrentRequestsPerKey)
+	}
+
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                                  "postgres://example",
+		"N2API_ENCRYPTION_SECRET":                       "encryption-secret",
+		"N2API_ADMIN_PASSWORD":                          "admin-password",
+		"N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_KEY": "3",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.GatewayMaxConcurrentRequestsPerKey != 3 {
+		t.Fatalf("GatewayMaxConcurrentRequestsPerKey = %d, want 3", cfg.GatewayMaxConcurrentRequestsPerKey)
+	}
+}
+
 func TestLoadGatewayRequestRateLimitConfig(t *testing.T) {
 	defaultCfg, err := Load(mapLookup(map[string]string{
 		"DATABASE_URL":            "postgres://example",
@@ -224,6 +251,22 @@ func TestLoadRejectsInvalidGatewayAccountConcurrencyLimit(t *testing.T) {
 			}))
 			if err == nil {
 				t.Fatal("Load returned nil error, want invalid gateway account concurrency limit error")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidGatewayAPIKeyConcurrencyLimit(t *testing.T) {
+	for _, value := range []string{"abc", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Load(mapLookup(map[string]string{
+				"DATABASE_URL":                                  "postgres://example",
+				"N2API_ENCRYPTION_SECRET":                       "encryption-secret",
+				"N2API_ADMIN_PASSWORD":                          "admin-password",
+				"N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_KEY": value,
+			}))
+			if err == nil {
+				t.Fatal("Load returned nil error, want invalid gateway api key concurrency limit error")
 			}
 		})
 	}

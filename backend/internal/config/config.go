@@ -22,6 +22,7 @@ type Config struct {
 	OpenAIAPIBaseURL                       string
 	GatewayMaxConcurrentRequests           int
 	GatewayMaxConcurrentRequestsPerAccount int
+	GatewayMaxConcurrentRequestsPerKey     int
 	GatewayRequestsPerMinutePerKey         int
 	GatewayTokensPerMinutePerKey           int
 }
@@ -65,6 +66,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.GatewayMaxConcurrentRequestsPerAccount = maxConcurrentPerAccount
+	maxConcurrentPerKey, err := parseNonNegativeInt(lookup("N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_KEY"), "N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GatewayMaxConcurrentRequestsPerKey = maxConcurrentPerKey
 	requestsPerMinute, err := parseNonNegativeInt(lookup("N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY"), "N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY")
 	if err != nil {
 		return Config{}, err

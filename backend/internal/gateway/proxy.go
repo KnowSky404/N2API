@@ -106,6 +106,7 @@ type Config struct {
 	CodexResponsesBaseURL           string
 	MaxConcurrentGatewayRequests    int
 	MaxConcurrentRequestsPerAccount int
+	MaxConcurrentRequestsPerKey     int
 	MaxRequestsPerMinutePerKey      int
 	MaxTokensPerMinutePerKey        int
 	Logger                          RequestLogger
@@ -121,6 +122,7 @@ type Proxy struct {
 	codexBaseURL    string
 	limiter         chan struct{}
 	accountLimiter  *accountConcurrencyLimiter
+	keyLimiter      *apiKeyConcurrencyLimiter
 	rateLimiter     *apiKeyRateLimiter
 	tokenLimiter    *apiKeyTokenLimiter
 	logger          RequestLogger
@@ -152,6 +154,10 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if cfg.MaxConcurrentRequestsPerAccount > 0 {
 		accountLimiter = newAccountConcurrencyLimiter(cfg.MaxConcurrentRequestsPerAccount)
 	}
+	var keyLimiter *apiKeyConcurrencyLimiter
+	if cfg.MaxConcurrentRequestsPerKey > 0 {
+		keyLimiter = newAPIKeyConcurrencyLimiter(cfg.MaxConcurrentRequestsPerKey)
+	}
 	var rateLimiter *apiKeyRateLimiter
 	if cfg.MaxRequestsPerMinutePerKey > 0 {
 		rateLimiter = newAPIKeyRateLimiter(cfg.MaxRequestsPerMinutePerKey, time.Now)
@@ -168,6 +174,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		codexBaseURL:    codexBaseURL,
 		limiter:         limiter,
 		accountLimiter:  accountLimiter,
+		keyLimiter:      keyLimiter,
 		rateLimiter:     rateLimiter,
 		tokenLimiter:    tokenLimiter,
 		logger:          cfg.Logger,
@@ -295,6 +302,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
+	releaseKey, ok := p.tryAcquireAPIKeySlot(key.ID)
+	if !ok {
+		errorCode = "rate_limit_exceeded"
+		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key concurrency limit exceeded")
+		return
+	}
+	defer releaseKey()
+
 	failedAccountIDs := []int64{}
 	accountConcurrencyLimited := false
 	var lastRetryableResp *http.Response
@@ -383,6 +398,13 @@ func (p *Proxy) tryAcquireAccountSlot(accountID int64) (func(), bool) {
 	return p.accountLimiter.Acquire(accountID)
 }
 
+func (p *Proxy) tryAcquireAPIKeySlot(keyID int64) (func(), bool) {
+	if p.keyLimiter == nil || keyID <= 0 {
+		return func() {}, true
+	}
+	return p.keyLimiter.Acquire(keyID)
+}
+
 func (p *Proxy) tryAcquireGatewaySlot() (func(), bool) {
 	if p.limiter == nil {
 		return func() {}, true
@@ -454,6 +476,39 @@ func (l *accountConcurrencyLimiter) Acquire(accountID int64) (func(), bool) {
 		l.inFlight[accountID]--
 		if l.inFlight[accountID] <= 0 {
 			delete(l.inFlight, accountID)
+		}
+	}, true
+}
+
+type apiKeyConcurrencyLimiter struct {
+	limit    int
+	mu       sync.Mutex
+	inFlight map[int64]int
+}
+
+func newAPIKeyConcurrencyLimiter(limit int) *apiKeyConcurrencyLimiter {
+	return &apiKeyConcurrencyLimiter{
+		limit:    limit,
+		inFlight: map[int64]int{},
+	}
+}
+
+func (l *apiKeyConcurrencyLimiter) Acquire(keyID int64) (func(), bool) {
+	if l == nil || l.limit <= 0 || keyID <= 0 {
+		return func() {}, true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inFlight[keyID] >= l.limit {
+		return nil, false
+	}
+	l.inFlight[keyID]++
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		l.inFlight[keyID]--
+		if l.inFlight[keyID] <= 0 {
+			delete(l.inFlight, keyID)
 		}
 	}, true
 }

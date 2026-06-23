@@ -21,12 +21,20 @@ type fakeAPIKeyAuthenticator struct {
 	gotKey string
 	err    error
 	key    admin.APIKey
+	keys   map[string]admin.APIKey
 }
 
 func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey string) (admin.APIKey, error) {
 	a.gotKey = apiKey
 	if a.err != nil {
 		return admin.APIKey{}, a.err
+	}
+	if a.keys != nil {
+		key, ok := a.keys[apiKey]
+		if !ok {
+			return admin.APIKey{}, admin.ErrUnauthorized
+		}
+		return key, nil
 	}
 	if a.key.ID != 0 {
 		return a.key, nil
@@ -531,6 +539,143 @@ func TestProxyRejectsWhenAllSelectedAccountsHitConcurrencyLimit(t *testing.T) {
 	}
 	if firstRecorder.Code != http.StatusOK {
 		t.Fatalf("first status = %d body=%s, want 200", firstRecorder.Code, firstRecorder.Body.String())
+	}
+}
+
+func TestProxyRejectsWhenAPIKeyConcurrencyLimitIsFull(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan struct{})
+	var transportCalls int32
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AuthorizationToken: "first-token"},
+		{AccountID: 2, AuthorizationToken: "second-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		call := atomic.AddInt32(&transportCalls, 1)
+		if call == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "limited key"}}, tokens, Config{
+		UpstreamBaseURL:             "https://upstream.example.test",
+		MaxConcurrentRequestsPerKey: 1,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5"},
+		},
+	}, client)
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	firstReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRecorder := httptest.NewRecorder()
+	go func() {
+		defer close(firstDone)
+		proxy.ServeHTTP(firstRecorder, firstReq)
+	}()
+	<-firstStarted
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	secondReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondRecorder := httptest.NewRecorder()
+	proxy.ServeHTTP(secondRecorder, secondReq)
+
+	close(releaseFirst)
+	<-firstDone
+	if secondRecorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status = %d body=%s, want 429", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	if !strings.Contains(secondRecorder.Body.String(), "rate_limit_exceeded") {
+		t.Fatalf("second body = %q, want rate_limit_exceeded", secondRecorder.Body.String())
+	}
+	if tokens.calls != 1 {
+		t.Fatalf("account selections = %d, want only first request selection", tokens.calls)
+	}
+	if got := atomic.LoadInt32(&transportCalls); got != 1 {
+		t.Fatalf("transport calls = %d, want only first request upstream call", got)
+	}
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("first status = %d body=%s, want 200", firstRecorder.Code, firstRecorder.Body.String())
+	}
+}
+
+func TestProxyAllowsDifferentAPIKeysWhenOneKeyConcurrencyLimitIsFull(t *testing.T) {
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan struct{})
+	var transportCalls int32
+	var secondAuthorization string
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AuthorizationToken: "first-token"},
+		{AccountID: 2, AuthorizationToken: "second-token"},
+	}}
+	auth := &fakeAPIKeyAuthenticator{keys: map[string]admin.APIKey{
+		"first-client-secret":  {ID: 42, Name: "first key"},
+		"second-client-secret": {ID: 43, Name: "second key"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		call := atomic.AddInt32(&transportCalls, 1)
+		if call == 1 {
+			close(firstStarted)
+			<-releaseFirst
+		} else {
+			secondAuthorization = r.Header.Get("Authorization")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(auth, tokens, Config{
+		UpstreamBaseURL:             "https://upstream.example.test",
+		MaxConcurrentRequestsPerKey: 1,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5"},
+		},
+	}, client)
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	firstReq.Header.Set("Authorization", "Bearer first-client-secret")
+	firstReq.Header.Set("Content-Type", "application/json")
+	firstRecorder := httptest.NewRecorder()
+	go func() {
+		defer close(firstDone)
+		proxy.ServeHTTP(firstRecorder, firstReq)
+	}()
+	<-firstStarted
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	secondReq.Header.Set("Authorization", "Bearer second-client-secret")
+	secondReq.Header.Set("Content-Type", "application/json")
+	secondRecorder := httptest.NewRecorder()
+	proxy.ServeHTTP(secondRecorder, secondReq)
+
+	close(releaseFirst)
+	<-firstDone
+	if secondRecorder.Code != http.StatusOK {
+		t.Fatalf("second status = %d body=%s, want 200", secondRecorder.Code, secondRecorder.Body.String())
+	}
+	if firstRecorder.Code != http.StatusOK {
+		t.Fatalf("first status = %d body=%s, want 200", firstRecorder.Code, firstRecorder.Body.String())
+	}
+	if tokens.calls != 2 {
+		t.Fatalf("account selections = %d, want both requests selected", tokens.calls)
+	}
+	if got := atomic.LoadInt32(&transportCalls); got != 2 {
+		t.Fatalf("transport calls = %d, want both requests upstream", got)
+	}
+	if secondAuthorization != "Bearer second-token" {
+		t.Fatalf("second upstream Authorization = %q, want second selected account token", secondAuthorization)
 	}
 }
 
