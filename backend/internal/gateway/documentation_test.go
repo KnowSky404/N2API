@@ -159,6 +159,25 @@ func TestGatewayDocumentationMentionsProviderAccountBulkEnable(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsSelectedProviderAccountTests(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Test selected",
+			"selected provider accounts",
+			"without probing the whole account pool",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in selected provider account test documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md", "../../../.env.example"} {
 		content, err := os.ReadFile(path)
