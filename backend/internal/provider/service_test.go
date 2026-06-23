@@ -2023,9 +2023,10 @@ func TestRecordAccountUsedReturnsMarkAccountUsedFailure(t *testing.T) {
 }
 
 type memoryRepo struct {
-	accounts      []Account
-	accountModels map[int64][]AccountModel
-	states        []OAuthState
+	accounts           []Account
+	accountModels      map[int64][]AccountModel
+	accountTestResults []AccountTestResult
+	states             []OAuthState
 
 	saveCount           int
 	nextID              int64
@@ -2349,10 +2350,41 @@ func (r *memoryRepo) RecordAccountTestResult(ctx context.Context, providerName s
 			r.accounts[i].LastTestAt = &at
 			r.accounts[i].LastTestStatus = status
 			r.accounts[i].LastTestError = message
+			r.accountTestResults = append(r.accountTestResults, AccountTestResult{
+				ID:        int64(len(r.accountTestResults) + 1),
+				AccountID: id,
+				Provider:  providerName,
+				Status:    status,
+				Message:   message,
+				CheckedAt: at,
+				CreatedAt: time.Now(),
+			})
 			return nil
 		}
 	}
 	return ErrNotConnected
+}
+
+func (r *memoryRepo) ListAccountTestResults(ctx context.Context, providerName string, accountID int64, limit int) ([]AccountTestResult, error) {
+	if _, err := r.FindAccountByID(ctx, providerName, accountID); err != nil {
+		return nil, err
+	}
+	results := make([]AccountTestResult, 0, len(r.accountTestResults))
+	for _, result := range r.accountTestResults {
+		if result.Provider == providerName && result.AccountID == accountID {
+			results = append(results, result)
+		}
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		if !results[i].CheckedAt.Equal(results[j].CheckedAt) {
+			return results[i].CheckedAt.After(results[j].CheckedAt)
+		}
+		return results[i].ID > results[j].ID
+	})
+	if limit < len(results) {
+		results = results[:limit]
+	}
+	return results, nil
 }
 
 func (r *memoryRepo) ListAccountModels(ctx context.Context, providerName string, accountID int64) ([]AccountModel, error) {

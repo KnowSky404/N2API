@@ -238,21 +238,39 @@ func TestProviderRepositoryRecordAccountTestResult(t *testing.T) {
 		Enabled:               true,
 		Status:                provider.AccountStatusActive,
 	})
-	now := time.Now().UTC().Truncate(time.Microsecond)
+	firstCheckedAt := time.Now().UTC().Truncate(time.Microsecond)
+	secondCheckedAt := firstCheckedAt.Add(time.Minute)
 
-	if err := repo.RecordAccountTestResult(ctx, "openai", saved.ID, provider.AccountTestStatusFailed, "quota window", now); err != nil {
+	if err := repo.RecordAccountTestResult(ctx, "openai", saved.ID, provider.AccountTestStatusFailed, "quota window", firstCheckedAt); err != nil {
 		t.Fatalf("RecordAccountTestResult returned error: %v", err)
+	}
+	if err := repo.RecordAccountTestResult(ctx, "openai", saved.ID, provider.AccountTestStatusPassed, "", secondCheckedAt); err != nil {
+		t.Fatalf("RecordAccountTestResult second result returned error: %v", err)
 	}
 	found, err := repo.FindAccountByID(ctx, "openai", saved.ID)
 	if err != nil {
 		t.Fatalf("FindAccountByID returned error: %v", err)
 	}
 
-	if found.LastTestAt == nil || !found.LastTestAt.Equal(now) {
-		t.Fatalf("LastTestAt = %v, want %v", found.LastTestAt, now)
+	if found.LastTestAt == nil || !found.LastTestAt.Equal(secondCheckedAt) {
+		t.Fatalf("LastTestAt = %v, want %v", found.LastTestAt, secondCheckedAt)
 	}
-	if found.LastTestStatus != provider.AccountTestStatusFailed || found.LastTestError != "quota window" {
-		t.Fatalf("test result = status:%q error:%q, want failed/quota window", found.LastTestStatus, found.LastTestError)
+	if found.LastTestStatus != provider.AccountTestStatusPassed || found.LastTestError != "" {
+		t.Fatalf("test result = status:%q error:%q, want passed/empty", found.LastTestStatus, found.LastTestError)
+	}
+
+	results, err := repo.ListAccountTestResults(ctx, "openai", saved.ID, 10)
+	if err != nil {
+		t.Fatalf("ListAccountTestResults returned error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("history result count = %d, want 2", len(results))
+	}
+	if results[0].AccountID != saved.ID || results[0].Provider != "openai" || results[0].Status != provider.AccountTestStatusPassed || results[0].Message != "" || !results[0].CheckedAt.Equal(secondCheckedAt) {
+		t.Fatalf("newest result = %+v, want passed result at %v", results[0], secondCheckedAt)
+	}
+	if results[1].AccountID != saved.ID || results[1].Provider != "openai" || results[1].Status != provider.AccountTestStatusFailed || results[1].Message != "quota window" || !results[1].CheckedAt.Equal(firstCheckedAt) {
+		t.Fatalf("oldest result = %+v, want failed result at %v", results[1], firstCheckedAt)
 	}
 }
 

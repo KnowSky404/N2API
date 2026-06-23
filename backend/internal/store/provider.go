@@ -646,8 +646,14 @@ func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerNa
 }
 
 func (r *ProviderRepository) RecordAccountTestResult(ctx context.Context, providerName string, id int64, status, message string, at time.Time) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE provider_accounts
 		SET
 			last_test_at = $3,
@@ -661,7 +667,66 @@ func (r *ProviderRepository) RecordAccountTestResult(ctx context.Context, provid
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.ErrNotConnected
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO provider_account_test_results (
+			account_id, provider, status, message, checked_at
+		)
+		VALUES ($1, $2, $3, $4, $5)
+	`, updatedID, providerName, status, message, at)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *ProviderRepository) ListAccountTestResults(ctx context.Context, providerName string, accountID int64, limit int) ([]provider.AccountTestResult, error) {
+	var exists int
+	err := r.pool.QueryRow(ctx, `
+		SELECT 1
+		FROM provider_accounts
+		WHERE provider = $1
+			AND id = $2
+	`, providerName, accountID).Scan(&exists)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, provider.ErrNotConnected
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, account_id, provider, status, message, checked_at, created_at
+		FROM provider_account_test_results
+		WHERE provider = $1
+			AND account_id = $2
+		ORDER BY checked_at DESC, id DESC
+		LIMIT $3
+	`, providerName, accountID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	results := []provider.AccountTestResult{}
+	for rows.Next() {
+		var result provider.AccountTestResult
+		if err := rows.Scan(
+			&result.ID,
+			&result.AccountID,
+			&result.Provider,
+			&result.Status,
+			&result.Message,
+			&result.CheckedAt,
+			&result.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, rows.Err()
 }
 
 func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName string, accountID int64) ([]provider.AccountModel, error) {

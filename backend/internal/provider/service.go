@@ -181,6 +181,16 @@ type Account struct {
 	UpdatedAt             time.Time         `json:"updatedAt"`
 }
 
+type AccountTestResult struct {
+	ID        int64     `json:"id"`
+	AccountID int64     `json:"accountId"`
+	Provider  string    `json:"provider"`
+	Status    string    `json:"status"`
+	Message   string    `json:"message"`
+	CheckedAt time.Time `json:"checkedAt"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 type AccountCredential struct {
 	CredentialType        string            `json:"credentialType"`
 	EncryptedAccessToken  string            `json:"-"`
@@ -324,6 +334,7 @@ type Repository interface {
 	RecordRefreshFailure(ctx context.Context, provider string, id int64, message string, at time.Time, openUntil *time.Time) error
 	RecordAccountStatus(ctx context.Context, provider string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error
 	RecordAccountTestResult(ctx context.Context, provider string, id int64, status, message string, at time.Time) error
+	ListAccountTestResults(ctx context.Context, provider string, accountID int64, limit int) ([]AccountTestResult, error)
 	ListAccountModels(ctx context.Context, provider string, accountID int64) ([]AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
