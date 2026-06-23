@@ -1085,7 +1085,7 @@ func (s *Service) selectFromCandidates(ctx context.Context, accounts []Account, 
 	for _, account := range accounts {
 		selected, err := s.selectedAccount(ctx, account)
 		if err != nil {
-			if markErr := s.repo.MarkAccountError(ctx, s.cfg.Provider, account.ID, err.Error(), time.Now()); markErr != nil {
+			if markErr := s.recordSelectionFailure(ctx, account.ID, err); markErr != nil {
 				return SelectedAccount{}, fmt.Errorf("mark provider account error: %w", markErr)
 			}
 			continue
@@ -1099,6 +1099,19 @@ func (s *Service) selectFromCandidates(ctx context.Context, accounts []Account, 
 		return SelectedAccount{}, ErrAccountsDisabled
 	}
 	return SelectedAccount{}, notFoundErr
+}
+
+func (s *Service) recordSelectionFailure(ctx context.Context, accountID int64, err error) error {
+	now := time.Now()
+	reason := strings.TrimSpace(err.Error())
+	if reason == "" {
+		reason = "provider account selection failed"
+	}
+	if errors.Is(err, ErrInvalidInput) {
+		until := now.Add(defaultCircuitOpen)
+		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusCircuitOpen, reason, now, nil, &until)
+	}
+	return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
 }
 
 func (s *Service) selectedAccount(ctx context.Context, account Account) (SelectedAccount, error) {

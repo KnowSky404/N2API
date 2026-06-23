@@ -793,6 +793,9 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithInvalidBaseURL(t *testing.T) {
 	if repo.accounts[0].LastError == "" {
 		t.Fatal("invalid API upstream account was not marked with an error")
 	}
+	if repo.accounts[0].Status != AccountStatusCircuitOpen || repo.accounts[0].CircuitOpenUntil == nil {
+		t.Fatalf("invalid API upstream account status = %+v, want circuit_open with an open window", repo.accounts[0])
+	}
 	if repo.accounts[0].LastUsedAt != nil {
 		t.Fatal("invalid API upstream account was marked used")
 	}
