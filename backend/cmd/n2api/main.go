@@ -22,6 +22,7 @@ type gatewayAccountProvider struct {
 
 var _ gateway.AccountProvider = gatewayAccountProvider{}
 var _ gateway.StickyAccountProvider = gatewayAccountProvider{}
+var _ gateway.AccountUsageRecorder = gatewayAccountProvider{}
 
 func (p gatewayAccountProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
 	selected, err := p.service.SelectAccountForModel(ctx, model, excludedAccountIDs...)
@@ -50,6 +51,10 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 
 func (p gatewayAccountProvider) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
 	return p.service.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
+}
+
+func (p gatewayAccountProvider) RecordAccountUsed(ctx context.Context, accountID int64) error {
+	return p.service.RecordAccountUsed(ctx, accountID)
 }
 
 type gatewayModelProvider struct {

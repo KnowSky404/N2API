@@ -53,6 +53,10 @@ type AccountFailureReporter interface {
 	RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error
 }
 
+type AccountUsageRecorder interface {
+	RecordAccountUsed(ctx context.Context, accountID int64) error
+}
+
 type ExposedModel struct {
 	ID      string
 	OwnedBy string
@@ -350,6 +354,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "provider account concurrency limit exceeded")
 			return
 		}
+		if err := p.recordAccountUsed(r.Context(), selected.AccountID); err != nil {
+			releaseAccount()
+			errorCode = "internal_error"
+			writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not record provider account use")
+			return
+		}
 		loggedAccount = selected
 
 		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
@@ -454,6 +464,13 @@ func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excl
 		}
 	}
 	return p.accounts.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+func (p *Proxy) recordAccountUsed(ctx context.Context, accountID int64) error {
+	if recorder, ok := p.accounts.(AccountUsageRecorder); ok {
+		return recorder.RecordAccountUsed(ctx, accountID)
+	}
+	return nil
 }
 
 type accountConcurrencyLimiter struct {

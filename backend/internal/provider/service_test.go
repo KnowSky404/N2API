@@ -742,8 +742,8 @@ func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.
 	if selected.BaseURL != "https://upstream.example.test" {
 		t.Fatalf("BaseURL = %q, want upstream base URL", selected.BaseURL)
 	}
-	if repo.accounts[0].LastUsedAt == nil {
-		t.Fatal("API upstream account was not marked used")
+	if repo.accounts[0].LastUsedAt != nil {
+		t.Fatal("API upstream account selection marked used before gateway acquired the account")
 	}
 }
 
@@ -1589,7 +1589,22 @@ func TestSelectAccountForModelReturnsMarkAccountErrorFailure(t *testing.T) {
 	}
 }
 
-func TestSelectAccountForModelReturnsMarkAccountUsedFailure(t *testing.T) {
+func TestRecordAccountUsedMarksAccountUsed(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "access-token"),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if err := service.RecordAccountUsed(context.Background(), 1); err != nil {
+		t.Fatalf("RecordAccountUsed returned error: %v", err)
+	}
+	if repo.accounts[0].LastUsedAt == nil {
+		t.Fatal("account was not marked used")
+	}
+}
+
+func TestRecordAccountUsedReturnsMarkAccountUsedFailure(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "access-token"),
@@ -1597,8 +1612,8 @@ func TestSelectAccountForModelReturnsMarkAccountUsedFailure(t *testing.T) {
 	repo.markAccountUsedErr = errors.New("mark account used failed")
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccountForModel(context.Background(), ""); !errors.Is(err, repo.markAccountUsedErr) {
-		t.Fatalf("SelectAccountForModel error = %v, want mark account used failure", err)
+	if err := service.RecordAccountUsed(context.Background(), 1); !errors.Is(err, repo.markAccountUsedErr) {
+		t.Fatalf("RecordAccountUsed error = %v, want mark account used failure", err)
 	}
 }
 

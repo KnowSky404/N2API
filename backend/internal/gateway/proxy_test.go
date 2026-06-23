@@ -50,6 +50,7 @@ type fakeSelectedAccountProvider struct {
 	sessions   []string
 	exclusions [][]int64
 	failures   []reportedAccountFailure
+	used       []int64
 }
 
 type reportedAccountFailure struct {
@@ -85,6 +86,11 @@ func (p *fakeSelectedAccountProvider) RecordAccountFailure(_ context.Context, ac
 		retryAfter: retryAfter,
 		message:    message,
 	})
+	return nil
+}
+
+func (p *fakeSelectedAccountProvider) RecordAccountUsed(_ context.Context, accountID int64) error {
+	p.used = append(p.used, accountID)
 	return nil
 }
 
@@ -617,6 +623,9 @@ func TestProxyRetriesAnotherAccountWhenSelectedAccountConcurrencyLimitIsFull(t *
 	}
 	if secondAuthorization != "Bearer second-token" {
 		t.Fatalf("second upstream Authorization = %q, want fallback account token", secondAuthorization)
+	}
+	if !slices.Equal(tokens.used, []int64{1, 2}) {
+		t.Fatalf("used accounts = %+v, want only successfully acquired accounts 1 and 2", tokens.used)
 	}
 	if len(tokens.failures) != 0 {
 		t.Fatalf("recorded failures = %+v, want none for local account concurrency", tokens.failures)

@@ -1091,9 +1091,6 @@ func (s *Service) selectFromCandidates(ctx context.Context, accounts []Account, 
 			}
 			continue
 		}
-		if err := s.repo.MarkAccountUsed(ctx, s.cfg.Provider, account.ID, time.Now()); err != nil {
-			return SelectedAccount{}, fmt.Errorf("mark provider account used: %w", err)
-		}
 		return selected, nil
 	}
 	if !hasEnabled {
@@ -1113,6 +1110,13 @@ func (s *Service) recordSelectionFailure(ctx context.Context, accountID int64, e
 		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusCircuitOpen, reason, now, nil, &until)
 	}
 	return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
+}
+
+func (s *Service) RecordAccountUsed(ctx context.Context, accountID int64) error {
+	if accountID <= 0 {
+		return ErrInvalidInput
+	}
+	return s.repo.MarkAccountUsed(ctx, s.cfg.Provider, accountID, time.Now())
 }
 
 func (s *Service) selectedAccount(ctx context.Context, account Account) (SelectedAccount, error) {
