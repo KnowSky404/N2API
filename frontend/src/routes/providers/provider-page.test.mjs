@@ -106,6 +106,13 @@ test('provider account state uses unified account refresh endpoint', () => {
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{account\.id\}\/refresh/);
 });
 
+test('provider account state uses unified codex oauth callback endpoint', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/callback/);
+  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/callback/);
+});
+
 test('provider account table supports search, sorting, and a pinned actions column', () => {
   assert.match(source, /placeholder="Search accounts"/);
   assert.match(source, /aria-sort=/);

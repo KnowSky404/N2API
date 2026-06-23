@@ -1659,6 +1659,23 @@ func TestProviderManualCallbackCompletesFromCallbackURL(t *testing.T) {
 	}
 }
 
+func TestUnifiedProviderAccountCodexOAuthCallbackCompletesFromCallbackURL(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc&state=oauth_state"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.callbackCode != "abc" || providers.callbackState != "oauth_state" {
+		t.Fatalf("callback args = code %q state %q, want parsed callback URL values", providers.callbackCode, providers.callbackState)
+	}
+}
+
 func TestProviderManualCallbackRejectsMissingCallbackValues(t *testing.T) {
 	providers := newFakeProviderService()
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)

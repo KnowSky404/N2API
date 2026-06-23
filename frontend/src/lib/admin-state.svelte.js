@@ -724,7 +724,7 @@ export async function completeProviderCallback() {
   provider.error = '';
   providerAccounts.error = '';
   try {
-    await requestJSON('/api/admin/providers/openai/callback', {
+    await requestJSON('/api/admin/provider-accounts/codex-oauth/callback', {
       method: 'POST',
       body: JSON.stringify({ callbackUrl: providerOAuth.callbackUrl })
     });

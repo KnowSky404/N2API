@@ -346,6 +346,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleProviderConnect(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/codex-oauth/callback", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleProviderCallback(w, r, providers)
+	}))
+
 	mux.HandleFunc("PATCH /api/admin/provider-accounts/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handlePatchProviderAccount(w, r, providers)
 	}))
@@ -384,29 +388,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/callback", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		if providers == nil {
-			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-			return
-		}
-		code, state, err := decodeCallbackURL(w, r)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request")
-			return
-		}
-		account, err := providers.CompleteCallback(r.Context(), code, state)
-		if err != nil {
-			if errors.Is(err, provider.ErrInvalidState) {
-				writeError(w, http.StatusBadRequest, "invalid_oauth_callback")
-				return
-			}
-			if errors.Is(err, provider.ErrNotConfigured) {
-				writeError(w, http.StatusConflict, "provider_not_configured")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+		handleProviderCallback(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -548,6 +530,32 @@ func handleProviderConnect(w http.ResponseWriter, r *http.Request, providers Pro
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": result.AuthorizationURL})
+}
+
+func handleProviderCallback(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	code, state, err := decodeCallbackURL(w, r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	account, err := providers.CompleteCallback(r.Context(), code, state)
+	if err != nil {
+		if errors.Is(err, provider.ErrInvalidState) {
+			writeError(w, http.StatusBadRequest, "invalid_oauth_callback")
+			return
+		}
+		if errors.Is(err, provider.ErrNotConfigured) {
+			writeError(w, http.StatusConflict, "provider_not_configured")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
 }
 
 func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
