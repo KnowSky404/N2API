@@ -2716,6 +2716,35 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 }
 
+func TestModelRoutingPreviewReturnsBlockedCandidatesWhenNoneSchedulable(t *testing.T) {
+	admins := newFakeAdminService()
+	providers := newFakeProviderService()
+	providers.selectionPreview = provider.SelectionPreview{
+		Model:             "gpt-5",
+		SelectedAccountID: 0,
+		Candidates: []provider.SelectionCandidate{
+			{ID: 2, DisplayName: "Missing model", AccountType: provider.AccountTypeAPIUpstream, Schedulable: false, UnschedulableReason: "model not configured"},
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?model=gpt-5", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body provider.SelectionPreview
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.SelectedAccountID != 0 || len(body.Candidates) != 1 || body.Candidates[0].Schedulable || body.Candidates[0].UnschedulableReason != "model not configured" {
+		t.Fatalf("preview = %+v, want blocked diagnostic candidate", body)
+	}
+}
+
 func TestModelRoutingPreviewRequiresModel(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?sessionId=workspace-123", nil)

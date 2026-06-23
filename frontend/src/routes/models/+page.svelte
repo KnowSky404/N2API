@@ -244,8 +244,10 @@
                   <span class="font-normal text-[#6e6e6e]">
                     {accountTypeLabel(selectedPreviewAccount.accountType)} · ID {selectedPreviewAccount.id}
                   </span>
-                {:else}
+                {:else if modelRoutingPreview.result.selectedAccountId}
                   Account {modelRoutingPreview.result.selectedAccountId}
+                {:else}
+                  No schedulable account
                 {/if}
                 {#if modelRoutingPreview.result.sessionId}
                   for session {modelRoutingPreview.result.sessionId}

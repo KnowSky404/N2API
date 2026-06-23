@@ -1065,6 +1065,14 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 		accounts = stickySessionCandidates(accounts, sessionID)
 	}
 	if len(accounts) == 0 {
+		blocked := s.unschedulableSelectionCandidates(ctx, model, nil, excludedAccountIDs, now)
+		if len(blocked) > 0 {
+			return SelectionPreview{
+				Model:      model,
+				SessionID:  sessionID,
+				Candidates: blocked,
+			}, nil
+		}
 		return SelectionPreview{}, notFoundErr
 	}
 

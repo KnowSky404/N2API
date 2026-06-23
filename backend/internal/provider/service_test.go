@@ -1566,6 +1566,46 @@ func TestPreviewAccountSelectionIncludesUnschedulableReasons(t *testing.T) {
 	}
 }
 
+func TestPreviewAccountSelectionReturnsBlockedCandidatesWhenNoneSchedulable(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, false, 1, "disabled-token"),
+		testAccount(t, 2, true, 1, "missing-model-token"),
+	}
+	repo.accountModels[1] = []AccountModel{{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	repo.accountModels[2] = []AccountModel{{AccountID: 2, Provider: "openai", Model: "gpt-4.1", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "")
+	if err != nil {
+		t.Fatalf("PreviewAccountSelection returned error: %v", err)
+	}
+
+	if preview.Model != "gpt-5" || preview.SelectedAccountID != 0 {
+		t.Fatalf("preview metadata = %+v, want model gpt-5 with no selected account", preview)
+	}
+	want := map[int64]string{
+		1: "account disabled",
+		2: "model not configured",
+	}
+	if len(preview.Candidates) != len(want) {
+		t.Fatalf("candidates = %+v, want blocked candidates", preview.Candidates)
+	}
+	for _, candidate := range preview.Candidates {
+		reason, ok := want[candidate.ID]
+		if !ok {
+			t.Fatalf("unexpected candidate %+v", candidate)
+		}
+		if candidate.Schedulable || candidate.Selected || candidate.UnschedulableReason != reason {
+			t.Fatalf("candidate %d = schedulable:%v selected:%v reason:%q, want blocked reason %q", candidate.ID, candidate.Schedulable, candidate.Selected, candidate.UnschedulableReason, reason)
+		}
+		delete(want, candidate.ID)
+	}
+	if len(want) > 0 {
+		t.Fatalf("missing blocked candidates: %+v", want)
+	}
+}
+
 func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
