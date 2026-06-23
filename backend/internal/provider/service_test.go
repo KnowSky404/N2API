@@ -946,6 +946,32 @@ func TestRecordAccountFailureDoesNotExpireAccountForResponsesScopeForbidden(t *t
 	}
 }
 
+func TestResetAccountStatusClearsLocalFailureWindows(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	now := time.Now()
+	future := now.Add(time.Hour)
+	repo.accounts[0].Status = AccountStatusRateLimited
+	repo.accounts[0].StatusReason = "rate limited"
+	repo.accounts[0].LastError = "rate limited"
+	repo.accounts[0].LastErrorAt = &now
+	repo.accounts[0].RateLimitedUntil = &future
+	repo.accounts[0].CircuitOpenUntil = &future
+	repo.accounts[0].FailureCount = 3
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	account, err := service.ResetAccountStatus(context.Background(), 7)
+	if err != nil {
+		t.Fatalf("ResetAccountStatus returned error: %v", err)
+	}
+	if account.ID != 7 || account.Status != AccountStatusActive || account.StatusReason != "" || account.LastError != "" || account.LastErrorAt != nil {
+		t.Fatalf("account status fields = %+v, want active without errors", account)
+	}
+	if account.RateLimitedUntil != nil || account.CircuitOpenUntil != nil || account.FailureCount != 0 {
+		t.Fatalf("account failure windows = %+v, want cleared", account)
+	}
+}
+
 func TestSelectAccountForModelUsesPriorityOrder(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -1572,6 +1598,15 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 		}
 		if update.Priority != nil {
 			r.accounts[i].Priority = *update.Priority
+		}
+		if update.ClearStatus {
+			r.accounts[i].Status = AccountStatusActive
+			r.accounts[i].StatusReason = ""
+			r.accounts[i].LastError = ""
+			r.accounts[i].LastErrorAt = nil
+			r.accounts[i].RateLimitedUntil = nil
+			r.accounts[i].CircuitOpenUntil = nil
+			r.accounts[i].FailureCount = 0
 		}
 		r.accounts[i].UpdatedAt = time.Now()
 		return r.accounts[i], nil

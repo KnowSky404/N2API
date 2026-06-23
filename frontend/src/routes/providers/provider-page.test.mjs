@@ -170,8 +170,21 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /API upstream/);
   assert.match(source, /Base URL/);
   assert.match(source, /Manual models/);
+  assert.match(source, /resetProviderAccountStatus\(account\)/);
+  assert.match(source, /Reset local status/);
+  assert.match(source, /account\.rateLimitedUntil/);
+  assert.match(source, /account\.circuitOpenUntil/);
   assert.match(source, /disconnectProviderAccount\(account\)/);
   assert.match(source, /disabled=\{providerAccounts\.saving\}\s+onclick=\{\(\) => disconnectProviderAccount\(account\)\}/);
+});
+
+test('admin state can reset provider account local status', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /resetProviderAccountStatus/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}\/reset-status/);
+  assert.match(adminStateSource, /Account status reset failed/);
+  assert.match(adminStateSource, /loadModelRouting/);
 });
 
 test('api keys page owns model policy and gateway default model', () => {

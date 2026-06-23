@@ -20,6 +20,7 @@
     providerOAuth,
     refreshProviderAccount,
     removeAccountModel,
+    resetProviderAccountStatus,
     saveAccountModels,
     session,
     setAccountModelEnabled,
@@ -670,6 +671,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             >
               <span aria-hidden="true">R</span>
               <span class="sr-only">Refresh account</span>
+            </button>
+            <button
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)}
+              onclick={() => resetProviderAccountStatus(account)}
+              title="Reset local status"
+              aria-label="Reset local status"
+            >
+              <span aria-hidden="true">S</span>
+              <span class="sr-only">Reset local status</span>
             </button>
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"

@@ -216,8 +216,9 @@ type ExposedModel struct {
 }
 
 type AccountUpdate struct {
-	Enabled  *bool
-	Priority *int
+	Enabled     *bool
+	Priority    *int
+	ClearStatus bool
 }
 
 type SelectedAccount struct {
@@ -658,13 +659,17 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil {
+	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
 		return Account{}, ErrInvalidInput
 	}
 	return s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
+}
+
+func (s *Service) ResetAccountStatus(ctx context.Context, id int64) (Account, error) {
+	return s.UpdateAccount(ctx, id, AccountUpdate{ClearStatus: true})
 }
 
 func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstreamInput) (Account, error) {

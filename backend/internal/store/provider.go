@@ -436,11 +436,18 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 		SET
 			enabled = COALESCE($3, enabled),
 			priority = COALESCE($4, priority),
+			last_error = CASE WHEN $5 THEN '' ELSE last_error END,
+			last_error_at = CASE WHEN $5 THEN NULL ELSE last_error_at END,
+			status = CASE WHEN $5 THEN 'active' ELSE status END,
+			status_reason = CASE WHEN $5 THEN '' ELSE status_reason END,
+			failure_count = CASE WHEN $5 THEN 0 ELSE failure_count END,
+			circuit_open_until = CASE WHEN $5 THEN NULL ELSE circuit_open_until END,
+			rate_limited_until = CASE WHEN $5 THEN NULL ELSE rate_limited_until END,
 			updated_at = now()
 		WHERE provider = $1
 			AND id = $2
 		RETURNING id
-	`, providerName, id, update.Enabled, update.Priority)
+	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus)
 	var updatedID int64
 	err := row.Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {

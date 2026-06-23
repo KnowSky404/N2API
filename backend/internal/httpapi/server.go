@@ -56,6 +56,7 @@ type ProviderService interface {
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
+	ResetAccountStatus(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
 	Disconnect(ctx context.Context) error
 }
@@ -431,6 +432,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleRefreshProviderAccount(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleResetProviderAccountStatus(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleProviderStatus(w, r, providers)
 	}))
@@ -473,6 +478,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleRefreshProviderAccount(w, r, providers)
+	}))
+
+	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleResetProviderAccountStatus(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -744,6 +753,25 @@ func handleRefreshProviderAccount(w http.ResponseWriter, r *http.Request, provid
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+}
+
+func handleResetProviderAccountStatus(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	account, err := providers.ResetAccountStatus(r.Context(), id)
+	if err != nil {
+		writeProviderAccountError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
