@@ -27,6 +27,19 @@
   }
 
   const blockedModels = $derived(modelRouting.models.filter((model) => model.enabledCount === 0));
+  const blockedReasonSummary = $derived(
+    Array.from(
+      blockedModels
+        .flatMap((model) => model.accounts ?? [])
+        .filter((account) => !account.schedulable && account.unschedulableReason)
+        .reduce((counts, account) => {
+          const reason = account.unschedulableReason;
+          counts.set(reason, (counts.get(reason) ?? 0) + 1);
+          return counts;
+        }, new Map())
+        .entries()
+    )
+  );
 </script>
 
 <svelte:head>
@@ -119,6 +132,20 @@
             <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Ready models</p>
             <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{modelRouting.models.length - blockedModels.length}</p>
           </div>
+        </div>
+        <div class="mt-4">
+          <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Blocked reasons</p>
+          {#if blockedReasonSummary.length > 0}
+            <div class="mt-2 flex flex-wrap gap-2">
+              {#each blockedReasonSummary as [reason, count]}
+                <span class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
+                  {statusLabel(reason)}: {count}
+                </span>
+              {/each}
+            </div>
+          {:else}
+            <p class="mt-2 text-sm text-[#6e6e6e]">No blocked account reasons.</p>
+          {/if}
         </div>
         {#if blockedModels.length > 0}
           <p class="mt-3 text-sm text-amber-800">

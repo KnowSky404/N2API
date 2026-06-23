@@ -261,7 +261,10 @@ test('models page surfaces model routing candidates', () => {
   assert.match(modelsSource, /loadModelRouting/);
   assert.match(modelsSource, /Routing readiness/);
   assert.match(modelsSource, /Blocked models/);
+  assert.match(modelsSource, /Blocked reasons/);
   assert.match(modelsSource, /modelRouting\.models\.filter\(\(model\) => model\.enabledCount === 0\)/);
+  assert.match(modelsSource, /blockedReasonSummary/);
+  assert.match(modelsSource, /account\.unschedulableReason/);
   assert.match(modelsSource, /Routing candidates/);
   assert.match(modelsSource, /model\.accounts/);
   assert.match(modelsSource, /account\.displayName/);
