@@ -778,6 +778,9 @@ func TestProxyRejectsWhenAPIKeyRequestRateLimitIsExceeded(t *testing.T) {
 			allowedModels: []string{"gpt-5"},
 		},
 	}, client)
+	proxy.rateLimiter.now = func() time.Time {
+		return time.Date(2026, 6, 23, 12, 0, 1, 0, time.UTC)
+	}
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
 	firstReq.Header.Set("Authorization", "Bearer n2api_client_secret")
 	firstReq.Header.Set("Content-Type", "application/json")
@@ -800,6 +803,9 @@ func TestProxyRejectsWhenAPIKeyRequestRateLimitIsExceeded(t *testing.T) {
 	}
 	if !strings.Contains(secondRecorder.Body.String(), "rate_limit_exceeded") {
 		t.Fatalf("second body = %q, want rate_limit_exceeded", secondRecorder.Body.String())
+	}
+	if got := secondRecorder.Header().Get("Retry-After"); got != "59" {
+		t.Fatalf("second Retry-After = %q, want 59", got)
 	}
 	if tokens.calls != 1 {
 		t.Fatalf("account selections = %d, want only first request selection", tokens.calls)
@@ -835,6 +841,9 @@ func TestProxyRejectsWhenAPIKeyTokenRateLimitIsExceeded(t *testing.T) {
 			allowedModels: []string{"gpt-5"},
 		},
 	}, client)
+	proxy.tokenLimiter.now = func() time.Time {
+		return time.Date(2026, 6, 23, 12, 0, 1, 0, time.UTC)
+	}
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
 	firstReq.Header.Set("Authorization", "Bearer n2api_client_secret")
 	firstReq.Header.Set("Content-Type", "application/json")
@@ -857,6 +866,9 @@ func TestProxyRejectsWhenAPIKeyTokenRateLimitIsExceeded(t *testing.T) {
 	}
 	if !strings.Contains(secondRecorder.Body.String(), "rate_limit_exceeded") {
 		t.Fatalf("second body = %q, want rate_limit_exceeded", secondRecorder.Body.String())
+	}
+	if got := secondRecorder.Header().Get("Retry-After"); got != "59" {
+		t.Fatalf("second Retry-After = %q, want 59", got)
 	}
 	if tokens.calls != 1 {
 		t.Fatalf("account selections = %d, want only first request selection", tokens.calls)
