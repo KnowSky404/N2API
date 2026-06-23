@@ -46,6 +46,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
     'Gateway actions',
     'Gateway readiness',
     'Provider accounts',
+    'Routing diagnostics',
     'Schedulable accounts',
     'Routable models',
     'Active API keys',
