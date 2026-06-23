@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -61,6 +62,7 @@ type fakeProviderService struct {
 	selectionPreview      provider.SelectionPreview
 	previewModel          string
 	previewSessionID      string
+	previewExcludedIDs    []int64
 	lastAccountUpdate     provider.AccountUpdate
 	updateErr             error
 	accountModelsErr      error
@@ -412,9 +414,10 @@ func (s *fakeProviderService) ListExposedModels(_ context.Context, allowedModels
 	return models, nil
 }
 
-func (s *fakeProviderService) PreviewAccountSelection(_ context.Context, model, sessionID string, _ ...int64) (provider.SelectionPreview, error) {
+func (s *fakeProviderService) PreviewAccountSelection(_ context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
 	s.previewModel = model
 	s.previewSessionID = sessionID
+	s.previewExcludedIDs = append([]int64(nil), excludedAccountIDs...)
 	if s.selectionPreview.Model == "" {
 		return provider.SelectionPreview{}, provider.ErrModelUnavailable
 	}
@@ -2926,6 +2929,52 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 	if body.SelectedAccountID != 8 || len(body.Candidates) != 2 || !body.Candidates[0].Selected {
 		t.Fatalf("preview = %+v, want selected sticky candidate", body)
+	}
+}
+
+func TestModelRoutingPreviewPassesExcludedAccountIDs(t *testing.T) {
+	admins := newFakeAdminService()
+	providers := newFakeProviderService()
+	providers.selectionPreview = provider.SelectionPreview{
+		Model:             "gpt-5",
+		SessionID:         "workspace-123",
+		SelectedAccountID: 9,
+		Candidates: []provider.SelectionCandidate{
+			{ID: 9, DisplayName: "Fallback", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true},
+			{ID: 7, DisplayName: "Excluded", AccountType: provider.AccountTypeCodexOAuth, Priority: 1, Schedulable: false, UnschedulableReason: "account excluded"},
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?model=gpt-5&sessionId=workspace-123&excludedAccountIds=7,8", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.previewModel != "gpt-5" || providers.previewSessionID != "workspace-123" {
+		t.Fatalf("preview call = model:%q session:%q", providers.previewModel, providers.previewSessionID)
+	}
+	if !reflect.DeepEqual(providers.previewExcludedIDs, []int64{7, 8}) {
+		t.Fatalf("preview excluded ids = %+v, want [7 8]", providers.previewExcludedIDs)
+	}
+}
+
+func TestModelRoutingPreviewRejectsInvalidExcludedAccountIDs(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?model=gpt-5&excludedAccountIds=7,abc", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "bad_request") {
+		t.Fatalf("body = %q, want bad_request", recorder.Body.String())
 	}
 }
 

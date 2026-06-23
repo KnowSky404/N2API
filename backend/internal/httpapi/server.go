@@ -676,7 +676,12 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, providers
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	preview, err := providers.PreviewAccountSelection(r.Context(), model, r.URL.Query().Get("sessionId"))
+	excludedIDs, err := parseExcludedAccountIDs(r.URL.Query().Get("excludedAccountIds"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	preview, err := providers.PreviewAccountSelection(r.Context(), model, r.URL.Query().Get("sessionId"), excludedIDs...)
 	if err != nil {
 		if errors.Is(err, provider.ErrInvalidInput) {
 			writeError(w, http.StatusBadRequest, "invalid_input")
@@ -694,6 +699,26 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, providers
 		return
 	}
 	writeJSON(w, http.StatusOK, preview)
+}
+
+func parseExcludedAccountIDs(raw string) ([]int64, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	ids := make([]int64, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, errors.New("invalid excluded account id")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func handleProviderStatus(w http.ResponseWriter, r *http.Request, providers ProviderService) {
