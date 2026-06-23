@@ -79,11 +79,12 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
 });
 
 test('dashboard shows gateway scheduling capacity', () => {
-  for (const label of ['Provider accounts', 'Schedulable accounts', 'Routable models', 'Active API keys']) {
+  for (const label of ['Provider accounts', 'Schedulable accounts', 'Unschedulable accounts', 'Routable models', 'Active API keys']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
   }
 
   assert.match(dashboardPage, /getSchedulableProviderAccounts/);
+  assert.match(dashboardPage, /getUnschedulableProviderAccountSummary/);
   assert.match(dashboardPage, /getRoutableModelCount/);
   assert.match(dashboardPage, /modelRouting/);
 });
@@ -107,6 +108,8 @@ test('dashboard shows gateway runtime scheduling limits', () => {
 
 test('admin state derives schedulable gateway capacity', () => {
   assert.match(adminState, /export function getSchedulableProviderAccounts/);
+  assert.match(adminState, /export function getUnschedulableProviderAccountSummary/);
+  assert.match(adminState, /reasonLabel/);
   assert.match(adminState, /rateLimitedUntil/);
   assert.match(adminState, /circuitOpenUntil/);
   assert.match(adminState, /export function getRoutableModelCount/);

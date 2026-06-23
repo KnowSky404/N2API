@@ -378,9 +378,33 @@ function isProviderAccountSchedulable(account) {
   return !['disabled', 'expired', 'rate_limited', 'circuit_open'].includes(account.status ?? '');
 }
 
+/** @param {Partial<ProviderAccount>} account */
+function providerAccountUnschedulableReason(account) {
+  if (!account.enabled) return 'disabled';
+  if (isFutureTimestamp(account.rateLimitedUntil)) return 'rate_limited';
+  if (isFutureTimestamp(account.circuitOpenUntil)) return 'circuit_open';
+  if (['disabled', 'expired', 'rate_limited', 'circuit_open'].includes(account.status ?? '')) return account.status ?? '';
+  return '';
+}
+
 /** @param {ProviderAccount[]} [accounts] */
 export function getSchedulableProviderAccounts(accounts = providerAccounts.items) {
   return accounts.filter((account) => isProviderAccountSchedulable(account));
+}
+
+/** @param {ProviderAccount[]} [accounts] */
+export function getUnschedulableProviderAccountSummary(accounts = providerAccounts.items) {
+  const counts = new Map();
+  for (const account of accounts) {
+    const reason = providerAccountUnschedulableReason(account);
+    if (!reason) continue;
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([reason, count]) => ({
+    reason,
+    reasonLabel: statusLabel(reason),
+    count
+  }));
 }
 
 /** @param {Array<Partial<ModelRoutingModel>>} [models] */

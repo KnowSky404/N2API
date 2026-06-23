@@ -15,6 +15,7 @@
     getRoutableModelCount,
     getSchedulableProviderAccounts,
     getStatusItems,
+    getUnschedulableProviderAccountSummary,
     health,
     loadModelSettings,
     loadProviderAccounts,
@@ -41,6 +42,7 @@
   const statusItems = $derived(getStatusItems());
   const activeKeys = $derived(getActiveKeys());
   const schedulableAccounts = $derived(getSchedulableProviderAccounts());
+  const unschedulableAccountSummary = $derived(getUnschedulableProviderAccountSummary());
   const routableModelCount = $derived(getRoutableModelCount());
 </script>
 
@@ -104,7 +106,7 @@
   <article class="rounded-lg border border-[#ededed] bg-white p-6">
     <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Gateway overview</h2>
     <p class="mt-2 text-sm text-[#6e6e6e]">Provider capacity and client access at a glance.</p>
-    <div class="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
 <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
   <p class="text-sm font-medium text-[#6e6e6e]">Provider accounts</p>
   <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : providerAccounts.items.length}</p>
@@ -112,6 +114,15 @@
 <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
   <p class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</p>
   <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableAccounts.length}</p>
+</div>
+<div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+  <p class="text-sm font-medium text-[#6e6e6e]">Unschedulable accounts</p>
+  <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : providerAccounts.items.length - schedulableAccounts.length}</p>
+  {#if !providerAccounts.loading && unschedulableAccountSummary.length > 0}
+    <p class="mt-2 text-xs text-[#6e6e6e]">
+      {unschedulableAccountSummary.map((item) => `${item.reasonLabel}: ${item.count}`).join(' · ')}
+    </p>
+  {/if}
 </div>
 <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
   <p class="text-sm font-medium text-[#6e6e6e]">Routable models</p>
