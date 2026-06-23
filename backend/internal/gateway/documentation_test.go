@@ -170,6 +170,7 @@ func TestGatewayDocumentationMentionsProviderAccountSchedulingPause(t *testing.T
 		text := string(content)
 		for _, want := range []string{
 			"Pause scheduling",
+			"Pause duration seconds",
 			"temporarily opens the account circuit",
 			"Reset local status",
 		} {
