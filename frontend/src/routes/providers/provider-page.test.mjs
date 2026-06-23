@@ -95,7 +95,9 @@ test('provider page has a single OAuth account creation entry point', () => {
 test('provider account state uses unified codex oauth connect endpoint', () => {
   const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/status/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/connect/);
+  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai'/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/connect/);
 });
 

@@ -342,6 +342,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusCreated, map[string]provider.Account{"account": account})
 	}))
 
+	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleProviderStatus(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/codex-oauth/connect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleProviderConnect(w, r, providers)
 	}))
@@ -371,16 +375,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		if providers == nil {
-			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-			return
-		}
-		status, err := providers.Status(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		writeJSON(w, http.StatusOK, status)
+		handleProviderStatus(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/connect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -508,6 +503,19 @@ func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, provider
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+func handleProviderStatus(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	status, err := providers.Status(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 func handleProviderConnect(w http.ResponseWriter, r *http.Request, providers ProviderService) {

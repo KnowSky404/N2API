@@ -798,6 +798,26 @@ func TestProviderStatusRequiresSessionAndReturnsStatus(t *testing.T) {
 	}
 }
 
+func TestUnifiedProviderAccountCodexOAuthStatusReturnsStatus(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/provider-accounts/codex-oauth/status", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body provider.Status
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !body.Configured || !body.Connected || body.DisplayName != "Codex Account" {
+		t.Fatalf("provider status = %+v", body)
+	}
+}
+
 func TestProviderConnectReturnsAuthorizationURL(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", nil)

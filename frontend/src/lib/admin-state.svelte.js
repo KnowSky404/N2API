@@ -527,7 +527,7 @@ export async function loadProvider() {
   provider.error = '';
 
   try {
-    const payload = await requestJSON('/api/admin/providers/openai');
+    const payload = await requestJSON('/api/admin/provider-accounts/codex-oauth/status');
     if (!isCurrentAuthenticated(version)) return;
     provider.data = payload;
   } catch (error) {
