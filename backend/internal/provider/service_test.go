@@ -1091,6 +1091,27 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	}
 }
 
+func TestPauseAccountSchedulingTemporarilyOpensCircuit(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 3, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	paused, err := service.PauseAccountScheduling(context.Background(), 7, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("PauseAccountScheduling returned error: %v", err)
+	}
+
+	if paused.Status != AccountStatusCircuitOpen || paused.StatusReason != "manually paused" || paused.LastError != "manually paused" {
+		t.Fatalf("paused account = %+v, want manual circuit-open status", paused)
+	}
+	if paused.CircuitOpenUntil == nil || !paused.CircuitOpenUntil.After(time.Now().Add(4*time.Minute)) {
+		t.Fatalf("CircuitOpenUntil = %v, want future pause window", paused.CircuitOpenUntil)
+	}
+	if AccountSchedulable(paused, time.Now()) {
+		t.Fatalf("paused account is schedulable: %+v", paused)
+	}
+}
+
 func TestRecordAccountFailureMapsUpstreamStatusesToAccountState(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}

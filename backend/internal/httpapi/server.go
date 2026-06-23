@@ -61,6 +61,7 @@ type ProviderService interface {
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccount(ctx context.Context, id int64) (provider.Account, error)
+	PauseAccountScheduling(ctx context.Context, id int64, duration time.Duration) (provider.Account, error)
 	ResetAccountStatus(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
 	Disconnect(ctx context.Context) error
@@ -509,6 +510,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleTestProviderAccount(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/pause", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handlePauseProviderAccountScheduling(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleResetProviderAccountStatus(w, r, providers)
 	}))
@@ -559,6 +564,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleTestProviderAccount(w, r, providers)
+	}))
+
+	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/pause", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handlePauseProviderAccountScheduling(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -889,6 +898,32 @@ func handleTestProviderAccount(w http.ResponseWriter, r *http.Request, providers
 	}
 
 	account, err := providers.TestAccount(r.Context(), id)
+	if err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+}
+
+func handlePauseProviderAccountScheduling(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	var req struct {
+		DurationSeconds int `json:"durationSeconds"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	account, err := providers.PauseAccountScheduling(r.Context(), id, time.Duration(req.DurationSeconds)*time.Second)
 	if err != nil {
 		writeProviderAccountError(w, err)
 		return

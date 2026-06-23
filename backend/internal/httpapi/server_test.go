@@ -75,6 +75,8 @@ type fakeProviderService struct {
 	disconnected          bool
 	refreshedAccountID    int64
 	testedAccountID       int64
+	pausedAccountID       int64
+	pauseDuration         time.Duration
 	resetStatusAccountID  int64
 	disconnectedAccountID int64
 }
@@ -515,6 +517,25 @@ func (s *fakeProviderService) TestAccount(_ context.Context, id int64) (provider
 			account.FailureCount = 0
 			s.accounts[i] = account
 			s.testedAccountID = id
+			return account, nil
+		}
+	}
+	return provider.Account{}, provider.ErrNotConnected
+}
+
+func (s *fakeProviderService) PauseAccountScheduling(_ context.Context, id int64, duration time.Duration) (provider.Account, error) {
+	for i, account := range s.accounts {
+		if account.ID == id {
+			now := time.Now()
+			until := now.Add(duration)
+			account.Status = provider.AccountStatusCircuitOpen
+			account.StatusReason = "manually paused"
+			account.LastError = "manually paused"
+			account.LastErrorAt = &now
+			account.CircuitOpenUntil = &until
+			s.accounts[i] = account
+			s.pausedAccountID = id
+			s.pauseDuration = duration
 			return account, nil
 		}
 	}
@@ -1188,6 +1209,7 @@ func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
 		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
+		{name: "pause", method: http.MethodPost, path: "/api/admin/provider-accounts/7/pause", body: `{"durationSeconds":300}`},
 		{name: "reset status", method: http.MethodPost, path: "/api/admin/provider-accounts/7/reset-status"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
@@ -1219,6 +1241,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
 		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
+		{name: "pause", method: http.MethodPost, path: "/api/admin/provider-accounts/7/pause", body: `{"durationSeconds":300}`},
 		{name: "reset status", method: http.MethodPost, path: "/api/admin/provider-accounts/7/reset-status"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
@@ -1700,6 +1723,40 @@ func TestAdminCanTestUnifiedProviderAccount(t *testing.T) {
 	}
 	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastError != "" || body.Account.CircuitOpenUntil != nil || body.Account.FailureCount != 0 {
 		t.Fatalf("account = %+v, want tested active account 7", body.Account)
+	}
+}
+
+func TestAdminCanPauseUnifiedProviderAccountScheduling(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{
+		ID:          7,
+		Provider:    "openai",
+		DisplayName: "Account A",
+		Enabled:     true,
+		Priority:    10,
+		Status:      provider.AccountStatusActive,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/pause", strings.NewReader(`{"durationSeconds":300}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.pausedAccountID != 7 || providers.pauseDuration != 5*time.Minute {
+		t.Fatalf("pause call = id:%d duration:%s, want account 7 for 5m", providers.pausedAccountID, providers.pauseDuration)
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusCircuitOpen || body.Account.CircuitOpenUntil == nil {
+		t.Fatalf("account = %+v, want paused circuit-open account 7", body.Account)
 	}
 }
 

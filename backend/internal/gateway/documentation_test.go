@@ -139,3 +139,22 @@ func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayDocumentationMentionsProviderAccountSchedulingPause(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Pause scheduling",
+			"temporarily opens the account circuit",
+			"Reset local status",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account scheduling pause documentation", path, want)
+			}
+		}
+	}
+}

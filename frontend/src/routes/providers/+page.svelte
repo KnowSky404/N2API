@@ -23,6 +23,7 @@
     providerAccounts,
     providerConnectForm,
     providerOAuth,
+    pauseProviderAccount,
     refreshProviderAccount,
     removeAccountModel,
     resetProviderAccountStatus,
@@ -872,6 +873,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             >
               <span aria-hidden="true">T</span>
               <span class="sr-only">Test account</span>
+            </button>
+            <button
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={providerAccounts.saving}
+              onclick={() => pauseProviderAccount(account)}
+              title="Pause scheduling"
+              aria-label="Pause scheduling"
+            >
+              <span aria-hidden="true">P</span>
+              <span class="sr-only">Pause scheduling</span>
             </button>
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-sm font-semibold text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"

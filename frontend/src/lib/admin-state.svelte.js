@@ -1214,6 +1214,31 @@ export async function testProviderAccount(account) {
 }
 
 /** @param {ProviderAccount} account */
+export async function pauseProviderAccount(account) {
+  const version = sessionVersion;
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  try {
+    await requestJSON(`/api/admin/provider-accounts/${account.id}/pause`, {
+      method: 'POST',
+      body: JSON.stringify({ durationSeconds: 300 })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    await loadProviderAccounts();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    const message = error instanceof Error ? error.message : 'Account scheduling pause failed';
+    providerAccounts.error = message;
+    await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = message;
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
+/** @param {ProviderAccount} account */
 export async function resetProviderAccountStatus(account) {
   const version = sessionVersion;
   providerAccounts.saving = true;

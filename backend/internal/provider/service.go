@@ -26,6 +26,8 @@ const (
 	defaultStateTTL      = 10 * time.Minute
 	defaultRefreshWindow = 2 * time.Minute
 	defaultCircuitOpen   = 5 * time.Minute
+	defaultManualPause   = 5 * time.Minute
+	maxManualPause       = 24 * time.Hour
 
 	refreshFailureCircuitThreshold = 3
 
@@ -993,6 +995,27 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 	}
 	return s.ResetAccountStatus(ctx, account.ID)
+}
+
+func (s *Service) PauseAccountScheduling(ctx context.Context, id int64, duration time.Duration) (Account, error) {
+	if id <= 0 {
+		return Account{}, ErrInvalidInput
+	}
+	if duration <= 0 {
+		duration = defaultManualPause
+	}
+	if duration > maxManualPause {
+		return Account{}, ErrInvalidInput
+	}
+	if _, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id); err != nil {
+		return Account{}, err
+	}
+	now := time.Now()
+	until := now.Add(duration)
+	if err := s.repo.RecordAccountStatus(ctx, s.cfg.Provider, id, AccountStatusCircuitOpen, "manually paused", now, nil, &until); err != nil {
+		return Account{}, err
+	}
+	return s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
 }
 
 func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account, accessToken string) (Account, error) {

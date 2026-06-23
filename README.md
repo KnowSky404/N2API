@@ -75,6 +75,8 @@ API upstream credentials can be updated after account creation. Use the provider
 
 Use **Test account** when you want to probe one provider account before sending client traffic through it. The action probes one provider account with its current OAuth token or API upstream key, clears local failure status on a successful probe, and records upstream failure status for 401/403/429/5xx probe responses.
 
+Use **Pause scheduling** when you want a healthy account to stop receiving traffic for a short window. The action temporarily opens the account circuit for five minutes without disabling or deleting the account. Use **Reset local status** to clear the pause early when you want the account to rejoin routing immediately.
+
 During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so the gateway does not assume every account can serve every globally allowed model.
 
 Lower priority numbers are selected first. Within the same priority and health class, accounts with a higher load factor are considered before lower-capacity accounts; keep weak or quota-sensitive accounts at load factor `1` and raise stronger accounts when you want them to carry more traffic.
