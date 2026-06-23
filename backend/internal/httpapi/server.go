@@ -383,12 +383,30 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 			return
 		}
-		var req provider.APIUpstreamInput
+		var req struct {
+			Name    string   `json:"name"`
+			BaseURL string   `json:"baseUrl"`
+			APIKey  string   `json:"apiKey"`
+			Enabled *bool    `json:"enabled"`
+			Priority int     `json:"priority"`
+			Models  []string `json:"models"`
+		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		account, err := providers.CreateAPIUpstreamAccount(r.Context(), req)
+		enabled := true
+		if req.Enabled != nil {
+			enabled = *req.Enabled
+		}
+		account, err := providers.CreateAPIUpstreamAccount(r.Context(), provider.APIUpstreamInput{
+			Name:     req.Name,
+			BaseURL:  req.BaseURL,
+			APIKey:   req.APIKey,
+			Enabled:  enabled,
+			Priority: req.Priority,
+			Models:   req.Models,
+		})
 		if err != nil {
 			writeProviderAccountError(w, err)
 			return

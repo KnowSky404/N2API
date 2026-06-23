@@ -1104,6 +1104,40 @@ func TestCreateAPIUpstreamAccount(t *testing.T) {
 	}
 }
 
+func TestCreateAPIUpstreamAccountDefaultsEnabledWhenOmitted(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
+	}
+	if !providers.createdAPIUpstream.Enabled {
+		t.Fatalf("created input enabled = false, want omitted enabled to default true: %+v", providers.createdAPIUpstream)
+	}
+}
+
+func TestCreateAPIUpstreamAccountPreservesExplicitDisabled(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret","enabled":false}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
+	}
+	if providers.createdAPIUpstream.Enabled {
+		t.Fatalf("created input enabled = true, want explicit false to be preserved: %+v", providers.createdAPIUpstream)
+	}
+}
+
 func TestCreateAPIUpstreamAccountMapsErrors(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":"","baseUrl":"https://upstream.example.test","apiKey":"secret"}`))
