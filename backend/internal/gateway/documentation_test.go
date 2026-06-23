@@ -151,6 +151,8 @@ func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 			"N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED",
 			"N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS",
 			"disabled by default",
+			"startup defaults",
+			"Gateway Settings",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in provider account auto test documentation", path, want)
