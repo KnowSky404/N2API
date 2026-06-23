@@ -1518,6 +1518,44 @@ func TestAdminCanBulkDisableUnifiedProviderAccounts(t *testing.T) {
 	}
 }
 
+func TestAdminCanBulkUpdateUnifiedProviderAccountScheduling(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1},
+		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-update", strings.NewReader(`{"accountIds":[7,8,7],"priority":2,"loadFactor":5}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !reflect.DeepEqual(providers.accountUpdateIDs, []int64{7, 8}) {
+		t.Fatalf("updated ids = %+v, want [7 8]", providers.accountUpdateIDs)
+	}
+	for index, update := range providers.accountUpdates {
+		if update.Priority == nil || *update.Priority != 2 {
+			t.Fatalf("update %d priority = %+v, want 2", index, update.Priority)
+		}
+		if update.LoadFactor == nil || *update.LoadFactor != 5 {
+			t.Fatalf("update %d load factor = %+v, want 5", index, update.LoadFactor)
+		}
+	}
+	var body struct {
+		Accounts []provider.Account `json:"accounts"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Accounts) != 2 || body.Accounts[0].Priority != 2 || body.Accounts[1].LoadFactor != 5 {
+		t.Fatalf("accounts = %+v, want two accounts with priority 2 load factor 5", body.Accounts)
+	}
+}
+
 func TestAdminBulkProviderAccountUpdateValidatesInput(t *testing.T) {
 	cases := []struct {
 		name string

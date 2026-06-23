@@ -850,12 +850,14 @@ func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, pr
 	var req struct {
 		AccountIDs []int64 `json:"accountIds"`
 		Enabled    *bool   `json:"enabled"`
+		Priority   *int    `json:"priority"`
+		LoadFactor *int    `json:"loadFactor"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if req.Enabled == nil || len(req.AccountIDs) == 0 || len(req.AccountIDs) > 100 {
+	if (req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil) || len(req.AccountIDs) == 0 || len(req.AccountIDs) > 100 {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
@@ -875,7 +877,11 @@ func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, pr
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
 	for _, id := range accountIDs {
-		account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{Enabled: req.Enabled})
+		account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
+			Enabled:    req.Enabled,
+			Priority:   req.Priority,
+			LoadFactor: req.LoadFactor,
+		})
 		if err != nil {
 			writeProviderAccountError(w, err)
 			return
