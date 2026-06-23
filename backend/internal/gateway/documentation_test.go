@@ -191,6 +191,8 @@ func TestGatewayDocumentationMentionsProviderAccountTestResults(t *testing.T) {
 			"last test status",
 			"last test time",
 			"last test error",
+			"test-results",
+			"test history",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in provider account test result documentation", path, want)
