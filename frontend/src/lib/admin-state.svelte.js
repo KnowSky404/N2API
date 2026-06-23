@@ -347,6 +347,23 @@ export function getActiveKeys() {
 }
 
 /**
+ * @param {Partial<APIKey>} key
+ * @param {Array<Partial<ModelRoutingModel> & { model: string }>} routingModels
+ */
+export function apiKeyModelWarnings(key, routingModels) {
+  if (key.revokedAt || key.modelPolicy !== 'selected') return [];
+  const routable = new Set(
+    routingModels
+      .filter((model) => Number(model.enabledCount ?? 0) > 0)
+      .map((model) => String(model.model ?? '').trim())
+      .filter(Boolean)
+  );
+  return (key.allowedModels ?? [])
+    .map((model) => String(model ?? '').trim())
+    .filter((model, index, models) => model && models.indexOf(model) === index && !routable.has(model));
+}
+
+/**
  * @param {Record<string, any>} target
  * @param {Record<string, any>} values
  */

@@ -6,6 +6,7 @@ import { mock } from 'bun:test';
 globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
+  apiKeyModelWarnings,
   mergeAccountModelChanges,
   parseAccountModelsText,
   parseModelLines,
@@ -87,6 +88,31 @@ test('pruneAccountModelStates removes account model state for missing accounts',
   assert.deepEqual(Object.keys(states), ['8', '12']);
 });
 
+test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {
+  const warnings = apiKeyModelWarnings(
+    {
+      modelPolicy: 'selected',
+      allowedModels: ['gpt-5', 'gpt-5-mini', 'codex-mini']
+    },
+    [
+      { model: 'gpt-5', enabledCount: 1 },
+      { model: 'gpt-5-mini', enabledCount: 0 }
+    ]
+  );
+
+  assert.deepEqual(warnings, ['gpt-5-mini', 'codex-mini']);
+});
+
+test('apiKeyModelWarnings ignores all-model policy and revoked keys', () => {
+  const routing = [{ model: 'gpt-5', enabledCount: 0 }];
+
+  assert.deepEqual(apiKeyModelWarnings({ modelPolicy: 'all', allowedModels: ['gpt-5'] }, routing), []);
+  assert.deepEqual(
+    apiKeyModelWarnings({ modelPolicy: 'selected', allowedModels: ['gpt-5'], revokedAt: '2026-06-23T00:00:00Z' }, routing),
+    []
+  );
+});
+
 test('provider page has a single OAuth account creation entry point', () => {
   assert.equal(source.includes('Connect account'), false);
   assert.match(source, /Add OAuth account/);
@@ -153,6 +179,8 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.match(apiKeysSource, /Model access/);
   assert.match(apiKeysSource, /All routable models/);
   assert.match(apiKeysSource, /Selected models/);
+  assert.match(apiKeysSource, /apiKeyModelWarnings/);
+  assert.match(apiKeysSource, /No schedulable account/);
 });
 
 test('models page points model access management to api keys', () => {

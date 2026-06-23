@@ -1,12 +1,14 @@
 <script>
   import {
     apiKeys,
+    apiKeyModelWarnings,
     copySecret,
     createKey,
     formatDate,
     getActiveKeys,
     login,
     loginForm,
+    modelRouting,
     modelSettings,
     revokeKey,
     saveModelSettings,
@@ -15,6 +17,11 @@
   } from '$lib/admin-state.svelte.js';
 
   const activeKeys = $derived(getActiveKeys());
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function unroutableModelsForKey(key) {
+    return apiKeyModelWarnings(key, modelRouting.models);
+  }
 </script>
 
 <svelte:head>
@@ -222,6 +229,11 @@ All routable models
                   key.allowedModelsText = event.currentTarget.value;
                 }}
               ></textarea>
+            {/if}
+            {#if unroutableModelsForKey(key).length}
+              <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">
+                No schedulable account: {unroutableModelsForKey(key).join(', ')}
+              </p>
             {/if}
             <button
               class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
