@@ -30,6 +30,17 @@
     return value || 'Missing';
   }
 
+  /** @param {string | null | undefined} value */
+  function errorLabel(value) {
+    if (!value) return '-';
+
+    return value
+      .split('_')
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
   const usageRanges = ['24h', '7d', '30d'];
   const usageGroups = [
     { value: 'model', label: 'Model' },
@@ -399,7 +410,9 @@ onclick={loadRequestLogs}
         <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
           {log.latencyMs}ms
         </td>
-        <td class="px-4 py-3 text-[#3c3c3c]">{log.error || '-'}</td>
+        <td class="px-4 py-3 text-[#3c3c3c]">
+          <span title={log.error || ''}>{errorLabel(log.error)}</span>
+        </td>
       </tr>
     {/each}
   {/if}

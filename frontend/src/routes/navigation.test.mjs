@@ -117,6 +117,12 @@ test('request logs page includes usage accounting UI', () => {
   }
 });
 
+test('request logs page formats gateway error codes for scanning', () => {
+  assert.match(requestLogsPage, /function errorLabel/);
+  assert.match(requestLogsPage, /errorLabel\(log\.error\)/);
+  assert.match(requestLogsPage, /title=\{log\.error/);
+});
+
 test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /N2API Routing Diagnostics/);
   assert.match(modelsPage, /Routing diagnostics/);
