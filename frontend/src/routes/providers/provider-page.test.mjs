@@ -291,6 +291,14 @@ test('provider account rows use compact controls and hover details', () => {
   assert.doesNotMatch(source, />\s*\{account\.lastError\}\s*</);
 });
 
+test('provider account rows show remaining scheduling block windows', () => {
+  assert.match(source, /futureTimeRemainingLabel/);
+  assert.match(source, /futureTimeRemainingLabel\(account\.rateLimitedUntil\)/);
+  assert.match(source, /futureTimeRemainingLabel\(account\.circuitOpenUntil\)/);
+  assert.match(source, /Rate limited \{futureTimeRemainingLabel\(account\.rateLimitedUntil\)/);
+  assert.match(source, /Circuit \{futureTimeRemainingLabel\(account\.circuitOpenUntil\)/);
+});
+
 test('provider accounts page exposes configurable scheduling pause duration', () => {
   assert.match(source, /Pause duration seconds/);
   assert.match(source, /providerAccountPauseForm\.durationSeconds/);
