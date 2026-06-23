@@ -38,3 +38,8 @@ test('request logs page shows provider account attribution', () => {
   assert.match(requestLogsPage, /log\.providerAccountType/);
   assert.match(requestLogsPage, /log\.providerAccountId/);
 });
+
+test('request logs page shows request model', () => {
+  assert.match(requestLogsPage, />Model</);
+  assert.match(requestLogsPage, /log\.model/);
+});

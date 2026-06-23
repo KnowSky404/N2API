@@ -900,6 +900,39 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 	}
 }
 
+func TestProxyLogsRequestModel(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":" gpt-5 ","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	if logger.entries[0].Model != "gpt-5" {
+		t.Fatalf("logged model = %q, want gpt-5", logger.entries[0].Model)
+	}
+}
+
 func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{errs: []error{provider.ErrNotConnected}}, Config{

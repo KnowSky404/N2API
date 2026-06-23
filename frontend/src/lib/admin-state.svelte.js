@@ -50,6 +50,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} requestId
  * @property {string} clientKey
  * @property {string} provider
+ * @property {string} model
  * @property {number} providerAccountId
  * @property {string} providerAccountType
  * @property {string} providerAccountName

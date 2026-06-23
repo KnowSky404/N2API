@@ -66,6 +66,7 @@ type RequestLog struct {
 	Provider            string
 	ProviderAccountID   int64
 	ProviderAccountType string
+	Model               string
 	Route               string
 	Method              string
 	StatusCode          int
@@ -146,6 +147,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	errorCode := ""
 	var loggedAccount SelectedAccount
+	requestModel := ""
 	defer func() {
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:           newRequestID(),
@@ -153,6 +155,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Provider:            "openai",
 			ProviderAccountID:   loggedAccount.AccountID,
 			ProviderAccountType: loggedAccount.AccountType,
+			Model:               requestModel,
 			Route:               r.URL.Path,
 			Method:              r.Method,
 			StatusCode:          recorder.statusCode(),
@@ -181,6 +184,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
 		return
 	}
+	requestModel = model
 	if model != "" && !apiKeyAllowsModel(key, model) {
 		errorCode = "model_not_found"
 		writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")

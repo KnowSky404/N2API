@@ -82,12 +82,13 @@ onclick={loadRequestLogs}
   {/if}
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1040px] text-left text-sm">
+    <table class="w-full min-w-[1120px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Time</th>
     <th class="px-4 py-3 font-medium">Key</th>
     <th class="px-4 py-3 font-medium">Provider account</th>
+    <th class="px-4 py-3 font-medium">Model</th>
     <th class="px-4 py-3 font-medium">Route</th>
     <th class="px-4 py-3 font-medium">Method</th>
     <th class="px-4 py-3 font-medium">Status</th>
@@ -98,11 +99,11 @@ onclick={loadRequestLogs}
 <tbody class="divide-y divide-[#ededed]">
   {#if requestLogs.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading request logs...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">Loading request logs...</td>
     </tr>
   {:else if requestLogs.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No gateway requests yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">No gateway requests yet.</td>
     </tr>
   {:else}
     {#each requestLogs.items as log}
@@ -121,6 +122,7 @@ onclick={loadRequestLogs}
             <span class="text-[#6e6e6e]">Unassigned</span>
           {/if}
         </td>
+        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.model || '-'}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{log.route}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.method}</td>
         <td class="px-4 py-3">

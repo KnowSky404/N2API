@@ -13,7 +13,7 @@ func TestGatewayRepositoryImplementsRequestLogger(t *testing.T) {
 
 func TestCreateRequestLogSQLIncludesProviderAccountAttribution(t *testing.T) {
 	sql := createRequestLogSQL()
-	for _, want := range []string{"provider_account_id", "provider_account_type"} {
+	for _, want := range []string{"provider_account_id", "provider_account_type", "model"} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("CreateRequestLog SQL missing %q: %s", want, sql)
 		}
