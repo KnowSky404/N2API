@@ -1037,6 +1037,7 @@ export async function updateProviderAccount(account, patch) {
     });
     if (!isCurrentAuthenticated(version)) return;
     await loadProviderAccounts();
+    await loadModelRouting();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Account update failed';

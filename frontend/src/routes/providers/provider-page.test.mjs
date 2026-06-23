@@ -252,6 +252,16 @@ test('admin state can update provider account local name', () => {
   assert.match(adminStateSource, /updateProviderAccount\(account, \{ name \}\)/);
 });
 
+test('admin state refreshes model routing after provider account scheduling changes', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+  const updateProviderAccountSource = adminStateSource.match(
+    /export async function updateProviderAccount\(account, patch\) \{[\s\S]*?\n\}/
+  )?.[0] ?? '';
+
+  assert.match(updateProviderAccountSource, /loadProviderAccounts\(\)/);
+  assert.match(updateProviderAccountSource, /loadModelRouting\(\)/);
+});
+
 test('api keys page owns model policy and gateway default model', () => {
   assert.match(apiKeysSource, /Gateway default model/);
   assert.match(apiKeysSource, /Model access/);
