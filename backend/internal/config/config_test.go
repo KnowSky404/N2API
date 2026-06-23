@@ -116,6 +116,33 @@ func TestLoadGatewayConcurrencyLimitConfig(t *testing.T) {
 	}
 }
 
+func TestLoadGatewayAccountConcurrencyLimitConfig(t *testing.T) {
+	defaultCfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if defaultCfg.GatewayMaxConcurrentRequestsPerAccount != 0 {
+		t.Fatalf("GatewayMaxConcurrentRequestsPerAccount = %d, want default disabled 0", defaultCfg.GatewayMaxConcurrentRequestsPerAccount)
+	}
+
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+		"N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT": "2",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.GatewayMaxConcurrentRequestsPerAccount != 2 {
+		t.Fatalf("GatewayMaxConcurrentRequestsPerAccount = %d, want 2", cfg.GatewayMaxConcurrentRequestsPerAccount)
+	}
+}
+
 func TestLoadGatewayRequestRateLimitConfig(t *testing.T) {
 	defaultCfg, err := Load(mapLookup(map[string]string{
 		"DATABASE_URL":            "postgres://example",
@@ -181,6 +208,22 @@ func TestLoadRejectsInvalidGatewayConcurrencyLimit(t *testing.T) {
 			}))
 			if err == nil {
 				t.Fatal("Load returned nil error, want invalid gateway concurrency limit error")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidGatewayAccountConcurrencyLimit(t *testing.T) {
+	for _, value := range []string{"abc", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Load(mapLookup(map[string]string{
+				"DATABASE_URL":            "postgres://example",
+				"N2API_ENCRYPTION_SECRET": "encryption-secret",
+				"N2API_ADMIN_PASSWORD":    "admin-password",
+				"N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT": value,
+			}))
+			if err == nil {
+				t.Fatal("Load returned nil error, want invalid gateway account concurrency limit error")
 			}
 		})
 	}

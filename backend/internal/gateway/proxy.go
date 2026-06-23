@@ -102,14 +102,15 @@ type RequestLog struct {
 }
 
 type Config struct {
-	UpstreamBaseURL              string
-	CodexResponsesBaseURL        string
-	MaxConcurrentGatewayRequests int
-	MaxRequestsPerMinutePerKey   int
-	MaxTokensPerMinutePerKey     int
-	Logger                       RequestLogger
-	ModelProvider                ModelProvider
-	UsagePricer                  UsagePricer
+	UpstreamBaseURL                 string
+	CodexResponsesBaseURL           string
+	MaxConcurrentGatewayRequests    int
+	MaxConcurrentRequestsPerAccount int
+	MaxRequestsPerMinutePerKey      int
+	MaxTokensPerMinutePerKey        int
+	Logger                          RequestLogger
+	ModelProvider                   ModelProvider
+	UsagePricer                     UsagePricer
 }
 
 type Proxy struct {
@@ -119,6 +120,7 @@ type Proxy struct {
 	upstreamBaseURL string
 	codexBaseURL    string
 	limiter         chan struct{}
+	accountLimiter  *accountConcurrencyLimiter
 	rateLimiter     *apiKeyRateLimiter
 	tokenLimiter    *apiKeyTokenLimiter
 	logger          RequestLogger
@@ -146,6 +148,10 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if cfg.MaxConcurrentGatewayRequests > 0 {
 		limiter = make(chan struct{}, cfg.MaxConcurrentGatewayRequests)
 	}
+	var accountLimiter *accountConcurrencyLimiter
+	if cfg.MaxConcurrentRequestsPerAccount > 0 {
+		accountLimiter = newAccountConcurrencyLimiter(cfg.MaxConcurrentRequestsPerAccount)
+	}
 	var rateLimiter *apiKeyRateLimiter
 	if cfg.MaxRequestsPerMinutePerKey > 0 {
 		rateLimiter = newAPIKeyRateLimiter(cfg.MaxRequestsPerMinutePerKey, time.Now)
@@ -161,6 +167,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		upstreamBaseURL: upstreamBaseURL,
 		codexBaseURL:    codexBaseURL,
 		limiter:         limiter,
+		accountLimiter:  accountLimiter,
 		rateLimiter:     rateLimiter,
 		tokenLimiter:    tokenLimiter,
 		logger:          cfg.Logger,
@@ -289,6 +296,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer release()
 
 	failedAccountIDs := []int64{}
+	accountConcurrencyLimited := false
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		selected, err := p.selectAccount(r.Context(), model, sessionID, failedAccountIDs...)
@@ -296,6 +304,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if lastRetryableResp != nil {
 				_ = lastRetryableResp.Body.Close()
 				lastRetryableResp = nil
+			}
+			if accountConcurrencyLimited && errors.Is(err, provider.ErrAccountsUnavailable) {
+				errorCode = "rate_limit_exceeded"
+				writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "provider account concurrency limit exceeded")
+				return
 			}
 			errorCode = providerErrorCode(err)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
@@ -310,16 +323,29 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 			return
 		}
+		releaseAccount, ok := p.tryAcquireAccountSlot(selected.AccountID)
+		if !ok {
+			accountConcurrencyLimited = true
+			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
+			if attempt+1 < maxAttempts {
+				continue
+			}
+			errorCode = "rate_limit_exceeded"
+			writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "provider account concurrency limit exceeded")
+			return
+		}
 		loggedAccount = selected
 
 		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 		if err != nil {
+			releaseAccount()
 			errorCode = "upstream_request_error"
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
 			return
 		}
 		upstreamResp, err := p.client.Do(upstreamReq)
 		if err != nil {
+			releaseAccount()
 			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", err.Error())
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
@@ -335,10 +361,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
+				releaseAccount()
 				lastRetryableResp = upstreamResp
 				continue
 			}
 		}
+		defer releaseAccount()
 		defer upstreamResp.Body.Close()
 
 		copyResponseHeaders(recorder.Header(), upstreamResp.Header)
@@ -346,6 +374,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
 		return
 	}
+}
+
+func (p *Proxy) tryAcquireAccountSlot(accountID int64) (func(), bool) {
+	if p.accountLimiter == nil || accountID <= 0 {
+		return func() {}, true
+	}
+	return p.accountLimiter.Acquire(accountID)
 }
 
 func (p *Proxy) tryAcquireGatewaySlot() (func(), bool) {
@@ -388,6 +423,39 @@ func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excl
 		}
 	}
 	return p.accounts.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+type accountConcurrencyLimiter struct {
+	limit    int
+	mu       sync.Mutex
+	inFlight map[int64]int
+}
+
+func newAccountConcurrencyLimiter(limit int) *accountConcurrencyLimiter {
+	return &accountConcurrencyLimiter{
+		limit:    limit,
+		inFlight: map[int64]int{},
+	}
+}
+
+func (l *accountConcurrencyLimiter) Acquire(accountID int64) (func(), bool) {
+	if l == nil || l.limit <= 0 || accountID <= 0 {
+		return func() {}, true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inFlight[accountID] >= l.limit {
+		return nil, false
+	}
+	l.inFlight[accountID]++
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		l.inFlight[accountID]--
+		if l.inFlight[accountID] <= 0 {
+			delete(l.inFlight, accountID)
+		}
+	}, true
 }
 
 type apiKeyRateLimiter struct {

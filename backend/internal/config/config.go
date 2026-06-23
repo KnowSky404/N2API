@@ -7,22 +7,23 @@ import (
 )
 
 type Config struct {
-	Host                           string
-	Port                           int
-	PublicURL                      string
-	DatabaseURL                    string
-	AdminUsername                  string
-	AdminPassword                  string
-	EncryptionSecret               string
-	OpenAIOAuthClientID            string
-	OpenAIOAuthSecret              string
-	OpenAIOAuthRedirectURL         string
-	OpenAIOAuthAuthURL             string
-	OpenAIOAuthTokenURL            string
-	OpenAIAPIBaseURL               string
-	GatewayMaxConcurrentRequests   int
-	GatewayRequestsPerMinutePerKey int
-	GatewayTokensPerMinutePerKey   int
+	Host                                   string
+	Port                                   int
+	PublicURL                              string
+	DatabaseURL                            string
+	AdminUsername                          string
+	AdminPassword                          string
+	EncryptionSecret                       string
+	OpenAIOAuthClientID                    string
+	OpenAIOAuthSecret                      string
+	OpenAIOAuthRedirectURL                 string
+	OpenAIOAuthAuthURL                     string
+	OpenAIOAuthTokenURL                    string
+	OpenAIAPIBaseURL                       string
+	GatewayMaxConcurrentRequests           int
+	GatewayMaxConcurrentRequestsPerAccount int
+	GatewayRequestsPerMinutePerKey         int
+	GatewayTokensPerMinutePerKey           int
 }
 
 const (
@@ -59,6 +60,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.GatewayMaxConcurrentRequests = maxConcurrent
+	maxConcurrentPerAccount, err := parseNonNegativeInt(lookup("N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT"), "N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GatewayMaxConcurrentRequestsPerAccount = maxConcurrentPerAccount
 	requestsPerMinute, err := parseNonNegativeInt(lookup("N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY"), "N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY")
 	if err != nil {
 		return Config{}, err
