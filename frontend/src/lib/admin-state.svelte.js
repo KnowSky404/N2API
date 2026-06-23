@@ -139,6 +139,26 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} ProviderAccountTestResult
+ * @property {number} id
+ * @property {number} accountId
+ * @property {string} provider
+ * @property {string} status
+ * @property {string} message
+ * @property {string} checkedAt
+ * @property {string} createdAt
+ */
+
+/**
+ * @typedef {object} AccountTestResultsState
+ * @property {boolean} expanded
+ * @property {boolean} loading
+ * @property {string} error
+ * @property {ProviderAccountTestResult[]} items
+ * @property {number} requestSeq
+ */
+
+/**
  * @typedef {object} ModelRoutingAccount
  * @property {number} id
  * @property {string} displayName
@@ -291,6 +311,8 @@ export const modelSettings = $state({
 });
 /** @type {Record<string, AccountModelsState>} */
 export const accountModels = $state({});
+/** @type {Record<string, AccountTestResultsState>} */
+export const accountTestResults = $state({});
 /** @type {{ loading: boolean, error: string, defaultModel: string, allowedModels: string[], models: ModelRoutingModel[], warnings: string[] }} */
 export const modelRouting = $state({
   loading: false,
@@ -389,10 +411,31 @@ export function shouldApplyAccountModelsResponse(state, requestSeq) {
 }
 
 /**
+ * @param {{ requestSeq: number }} state
+ * @param {number} requestSeq
+ */
+export function shouldApplyAccountTestResultsResponse(state, requestSeq) {
+  return state.requestSeq === requestSeq;
+}
+
+/**
  * @param {Record<string, any>} states
  * @param {Array<number | string>} accountIds
  */
 export function pruneAccountModelStates(states, accountIds) {
+  const accountKeys = new Set(accountIds.map((id) => String(id)));
+  for (const key of Object.keys(states)) {
+    if (!accountKeys.has(key)) {
+      delete states[key];
+    }
+  }
+}
+
+/**
+ * @param {Record<string, any>} states
+ * @param {Array<number | string>} accountIds
+ */
+export function pruneAccountTestResultStates(states, accountIds) {
   const accountKeys = new Set(accountIds.map((id) => String(id)));
   for (const key of Object.keys(states)) {
     if (!accountKeys.has(key)) {
@@ -870,6 +913,10 @@ export async function loadProviderAccounts() {
       accountModels,
       providerAccounts.items.map((account) => account.id)
     );
+    pruneAccountTestResultStates(
+      accountTestResults,
+      providerAccounts.items.map((account) => account.id)
+    );
     await Promise.all(providerAccounts.items.map((account) => loadAccountModels(account.id)));
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
@@ -896,6 +943,21 @@ function ensureAccountModelsState(accountId) {
   return accountModels[key];
 }
 
+/** @param {number} accountId */
+function ensureAccountTestResultsState(accountId) {
+  const key = String(accountId);
+  if (!accountTestResults[key]) {
+    accountTestResults[key] = {
+      expanded: false,
+      loading: false,
+      error: '',
+      items: [],
+      requestSeq: 0
+    };
+  }
+  return accountTestResults[key];
+}
+
 /** @param {AccountModel[]} models */
 export function accountModelsText(models) {
   return modelListText(models.map((item) => item.model));
@@ -904,6 +966,11 @@ export function accountModelsText(models) {
 /** @param {number} accountId */
 export function getAccountModelsState(accountId) {
   return ensureAccountModelsState(accountId);
+}
+
+/** @param {number} accountId */
+export function getAccountTestResultsState(accountId) {
+  return ensureAccountTestResultsState(accountId);
 }
 
 /** @param {number} accountId */
@@ -933,6 +1000,59 @@ export async function loadAccountModels(accountId) {
       state.loading = false;
     }
   }
+}
+
+/**
+ * @param {number} accountId
+ * @param {{ expand?: boolean }} options
+ */
+export async function loadAccountTestResults(accountId, options = {}) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const state = ensureAccountTestResultsState(accountId);
+  if (options.expand) state.expanded = true;
+  state.requestSeq += 1;
+  const requestSeq = state.requestSeq;
+  state.loading = true;
+  state.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/test-results?limit=20`);
+    if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountTestResultsResponse(state, requestSeq)) return;
+    state.items = payload.results ?? [];
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountTestResultsResponse(state, requestSeq)) return;
+    state.error = error instanceof Error ? error.message : 'Account test history load failed';
+  } finally {
+    if (isCurrentAuthenticated(version) && shouldApplyAccountTestResultsResponse(state, requestSeq)) {
+      state.loading = false;
+    }
+  }
+}
+
+/** @param {number} accountId */
+export async function toggleAccountTestHistory(accountId) {
+  const state = ensureAccountTestResultsState(accountId);
+  if (state.expanded) {
+    state.expanded = false;
+    return;
+  }
+  await loadAccountTestResults(accountId, { expand: true });
+}
+
+/** @param {number} accountId */
+async function refreshAccountTestResultsIfExpanded(accountId) {
+  if (!accountTestResults[String(accountId)]?.expanded) return;
+  await loadAccountTestResults(accountId);
+}
+
+export async function refreshExpandedAccountTestResults() {
+  const expandedIds = Object.entries(accountTestResults)
+    .filter(([, state]) => state.expanded)
+    .map(([id]) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  await Promise.all(expandedIds.map((id) => loadAccountTestResults(id)));
 }
 
 /**
@@ -1076,6 +1196,7 @@ export async function updateProviderAccount(account, patch) {
     if (!isCurrentAuthenticated(version)) return;
     await loadProviderAccounts();
     await loadModelRouting();
+    await refreshAccountTestResultsIfExpanded(account.id);
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Account update failed';
@@ -1213,6 +1334,7 @@ export async function testProviderAccount(account) {
     if (!isCurrentAuthenticated(version)) return;
     await loadProviderAccounts();
     await loadModelRouting();
+    await refreshExpandedAccountTestResults();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Account test failed';

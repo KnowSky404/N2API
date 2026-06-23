@@ -6,9 +6,11 @@ import { mock } from 'bun:test';
 globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
+  accountTestResults,
   apiKeys,
   apiKeyModelWarnings,
   accountModelsText,
+  getAccountTestResultsState,
   loadModelRoutingPreview,
   modelListText,
   modelRoutingPreview,
@@ -17,10 +19,12 @@ const {
   parseAccountModelsText,
   parseModelLines,
   pruneAccountModelStates,
+  pruneAccountTestResultStates,
   removeAccountModel,
   session,
   setAccountModelEnabled,
   shouldApplyAccountModelsResponse,
+  shouldApplyAccountTestResultsResponse,
   updateAPIKeyLimits
 } = await import('../../lib/admin-state.svelte.js');
 
@@ -113,6 +117,27 @@ test('pruneAccountModelStates removes account model state for missing accounts',
   assert.deepEqual(Object.keys(states), ['8', '12']);
 });
 
+test('account test result state initializes and rejects stale responses', () => {
+  const state = getAccountTestResultsState(7);
+
+  assert.equal(state.expanded, false);
+  assert.equal(state.loading, false);
+  assert.equal(state.error, '');
+  assert.deepEqual(state.items, []);
+  assert.equal(shouldApplyAccountTestResultsResponse({ requestSeq: 3 }, 3), true);
+  assert.equal(shouldApplyAccountTestResultsResponse({ requestSeq: 4 }, 3), false);
+});
+
+test('pruneAccountTestResultStates removes state for missing accounts', () => {
+  accountTestResults[7] = { requestSeq: 1 };
+  accountTestResults[8] = { requestSeq: 1 };
+  accountTestResults[12] = { requestSeq: 1 };
+
+  pruneAccountTestResultStates(accountTestResults, [8, 12]);
+
+  assert.deepEqual(Object.keys(accountTestResults), ['8', '12']);
+});
+
 test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {
   const warnings = apiKeyModelWarnings(
     {
@@ -186,6 +211,13 @@ test('provider account state uses unified account refresh endpoint', () => {
 
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}\/refresh/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{account\.id\}\/refresh/);
+});
+
+test('provider account state uses unified test-results endpoint', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{accountId\}\/test-results\?limit=20/);
+  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{accountId\}\/test-results/);
 });
 
 test('provider account state uses unified codex oauth callback endpoint', () => {
