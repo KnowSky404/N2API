@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -26,6 +27,8 @@ type Config struct {
 	GatewayMaxConcurrentRequestsPerKey     int
 	GatewayRequestsPerMinutePerKey         int
 	GatewayTokensPerMinutePerKey           int
+	ProviderAccountAutoTestEnabled         bool
+	ProviderAccountAutoTestInterval        time.Duration
 }
 
 const (
@@ -33,6 +36,9 @@ const (
 	defaultOpenAIOAuthRedirect = "http://localhost:1455/auth/callback"
 	defaultOpenAIOAuthAuthURL  = "https://auth.openai.com/oauth/authorize"
 	defaultOpenAIOAuthTokenURL = "https://auth.openai.com/oauth/token"
+
+	defaultProviderAccountAutoTestInterval = 5 * time.Minute
+	minProviderAccountAutoTestInterval     = time.Minute
 )
 
 func Load(lookup func(string) string) (Config, error) {
@@ -56,6 +62,27 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.AllowHTTPAPIUpstreams = allowHTTPAPIUpstreams
+
+	autoTestEnabled, err := parseBool(lookup("N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED"), "N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ProviderAccountAutoTestEnabled = autoTestEnabled
+	autoTestIntervalSeconds, err := parseNonNegativeInt(
+		lookup("N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS"),
+		"N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS",
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if autoTestIntervalSeconds == 0 {
+		cfg.ProviderAccountAutoTestInterval = defaultProviderAccountAutoTestInterval
+	} else {
+		cfg.ProviderAccountAutoTestInterval = time.Duration(autoTestIntervalSeconds) * time.Second
+	}
+	if cfg.ProviderAccountAutoTestEnabled && cfg.ProviderAccountAutoTestInterval < minProviderAccountAutoTestInterval {
+		return Config{}, fmt.Errorf("N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS must be at least 60 when auto test is enabled")
+	}
 
 	port, err := parsePort(valueOrDefault(lookup("N2API_PORT"), "3000"))
 	if err != nil {

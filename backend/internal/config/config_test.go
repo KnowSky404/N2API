@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	cfg, err := Load(mapLookup(map[string]string{
@@ -328,6 +332,75 @@ func TestLoadRejectsInvalidGatewayTokenRateLimit(t *testing.T) {
 				t.Fatal("Load returned nil error, want invalid gateway token rate limit error")
 			}
 		})
+	}
+}
+
+func TestLoadProviderAccountAutoTestDefaultsDisabled(t *testing.T) {
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.ProviderAccountAutoTestEnabled {
+		t.Fatal("ProviderAccountAutoTestEnabled = true, want false by default")
+	}
+	if cfg.ProviderAccountAutoTestInterval != 5*time.Minute {
+		t.Fatalf("ProviderAccountAutoTestInterval = %v, want 5m", cfg.ProviderAccountAutoTestInterval)
+	}
+}
+
+func TestLoadProviderAccountAutoTestEnabledWithInterval(t *testing.T) {
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                                      "postgres://example",
+		"N2API_ENCRYPTION_SECRET":                           "encryption-secret",
+		"N2API_ADMIN_PASSWORD":                              "admin-password",
+		"N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED":          "true",
+		"N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS": "120",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if !cfg.ProviderAccountAutoTestEnabled {
+		t.Fatal("ProviderAccountAutoTestEnabled = false, want true")
+	}
+	if cfg.ProviderAccountAutoTestInterval != 2*time.Minute {
+		t.Fatalf("ProviderAccountAutoTestInterval = %v, want 2m", cfg.ProviderAccountAutoTestInterval)
+	}
+}
+
+func TestLoadProviderAccountAutoTestRejectsTooSmallEnabledInterval(t *testing.T) {
+	_, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                                      "postgres://example",
+		"N2API_ENCRYPTION_SECRET":                           "encryption-secret",
+		"N2API_ADMIN_PASSWORD":                              "admin-password",
+		"N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED":          "true",
+		"N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS": "30",
+	}))
+	if err == nil {
+		t.Fatal("Load returned nil error, want auto test interval validation error")
+	}
+	if !strings.Contains(err.Error(), "N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS must be at least 60 when auto test is enabled") {
+		t.Fatalf("Load error = %q, want auto test interval validation error", err.Error())
+	}
+}
+
+func TestLoadProviderAccountAutoTestRejectsInvalidBoolean(t *testing.T) {
+	_, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                             "postgres://example",
+		"N2API_ENCRYPTION_SECRET":                  "encryption-secret",
+		"N2API_ADMIN_PASSWORD":                     "admin-password",
+		"N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED": "sometimes",
+	}))
+	if err == nil {
+		t.Fatal("Load returned nil error, want auto test boolean validation error")
+	}
+	if !strings.Contains(err.Error(), "N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED must be a boolean") {
+		t.Fatalf("Load error = %q, want auto test boolean validation error", err.Error())
 	}
 }
 
