@@ -59,6 +59,12 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} statusCode
  * @property {number} latencyMs
  * @property {string} error
+ * @property {number} inputTokens
+ * @property {number} outputTokens
+ * @property {number} totalTokens
+ * @property {number} cachedInputTokens
+ * @property {number} reasoningTokens
+ * @property {string} usageSource
  * @property {string} createdAt
  */
 

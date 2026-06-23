@@ -43,3 +43,12 @@ test('request logs page shows request model', () => {
   assert.match(requestLogsPage, />Model</);
   assert.match(requestLogsPage, /log\.model/);
 });
+
+test('request logs page shows token usage', () => {
+  assert.match(requestLogsPage, />Tokens</);
+  assert.match(requestLogsPage, />Usage</);
+  assert.match(requestLogsPage, /log\.inputTokens/);
+  assert.match(requestLogsPage, /log\.outputTokens/);
+  assert.match(requestLogsPage, /log\.totalTokens/);
+  assert.match(requestLogsPage, /log\.usageSource/);
+});

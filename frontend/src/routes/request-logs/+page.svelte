@@ -14,6 +14,14 @@
     if (value === 'codex_oauth') return 'Codex OAuth';
     return value || 'Unknown';
   }
+
+  /** @param {string | null | undefined} value */
+  function usageSourceLabel(value) {
+    if (value === 'chat_completions') return 'Chat';
+    if (value === 'responses') return 'Responses';
+    if (value === 'stream') return 'Stream';
+    return value || 'Missing';
+  }
 </script>
 
 <svelte:head>
@@ -82,13 +90,15 @@ onclick={loadRequestLogs}
   {/if}
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1120px] text-left text-sm">
+    <table class="w-full min-w-[1280px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Time</th>
     <th class="px-4 py-3 font-medium">Key</th>
     <th class="px-4 py-3 font-medium">Provider account</th>
     <th class="px-4 py-3 font-medium">Model</th>
+    <th class="px-4 py-3 font-medium">Tokens</th>
+    <th class="px-4 py-3 font-medium">Usage</th>
     <th class="px-4 py-3 font-medium">Route</th>
     <th class="px-4 py-3 font-medium">Method</th>
     <th class="px-4 py-3 font-medium">Status</th>
@@ -99,11 +109,11 @@ onclick={loadRequestLogs}
 <tbody class="divide-y divide-[#ededed]">
   {#if requestLogs.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">Loading request logs...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">Loading request logs...</td>
     </tr>
   {:else if requestLogs.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="9">No gateway requests yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="11">No gateway requests yet.</td>
     </tr>
   {:else}
     {#each requestLogs.items as log}
@@ -123,6 +133,12 @@ onclick={loadRequestLogs}
           {/if}
         </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.model || '-'}</td>
+        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
+          {log.inputTokens || 0}/{log.outputTokens || 0}/{log.totalTokens || 0}
+        </td>
+        <td class="px-4 py-3 text-[#3c3c3c]">
+          <span class="text-sm">{usageSourceLabel(log.usageSource)}</span>
+        </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{log.route}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.method}</td>
         <td class="px-4 py-3">
