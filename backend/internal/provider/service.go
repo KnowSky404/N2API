@@ -265,6 +265,9 @@ type SelectionCandidate struct {
 	LoadFactor          int        `json:"loadFactor"`
 	Status              string     `json:"status"`
 	LastUsedAt          *time.Time `json:"lastUsedAt"`
+	LastTestAt          *time.Time `json:"lastTestAt"`
+	LastTestStatus      string     `json:"lastTestStatus"`
+	LastTestError       string     `json:"lastTestError"`
 	ScheduleRank        int        `json:"scheduleRank"`
 	Selected            bool       `json:"selected"`
 	Schedulable         bool       `json:"schedulable"`
@@ -1283,6 +1286,9 @@ func selectionCandidate(account Account, scheduleRank int, selected bool, schedu
 		LoadFactor:          normalizedLoadFactor(account.LoadFactor),
 		Status:              valueOrDefault(account.Status, AccountStatusActive),
 		LastUsedAt:          account.LastUsedAt,
+		LastTestAt:          account.LastTestAt,
+		LastTestStatus:      account.LastTestStatus,
+		LastTestError:       account.LastTestError,
 		ScheduleRank:        scheduleRank,
 		Selected:            selected,
 		Schedulable:         schedulable,

@@ -40,12 +40,16 @@
     const lastError = account.lastError
       ? `${account.lastError}${account.lastErrorAt ? ` - ${formatDate(account.lastErrorAt)}` : ''}`
       : '';
+    const lastTest = account.lastTestAt
+      ? `Last test ${account.lastTestStatus || 'checked'} at ${formatDate(account.lastTestAt)}${account.lastTestError ? `: ${account.lastTestError}` : ''}`
+      : '';
     return [
       account.displayName || `Account ${account.id}`,
       accountTypeLabel(account.accountType),
       `Priority ${account.priority}`,
       `Load ${account.loadFactor || 1}`,
       account.schedulable ? statusLabel(account.status) : account.unschedulableReason,
+      lastTest,
       account.statusReason,
       lastError
     ]
@@ -279,6 +283,12 @@
                 <span>Priority {account.priority}</span>
                 <span>Load {account.loadFactor || 1}</span>
                 <span>Used {formatDate(account.lastUsedAt)}</span>
+                {#if account.lastTestAt}
+                  <span>Test {account.lastTestStatus || 'checked'} {formatDate(account.lastTestAt)}</span>
+                {/if}
+                {#if account.lastTestError}
+                  <span class="font-medium text-amber-800">{account.lastTestError}</span>
+                {/if}
                 {#if account.selected}
                   <span class="font-medium text-[#0a7a5e]">Selected</span>
                 {/if}
@@ -368,6 +378,12 @@
                             <span class="text-[#6e6e6e]">Priority {account.priority}</span>
                             <span class="text-[#6e6e6e]">Load {account.loadFactor || 1}</span>
                             <span class="text-[#6e6e6e]">Used {formatDate(account.lastUsedAt)}</span>
+                            {#if account.lastTestAt}
+                              <span class="text-[#6e6e6e]">Test {account.lastTestStatus || 'checked'} {formatDate(account.lastTestAt)}</span>
+                            {/if}
+                            {#if account.lastTestError}
+                              <span class="font-medium text-amber-800">{account.lastTestError}</span>
+                            {/if}
                             <span class={account.schedulable ? 'text-[#6e6e6e]' : 'font-medium text-amber-800'}>
                               {account.schedulable ? statusLabel(account.status) : account.unschedulableReason}
                             </span>

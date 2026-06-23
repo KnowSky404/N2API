@@ -1622,6 +1622,10 @@ func TestPreviewAccountSelectionUsesStickySessionWithoutMarkingAccountUsed(t *te
 		testAccount(t, 2, true, 1, "second-token"),
 		testAccount(t, 3, true, 50, "low-priority-token"),
 	}
+	lastTestAt := time.Now().Add(-2 * time.Minute).UTC().Truncate(time.Second)
+	repo.accounts[0].LastTestAt = &lastTestAt
+	repo.accounts[0].LastTestStatus = AccountTestStatusFailed
+	repo.accounts[0].LastTestError = "quota window"
 	for i := range repo.accounts {
 		repo.accounts[i].LastUsedAt = &older
 		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
@@ -1651,6 +1655,19 @@ func TestPreviewAccountSelectionUsesStickySessionWithoutMarkingAccountUsed(t *te
 	}
 	if preview.Candidates[2].ID != 3 || preview.Candidates[2].Priority != 50 {
 		t.Fatalf("last candidate = %+v, want low-priority account", preview.Candidates[2])
+	}
+	var tested SelectionCandidate
+	for _, candidate := range preview.Candidates {
+		if candidate.ID == 1 {
+			tested = candidate
+			break
+		}
+	}
+	if tested.LastTestAt == nil || !tested.LastTestAt.Equal(lastTestAt) {
+		t.Fatalf("candidate LastTestAt = %v, want %v", tested.LastTestAt, lastTestAt)
+	}
+	if tested.LastTestStatus != AccountTestStatusFailed || tested.LastTestError != "quota window" {
+		t.Fatalf("candidate test result = status:%q error:%q, want failed/quota window", tested.LastTestStatus, tested.LastTestError)
 	}
 	for _, account := range repo.accounts {
 		if account.LastUsedAt == nil || !account.LastUsedAt.Equal(older) {

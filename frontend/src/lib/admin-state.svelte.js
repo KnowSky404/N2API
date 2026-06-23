@@ -151,6 +151,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} lastError
  * @property {string | null} lastErrorAt
  * @property {string | null} lastUsedAt
+ * @property {string | null} lastTestAt
+ * @property {string} lastTestStatus
+ * @property {string} lastTestError
  * @property {number} scheduleRank
  * @property {boolean} schedulable
  * @property {string} unschedulableReason
@@ -183,6 +186,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} loadFactor
  * @property {string} status
  * @property {string | null} lastUsedAt
+ * @property {string | null} lastTestAt
+ * @property {string} lastTestStatus
+ * @property {string} lastTestError
  * @property {number} scheduleRank
  * @property {boolean} selected
  * @property {boolean} schedulable
