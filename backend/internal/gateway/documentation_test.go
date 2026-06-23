@@ -197,6 +197,25 @@ func TestGatewayDocumentationMentionsSelectedProviderAccountTests(t *testing.T) 
 	}
 }
 
+func TestGatewayDocumentationMentionsProviderAccountBulkStatusActions(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Pause selected",
+			"Reset selected",
+			"Selected provider accounts can be paused and reset together",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account bulk status documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md", "../../../.env.example"} {
 		content, err := os.ReadFile(path)
