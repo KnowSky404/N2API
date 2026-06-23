@@ -61,6 +61,7 @@ type fakeProviderService struct {
 	selectionPreview      provider.SelectionPreview
 	previewModel          string
 	previewSessionID      string
+	lastAccountUpdate     provider.AccountUpdate
 	updateErr             error
 	accountModelsErr      error
 	replaceModelsErr      error
@@ -416,10 +417,11 @@ func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state st
 }
 
 func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update provider.AccountUpdate) (provider.Account, error) {
+	s.lastAccountUpdate = update
 	if s.updateErr != nil {
 		return provider.Account{}, s.updateErr
 	}
-	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus && update.Name == nil {
+	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
@@ -435,6 +437,13 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 			}
 			if update.Name != nil {
 				account.Name = strings.TrimSpace(*update.Name)
+			}
+			if update.APIUpstreamBaseURL != nil {
+				account.Credential.BaseURL = strings.TrimSpace(*update.APIUpstreamBaseURL)
+				account.BaseURL = account.Credential.BaseURL
+			}
+			if update.APIUpstreamAPIKey != nil {
+				account.Credential.EncryptedAPIKey = "updated-encrypted-api-key"
 			}
 			if update.ClearStatus {
 				account.Status = provider.AccountStatusActive
@@ -1362,6 +1371,44 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	}
 	if body.Account.ID != 7 || body.Account.Name != "Renamed" || body.Account.Enabled || body.Account.Priority != 2 {
 		t.Fatalf("account = %+v, want renamed disabled account 7 priority 2", body.Account)
+	}
+}
+
+func TestAdminCanUpdateAPIUpstreamCredential(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{
+		ID:          7,
+		Provider:    "openai",
+		AccountType: provider.AccountTypeAPIUpstream,
+		DisplayName: "API Upstream",
+		Enabled:     true,
+		Priority:    10,
+		Credential:  provider.AccountCredential{BaseURL: "https://old.example.test"},
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"baseUrl":" https://new.example.test/v1 ","apiKey":" new-secret "}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if providers.lastAccountUpdate.APIUpstreamBaseURL == nil || *providers.lastAccountUpdate.APIUpstreamBaseURL != " https://new.example.test/v1 " {
+		t.Fatalf("base URL update = %+v", providers.lastAccountUpdate.APIUpstreamBaseURL)
+	}
+	if providers.lastAccountUpdate.APIUpstreamAPIKey == nil || *providers.lastAccountUpdate.APIUpstreamAPIKey != " new-secret " {
+		t.Fatalf("API key update = %+v", providers.lastAccountUpdate.APIUpstreamAPIKey)
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.BaseURL != "https://new.example.test/v1" {
+		t.Fatalf("account base URL = %q, want updated base URL", body.Account.BaseURL)
 	}
 }
 

@@ -147,6 +147,48 @@ func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryUpdatesAPIUpstreamCredential(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	saved := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:    "openai",
+		AccountType: provider.AccountTypeAPIUpstream,
+		Subject:     "https://upstream.example.test",
+		DisplayName: "API Upstream",
+		Enabled:     true,
+		Priority:    5,
+		Status:      provider.AccountStatusActive,
+		Credential: provider.AccountCredential{
+			CredentialType:  provider.CredentialTypeAPIKey,
+			EncryptedAPIKey: "old-encrypted-api-key",
+			BaseURL:         "https://old.example.test",
+		},
+	})
+	baseURL := "https://new.example.test"
+	encryptedAPIKey := "new-encrypted-api-key"
+
+	updated, err := repo.UpdateAccount(ctx, "openai", saved.ID, provider.AccountUpdate{
+		APIUpstreamBaseURL:         &baseURL,
+		EncryptedAPIUpstreamAPIKey: &encryptedAPIKey,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if updated.Credential.BaseURL != "https://new.example.test" || updated.Credential.EncryptedAPIKey != encryptedAPIKey {
+		t.Fatalf("updated credential = %+v, want new base URL and encrypted key", updated.Credential)
+	}
+
+	found, err := repo.FindAccountByID(ctx, "openai", saved.ID)
+	if err != nil {
+		t.Fatalf("FindAccountByID returned error: %v", err)
+	}
+	if found.Credential.BaseURL != "https://new.example.test" || found.Credential.EncryptedAPIKey != encryptedAPIKey {
+		t.Fatalf("found credential = %+v, want persisted update", found.Credential)
+	}
+}
+
 func TestMarkAccountUsedClearsTemporaryFailureStateColumns(t *testing.T) {
 	source, err := os.ReadFile("provider.go")
 	if err != nil {

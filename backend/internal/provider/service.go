@@ -143,6 +143,7 @@ type Account struct {
 	Subject               string            `json:"subject"`
 	Name                  string            `json:"name"`
 	DisplayName           string            `json:"displayName"`
+	BaseURL               string            `json:"baseUrl,omitempty"`
 	Credential            AccountCredential `json:"-"`
 	EncryptedAccessToken  string            `json:"-"`
 	EncryptedRefreshToken string            `json:"-"`
@@ -217,10 +218,13 @@ type ExposedModel struct {
 }
 
 type AccountUpdate struct {
-	Enabled     *bool
-	Priority    *int
-	ClearStatus bool
-	Name        *string
+	Enabled                    *bool
+	Priority                   *int
+	ClearStatus                bool
+	Name                       *string
+	APIUpstreamBaseURL         *string
+	APIUpstreamAPIKey          *string
+	EncryptedAPIUpstreamAPIKey *string
 }
 
 type SelectedAccount struct {
@@ -679,7 +683,7 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus && update.Name == nil {
+	if update.Enabled == nil && update.Priority == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
@@ -691,6 +695,38 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 			return Account{}, ErrInvalidInput
 		}
 		update.Name = &name
+	}
+	if update.APIUpstreamBaseURL != nil || update.APIUpstreamAPIKey != nil {
+		account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
+		if err != nil {
+			return Account{}, err
+		}
+		if account.AccountType != AccountTypeAPIUpstream {
+			return Account{}, ErrInvalidInput
+		}
+	}
+	if update.APIUpstreamBaseURL != nil {
+		baseURL := normalizeOpenAICompatibleBaseURL(*update.APIUpstreamBaseURL)
+		parsedBaseURL, err := url.Parse(baseURL)
+		if err != nil ||
+			!parsedBaseURL.IsAbs() ||
+			parsedBaseURL.Host == "" ||
+			!s.apiUpstreamSchemeAllowed(parsedBaseURL.Scheme) {
+			return Account{}, ErrInvalidInput
+		}
+		update.APIUpstreamBaseURL = &baseURL
+	}
+	if update.APIUpstreamAPIKey != nil {
+		apiKey := strings.TrimSpace(*update.APIUpstreamAPIKey)
+		if apiKey == "" {
+			return Account{}, ErrInvalidInput
+		}
+		encryptedAPIKey, err := secret.EncryptString(s.cfg.Secret, apiKey)
+		if err != nil {
+			return Account{}, err
+		}
+		update.EncryptedAPIUpstreamAPIKey = &encryptedAPIKey
+		update.APIUpstreamAPIKey = nil
 	}
 	return s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
 }
@@ -1228,6 +1264,12 @@ func normalizeAccountCredentialFields(account Account) Account {
 	}
 	if account.Credential.LastRefreshErrorAt == nil {
 		account.Credential.LastRefreshErrorAt = account.LastRefreshErrorAt
+	}
+	if account.BaseURL == "" {
+		account.BaseURL = account.Credential.BaseURL
+	}
+	if account.Credential.BaseURL == "" {
+		account.Credential.BaseURL = account.BaseURL
 	}
 	return account
 }

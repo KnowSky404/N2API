@@ -1147,6 +1147,60 @@ func TestUpdateAccountCanRenameLocalAccountLabel(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{{
+		ID:          7,
+		Provider:    "openai",
+		AccountType: AccountTypeAPIUpstream,
+		Name:        "Upstream",
+		Credential: AccountCredential{
+			CredentialType:  CredentialTypeAPIKey,
+			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "old-secret"),
+			BaseURL:         "https://old.example.test",
+		},
+		Enabled:  true,
+		Priority: 1,
+		Status:   AccountStatusActive,
+	}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	oldEncryptedAPIKey := repo.accounts[0].Credential.EncryptedAPIKey
+	baseURL := "https://new.example.test/v1/"
+	apiKey := "new-secret"
+
+	account, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{
+		APIUpstreamBaseURL: &baseURL,
+		APIUpstreamAPIKey:  &apiKey,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if account.Credential.BaseURL != "https://new.example.test" {
+		t.Fatalf("BaseURL = %q, want normalized upstream base URL", account.Credential.BaseURL)
+	}
+	if account.Credential.EncryptedAPIKey == "" || account.Credential.EncryptedAPIKey == "new-secret" || account.Credential.EncryptedAPIKey == oldEncryptedAPIKey {
+		t.Fatalf("encrypted API key = %q, want new encrypted non-plaintext value", account.Credential.EncryptedAPIKey)
+	}
+	decrypted, err := secret.DecryptString("encryption-secret", account.Credential.EncryptedAPIKey)
+	if err != nil {
+		t.Fatalf("DecryptString returned error: %v", err)
+	}
+	if decrypted != "new-secret" {
+		t.Fatalf("decrypted API key = %q, want new-secret", decrypted)
+	}
+}
+
+func TestUpdateAccountRejectsAPIUpstreamCredentialPatchForOAuthAccount(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	baseURL := "https://new.example.test/v1"
+
+	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{APIUpstreamBaseURL: &baseURL}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateAccount error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestUpdateAccountRejectsEmptyLocalAccountLabel(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
@@ -1900,6 +1954,12 @@ func normalizeMemoryAccount(account *Account) {
 	if account.Credential.Metadata == nil {
 		account.Credential.Metadata = account.Metadata
 	}
+	if account.BaseURL == "" {
+		account.BaseURL = account.Credential.BaseURL
+	}
+	if account.Credential.BaseURL == "" {
+		account.Credential.BaseURL = account.BaseURL
+	}
 }
 
 func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id int64, update AccountUpdate) (Account, error) {
@@ -1915,6 +1975,13 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 		}
 		if update.Name != nil {
 			r.accounts[i].Name = *update.Name
+		}
+		if update.APIUpstreamBaseURL != nil {
+			r.accounts[i].Credential.BaseURL = *update.APIUpstreamBaseURL
+			r.accounts[i].BaseURL = *update.APIUpstreamBaseURL
+		}
+		if update.EncryptedAPIUpstreamAPIKey != nil {
+			r.accounts[i].Credential.EncryptedAPIKey = *update.EncryptedAPIUpstreamAPIKey
 		}
 		if update.ClearStatus {
 			r.accounts[i].Status = AccountStatusActive

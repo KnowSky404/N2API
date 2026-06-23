@@ -144,6 +144,7 @@ func syncAccountLegacyFields(account *provider.Account) {
 	account.LastRefreshAt = account.Credential.LastRefreshAt
 	account.LastRefreshError = account.Credential.LastRefreshError
 	account.LastRefreshErrorAt = account.Credential.LastRefreshErrorAt
+	account.BaseURL = account.Credential.BaseURL
 	account.Metadata = account.Credential.Metadata
 	if account.Metadata == nil {
 		account.Metadata = map[string]string{}
@@ -431,7 +432,13 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 }
 
 func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName string, id int64, update provider.AccountUpdate) (provider.Account, error) {
-	row := r.pool.QueryRow(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return provider.Account{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `
 		UPDATE provider_accounts
 		SET
 			enabled = COALESCE($3, enabled),
@@ -450,11 +457,27 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 		RETURNING id
 	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus, update.Name, update.Name != nil)
 	var updatedID int64
-	err := row.Scan(&updatedID)
+	err = row.Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.Account{}, provider.ErrNotConnected
 	}
 	if err != nil {
+		return provider.Account{}, err
+	}
+	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE provider_account_credentials
+			SET
+				encrypted_api_key = CASE WHEN $2 THEN $3 ELSE encrypted_api_key END,
+				base_url = CASE WHEN $4 THEN $5 ELSE base_url END,
+				updated_at = now()
+			WHERE account_id = $1
+		`, updatedID, update.EncryptedAPIUpstreamAPIKey != nil, update.EncryptedAPIUpstreamAPIKey, update.APIUpstreamBaseURL != nil, update.APIUpstreamBaseURL)
+		if err != nil {
+			return provider.Account{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return provider.Account{}, err
 	}
 	return r.FindAccountByID(ctx, providerName, updatedID)

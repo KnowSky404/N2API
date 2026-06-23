@@ -226,6 +226,11 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /API upstream/);
   assert.match(source, /Base URL/);
   assert.match(source, /HTTPS is required unless HTTP upstreams are explicitly enabled/);
+  assert.match(source, /name="baseUrl"/);
+  assert.match(source, /name="apiKey"/);
+  assert.match(source, /Leave blank to keep current key/);
+  assert.match(source, /Save upstream/);
+  assert.match(source, /updateAPIUpstreamCredential\(account, event\)/);
   assert.match(source, /updateProviderAccountName\(account, event\)/);
   assert.match(source, /provider-account-name-\$\{account\.id\}/);
   assert.match(source, /Rename \$\{accountLabel\(account\)\}/);

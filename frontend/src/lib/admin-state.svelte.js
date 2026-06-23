@@ -33,6 +33,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} subject
  * @property {string} name
  * @property {string} displayName
+ * @property {string} baseUrl
  * @property {boolean} enabled
  * @property {number} priority
  * @property {string} status
@@ -1041,7 +1042,7 @@ export async function completeProviderCallback() {
 
 /**
  * @param {ProviderAccount} account
- * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'name'>>} patch
+ * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'name' | 'baseUrl'>> & { apiKey?: string }} patch
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;

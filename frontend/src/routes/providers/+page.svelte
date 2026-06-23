@@ -71,6 +71,7 @@
       account.name,
       account.displayName,
       account.subject,
+      account.baseUrl,
       account.provider,
       accountTypeLabel(account),
       statusLabel(account.status),
@@ -159,6 +160,34 @@
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function isCodexOAuthAccount(account) {
     return account.accountType === 'codex_oauth' || !account.accountType;
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {SubmitEvent & { currentTarget: HTMLFormElement }} event
+   */
+  async function updateAPIUpstreamCredential(account, event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const baseUrl = String(data.get('baseUrl') ?? '');
+    const apiKey = String(data.get('apiKey') ?? '');
+    /** @type {{ baseUrl?: string, apiKey?: string }} */
+    const patch = {};
+
+    if (baseUrl.trim() && baseUrl.trim() !== (account.baseUrl ?? '').trim()) {
+      patch.baseUrl = baseUrl;
+    }
+    if (apiKey.trim()) {
+      patch.apiKey = apiKey;
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    await updateProviderAccount(account, patch);
+    const apiKeyInput = form.elements.namedItem('apiKey');
+    if (apiKeyInput instanceof HTMLInputElement) {
+      apiKeyInput.value = '';
+    }
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -615,6 +644,44 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           <p class="mt-1 max-w-[18rem] truncate font-mono text-[13px] text-[#6e6e6e]">
             {accountProviderDetail(account)}
           </p>
+          {#if account.accountType === 'api_upstream'}
+            <form
+              class="mt-3 grid max-w-[18rem] gap-2"
+              onsubmit={(event) => updateAPIUpstreamCredential(account, event)}
+            >
+              <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
+                Base URL
+                <input
+                  class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  name="baseUrl"
+                  type="url"
+                  value={account.baseUrl || ''}
+                  placeholder="https://api.openai.com/v1"
+                  disabled={providerAccounts.saving}
+                />
+              </label>
+              <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
+                  API key
+                  <input
+                    class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                    name="apiKey"
+                    type="password"
+                    autocomplete="off"
+                    placeholder="Leave blank to keep current key"
+                    disabled={providerAccounts.saving}
+                  />
+                </label>
+                <button
+                  class="self-end rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                  type="submit"
+                  disabled={providerAccounts.saving}
+                >
+                  Save upstream
+                </button>
+              </div>
+            </form>
+          {/if}
         </td>
         <td class="px-4 py-3 align-middle">
           <span class="inline-flex whitespace-nowrap rounded-full bg-[#f5f5f5] px-2.5 py-1 text-xs font-medium text-[#3c3c3c]">
