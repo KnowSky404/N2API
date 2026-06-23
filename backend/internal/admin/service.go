@@ -436,7 +436,7 @@ func usageSummarySince(rangeName string, now time.Time) (time.Time, bool) {
 
 func validUsageSummaryGroup(groupBy string) bool {
 	switch groupBy {
-	case "client_key", "provider_account", "model":
+	case "client_key", "provider_account", "model", "session":
 		return true
 	default:
 		return false

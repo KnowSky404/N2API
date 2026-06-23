@@ -355,6 +355,12 @@ func TestGetUsageSummaryValidatesRangeAndGroup(t *testing.T) {
 	if summary.TotalRequests != 2 || summary.TotalInputTokens != 30 || summary.TotalOutputTokens != 10 || summary.TotalTokens != 40 {
 		t.Fatalf("summary totals = %+v, want row totals", summary)
 	}
+	if _, err := service.GetUsageSummary(context.Background(), "7d", "session"); err != nil {
+		t.Fatalf("GetUsageSummary session returned error: %v", err)
+	}
+	if repo.lastUsageGroupBy != "session" {
+		t.Fatalf("repository group = %q, want session", repo.lastUsageGroupBy)
+	}
 
 	for _, tc := range []struct {
 		name    string

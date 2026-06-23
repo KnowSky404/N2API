@@ -34,7 +34,8 @@
   const usageGroups = [
     { value: 'model', label: 'Model' },
     { value: 'client_key', label: 'Client key' },
-    { value: 'provider_account', label: 'Provider account' }
+    { value: 'provider_account', label: 'Provider account' },
+    { value: 'session', label: 'Session' }
   ];
 
   /** @param {string} range */

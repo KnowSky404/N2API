@@ -500,6 +500,8 @@ func usageSummaryGroupSQL(groupBy string) (groupExpr, labelExpr, joinSQL string,
 		return "COALESCE(l.provider_account_id::text, 'unassigned')", "COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, 'Unassigned')", "LEFT JOIN provider_accounts a ON a.id = l.provider_account_id", true
 	case "model":
 		return "COALESCE(NULLIF(l.model, ''), 'unknown')", "COALESCE(NULLIF(l.model, ''), 'Unknown model')", "", true
+	case "session":
+		return "COALESCE(NULLIF(l.session_id, ''), 'none')", "COALESCE(NULLIF(l.session_id, ''), 'No session')", "", true
 	default:
 		return "", "", "", false
 	}

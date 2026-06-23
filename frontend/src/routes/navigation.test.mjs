@@ -65,7 +65,7 @@ test('request logs page shows token usage', () => {
 });
 
 test('request logs page includes usage accounting UI', () => {
-  for (const label of ['Usage summary', 'Estimated cost', 'Input tokens', 'Output tokens', 'Pricing']) {
+  for (const label of ['Usage summary', 'Estimated cost', 'Input tokens', 'Output tokens', 'Pricing', 'Session']) {
     assert.match(requestLogsPage, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
   }
 });

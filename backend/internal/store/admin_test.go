@@ -17,7 +17,7 @@ func TestAdminRepositoryImplementsInterface(t *testing.T) {
 }
 
 func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
-	for _, groupBy := range []string{"client_key", "provider_account", "model"} {
+	for _, groupBy := range []string{"client_key", "provider_account", "model", "session"} {
 		t.Run(groupBy, func(t *testing.T) {
 			groupExpr, labelExpr, _, ok := usageSummaryGroupSQL(groupBy)
 			if !ok {
@@ -31,6 +31,19 @@ func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
 
 	if _, _, _, ok := usageSummaryGroupSQL("status; DROP TABLE request_logs"); ok {
 		t.Fatal("usageSummaryGroupSQL accepted an unknown group")
+	}
+}
+
+func TestUsageSummarySessionGroupUsesLoggedSessionID(t *testing.T) {
+	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL("session")
+	if !ok {
+		t.Fatal("usageSummaryGroupSQL(session) ok = false, want true")
+	}
+	if !strings.Contains(groupExpr, "l.session_id") || !strings.Contains(labelExpr, "l.session_id") {
+		t.Fatalf("session group expressions = %q / %q, want request log session_id", groupExpr, labelExpr)
+	}
+	if joinSQL != "" {
+		t.Fatalf("session group join SQL = %q, want no join", joinSQL)
 	}
 }
 
