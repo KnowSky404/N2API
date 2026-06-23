@@ -875,9 +875,16 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 		}
 		limitedBody = body
 	}
+	if sessionID == "" {
+		sessionID = stickySessionIDFromHeader(r.Header)
+	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
 	}, maxReplayableAttempts, model, sessionID, nil
+}
+
+func stickySessionIDFromHeader(header http.Header) string {
+	return strings.TrimSpace(header.Get("session_id"))
 }
 
 func routeRequiresModel(r *http.Request) bool {
