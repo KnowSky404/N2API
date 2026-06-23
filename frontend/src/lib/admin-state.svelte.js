@@ -824,7 +824,7 @@ export async function refreshProviderAccount(account) {
   providerAccounts.saving = true;
   providerAccounts.error = '';
   try {
-    await requestJSON(`/api/admin/providers/openai/accounts/${account.id}/refresh`, {
+    await requestJSON(`/api/admin/provider-accounts/${account.id}/refresh`, {
       method: 'POST'
     });
     if (!isCurrentAuthenticated(version)) return;

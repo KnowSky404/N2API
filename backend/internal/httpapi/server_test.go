@@ -1300,6 +1300,33 @@ func TestAdminCanRefreshProviderAccount(t *testing.T) {
 	}
 }
 
+func TestAdminCanRefreshUnifiedProviderAccount(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, Status: provider.AccountStatusCircuitOpen}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/refresh", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if providers.refreshedAccountID != 7 {
+		t.Fatalf("refreshedAccountID = %d, want 7", providers.refreshedAccountID)
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastRefreshAt == nil {
+		t.Fatalf("account = %+v, want refreshed active account 7", body.Account)
+	}
+}
+
 func TestAdminCanDisconnectProviderAccount(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10}}

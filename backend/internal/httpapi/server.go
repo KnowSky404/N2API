@@ -362,6 +362,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleReplaceProviderAccountModels(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleRefreshProviderAccount(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		if providers == nil {
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
@@ -434,30 +438,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		if providers == nil {
-			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-			return
-		}
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil || id <= 0 {
-			writeError(w, http.StatusBadRequest, "bad_request")
-			return
-		}
-
-		account, err := providers.RefreshAccount(r.Context(), id)
-		if err != nil {
-			if errors.Is(err, provider.ErrInvalidInput) {
-				writeError(w, http.StatusBadRequest, "invalid_input")
-				return
-			}
-			if errors.Is(err, provider.ErrNotConnected) {
-				writeError(w, http.StatusNotFound, "not_found")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+		handleRefreshProviderAccount(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -666,6 +647,33 @@ func handleReplaceProviderAccountModels(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]provider.AccountModel{"models": models})
+}
+
+func handleRefreshProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	account, err := providers.RefreshAccount(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, provider.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		if errors.Is(err, provider.ErrNotConnected) {
+			writeError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
 }
 
 func writeManualOAuthCallbackPage(w http.ResponseWriter, r *http.Request) {

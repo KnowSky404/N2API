@@ -99,6 +99,13 @@ test('provider account state uses unified codex oauth connect endpoint', () => {
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/connect/);
 });
 
+test('provider account state uses unified account refresh endpoint', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}\/refresh/);
+  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{account\.id\}\/refresh/);
+});
+
 test('provider account table supports search, sorting, and a pinned actions column', () => {
   assert.match(source, /placeholder="Search accounts"/);
   assert.match(source, /aria-sort=/);
