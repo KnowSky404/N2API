@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
@@ -30,6 +31,17 @@ func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
 
 	if _, _, _, ok := usageSummaryGroupSQL("status; DROP TABLE request_logs"); ok {
 		t.Fatal("usageSummaryGroupSQL accepted an unknown group")
+	}
+}
+
+func TestListRequestLogsPrefersProviderAccountNameSnapshot(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("ReadFile admin.go returned error: %v", err)
+	}
+	sql := string(source)
+	if !strings.Contains(sql, "COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, '')") {
+		t.Fatal("ListRequestLogs must prefer the logged provider account name snapshot before joining the current account row")
 	}
 }
 

@@ -379,7 +379,7 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			l.provider,
 			COALESCE(l.provider_account_id, 0),
 			COALESCE(NULLIF(l.provider_account_type, ''), a.account_type, ''),
-			COALESCE(NULLIF(a.display_name, ''), a.name, ''),
+			COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, ''),
 			l.model,
 			l.route,
 			l.method,

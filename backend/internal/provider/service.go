@@ -222,6 +222,7 @@ type SelectedAccount struct {
 	AccountID          int64
 	Provider           string
 	AccountType        string
+	DisplayName        string
 	AuthorizationToken string
 	BaseURL            string
 	ChatGPTAccountID   string
@@ -976,6 +977,7 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 		AccountID:        account.ID,
 		Provider:         valueOrDefault(strings.TrimSpace(account.Provider), s.cfg.Provider),
 		AccountType:      accountType,
+		DisplayName:      accountDisplayName(account),
 		ChatGPTAccountID: strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
 	}
 	switch accountType {
@@ -1056,6 +1058,15 @@ func normalizeAccountCredentialFields(account Account) Account {
 		account.Credential.LastRefreshErrorAt = account.LastRefreshErrorAt
 	}
 	return account
+}
+
+func accountDisplayName(account Account) string {
+	for _, value := range []string{account.Name, account.DisplayName, account.Subject, account.Provider} {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (s *Service) selectionCandidates(ctx context.Context, model string, excludedAccountIDs []int64) ([]Account, bool, error, error) {

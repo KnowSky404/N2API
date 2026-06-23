@@ -33,6 +33,7 @@ type SelectedAccount struct {
 	AccountID          int64
 	Provider           string
 	AccountType        string
+	DisplayName        string
 	AuthorizationToken string
 	BaseURL            string
 	ChatGPTAccountID   string
@@ -77,6 +78,7 @@ type RequestLog struct {
 	Provider              string
 	ProviderAccountID     int64
 	ProviderAccountType   string
+	ProviderAccountName   string
 	Model                 string
 	Route                 string
 	Method                string
@@ -182,6 +184,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Provider:              "openai",
 			ProviderAccountID:     loggedAccount.AccountID,
 			ProviderAccountType:   loggedAccount.AccountType,
+			ProviderAccountName:   loggedAccount.DisplayName,
 			Model:                 requestModel,
 			Route:                 r.URL.Path,
 			Method:                r.Method,

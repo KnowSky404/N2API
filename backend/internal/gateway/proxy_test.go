@@ -919,7 +919,7 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
 	}))
 	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}, Config{
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Upstream A", AuthorizationToken: "upstream-token"}}}, Config{
 		UpstreamBaseURL: upstream.URL,
 		Logger:          logger,
 	})
@@ -941,6 +941,9 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 	}
 	if entry.ProviderAccountID != 7 || entry.ProviderAccountType != provider.AccountTypeAPIUpstream {
 		t.Fatalf("log account attribution = id:%d type:%q, want 7/%s", entry.ProviderAccountID, entry.ProviderAccountType, provider.AccountTypeAPIUpstream)
+	}
+	if entry.ProviderAccountName != "Upstream A" {
+		t.Fatalf("log account name = %q, want snapshot name", entry.ProviderAccountName)
 	}
 	if entry.StatusCode != http.StatusOK || entry.Error != "" {
 		t.Fatalf("log status/error = %d/%q, want 200/empty", entry.StatusCode, entry.Error)

@@ -31,6 +31,7 @@ func (p gatewayAccountProvider) SelectAccountForModel(ctx context.Context, model
 		AccountID:          selected.AccountID,
 		Provider:           selected.Provider,
 		AccountType:        selected.AccountType,
+		DisplayName:        selected.DisplayName,
 		AuthorizationToken: selected.AuthorizationToken,
 		BaseURL:            selected.BaseURL,
 		ChatGPTAccountID:   selected.ChatGPTAccountID,

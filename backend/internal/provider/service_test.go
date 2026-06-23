@@ -712,6 +712,7 @@ func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.
 		ID:          11,
 		Provider:    "openai",
 		AccountType: AccountTypeAPIUpstream,
+		Name:        "Upstream A",
 		Subject:     "api-upstream",
 		Credential: AccountCredential{
 			CredentialType:  CredentialTypeAPIKey,
@@ -731,6 +732,9 @@ func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.
 	}
 	if selected.AccountID != 11 || selected.Provider != "openai" || selected.AccountType != AccountTypeAPIUpstream {
 		t.Fatalf("selected account identity = %+v", selected)
+	}
+	if selected.DisplayName != "Upstream A" {
+		t.Fatalf("DisplayName = %q, want account name snapshot", selected.DisplayName)
 	}
 	if selected.AuthorizationToken != "sk-upstream" {
 		t.Fatalf("AuthorizationToken = %q, want upstream API key", selected.AuthorizationToken)
