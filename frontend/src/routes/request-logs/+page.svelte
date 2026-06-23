@@ -366,7 +366,7 @@ onclick={loadRequestLogs}
             <div class="max-w-[220px]">
               <p class="truncate font-medium text-[#0d0d0d]">{log.providerAccountName || `Account ${log.providerAccountId}`}</p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
-                {accountTypeLabel(log.providerAccountType)} · ID {log.providerAccountId}
+                {log.provider || 'Unknown'} · {accountTypeLabel(log.providerAccountType)} · ID {log.providerAccountId}
               </p>
             </div>
           {:else}

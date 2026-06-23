@@ -85,6 +85,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
 
 test('request logs page shows provider account attribution', () => {
   assert.match(requestLogsPage, /Provider account/);
+  assert.match(requestLogsPage, /log\.provider\s*\|\|/);
   assert.match(requestLogsPage, /log\.providerAccountName/);
   assert.match(requestLogsPage, /log\.providerAccountType/);
   assert.match(requestLogsPage, /log\.providerAccountId/);
