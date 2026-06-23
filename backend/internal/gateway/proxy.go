@@ -154,7 +154,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	errorCode := ""
 	var loggedAccount SelectedAccount
 	requestModel := ""
+	observedUsage := Usage{Source: "missing"}
 	defer func() {
+		if observedUsage.Model == "" {
+			observedUsage.Model = requestModel
+		}
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:           newRequestID(),
 			ClientKeyID:         key.ID,
@@ -167,6 +171,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			StatusCode:          recorder.statusCode(),
 			Latency:             time.Since(startedAt),
 			Error:               errorCode,
+			InputTokens:         observedUsage.InputTokens,
+			OutputTokens:        observedUsage.OutputTokens,
+			TotalTokens:         observedUsage.TotalTokens,
+			CachedInputTokens:   observedUsage.CachedInputTokens,
+			ReasoningTokens:     observedUsage.ReasoningTokens,
+			UsageSource:         observedUsage.Source,
 			CreatedAt:           startedAt,
 		})
 	}()
@@ -269,9 +279,25 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		copyResponseHeaders(recorder.Header(), upstreamResp.Header)
 		recorder.WriteHeader(upstreamResp.StatusCode)
-		_, _ = io.Copy(flushWriter{ResponseWriter: recorder}, upstreamResp.Body)
+		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
 		return
 	}
+}
+
+func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string) Usage {
+	if resp == nil || resp.Body == nil {
+		return Usage{Source: "missing"}
+	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		_, _ = io.Copy(flushWriter{ResponseWriter: w}, resp.Body)
+		return Usage{Source: "missing"}
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Usage{Source: "missing"}
+	}
+	_, _ = w.Write(body)
+	return ParseUsageFromJSON(route, body)
 }
 
 func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) {

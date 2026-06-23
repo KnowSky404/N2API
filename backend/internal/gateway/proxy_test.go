@@ -933,6 +933,52 @@ func TestProxyLogsRequestModel(t *testing.T) {
 	}
 }
 
+func TestProxyLogsNonStreamingUsage(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{
+				"model":"gpt-5",
+				"usage":{
+					"prompt_tokens":20,
+					"completion_tokens":5,
+					"total_tokens":25,
+					"prompt_tokens_details":{"cached_tokens":4},
+					"completion_tokens_details":{"reasoning_tokens":2}
+				}
+			}`)),
+			Request: r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"usage"`) {
+		t.Fatalf("body = %s, want passthrough usage payload", recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.UsageSource != "chat_completions" || entry.InputTokens != 20 || entry.OutputTokens != 5 || entry.TotalTokens != 25 || entry.CachedInputTokens != 4 || entry.ReasoningTokens != 2 {
+		t.Fatalf("logged usage = %+v, want parsed non-streaming usage", entry)
+	}
+}
+
 func TestProxyLogsProviderErrorsAfterAuthentication(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{errs: []error{provider.ErrNotConnected}}, Config{
