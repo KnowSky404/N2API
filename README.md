@@ -75,6 +75,8 @@ Selected rows can also receive shared scheduling parameters. Set **Bulk priority
 
 Configure model capability on each provider account row. The API Keys page controls the gateway default model, the global routable model list, and client-key model access; these settings do not grant capability to accounts that do not list that model.
 
+Selected provider accounts can also receive the same model capability list. Enter one model per line in **Bulk models**, then use **Apply models** to replace the selected accounts' manual model lists together; this controls which models the scheduler can route to those accounts.
+
 API upstream credentials can be updated after account creation. Use the provider account row to rotate the encrypted upstream API key or base URL; saving new credentials clears local failure status so a previously rate-limited, expired, or circuit-open API upstream can be scheduled again with the new settings.
 
 Use **Test account** when you want to probe one provider account before sending client traffic through it. The action probes one provider account with its current OAuth token or API upstream key, clears local failure status on a successful probe, and records upstream failure status for 401/403/429/5xx probe responses. The account row keeps the last test status, last test time, and last test error so manual checks remain visible after refresh. Each probe also writes provider account test history, available from the admin API at `GET /api/admin/provider-accounts/{id}/test-results`.

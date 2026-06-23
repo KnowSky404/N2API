@@ -196,6 +196,25 @@ func TestGatewayDocumentationMentionsProviderAccountBulkScheduling(t *testing.T)
 	}
 }
 
+func TestGatewayDocumentationMentionsProviderAccountBulkModels(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Apply models",
+			"selected provider accounts",
+			"same model capability list",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account bulk model documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsSelectedProviderAccountTests(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
