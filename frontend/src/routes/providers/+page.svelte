@@ -7,12 +7,15 @@
     copyAuthorizationURL,
     createAPIUpstreamAccount,
     disconnectProviderAccount,
+    formatCostMicrousd,
     formatDate,
+    formatTokens,
     getAccountModelsState,
     getProviderStateLabel,
     getSchedulableProviderAccounts,
     getUnschedulableProviderAccountSummary,
     loadProviderAccounts,
+    loadUsageSummary,
     login,
     loginForm,
     apiUpstreamForm,
@@ -29,15 +32,18 @@
     statusLabel,
     updateProviderAccount,
     updateProviderAccountName,
-    updateProviderAccountPriority
+    updateProviderAccountPriority,
+    usage
   } from '$lib/admin-state.svelte.js';
 
   let accountSearch = $state('');
   let accountSort = $state({ key: 'priority', direction: 'asc' });
+  let providerUsageRequested = $state(false);
 
   const providerStateLabel = $derived(getProviderStateLabel());
   const schedulableProviderAccounts = $derived(getSchedulableProviderAccounts());
   const unschedulableProviderAccountSummary = $derived(getUnschedulableProviderAccountSummary());
+  const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
       providerAccounts.items.filter((account) => {
@@ -47,6 +53,17 @@
       })
     )
   );
+
+  $effect(() => {
+    if (!session.authenticated) {
+      providerUsageRequested = false;
+      return;
+    }
+    if (!providerUsageRequested) {
+      providerUsageRequested = true;
+      void loadUsageSummary('24h', 'provider_account');
+    }
+  });
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountSearchText(account) {
@@ -259,6 +276,46 @@ class={[
         {/if}
       </article>
     </div>
+  </section>
+
+  <section class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 class="text-base font-semibold text-[#0d0d0d]">24h account usage</h3>
+        <p class="mt-1 text-sm text-[#6e6e6e]">Gateway traffic distribution by provider account.</p>
+      </div>
+      {#if usage.loading}
+        <span class="text-sm text-[#6e6e6e]">Loading...</span>
+      {/if}
+    </div>
+    {#if usage.error}
+      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
+    {:else if !usage24hProviderAccounts || usage24hProviderAccounts.rows.length === 0}
+      <p class="mt-4 text-sm text-[#6e6e6e]">No provider account usage in the last 24h.</p>
+    {:else}
+      <div class="mt-4 overflow-x-auto rounded-lg border border-[#ededed] bg-white">
+        <table class="w-full min-w-[640px] text-left text-sm">
+          <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+            <tr>
+              <th class="px-4 py-3 font-medium">Provider account</th>
+              <th class="px-4 py-3 font-medium">Requests</th>
+              <th class="px-4 py-3 font-medium">Tokens</th>
+              <th class="px-4 py-3 font-medium">Estimated cost</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#ededed]">
+            {#each usage24hProviderAccounts.rows.slice(0, 8) as row}
+              <tr>
+                <td class="px-4 py-3 font-medium text-[#0d0d0d]">{row.label || row.id}</td>
+                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
+                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
+                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
   </section>
 
   <div class="mt-5 flex flex-wrap items-center justify-between gap-3">

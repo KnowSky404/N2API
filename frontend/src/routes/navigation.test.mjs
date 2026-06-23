@@ -146,6 +146,17 @@ test('providers page summarizes account scheduling capacity', () => {
   assert.match(providersPage, /unschedulableProviderAccountSummary/);
 });
 
+test('providers page shows provider account usage distribution', () => {
+  for (const label of ['24h account usage', 'Requests', 'Tokens', 'Estimated cost']) {
+    assert.match(providersPage, new RegExp(label.replace(' ', '\\s+')), `providers page should include ${label}`);
+  }
+
+  assert.match(providersPage, /loadUsageSummary\('24h', 'provider_account'\)/);
+  assert.match(providersPage, /usage24hProviderAccounts/);
+  assert.match(providersPage, /formatTokens/);
+  assert.match(providersPage, /formatCostMicrousd/);
+});
+
 test('api keys page shows per-key usage distribution', () => {
   for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost']) {
     assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
