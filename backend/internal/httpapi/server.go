@@ -480,6 +480,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleBulkUpdateProviderAccounts(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleBulkTestProviderAccounts(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleProviderStatus(w, r, providers)
 	}))
@@ -872,6 +876,48 @@ func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, pr
 	accounts := make([]provider.Account, 0, len(accountIDs))
 	for _, id := range accountIDs {
 		account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{Enabled: req.Enabled})
+		if err != nil {
+			writeProviderAccountError(w, err)
+			return
+		}
+		accounts = append(accounts, account)
+	}
+	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+func handleBulkTestProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	var req struct {
+		AccountIDs []int64 `json:"accountIds"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if len(req.AccountIDs) == 0 || len(req.AccountIDs) > 100 {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	accountIDs := make([]int64, 0, len(req.AccountIDs))
+	seen := map[int64]struct{}{}
+	for _, id := range req.AccountIDs {
+		if id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		accountIDs = append(accountIDs, id)
+	}
+
+	accounts := make([]provider.Account, 0, len(accountIDs))
+	for _, id := range accountIDs {
+		account, err := providers.TestAccount(r.Context(), id)
 		if err != nil {
 			writeProviderAccountError(w, err)
 			return

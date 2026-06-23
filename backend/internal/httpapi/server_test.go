@@ -81,6 +81,7 @@ type fakeProviderService struct {
 	disconnected          bool
 	refreshedAccountID    int64
 	testedAccountID       int64
+	testedAccountIDs      []int64
 	testResultsAccountID  int64
 	testResultsLimit      int
 	testedAllAccounts     bool
@@ -549,6 +550,7 @@ func (s *fakeProviderService) TestAccount(_ context.Context, id int64) (provider
 			account.FailureCount = 0
 			s.accounts[i] = account
 			s.testedAccountID = id
+			s.testedAccountIDs = append(s.testedAccountIDs, id)
 			return account, nil
 		}
 	}
@@ -1542,6 +1544,66 @@ func TestAdminBulkProviderAccountUpdateValidatesInput(t *testing.T) {
 			}
 			if len(providers.accountUpdateIDs) != 0 {
 				t.Fatalf("updated ids = %+v, want no updates", providers.accountUpdateIDs)
+			}
+		})
+	}
+}
+
+func TestAdminCanTestSelectedUnifiedProviderAccounts(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1, Status: provider.AccountStatusCircuitOpen, LastError: "paused"},
+		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1, Status: provider.AccountStatusRateLimited, LastError: "rate limited"},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-test", strings.NewReader(`{"accountIds":[7,8,7]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !reflect.DeepEqual(providers.testedAccountIDs, []int64{7, 8}) {
+		t.Fatalf("tested ids = %+v, want [7 8]", providers.testedAccountIDs)
+	}
+	var body struct {
+		Accounts []provider.Account `json:"accounts"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Accounts) != 2 || body.Accounts[0].Status != provider.AccountStatusActive || body.Accounts[1].Status != provider.AccountStatusActive {
+		t.Fatalf("accounts = %+v, want two tested active accounts", body.Accounts)
+	}
+}
+
+func TestAdminBulkProviderAccountTestValidatesInput(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "empty ids", body: `{"accountIds":[]}`},
+		{name: "bad id", body: `{"accountIds":[0]}`},
+		{name: "too many ids", body: `{"accountIds":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true}}
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-test", strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+			}
+			if len(providers.testedAccountIDs) != 0 {
+				t.Fatalf("tested ids = %+v, want no tests", providers.testedAccountIDs)
 			}
 		})
 	}
