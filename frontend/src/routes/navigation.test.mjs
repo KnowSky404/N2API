@@ -52,3 +52,9 @@ test('request logs page shows token usage', () => {
   assert.match(requestLogsPage, /log\.totalTokens/);
   assert.match(requestLogsPage, /log\.usageSource/);
 });
+
+test('request logs page includes usage accounting UI', () => {
+  for (const label of ['Usage summary', 'Estimated cost', 'Input tokens', 'Output tokens', 'Pricing']) {
+    assert.match(requestLogsPage, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
+  }
+});

@@ -65,7 +65,39 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} cachedInputTokens
  * @property {number} reasoningTokens
  * @property {string} usageSource
+ * @property {number} estimatedCostMicrousd
  * @property {string} createdAt
+ */
+
+/**
+ * @typedef {object} UsageSummaryRow
+ * @property {string} id
+ * @property {string} label
+ * @property {number} requests
+ * @property {number} inputTokens
+ * @property {number} outputTokens
+ * @property {number} totalTokens
+ * @property {number} estimatedCostMicrousd
+ */
+
+/**
+ * @typedef {object} UsageSummary
+ * @property {string} range
+ * @property {string} groupBy
+ * @property {number} totalRequests
+ * @property {number} totalInputTokens
+ * @property {number} totalOutputTokens
+ * @property {number} totalTokens
+ * @property {number} estimatedCostMicrousd
+ * @property {UsageSummaryRow[]} rows
+ */
+
+/**
+ * @typedef {object} UsagePricingRow
+ * @property {string} model
+ * @property {number} inputMicrousdPerMillion
+ * @property {number} cachedInputMicrousdPerMillion
+ * @property {number} outputMicrousdPerMillion
  */
 
 /**
@@ -162,6 +194,26 @@ export const requestLogs = $state({
   loading: false,
   error: '',
   items: []
+});
+/** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
+export const usage = $state({
+  loading: false,
+  error: '',
+  range: '7d',
+  groupBy: 'model',
+  summaries: {},
+  current: null
+});
+/** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, version: number, currency: string, unit: string, rows: UsagePricingRow[] }} */
+export const usagePricing = $state({
+  loading: false,
+  saving: false,
+  error: '',
+  saved: false,
+  version: 1,
+  currency: 'USD',
+  unit: '1M_tokens',
+  rows: []
 });
 /** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, defaultModel: string, allowedModelsText: string }} */
 export const modelSettings = $state({
@@ -333,6 +385,16 @@ export function formatDate(value) {
   return new Date(value).toLocaleString();
 }
 
+/** @param {number | null | undefined} value */
+export function formatTokens(value) {
+  return Number(value ?? 0).toLocaleString();
+}
+
+/** @param {number | null | undefined} value */
+export function formatCostMicrousd(value) {
+  return `$${(Number(value ?? 0) / 1_000_000).toFixed(4)}`;
+}
+
 export async function copySecret() {
   if (!apiKeys.oneTimeSecret) return;
   const version = sessionVersion;
@@ -375,6 +437,27 @@ function clearRequestLogs() {
     loading: false,
     error: '',
     items: []
+  });
+}
+
+function clearUsage() {
+  replaceState(usage, {
+    loading: false,
+    error: '',
+    range: '7d',
+    groupBy: 'model',
+    summaries: {},
+    current: null
+  });
+  replaceState(usagePricing, {
+    loading: false,
+    saving: false,
+    error: '',
+    saved: false,
+    version: 1,
+    currency: 'USD',
+    unit: '1M_tokens',
+    rows: []
   });
 }
 
@@ -469,6 +552,7 @@ export async function loadSession() {
       clearAPIKeys();
       clearModelSettings();
       clearRequestLogs();
+      clearUsage();
       return;
     }
     if (!response.ok) {
@@ -492,6 +576,10 @@ export async function loadSession() {
     await loadModelRouting();
     await loadKeys();
     await loadRequestLogs();
+    await loadUsagePricing();
+    await loadUsageSummary('24h', usage.groupBy);
+    await loadUsageSummary('30d', usage.groupBy);
+    await loadUsageSummary('7d', usage.groupBy);
   } catch (error) {
     if (version !== sessionVersion) return;
 
@@ -506,6 +594,7 @@ export async function loadSession() {
     clearAPIKeys();
     clearModelSettings();
     clearRequestLogs();
+    clearUsage();
   }
 }
 
@@ -538,6 +627,7 @@ export async function logout() {
   clearAPIKeys();
   clearModelSettings();
   clearRequestLogs();
+  clearUsage();
   loginForm.password = '';
 }
 
@@ -1029,6 +1119,124 @@ export async function loadRequestLogs() {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     requestLogs.loading = false;
+  }
+}
+
+/**
+ * @param {string} range
+ * @param {string} groupBy
+ */
+function usageSummaryKey(range, groupBy) {
+  return `${range}:${groupBy}`;
+}
+
+/**
+ * @param {string} [range]
+ * @param {string} [groupBy]
+ */
+export async function loadUsageSummary(range = usage.range, groupBy = usage.groupBy) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  usage.loading = true;
+  usage.error = '';
+
+  try {
+    const params = new URLSearchParams({ range, groupBy });
+    const payload = await requestJSON(`/api/admin/usage-summary?${params.toString()}`);
+    if (!isCurrentAuthenticated(version)) return;
+    usage.range = payload.range ?? range;
+    usage.groupBy = payload.groupBy ?? groupBy;
+    usage.current = payload;
+    usage.summaries[usageSummaryKey(usage.range, usage.groupBy)] = payload;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    usage.error = error instanceof Error ? error.message : 'Failed to load usage summary';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    usage.loading = false;
+  }
+}
+
+export async function loadUsagePricing() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  usagePricing.loading = true;
+  usagePricing.error = '';
+  usagePricing.saved = false;
+
+  try {
+    const payload = await requestJSON('/api/admin/usage-pricing');
+    if (!isCurrentAuthenticated(version)) return;
+    usagePricing.version = payload.version ?? 1;
+    usagePricing.currency = payload.currency ?? 'USD';
+    usagePricing.unit = payload.unit ?? '1M_tokens';
+    usagePricing.rows = Object.entries(payload.models ?? {}).map(([model, price]) => ({
+      model,
+      inputMicrousdPerMillion: Number(price?.inputMicrousdPerMillion ?? 0),
+      cachedInputMicrousdPerMillion: Number(price?.cachedInputMicrousdPerMillion ?? 0),
+      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0)
+    }));
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    usagePricing.error = error instanceof Error ? error.message : 'Failed to load usage pricing';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    usagePricing.loading = false;
+  }
+}
+
+/** @param {SubmitEvent} event */
+export async function saveUsagePricing(event) {
+  event.preventDefault();
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  usagePricing.saving = true;
+  usagePricing.error = '';
+  usagePricing.saved = false;
+
+  /** @type {Record<string, Omit<UsagePricingRow, 'model'>>} */
+  const models = {};
+  for (const row of usagePricing.rows) {
+    const model = String(row.model ?? '').trim();
+    if (!model) continue;
+    models[model] = {
+      inputMicrousdPerMillion: Number(row.inputMicrousdPerMillion) || 0,
+      cachedInputMicrousdPerMillion: Number(row.cachedInputMicrousdPerMillion) || 0,
+      outputMicrousdPerMillion: Number(row.outputMicrousdPerMillion) || 0
+    };
+  }
+
+  try {
+    const payload = await requestJSON('/api/admin/usage-pricing', {
+      method: 'PUT',
+      body: JSON.stringify({
+        version: usagePricing.version,
+        currency: usagePricing.currency,
+        unit: usagePricing.unit,
+        models
+      })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    usagePricing.version = payload.version ?? 1;
+    usagePricing.currency = payload.currency ?? 'USD';
+    usagePricing.unit = payload.unit ?? '1M_tokens';
+    usagePricing.rows = Object.entries(payload.models ?? {}).map(([model, price]) => ({
+      model,
+      inputMicrousdPerMillion: Number(price?.inputMicrousdPerMillion ?? 0),
+      cachedInputMicrousdPerMillion: Number(price?.cachedInputMicrousdPerMillion ?? 0),
+      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0)
+    }));
+    usagePricing.saved = true;
+    await loadUsageSummary(usage.range, usage.groupBy);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    usagePricing.error = error instanceof Error ? error.message : 'Failed to save usage pricing';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    usagePricing.saving = false;
   }
 }
 
