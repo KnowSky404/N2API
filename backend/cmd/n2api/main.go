@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
@@ -136,7 +139,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	pool, err := store.OpenPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("database unavailable", "error", err)
@@ -177,6 +181,12 @@ func main() {
 		Secret:                cfg.EncryptionSecret,
 		AllowHTTPAPIUpstreams: cfg.AllowHTTPAPIUpstreams,
 	})
+	autoTestRunner := provider.NewAutoTestRunner(providerService, provider.AutoTestRunnerConfig{
+		Enabled:  cfg.ProviderAccountAutoTestEnabled,
+		Interval: cfg.ProviderAccountAutoTestInterval,
+	}, slog.Default())
+	go autoTestRunner.Run(ctx)
+
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL:                 cfg.OpenAIAPIBaseURL,
 		MaxConcurrentGatewayRequests:    cfg.GatewayMaxConcurrentRequests,
@@ -199,9 +209,24 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	slog.Info("starting n2api", "addr", cfg.Addr())
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("server stopped", "error", err)
-		os.Exit(1)
+	serverErrors := make(chan error, 1)
+	go func() {
+		slog.Info("starting n2api", "addr", cfg.Addr())
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server stopped", "error", err)
+			os.Exit(1)
+		}
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Error("server shutdown failed", "error", err)
+			os.Exit(1)
+		}
 	}
 }
