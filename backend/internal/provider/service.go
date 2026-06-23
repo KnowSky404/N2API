@@ -1129,7 +1129,15 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 			return SelectedAccount{}, err
 		}
 		selected.AuthorizationToken = token
-		selected.BaseURL = strings.TrimRight(strings.TrimSpace(account.Credential.BaseURL), "/")
+		baseURL := strings.TrimRight(strings.TrimSpace(account.Credential.BaseURL), "/")
+		parsedBaseURL, err := url.Parse(baseURL)
+		if err != nil ||
+			!parsedBaseURL.IsAbs() ||
+			parsedBaseURL.Host == "" ||
+			(parsedBaseURL.Scheme != "http" && parsedBaseURL.Scheme != "https") {
+			return SelectedAccount{}, ErrInvalidInput
+		}
+		selected.BaseURL = baseURL
 		return selected, nil
 	default:
 		return SelectedAccount{}, fmt.Errorf("unsupported account type %q", accountType)

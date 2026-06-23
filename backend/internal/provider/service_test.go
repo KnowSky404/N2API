@@ -747,6 +747,57 @@ func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.
 	}
 }
 
+func TestSelectAccountForModelSkipsAPIUpstreamWithInvalidBaseURL(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		{
+			ID:          11,
+			Provider:    "openai",
+			AccountType: AccountTypeAPIUpstream,
+			Name:        "Broken upstream",
+			Credential: AccountCredential{
+				CredentialType:  CredentialTypeAPIKey,
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-broken"),
+				BaseURL:         "://broken",
+			},
+			Enabled:  true,
+			Priority: 1,
+			Status:   AccountStatusActive,
+			Metadata: map[string]string{},
+		},
+		{
+			ID:          12,
+			Provider:    "openai",
+			AccountType: AccountTypeAPIUpstream,
+			Name:        "Fallback upstream",
+			Credential: AccountCredential{
+				CredentialType:  CredentialTypeAPIKey,
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-fallback"),
+				BaseURL:         "https://fallback.example.test/v1",
+			},
+			Enabled:  true,
+			Priority: 2,
+			Status:   AccountStatusActive,
+			Metadata: map[string]string{},
+		},
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
+	}
+	if selected.AccountID != 12 || selected.AuthorizationToken != "sk-fallback" {
+		t.Fatalf("selected = %+v, want fallback upstream 12", selected)
+	}
+	if repo.accounts[0].LastError == "" {
+		t.Fatal("invalid API upstream account was not marked with an error")
+	}
+	if repo.accounts[0].LastUsedAt != nil {
+		t.Fatal("invalid API upstream account was marked used")
+	}
+}
+
 func TestSelectAccountForModelSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
 	repo := newMemoryRepo()
 	now := time.Now()
