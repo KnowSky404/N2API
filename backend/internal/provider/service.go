@@ -728,6 +728,9 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		update.EncryptedAPIUpstreamAPIKey = &encryptedAPIKey
 		update.APIUpstreamAPIKey = nil
 	}
+	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil {
+		update.ClearStatus = true
+	}
 	return s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
 }
 

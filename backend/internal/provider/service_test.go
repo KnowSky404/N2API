@@ -1149,6 +1149,8 @@ func TestUpdateAccountCanRenameLocalAccountLabel(t *testing.T) {
 
 func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 	repo := newMemoryRepo()
+	now := time.Now()
+	openUntil := now.Add(time.Hour)
 	repo.accounts = []Account{{
 		ID:          7,
 		Provider:    "openai",
@@ -1159,9 +1161,14 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "old-secret"),
 			BaseURL:         "https://old.example.test",
 		},
-		Enabled:  true,
-		Priority: 1,
-		Status:   AccountStatusActive,
+		Enabled:          true,
+		Priority:         1,
+		Status:           AccountStatusCircuitOpen,
+		StatusReason:     "old upstream credential failed",
+		LastError:        "old upstream credential failed",
+		LastErrorAt:      &now,
+		FailureCount:     3,
+		CircuitOpenUntil: &openUntil,
 	}}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 	oldEncryptedAPIKey := repo.accounts[0].Credential.EncryptedAPIKey
@@ -1187,6 +1194,9 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 	}
 	if decrypted != "new-secret" {
 		t.Fatalf("decrypted API key = %q, want new-secret", decrypted)
+	}
+	if account.Status != AccountStatusActive || account.LastError != "" || account.CircuitOpenUntil != nil || account.FailureCount != 0 {
+		t.Fatalf("account status after credential rotation = %+v, want local failure state cleared", account)
 	}
 }
 

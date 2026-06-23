@@ -445,7 +445,7 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 			if update.APIUpstreamAPIKey != nil {
 				account.Credential.EncryptedAPIKey = "updated-encrypted-api-key"
 			}
-			if update.ClearStatus {
+			if update.ClearStatus || update.APIUpstreamBaseURL != nil || update.APIUpstreamAPIKey != nil {
 				account.Status = provider.AccountStatusActive
 				account.StatusReason = ""
 				account.LastError = ""
@@ -1383,6 +1383,8 @@ func TestAdminCanUpdateAPIUpstreamCredential(t *testing.T) {
 		DisplayName: "API Upstream",
 		Enabled:     true,
 		Priority:    10,
+		Status:      provider.AccountStatusCircuitOpen,
+		LastError:   "old upstream credential failed",
 		Credential:  provider.AccountCredential{BaseURL: "https://old.example.test"},
 	}}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
@@ -1409,6 +1411,9 @@ func TestAdminCanUpdateAPIUpstreamCredential(t *testing.T) {
 	}
 	if body.Account.BaseURL != "https://new.example.test/v1" {
 		t.Fatalf("account base URL = %q, want updated base URL", body.Account.BaseURL)
+	}
+	if body.Account.Status != provider.AccountStatusActive || body.Account.LastError != "" {
+		t.Fatalf("account status = %+v, want local failure state cleared", body.Account)
 	}
 }
 
