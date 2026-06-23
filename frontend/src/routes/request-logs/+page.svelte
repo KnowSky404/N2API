@@ -7,6 +7,13 @@
     requestLogs,
     session,
   } from '$lib/admin-state.svelte.js';
+
+  /** @param {string | null | undefined} value */
+  function accountTypeLabel(value) {
+    if (value === 'api_upstream') return 'API upstream';
+    if (value === 'codex_oauth') return 'Codex OAuth';
+    return value || 'Unknown';
+  }
 </script>
 
 <svelte:head>
@@ -75,11 +82,12 @@ onclick={loadRequestLogs}
   {/if}
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[900px] text-left text-sm">
+    <table class="w-full min-w-[1040px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Time</th>
     <th class="px-4 py-3 font-medium">Key</th>
+    <th class="px-4 py-3 font-medium">Provider account</th>
     <th class="px-4 py-3 font-medium">Route</th>
     <th class="px-4 py-3 font-medium">Method</th>
     <th class="px-4 py-3 font-medium">Status</th>
@@ -90,17 +98,29 @@ onclick={loadRequestLogs}
 <tbody class="divide-y divide-[#ededed]">
   {#if requestLogs.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading request logs...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading request logs...</td>
     </tr>
   {:else if requestLogs.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No gateway requests yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No gateway requests yet.</td>
     </tr>
   {:else}
     {#each requestLogs.items as log}
       <tr class="bg-white">
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(log.createdAt)}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">{log.clientKey || 'Unknown'}</td>
+        <td class="px-4 py-3">
+          {#if log.providerAccountId}
+            <div class="max-w-[220px]">
+              <p class="truncate font-medium text-[#0d0d0d]">{log.providerAccountName || `Account ${log.providerAccountId}`}</p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                {accountTypeLabel(log.providerAccountType)} · ID {log.providerAccountId}
+              </p>
+            </div>
+          {:else}
+            <span class="text-[#6e6e6e]">Unassigned</span>
+          {/if}
+        </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{log.route}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.method}</td>
         <td class="px-4 py-3">

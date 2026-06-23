@@ -12,6 +12,8 @@ const expectedFiles = [
   'src/routes/request-logs/+page.svelte'
 ];
 
+const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
+
 test('admin UI has focused routes behind a shared sidebar shell', () => {
   for (const file of expectedFiles) {
     assert.equal(existsSync(file), true, `${file} should exist`);
@@ -28,4 +30,11 @@ test('primary navigation exposes model routing page', () => {
 
   assert.match(layout, /href:\s*'\/models'/);
   assert.match(layout, /href:\s*'\/api-keys'/);
+});
+
+test('request logs page shows provider account attribution', () => {
+  assert.match(requestLogsPage, /Provider account/);
+  assert.match(requestLogsPage, /log\.providerAccountName/);
+  assert.match(requestLogsPage, /log\.providerAccountType/);
+  assert.match(requestLogsPage, /log\.providerAccountId/);
 });
