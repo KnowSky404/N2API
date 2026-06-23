@@ -484,6 +484,14 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleBulkTestProviderAccounts(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-pause", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleBulkPauseProviderAccountScheduling(w, r, providers)
+	}))
+
+	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleBulkResetProviderAccountStatus(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleProviderStatus(w, r, providers)
 	}))
@@ -861,18 +869,9 @@ func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, pr
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
-	accountIDs := make([]int64, 0, len(req.AccountIDs))
-	seen := map[int64]struct{}{}
-	for _, id := range req.AccountIDs {
-		if id <= 0 {
-			writeError(w, http.StatusBadRequest, "invalid_input")
-			return
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		accountIDs = append(accountIDs, id)
+	accountIDs, ok := parseBulkProviderAccountIDs(w, req.AccountIDs)
+	if !ok {
+		return
 	}
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
@@ -907,12 +906,34 @@ func handleBulkTestProviderAccounts(w http.ResponseWriter, r *http.Request, prov
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
-	accountIDs := make([]int64, 0, len(req.AccountIDs))
+	accountIDs, ok := parseBulkProviderAccountIDs(w, req.AccountIDs)
+	if !ok {
+		return
+	}
+
+	accounts := make([]provider.Account, 0, len(accountIDs))
+	for _, id := range accountIDs {
+		account, err := providers.TestAccount(r.Context(), id)
+		if err != nil {
+			writeProviderAccountError(w, err)
+			return
+		}
+		accounts = append(accounts, account)
+	}
+	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+func parseBulkProviderAccountIDs(w http.ResponseWriter, ids []int64) ([]int64, bool) {
+	if len(ids) == 0 || len(ids) > 100 {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return nil, false
+	}
+	accountIDs := make([]int64, 0, len(ids))
 	seen := map[int64]struct{}{}
-	for _, id := range req.AccountIDs {
+	for _, id := range ids {
 		if id <= 0 {
 			writeError(w, http.StatusBadRequest, "invalid_input")
-			return
+			return nil, false
 		}
 		if _, ok := seen[id]; ok {
 			continue
@@ -920,10 +941,63 @@ func handleBulkTestProviderAccounts(w http.ResponseWriter, r *http.Request, prov
 		seen[id] = struct{}{}
 		accountIDs = append(accountIDs, id)
 	}
+	return accountIDs, true
+}
+
+func handleBulkPauseProviderAccountScheduling(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	var req struct {
+		AccountIDs      []int64 `json:"accountIds"`
+		DurationSeconds int     `json:"durationSeconds"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if req.DurationSeconds <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	accountIDs, ok := parseBulkProviderAccountIDs(w, req.AccountIDs)
+	if !ok {
+		return
+	}
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
 	for _, id := range accountIDs {
-		account, err := providers.TestAccount(r.Context(), id)
+		account, err := providers.PauseAccountScheduling(r.Context(), id, time.Duration(req.DurationSeconds)*time.Second)
+		if err != nil {
+			writeProviderAccountError(w, err)
+			return
+		}
+		accounts = append(accounts, account)
+	}
+	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+func handleBulkResetProviderAccountStatus(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	var req struct {
+		AccountIDs []int64 `json:"accountIds"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	accountIDs, ok := parseBulkProviderAccountIDs(w, req.AccountIDs)
+	if !ok {
+		return
+	}
+
+	accounts := make([]provider.Account, 0, len(accountIDs))
+	for _, id := range accountIDs {
+		account, err := providers.ResetAccountStatus(r.Context(), id)
 		if err != nil {
 			writeProviderAccountError(w, err)
 			return
