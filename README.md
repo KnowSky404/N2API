@@ -74,6 +74,18 @@ Configure model capability on each provider account row. The API Keys page contr
 
 Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it.
 
+## Gateway Runtime Limits
+
+The API Keys page shows the concurrency and rate guards loaded by the running backend. Configure them with:
+
+- `N2API_GATEWAY_MAX_CONCURRENT_REQUESTS`
+- `N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT`
+- `N2API_GATEWAY_MAX_CONCURRENT_REQUESTS_PER_KEY`
+- `N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY`
+- `N2API_GATEWAY_TOKENS_PER_MINUTE_PER_KEY`
+
+All five limits are local to the running process. Set a value to `0` to disable that guard. Per-account concurrency makes busy accounts temporarily ineligible so the gateway can pick another eligible account when possible; if every eligible account is busy, the gateway returns a local 429. Per-key request and observed-token minute limits use fixed one-minute windows, and local 429 responses include `Retry-After` with the seconds remaining until the next window.
+
 ## Current Status
 
 The backend includes admin API key management, provider account management, per-account model configuration, request logs, static admin UI serving, and an OpenAI-compatible gateway for `/v1/models`, `/v1/chat/completions`, and core `/v1/responses` routes. The OAuth flow starts from the admin provider page, returns an authorization link, accepts the pasted callback URL, stores encrypted access/refresh/id tokens in PostgreSQL, and records isolated account metadata such as email, account id, plan type, client id, token fingerprint, and browser/request fingerprint hashes. API upstream accounts store encrypted API keys and base URLs. The gateway selects enabled, schedulable provider accounts by requested model, priority, and recent use; skips disabled/rate-limited/circuit-open/expired accounts; writes upstream 429/401/403/5xx failures back to account status; and can fall back before response streaming begins.
