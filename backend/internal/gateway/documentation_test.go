@@ -140,6 +140,25 @@ func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsProviderAccountBulkEnable(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"bulk enable or disable provider accounts",
+			"Enable selected",
+			"Disable selected",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account bulk enable documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md", "../../../.env.example"} {
 		content, err := os.ReadFile(path)
