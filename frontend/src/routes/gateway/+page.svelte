@@ -8,8 +8,8 @@
     getGatewayReadinessIssues,
     getRoutableModelCount,
     getSchedulableProviderAccounts,
-    loadAPIKeys,
     loadGatewaySettings,
+    loadKeys,
     loadModelRouting,
     loadProviderAccounts,
     loadUsageSummary,
@@ -50,7 +50,7 @@
       void loadGatewaySettings();
       void loadProviderAccounts();
       void loadModelRouting();
-      void loadAPIKeys();
+      void loadKeys();
       void loadUsageSummary('24h', 'model');
       void loadUsageSummary('24h', 'provider_account');
       void loadUsageSummary('24h', 'client_key');

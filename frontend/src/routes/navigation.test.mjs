@@ -77,7 +77,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /loadGatewaySettings/);
   assert.match(gatewayPage, /loadProviderAccounts/);
   assert.match(gatewayPage, /loadModelRouting/);
-  assert.match(gatewayPage, /loadAPIKeys/);
+  assert.match(gatewayPage, /loadKeys/);
   assert.match(gatewayPage, /getSchedulableProviderAccounts/);
   assert.match(gatewayPage, /getRoutableModelCount/);
   assert.match(gatewayPage, /getActiveKeys/);
