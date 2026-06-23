@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -16,6 +17,14 @@ type AutoTestRunnerConfig struct {
 	Interval time.Duration
 }
 
+type AutoTestStatus struct {
+	Running          bool       `json:"running"`
+	LastStartedAt    *time.Time `json:"lastStartedAt,omitempty"`
+	LastFinishedAt   *time.Time `json:"lastFinishedAt,omitempty"`
+	LastAccountCount int        `json:"lastAccountCount"`
+	LastError        string     `json:"lastError"`
+}
+
 type AutoTestRunnerConfigSource func(ctx context.Context) (AutoTestRunnerConfig, error)
 
 type AutoTestRunner struct {
@@ -24,6 +33,8 @@ type AutoTestRunner struct {
 	configSource AutoTestRunnerConfigSource
 	logger       *slog.Logger
 	running      atomic.Bool
+	statusMu     sync.Mutex
+	status       AutoTestStatus
 }
 
 func NewAutoTestRunner(service autoTestService, cfg AutoTestRunnerConfig, logger *slog.Logger) *AutoTestRunner {
@@ -46,6 +57,15 @@ func NewAutoTestRunnerWithConfigSource(service autoTestService, source AutoTestR
 		configSource: source,
 		logger:       logger,
 	}
+}
+
+func (r *AutoTestRunner) ProviderAccountAutoTestStatus() AutoTestStatus {
+	if r == nil {
+		return AutoTestStatus{}
+	}
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	return r.status
 }
 
 func (r *AutoTestRunner) Run(ctx context.Context) {
@@ -107,13 +127,36 @@ func (r *AutoTestRunner) runCycle(ctx context.Context) {
 	defer r.running.Store(false)
 
 	started := time.Now()
+	r.setStatusStarted(started)
 	accounts, err := r.service.TestAccounts(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
+			r.setStatusFinished(time.Now(), 0, ctx.Err().Error())
 			return
 		}
+		r.setStatusFinished(time.Now(), 0, err.Error())
 		r.logger.Warn("provider account auto test failed", "error", err, "duration", time.Since(started))
 		return
 	}
+	r.setStatusFinished(time.Now(), len(accounts), "")
 	r.logger.Info("provider account auto test completed", "accounts", len(accounts), "duration", time.Since(started))
+}
+
+func (r *AutoTestRunner) setStatusStarted(started time.Time) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.Running = true
+	r.status.LastStartedAt = &started
+	r.status.LastFinishedAt = nil
+	r.status.LastAccountCount = 0
+	r.status.LastError = ""
+}
+
+func (r *AutoTestRunner) setStatusFinished(finished time.Time, accountCount int, lastError string) {
+	r.statusMu.Lock()
+	defer r.statusMu.Unlock()
+	r.status.Running = false
+	r.status.LastFinishedAt = &finished
+	r.status.LastAccountCount = accountCount
+	r.status.LastError = lastError
 }

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync/atomic"
 	"testing"
@@ -34,6 +35,72 @@ func (s *fakeAutoTestService) TestAccounts(ctx context.Context) ([]Account, erro
 		return nil, s.err
 	}
 	return []Account{{ID: call, Provider: "openai"}}, nil
+}
+
+type immediateAutoTestService struct {
+	accounts []Account
+	err      error
+}
+
+func (s immediateAutoTestService) TestAccounts(context.Context) ([]Account, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.accounts, nil
+}
+
+func TestAutoTestRunnerStatusStartsEmpty(t *testing.T) {
+	runner := NewAutoTestRunner(immediateAutoTestService{}, AutoTestRunnerConfig{Enabled: true}, slog.Default())
+
+	status := runner.ProviderAccountAutoTestStatus()
+
+	if status.Running || status.LastStartedAt != nil || status.LastFinishedAt != nil || status.LastAccountCount != 0 || status.LastError != "" {
+		t.Fatalf("status = %+v, want empty status before any cycle", status)
+	}
+}
+
+func TestAutoTestRunnerStatusTracksSuccessfulCycle(t *testing.T) {
+	runner := NewAutoTestRunner(immediateAutoTestService{
+		accounts: []Account{{ID: 7, Provider: "openai"}, {ID: 8, Provider: "openai"}},
+	}, AutoTestRunnerConfig{Enabled: true}, slog.Default())
+
+	runner.runCycle(context.Background())
+
+	status := runner.ProviderAccountAutoTestStatus()
+	if status.Running || status.LastStartedAt == nil || status.LastFinishedAt == nil || status.LastAccountCount != 2 || status.LastError != "" {
+		t.Fatalf("status = %+v, want successful completed cycle", status)
+	}
+	if status.LastFinishedAt.Before(*status.LastStartedAt) {
+		t.Fatalf("status = %+v, want finish time after start time", status)
+	}
+}
+
+func TestAutoTestRunnerStatusTracksFailedCycle(t *testing.T) {
+	runner := NewAutoTestRunner(immediateAutoTestService{
+		err: errors.New("probe failed"),
+	}, AutoTestRunnerConfig{Enabled: true}, slog.Default())
+
+	runner.runCycle(context.Background())
+
+	status := runner.ProviderAccountAutoTestStatus()
+	if status.Running || status.LastStartedAt == nil || status.LastFinishedAt == nil || status.LastAccountCount != 0 || status.LastError != "probe failed" {
+		t.Fatalf("status = %+v, want failed completed cycle", status)
+	}
+}
+
+func TestAutoTestRunnerStatusClearsRunningAfterCanceledCycle(t *testing.T) {
+	runner := NewAutoTestRunner(immediateAutoTestService{
+		err: context.Canceled,
+	}, AutoTestRunnerConfig{Enabled: true}, slog.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	runner.runCycle(ctx)
+
+	status := runner.ProviderAccountAutoTestStatus()
+	if status.Running || status.LastStartedAt == nil || status.LastFinishedAt == nil {
+		t.Fatalf("status = %+v, want canceled completed cycle", status)
+	}
 }
 
 func TestAutoTestRunnerDisabledDoesNotProbe(t *testing.T) {
