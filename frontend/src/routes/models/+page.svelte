@@ -1,5 +1,30 @@
 <script>
-  import { login, loginForm, session } from '$lib/admin-state.svelte.js';
+  import { loadModelRouting, login, loginForm, modelRouting, session } from '$lib/admin-state.svelte.js';
+
+  let modelRoutingRequested = $state(false);
+
+  $effect(() => {
+    if (!session.authenticated) {
+      modelRoutingRequested = false;
+      return;
+    }
+    if (!modelRoutingRequested) {
+      modelRoutingRequested = true;
+      void loadModelRouting();
+    }
+  });
+
+  /** @param {string | null | undefined} value */
+  function accountTypeLabel(value) {
+    if (value === 'api_upstream') return 'API upstream';
+    if (value === 'codex_oauth' || !value) return 'Codex OAuth';
+    return value;
+  }
+
+  /** @param {string | null | undefined} value */
+  function statusLabel(value) {
+    return value ? value.replaceAll('_', ' ') : 'active';
+  }
 </script>
 
 <svelte:head>
@@ -43,24 +68,125 @@
     </form>
   </section>
 {:else}
-  <section class="rounded-lg border border-[#ededed] bg-white p-6">
-    <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Model access moved</h2>
-    <p class="mt-2 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
-      Gateway default model and API key model access are now managed from API Keys. Per-account manual models are managed from Provider accounts.
-    </p>
-    <div class="mt-5 flex flex-wrap gap-2">
-      <a
-        class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
-        href="/api-keys"
-      >
-        Open API Keys
-      </a>
-      <a
-        class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-        href="/providers"
-      >
-        Open Provider accounts
-      </a>
-    </div>
-  </section>
+  <div class="space-y-5">
+    <section class="rounded-lg border border-[#ededed] bg-white p-6">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Model routing policy</h2>
+          <p class="mt-2 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
+            Gateway default model and API key model access are managed from API Keys. Per-account manual models are managed from Provider accounts.
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <a
+            class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+            href="/api-keys"
+          >
+            Open API Keys
+          </a>
+          <a
+            class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            href="/providers"
+          >
+            Open Provider accounts
+          </a>
+        </div>
+      </div>
+      <div class="mt-5 grid gap-3 sm:grid-cols-3">
+        <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Default</p>
+          <p class="mt-2 truncate text-sm font-semibold text-[#0d0d0d]">{modelRouting.defaultModel || 'Not set'}</p>
+        </div>
+        <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Allowed</p>
+          <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{modelRouting.allowedModels.length}</p>
+        </div>
+        <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Routable</p>
+          <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{modelRouting.models.filter((model) => model.enabledCount > 0).length}</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="rounded-lg border border-[#ededed] bg-white p-6">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 class="text-lg font-semibold text-[#0d0d0d]">Routing candidates</h3>
+          <p class="mt-1 text-sm text-[#6e6e6e]">Candidate accounts are ordered the same way the gateway scheduler will consider them.</p>
+        </div>
+        {#if modelRouting.loading}
+          <span class="text-sm text-[#6e6e6e]">Loading...</span>
+        {/if}
+      </div>
+
+      {#if modelRouting.error}
+        <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{modelRouting.error}</p>
+      {/if}
+
+      {#if modelRouting.warnings.length}
+        <div class="mt-4 space-y-2">
+          {#each modelRouting.warnings as warning}
+            <p class="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{warning}</p>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
+        <table class="min-w-full divide-y divide-[#ededed] text-left text-sm">
+          <thead class="bg-[#fafafa] text-xs uppercase tracking-[0.08em] text-[#6e6e6e]">
+            <tr>
+              <th class="px-4 py-3 font-medium">Model</th>
+              <th class="px-4 py-3 font-medium">Policy</th>
+              <th class="px-4 py-3 font-medium">Accounts</th>
+              <th class="px-4 py-3 font-medium">Candidates</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#ededed]">
+            {#if modelRouting.loading && modelRouting.models.length === 0}
+              <tr>
+                <td class="px-4 py-5 text-[#6e6e6e]" colspan="4">Loading model routing...</td>
+              </tr>
+            {:else if modelRouting.models.length === 0}
+              <tr>
+                <td class="px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing policy configured yet.</td>
+              </tr>
+            {:else}
+              {#each modelRouting.models as model}
+                <tr class="align-top">
+                  <td class="px-4 py-4">
+                    <p class="font-medium text-[#0d0d0d]">{model.model}</p>
+                    {#if model.enabledCount === 0}
+                      <p class="mt-1 text-xs text-amber-700">No schedulable account</p>
+                    {/if}
+                  </td>
+                  <td class="px-4 py-4 text-[#3c3c3c]">
+                    {model.allowed ? 'Allowed' : 'Hidden'}
+                  </td>
+                  <td class="px-4 py-4 text-[#3c3c3c]">
+                    {model.enabledCount} / {model.configuredCount}
+                  </td>
+                  <td class="px-4 py-4">
+                    {#if model.accounts?.length}
+                      <div class="flex flex-wrap gap-2">
+                        {#each model.accounts as account}
+                          <span class="inline-flex max-w-[260px] items-center gap-2 rounded-md border border-[#ededed] bg-[#fafafa] px-2.5 py-1.5 text-xs text-[#3c3c3c]">
+                            <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
+                            <span class="text-[#6e6e6e]">{accountTypeLabel(account.accountType)}</span>
+                            <span class="text-[#6e6e6e]">Priority {account.priority}</span>
+                            <span class="text-[#6e6e6e]">{statusLabel(account.status)}</span>
+                          </span>
+                        {/each}
+                      </div>
+                    {:else}
+                      <span class="text-sm text-[#6e6e6e]">No candidates</span>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
 {/if}

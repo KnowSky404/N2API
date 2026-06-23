@@ -88,11 +88,22 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} ModelRoutingAccount
+ * @property {number} id
+ * @property {string} displayName
+ * @property {string} accountType
+ * @property {boolean} enabled
+ * @property {number} priority
+ * @property {string} status
+ */
+
+/**
  * @typedef {object} ModelRoutingModel
  * @property {string} model
  * @property {boolean} allowed
  * @property {number} configuredCount
  * @property {number} enabledCount
+ * @property {ModelRoutingAccount[]} accounts
  */
 
 export const health = $state({

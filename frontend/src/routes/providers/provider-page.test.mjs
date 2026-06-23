@@ -159,3 +159,13 @@ test('models page points model access management to api keys', () => {
   assert.match(modelsSource, /API Keys/);
   assert.match(modelsSource, /href="\/api-keys"/);
 });
+
+test('models page surfaces model routing candidates', () => {
+  assert.match(modelsSource, /loadModelRouting/);
+  assert.match(modelsSource, /Routing candidates/);
+  assert.match(modelsSource, /model\.accounts/);
+  assert.match(modelsSource, /account\.displayName/);
+  assert.match(modelsSource, /Priority \{account\.priority\}/);
+  assert.match(modelsSource, /account\.accountType/);
+  assert.match(modelsSource, /account\.status/);
+});
