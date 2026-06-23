@@ -49,6 +49,8 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 
 ## Gateway Runtime Limits
 
+Gateway management refreshes provider accounts, model routing, and API keys before reporting readiness, so the counts and prerequisite warnings are valid even when `/gateway` is opened directly.
+
 The deployment template includes optional in-process gateway guards:
 
 - `N2API_GATEWAY_MAX_CONCURRENT_REQUESTS` limits total active gateway requests.

@@ -64,6 +64,24 @@ func TestGatewayDocumentationMentionsAPIKeyLimitInheritance(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Gateway management refreshes provider accounts, model routing, and API keys",
+			"opened directly",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in gateway readiness refresh documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsAPIUpstreamCredentialRotation(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
