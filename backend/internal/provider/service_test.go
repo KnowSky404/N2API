@@ -1234,6 +1234,51 @@ func TestSelectAccountForModelAndSessionKeepsStickySelectionInsideHighestPriorit
 	}
 }
 
+func TestPreviewAccountSelectionUsesStickySessionWithoutMarkingAccountUsed(t *testing.T) {
+	older := time.Now().Add(-time.Hour)
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 1, "second-token"),
+		testAccount(t, 3, true, 50, "low-priority-token"),
+	}
+	for i := range repo.accounts {
+		repo.accounts[i].LastUsedAt = &older
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	sessionID := "workspace-123"
+	expectedStart := stickyAccountIndex(sessionID, 2) + 1
+
+	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", sessionID)
+	if err != nil {
+		t.Fatalf("PreviewAccountSelection returned error: %v", err)
+	}
+
+	if preview.Model != "gpt-5" || preview.SessionID != sessionID {
+		t.Fatalf("preview metadata = %+v, want model and session", preview)
+	}
+	if preview.SelectedAccountID != int64(expectedStart) {
+		t.Fatalf("selected account = %d, want sticky high-priority account %d", preview.SelectedAccountID, expectedStart)
+	}
+	if len(preview.Candidates) != 3 {
+		t.Fatalf("candidates = %+v, want three candidates", preview.Candidates)
+	}
+	if !preview.Candidates[0].Selected || preview.Candidates[0].ID != preview.SelectedAccountID {
+		t.Fatalf("first candidate = %+v, want selected account first", preview.Candidates[0])
+	}
+	if preview.Candidates[2].ID != 3 || preview.Candidates[2].Priority != 50 {
+		t.Fatalf("last candidate = %+v, want low-priority account", preview.Candidates[2])
+	}
+	for _, account := range repo.accounts {
+		if account.LastUsedAt == nil || !account.LastUsedAt.Equal(older) {
+			t.Fatalf("account %d last used = %v, want unchanged %v", account.ID, account.LastUsedAt, older)
+		}
+	}
+}
+
 func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{

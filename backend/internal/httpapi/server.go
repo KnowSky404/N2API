@@ -56,6 +56,7 @@ type ProviderService interface {
 	ListAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
+	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	ResetAccountStatus(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
@@ -406,6 +407,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, status)
 	}))
 
+	mux.HandleFunc("GET /api/admin/model-routing/preview", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleModelRoutingPreview(w, r, providers)
+	}))
+
 	mux.HandleFunc("GET /api/admin/provider-accounts", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleListProviderAccounts(w, r, providers)
 	}))
@@ -619,6 +624,36 @@ func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, provider
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	model := strings.TrimSpace(r.URL.Query().Get("model"))
+	if model == "" {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	preview, err := providers.PreviewAccountSelection(r.Context(), model, r.URL.Query().Get("sessionId"))
+	if err != nil {
+		if errors.Is(err, provider.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		if errors.Is(err, provider.ErrNotConfigured) {
+			writeError(w, http.StatusConflict, "provider_not_configured")
+			return
+		}
+		if errors.Is(err, provider.ErrModelUnavailable) || errors.Is(err, provider.ErrAccountsUnavailable) || errors.Is(err, provider.ErrAccountsDisabled) || errors.Is(err, provider.ErrNotConnected) {
+			writeError(w, http.StatusNotFound, "not_found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
 }
 
 func handleProviderStatus(w http.ResponseWriter, r *http.Request, providers ProviderService) {

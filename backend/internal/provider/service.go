@@ -232,6 +232,24 @@ type SelectedAccount struct {
 	ChatGPTAccountID   string
 }
 
+type SelectionPreview struct {
+	Model             string               `json:"model"`
+	SessionID         string               `json:"sessionId"`
+	SelectedAccountID int64                `json:"selectedAccountId"`
+	Candidates        []SelectionCandidate `json:"candidates"`
+}
+
+type SelectionCandidate struct {
+	ID           int64      `json:"id"`
+	DisplayName  string     `json:"displayName"`
+	AccountType  string     `json:"accountType"`
+	Priority     int        `json:"priority"`
+	Status       string     `json:"status"`
+	LastUsedAt   *time.Time `json:"lastUsedAt"`
+	ScheduleRank int        `json:"scheduleRank"`
+	Selected     bool       `json:"selected"`
+}
+
 type TokenResponse struct {
 	AccessToken  string
 	RefreshToken string
@@ -981,6 +999,45 @@ func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, se
 	}
 	accounts = stickySessionCandidates(accounts, sessionID)
 	return s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+}
+
+func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
+	if !s.Configured() {
+		return SelectionPreview{}, ErrNotConfigured
+	}
+	model = strings.TrimSpace(model)
+	sessionID = strings.TrimSpace(sessionID)
+	accounts, _, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
+	if err != nil {
+		return SelectionPreview{}, err
+	}
+	if sessionID != "" {
+		accounts = stickySessionCandidates(accounts, sessionID)
+	}
+	if len(accounts) == 0 {
+		return SelectionPreview{}, notFoundErr
+	}
+
+	preview := SelectionPreview{
+		Model:             model,
+		SessionID:         sessionID,
+		SelectedAccountID: accounts[0].ID,
+		Candidates:        make([]SelectionCandidate, 0, len(accounts)),
+	}
+	for index, account := range accounts {
+		account = normalizeAccountCredentialFields(account)
+		preview.Candidates = append(preview.Candidates, SelectionCandidate{
+			ID:           account.ID,
+			DisplayName:  accountDisplayName(account),
+			AccountType:  account.AccountType,
+			Priority:     account.Priority,
+			Status:       valueOrDefault(account.Status, AccountStatusActive),
+			LastUsedAt:   account.LastUsedAt,
+			ScheduleRank: index + 1,
+			Selected:     index == 0,
+		})
+	}
+	return preview, nil
 }
 
 func stickySessionCandidates(accounts []Account, sessionID string) []Account {
