@@ -300,12 +300,13 @@ export const modelRouting = $state({
   models: [],
   warnings: []
 });
-/** @type {{ loading: boolean, error: string, model: string, sessionId: string, result: SelectionPreview | null }} */
+/** @type {{ loading: boolean, error: string, model: string, sessionId: string, excludedAccountIds: string, result: SelectionPreview | null }} */
 export const modelRoutingPreview = $state({
   loading: false,
   error: '',
   model: '',
   sessionId: '',
+  excludedAccountIds: '',
   result: null
 });
 
@@ -1540,6 +1541,7 @@ export async function loadModelRoutingPreview() {
   if (!isCurrentAuthenticated(version)) return;
   const model = modelRoutingPreview.model.trim();
   const sessionId = modelRoutingPreview.sessionId.trim();
+  const excludedAccountIds = modelRoutingPreview.excludedAccountIds.trim();
   if (!model) {
     modelRoutingPreview.error = 'Model is required for selection preview';
     modelRoutingPreview.result = null;
@@ -1552,6 +1554,9 @@ export async function loadModelRoutingPreview() {
   const params = new URLSearchParams({ model });
   if (sessionId) {
     params.set('sessionId', sessionId);
+  }
+  if (excludedAccountIds) {
+    params.set('excludedAccountIds', excludedAccountIds);
   }
 
   try {

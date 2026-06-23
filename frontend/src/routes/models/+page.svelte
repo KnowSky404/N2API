@@ -225,6 +225,14 @@
               placeholder="workspace-123"
             />
           </label>
+          <label class="block text-sm font-medium text-[#3c3c3c]">
+            Excluded account IDs
+            <input
+              class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelRoutingPreview.excludedAccountIds}
+              placeholder="7, 8"
+            />
+          </label>
           <button
             class="justify-self-start rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             disabled={modelRoutingPreview.loading}
@@ -256,6 +264,9 @@
                 {/if}
                 {#if modelRoutingPreview.result.sessionId}
                   for session {modelRoutingPreview.result.sessionId}
+                {/if}
+                {#if modelRoutingPreview.excludedAccountIds.trim()}
+                  excluding {modelRoutingPreview.excludedAccountIds}
                 {/if}
               </p>
             </div>
