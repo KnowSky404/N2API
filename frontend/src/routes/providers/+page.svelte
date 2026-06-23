@@ -2,6 +2,7 @@
   import {
     accountLabel,
     accountTypeLabel,
+    bulkUpdateSelectedProviderAccountScheduling,
     bulkUpdateSelectedProviderAccounts,
     clearProviderAccountSelection,
     completeProviderCallback,
@@ -25,6 +26,7 @@
     apiUpstreamForm,
     provider,
     providerAccounts,
+    providerAccountBulkSchedulingForm,
     providerAccountPauseForm,
     providerConnectForm,
     providerOAuth,
@@ -645,6 +647,37 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         onclick={() => bulkUpdateSelectedProviderAccounts(false)}
       >
         Disable selected
+      </button>
+      <label class="grid w-28 gap-1 text-xs font-medium text-[#3c3c3c]">
+        Bulk priority
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+          type="number"
+          min="0"
+          step="1"
+          bind:value={providerAccountBulkSchedulingForm.priority}
+          disabled={providerAccounts.saving}
+        />
+      </label>
+      <label class="grid w-32 gap-1 text-xs font-medium text-[#3c3c3c]">
+        Bulk load factor
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+          type="number"
+          min="1"
+          max="100"
+          step="1"
+          bind:value={providerAccountBulkSchedulingForm.loadFactor}
+          disabled={providerAccounts.saving}
+        />
+      </label>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
+        onclick={bulkUpdateSelectedProviderAccountScheduling}
+      >
+        Apply scheduling
       </button>
       <button
         class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"

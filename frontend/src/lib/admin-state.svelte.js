@@ -246,6 +246,7 @@ export const provider = $state({
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
 export const providerConnectForm = $state({ name: '', priority: 100, enabled: true });
 export const providerAccountPauseForm = $state({ durationSeconds: 300 });
+export const providerAccountBulkSchedulingForm = $state({ priority: '', loadFactor: '' });
 export const providerOAuth = $state({ authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
 export const apiUpstreamForm = $state({
   name: '',
@@ -475,6 +476,11 @@ export function clearProviderAccountSelection() {
   for (const key of Object.keys(selectedProviderAccountIds)) {
     delete selectedProviderAccountIds[key];
   }
+}
+
+export function clearProviderAccountBulkSchedulingForm() {
+  providerAccountBulkSchedulingForm.priority = '';
+  providerAccountBulkSchedulingForm.loadFactor = '';
 }
 
 export function getProviderStateLabel() {
@@ -1299,6 +1305,65 @@ export async function bulkUpdateSelectedProviderAccounts(enabled) {
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Bulk account update failed';
+    providerAccounts.error = message;
+    await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = message;
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
+export async function bulkUpdateSelectedProviderAccountScheduling() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const accountIds = Object.keys(selectedProviderAccountIds)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (accountIds.length === 0) {
+    providerAccounts.error = 'Select at least one provider account';
+    return;
+  }
+
+  const payload = { accountIds };
+  const priorityText = String(providerAccountBulkSchedulingForm.priority ?? '').trim();
+  const loadFactorText = String(providerAccountBulkSchedulingForm.loadFactor ?? '').trim();
+  if (priorityText) {
+    const priority = Number(priorityText);
+    if (!/^\d+$/.test(priorityText) || !Number.isInteger(priority) || priority < 0) {
+      providerAccounts.error = 'Bulk priority must be a non-negative whole number';
+      return;
+    }
+    payload.priority = priority;
+  }
+  if (loadFactorText) {
+    const loadFactor = Number(loadFactorText);
+    if (!/^\d+$/.test(loadFactorText) || !Number.isInteger(loadFactor) || loadFactor < 1 || loadFactor > 100) {
+      providerAccounts.error = 'Bulk load factor must be a whole number from 1 to 100';
+      return;
+    }
+    payload.loadFactor = loadFactor;
+  }
+  if (payload.priority === undefined && payload.loadFactor === undefined) {
+    providerAccounts.error = 'Enter a bulk priority or load factor';
+    return;
+  }
+
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  try {
+    await requestJSON('/api/admin/provider-accounts/bulk-update', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    clearProviderAccountSelection();
+    clearProviderAccountBulkSchedulingForm();
+    await loadProviderAccounts();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    const message = error instanceof Error ? error.message : 'Bulk scheduling update failed';
     providerAccounts.error = message;
     await loadProviderAccounts();
     if (!isCurrentAuthenticated(version)) return;

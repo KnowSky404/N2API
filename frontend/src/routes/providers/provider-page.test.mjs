@@ -180,6 +180,16 @@ test('provider account state can bulk update selected account enabled state', ()
   assert.match(adminStateSource, /clearProviderAccountSelection/);
 });
 
+test('provider account state can bulk update selected scheduling fields', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /providerAccountBulkSchedulingForm/);
+  assert.match(adminStateSource, /bulkUpdateSelectedProviderAccountScheduling/);
+  assert.match(adminStateSource, /priority/);
+  assert.match(adminStateSource, /loadFactor/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-update/);
+});
+
 test('provider account state can test selected accounts', () => {
   const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
@@ -315,11 +325,16 @@ test('provider account table exposes bulk selection controls', () => {
   assert.match(source, /toggleProviderAccountSelection/);
   assert.match(source, /bulkUpdateSelectedProviderAccounts\(true\)/);
   assert.match(source, /bulkUpdateSelectedProviderAccounts\(false\)/);
+  assert.match(source, /bulkUpdateSelectedProviderAccountScheduling/);
+  assert.match(source, /providerAccountBulkSchedulingForm/);
   assert.match(source, /testSelectedProviderAccounts/);
   assert.match(source, /clearProviderAccountSelection/);
   assert.match(source, />\s*Test selected\s*</);
   assert.match(source, />\s*Enable selected\s*</);
   assert.match(source, />\s*Disable selected\s*</);
+  assert.match(source, />\s*Apply scheduling\s*</);
+  assert.match(source, /Bulk priority/);
+  assert.match(source, /Bulk load factor/);
   assert.match(source, />\s*Clear selection\s*</);
   assert.match(source, /Select \{accountLabel\(account\)\}/);
 });
