@@ -61,6 +61,11 @@ test('gateway page manages runtime limits and usage visibility', () => {
     'Provider account auto tests',
     'Enable auto tests',
     'Interval seconds',
+    'Auto-test status',
+    'Last finished',
+    'Accounts tested',
+    'Last error',
+    'Not run yet',
     '24h usage',
     'Top models',
     'Top provider accounts',
@@ -95,10 +100,19 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.tokensPerMinutePerKey\}/);
   assert.match(gatewayPage, /bind:checked=\{gatewaySettings\.data\.providerAccountAutoTestEnabled\}/);
   assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.providerAccountAutoTestIntervalSeconds\}/);
+  assert.match(gatewayPage, /gatewaySettings\.data\.providerAccountAutoTestStatus/);
+  assert.match(gatewayPage, /lastFinishedAt/);
+  assert.match(gatewayPage, /lastAccountCount/);
+  assert.match(gatewayPage, /lastError/);
   assert.match(adminState, /export async function updateGatewaySettings/);
   assert.match(adminState, /\/api\/admin\/gateway-settings/);
   assert.match(adminState, /providerAccountAutoTestEnabled: Boolean/);
   assert.match(adminState, /providerAccountAutoTestIntervalSeconds: Number/);
+  assert.match(adminState, /providerAccountAutoTestStatus/);
+  assert.match(adminState, /lastStartedAt/);
+  assert.match(adminState, /lastFinishedAt/);
+  assert.match(adminState, /lastAccountCount/);
+  assert.match(adminState, /lastError/);
   assert.match(gatewayPage, /formatCostMicrousd/);
 });
 

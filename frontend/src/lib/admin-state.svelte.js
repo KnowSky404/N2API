@@ -197,6 +197,16 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} tokensPerMinutePerKey
  * @property {boolean} providerAccountAutoTestEnabled
  * @property {number} providerAccountAutoTestIntervalSeconds
+ * @property {ProviderAccountAutoTestStatus} providerAccountAutoTestStatus
+ */
+
+/**
+ * @typedef {object} ProviderAccountAutoTestStatus
+ * @property {boolean} running
+ * @property {string | null} lastStartedAt
+ * @property {string | null} lastFinishedAt
+ * @property {number} lastAccountCount
+ * @property {string} lastError
  */
 
 /**
@@ -688,6 +698,17 @@ export function formatTokens(value) {
 /** @param {number | null | undefined} value */
 export function formatCostMicrousd(value) {
   return `$${(Number(value ?? 0) / 1_000_000).toFixed(4)}`;
+}
+
+/** @param {Partial<ProviderAccountAutoTestStatus> | null | undefined} status */
+function normalizeProviderAccountAutoTestStatus(status) {
+  return {
+    running: Boolean(status?.running),
+    lastStartedAt: status?.lastStartedAt ?? null,
+    lastFinishedAt: status?.lastFinishedAt ?? null,
+    lastAccountCount: Number(status?.lastAccountCount ?? 0),
+    lastError: String(status?.lastError ?? '')
+  };
 }
 
 export async function copySecret() {
@@ -1846,7 +1867,8 @@ export async function loadGatewaySettings() {
       requestsPerMinutePerKey: Number(payload.requestsPerMinutePerKey ?? 0),
       tokensPerMinutePerKey: Number(payload.tokensPerMinutePerKey ?? 0),
       providerAccountAutoTestEnabled: Boolean(payload.providerAccountAutoTestEnabled),
-      providerAccountAutoTestIntervalSeconds: Number(payload.providerAccountAutoTestIntervalSeconds ?? 300)
+      providerAccountAutoTestIntervalSeconds: Number(payload.providerAccountAutoTestIntervalSeconds ?? 300),
+      providerAccountAutoTestStatus: normalizeProviderAccountAutoTestStatus(payload.providerAccountAutoTestStatus)
     };
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
@@ -1908,7 +1930,10 @@ export async function updateGatewaySettings() {
       requestsPerMinutePerKey: Number(saved.requestsPerMinutePerKey ?? 0),
       tokensPerMinutePerKey: Number(saved.tokensPerMinutePerKey ?? 0),
       providerAccountAutoTestEnabled: Boolean(saved.providerAccountAutoTestEnabled),
-      providerAccountAutoTestIntervalSeconds: Number(saved.providerAccountAutoTestIntervalSeconds ?? 300)
+      providerAccountAutoTestIntervalSeconds: Number(saved.providerAccountAutoTestIntervalSeconds ?? 300),
+      providerAccountAutoTestStatus: normalizeProviderAccountAutoTestStatus(
+        saved.providerAccountAutoTestStatus ?? gatewaySettings.data.providerAccountAutoTestStatus
+      )
     };
     gatewaySettings.saved = true;
   } catch (error) {

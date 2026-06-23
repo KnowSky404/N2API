@@ -1,6 +1,7 @@
 <script>
   import {
     formatCostMicrousd,
+    formatDate,
     formatTokens,
     gatewayLimitLabel,
     gatewaySettings,
@@ -294,6 +295,38 @@
                 bind:value={gatewaySettings.data.providerAccountAutoTestIntervalSeconds}
               />
             </label>
+          </div>
+          <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div class="rounded-md border border-[#ededed] bg-white p-3">
+              <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Auto-test status</p>
+              <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">
+                {gatewaySettings.data.providerAccountAutoTestStatus.running ? 'Running' : 'Idle'}
+              </p>
+            </div>
+            <div class="rounded-md border border-[#ededed] bg-white p-3">
+              <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Last finished</p>
+              <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">
+                {gatewaySettings.data.providerAccountAutoTestStatus.lastFinishedAt
+                  ? formatDate(gatewaySettings.data.providerAccountAutoTestStatus.lastFinishedAt)
+                  : 'Not run yet'}
+              </p>
+            </div>
+            <div class="rounded-md border border-[#ededed] bg-white p-3">
+              <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Accounts tested</p>
+              <p class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">
+                {gatewaySettings.data.providerAccountAutoTestStatus.lastAccountCount}
+              </p>
+            </div>
+            <div class="rounded-md border border-[#ededed] bg-white p-3">
+              <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Last error</p>
+              <p
+                class={gatewaySettings.data.providerAccountAutoTestStatus.lastError
+                  ? 'mt-2 min-w-0 break-words text-sm font-semibold text-red-700'
+                  : 'mt-2 text-sm font-semibold text-[#0d0d0d]'}
+              >
+                {gatewaySettings.data.providerAccountAutoTestStatus.lastError || 'None'}
+              </p>
+            </div>
           </div>
         </div>
         <div class="mt-4 flex flex-wrap items-center gap-3">
