@@ -308,6 +308,25 @@ func TestProviderAccountLoadFactorMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestProviderAccountTestResultsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00017_provider_account_test_results.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE provider_accounts ADD COLUMN IF NOT EXISTS last_test_at TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS last_test_status TEXT NOT NULL DEFAULT ''",
+		"ADD COLUMN IF NOT EXISTS last_test_error TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE provider_accounts DROP COLUMN IF EXISTS last_test_error",
+		"ALTER TABLE provider_accounts DROP COLUMN IF EXISTS last_test_status",
+		"ALTER TABLE provider_accounts DROP COLUMN IF EXISTS last_test_at",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestRequestLogModelAttributionMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00010_request_log_model_attribution.sql")
 	if err != nil {
@@ -375,10 +394,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 16 {
-		t.Fatalf("migration sources = %d, want 16", len(sources))
+	if len(sources) != 17 {
+		t.Fatalf("migration sources = %d, want 17", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[15].Path != "00016_provider_account_load_factor.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[16].Path != "00017_provider_account_test_results.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

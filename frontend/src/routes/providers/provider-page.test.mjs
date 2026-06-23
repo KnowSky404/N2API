@@ -216,6 +216,9 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /sr-only">Refresh account/);
   assert.match(source, /title=\{accountHoverDetail\(account\)\}/);
   assert.match(source, /title=\{statusHoverDetail\(account\)\}/);
+  assert.match(source, /account\.lastTestAt/);
+  assert.match(source, /account\.lastTestStatus/);
+  assert.match(source, /account\.lastTestError/);
   assert.match(source, /account\.provider\s*\|\|\s*'unknown'/);
   assert.doesNotMatch(source, /account\.subject\s*\|\|\s*account\.provider/);
   assert.doesNotMatch(source, />\s*\{account\.lastError\}\s*</);

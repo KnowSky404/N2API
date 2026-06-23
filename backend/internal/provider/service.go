@@ -58,6 +58,11 @@ const (
 )
 
 const (
+	AccountTestStatusPassed = "passed"
+	AccountTestStatusFailed = "failed"
+)
+
+const (
 	AccountModelSourceManual = "manual"
 
 	maxAccountModels = 100
@@ -158,6 +163,9 @@ type Account struct {
 	LastUsedAt            *time.Time        `json:"lastUsedAt"`
 	LastError             string            `json:"lastError"`
 	LastErrorAt           *time.Time        `json:"lastErrorAt"`
+	LastTestAt            *time.Time        `json:"lastTestAt"`
+	LastTestStatus        string            `json:"lastTestStatus"`
+	LastTestError         string            `json:"lastTestError"`
 	Metadata              map[string]string `json:"metadata"`
 	Status                string            `json:"status"`
 	StatusReason          string            `json:"statusReason"`
@@ -312,6 +320,7 @@ type Repository interface {
 	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error
 	RecordRefreshFailure(ctx context.Context, provider string, id int64, message string, at time.Time, openUntil *time.Time) error
 	RecordAccountStatus(ctx context.Context, provider string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error
+	RecordAccountTestResult(ctx context.Context, provider string, id int64, status, message string, at time.Time) error
 	ListAccountModels(ctx context.Context, provider string, accountID int64) ([]AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
@@ -962,6 +971,10 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 
 	selected, err := s.selectedAccount(ctx, account)
 	if err != nil {
+		now := time.Now()
+		if markErr := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusFailed, err.Error(), now); markErr != nil {
+			return Account{}, markErr
+		}
 		if markErr := s.recordSelectionFailure(ctx, account.ID, err); markErr != nil {
 			return Account{}, markErr
 		}
@@ -983,16 +996,30 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	if err != nil {
 		now := time.Now()
 		until := now.Add(defaultCircuitOpen)
+		if markErr := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusFailed, err.Error(), now); markErr != nil {
+			return Account{}, markErr
+		}
 		if markErr := s.repo.RecordAccountStatus(ctx, s.cfg.Provider, account.ID, AccountStatusCircuitOpen, err.Error(), now, nil, &until); markErr != nil {
 			return Account{}, markErr
 		}
 		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 	}
 	if isAccountFailureStatus(result.statusCode) {
+		now := time.Now()
+		message := strings.TrimSpace(result.message)
+		if message == "" {
+			message = http.StatusText(result.statusCode)
+		}
+		if markErr := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusFailed, message, now); markErr != nil {
+			return Account{}, markErr
+		}
 		if err := s.RecordAccountFailure(ctx, account.ID, result.statusCode, result.retryAfter, result.message); err != nil {
 			return Account{}, err
 		}
 		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
+	}
+	if err := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusPassed, "", time.Now()); err != nil {
+		return Account{}, err
 	}
 	return s.ResetAccountStatus(ctx, account.ID)
 }

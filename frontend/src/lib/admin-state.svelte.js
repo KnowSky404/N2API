@@ -46,6 +46,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string | null} lastUsedAt
  * @property {string} lastError
  * @property {string | null} lastErrorAt
+ * @property {string | null} lastTestAt
+ * @property {string} lastTestStatus
+ * @property {string} lastTestError
  */
 
 /**

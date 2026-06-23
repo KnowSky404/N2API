@@ -224,6 +224,38 @@ func TestProviderRepositoryUpdatesAccountLoadFactor(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryRecordAccountTestResult(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	saved := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		Subject:               "probe-result",
+		DisplayName:           "Probe Result",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Status:                provider.AccountStatusActive,
+	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	if err := repo.RecordAccountTestResult(ctx, "openai", saved.ID, provider.AccountTestStatusFailed, "quota window", now); err != nil {
+		t.Fatalf("RecordAccountTestResult returned error: %v", err)
+	}
+	found, err := repo.FindAccountByID(ctx, "openai", saved.ID)
+	if err != nil {
+		t.Fatalf("FindAccountByID returned error: %v", err)
+	}
+
+	if found.LastTestAt == nil || !found.LastTestAt.Equal(now) {
+		t.Fatalf("LastTestAt = %v, want %v", found.LastTestAt, now)
+	}
+	if found.LastTestStatus != provider.AccountTestStatusFailed || found.LastTestError != "quota window" {
+		t.Fatalf("test result = status:%q error:%q, want failed/quota window", found.LastTestStatus, found.LastTestError)
+	}
+}
+
 func TestMarkAccountUsedClearsTemporaryFailureStateColumns(t *testing.T) {
 	source, err := os.ReadFile("provider.go")
 	if err != nil {

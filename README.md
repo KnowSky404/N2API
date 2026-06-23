@@ -73,7 +73,7 @@ Configure model capability on each provider account row. The API Keys page contr
 
 API upstream credentials can be updated after account creation. Use the provider account row to rotate the encrypted upstream API key or base URL; saving new credentials clears local failure status so a previously rate-limited, expired, or circuit-open API upstream can be scheduled again with the new settings.
 
-Use **Test account** when you want to probe one provider account before sending client traffic through it. The action probes one provider account with its current OAuth token or API upstream key, clears local failure status on a successful probe, and records upstream failure status for 401/403/429/5xx probe responses.
+Use **Test account** when you want to probe one provider account before sending client traffic through it. The action probes one provider account with its current OAuth token or API upstream key, clears local failure status on a successful probe, and records upstream failure status for 401/403/429/5xx probe responses. The account row keeps the last test status, last test time, and last test error so manual checks remain visible after refresh.
 
 Use **Pause scheduling** when you want a healthy account to stop receiving traffic for a short window. The action temporarily opens the account circuit for five minutes without disabling or deleting the account. Use **Reset local status** to clear the pause early when you want the account to rejoin routing immediately.
 

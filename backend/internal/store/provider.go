@@ -24,7 +24,7 @@ const providerAccountColumns = `
 	a.id, a.provider, a.account_type, a.subject, a.name, a.display_name, a.enabled, a.priority,
 	a.load_factor, a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
 	a.user_agent_hash, a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until,
-	a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
+	a.last_test_at, a.last_test_status, a.last_test_error, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
 	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
 	c.base_url, c.metadata
@@ -57,6 +57,9 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.FailureCount,
 		&account.CircuitOpenUntil,
 		&account.RateLimitedUntil,
+		&account.LastTestAt,
+		&account.LastTestStatus,
+		&account.LastTestError,
 		&account.CreatedAt,
 		&account.UpdatedAt,
 		&account.Credential.CredentialType,
@@ -636,6 +639,25 @@ func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerNa
 			AND id = $2
 		RETURNING id
 	`, providerName, id, status, reason, at, rateLimitedUntil, circuitOpenUntil).Scan(&updatedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	return err
+}
+
+func (r *ProviderRepository) RecordAccountTestResult(ctx context.Context, providerName string, id int64, status, message string, at time.Time) error {
+	var updatedID int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE provider_accounts
+		SET
+			last_test_at = $3,
+			last_test_status = $4,
+			last_test_error = $5,
+			updated_at = now()
+		WHERE provider = $1
+			AND id = $2
+		RETURNING id
+	`, providerName, id, at, status, message).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.ErrNotConnected
 	}

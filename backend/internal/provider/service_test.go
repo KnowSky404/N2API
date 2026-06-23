@@ -1065,6 +1065,9 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	if tested.Status != AccountStatusActive || tested.StatusReason != "" || tested.LastError != "" || tested.LastErrorAt != nil || tested.CircuitOpenUntil != nil || tested.FailureCount != 0 {
 		t.Fatalf("tested account = %+v, want local failure state cleared", tested)
 	}
+	if tested.LastTestAt == nil || tested.LastTestStatus != AccountTestStatusPassed || tested.LastTestError != "" {
+		t.Fatalf("test result = at:%v status:%q error:%q, want passed result", tested.LastTestAt, tested.LastTestStatus, tested.LastTestError)
+	}
 }
 
 func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
@@ -1085,6 +1088,9 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 
 	if tested.Status != AccountStatusRateLimited || tested.StatusReason != "quota window" || tested.LastError != "quota window" {
 		t.Fatalf("tested account = %+v, want rate limited failure state", tested)
+	}
+	if tested.LastTestAt == nil || tested.LastTestStatus != AccountTestStatusFailed || tested.LastTestError != "quota window" {
+		t.Fatalf("test result = at:%v status:%q error:%q, want failed result", tested.LastTestAt, tested.LastTestStatus, tested.LastTestError)
 	}
 	if tested.RateLimitedUntil == nil || !tested.RateLimitedUntil.After(time.Now().Add(100*time.Second)) {
 		t.Fatalf("RateLimitedUntil = %v, want retry-after window", tested.RateLimitedUntil)
@@ -2314,6 +2320,18 @@ func (r *memoryRepo) RecordAccountStatus(ctx context.Context, providerName strin
 			if status == AccountStatusCircuitOpen {
 				r.accounts[i].FailureCount++
 			}
+			return nil
+		}
+	}
+	return ErrNotConnected
+}
+
+func (r *memoryRepo) RecordAccountTestResult(ctx context.Context, providerName string, id int64, status, message string, at time.Time) error {
+	for i := range r.accounts {
+		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
+			r.accounts[i].LastTestAt = &at
+			r.accounts[i].LastTestStatus = status
+			r.accounts[i].LastTestError = message
 			return nil
 		}
 	}
