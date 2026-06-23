@@ -843,29 +843,31 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 	}
 
 	var req struct {
-		Enabled    *bool   `json:"enabled"`
-		Priority   *int    `json:"priority"`
-		LoadFactor *int    `json:"loadFactor"`
-		Name       *string `json:"name"`
-		BaseURL    *string `json:"baseUrl"`
-		APIKey     *string `json:"apiKey"`
+		Enabled               *bool   `json:"enabled"`
+		Priority              *int    `json:"priority"`
+		LoadFactor            *int    `json:"loadFactor"`
+		MaxConcurrentRequests *int    `json:"maxConcurrentRequests"`
+		Name                  *string `json:"name"`
+		BaseURL               *string `json:"baseUrl"`
+		APIKey                *string `json:"apiKey"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil {
+	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
 
 	account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
-		Enabled:            req.Enabled,
-		Priority:           req.Priority,
-		LoadFactor:         req.LoadFactor,
-		Name:               req.Name,
-		APIUpstreamBaseURL: req.BaseURL,
-		APIUpstreamAPIKey:  req.APIKey,
+		Enabled:               req.Enabled,
+		Priority:              req.Priority,
+		LoadFactor:            req.LoadFactor,
+		MaxConcurrentRequests: req.MaxConcurrentRequests,
+		Name:                  req.Name,
+		APIUpstreamBaseURL:    req.BaseURL,
+		APIUpstreamAPIKey:     req.APIKey,
 	})
 	if err != nil {
 		writeProviderAccountError(w, err)
@@ -880,16 +882,17 @@ func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 	var req struct {
-		AccountIDs []int64 `json:"accountIds"`
-		Enabled    *bool   `json:"enabled"`
-		Priority   *int    `json:"priority"`
-		LoadFactor *int    `json:"loadFactor"`
+		AccountIDs            []int64 `json:"accountIds"`
+		Enabled               *bool   `json:"enabled"`
+		Priority              *int    `json:"priority"`
+		LoadFactor            *int    `json:"loadFactor"`
+		MaxConcurrentRequests *int    `json:"maxConcurrentRequests"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if (req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil) || len(req.AccountIDs) == 0 || len(req.AccountIDs) > 100 {
+	if (req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil) || len(req.AccountIDs) == 0 || len(req.AccountIDs) > 100 {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
@@ -901,9 +904,10 @@ func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, pr
 	accounts := make([]provider.Account, 0, len(accountIDs))
 	for _, id := range accountIDs {
 		account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
-			Enabled:    req.Enabled,
-			Priority:   req.Priority,
-			LoadFactor: req.LoadFactor,
+			Enabled:               req.Enabled,
+			Priority:              req.Priority,
+			LoadFactor:            req.LoadFactor,
+			MaxConcurrentRequests: req.MaxConcurrentRequests,
 		})
 		if err != nil {
 			writeProviderAccountError(w, err)

@@ -477,13 +477,16 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 	if s.updateErr != nil {
 		return provider.Account{}, s.updateErr
 	}
-	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
 	if update.LoadFactor != nil && (*update.LoadFactor < 1 || *update.LoadFactor > 100) {
+		return provider.Account{}, provider.ErrInvalidInput
+	}
+	if update.MaxConcurrentRequests != nil && *update.MaxConcurrentRequests < 0 {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
 	for i, account := range s.accounts {
@@ -496,6 +499,9 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 			}
 			if update.LoadFactor != nil {
 				account.LoadFactor = *update.LoadFactor
+			}
+			if update.MaxConcurrentRequests != nil {
+				account.MaxConcurrentRequests = *update.MaxConcurrentRequests
 			}
 			if update.Name != nil {
 				account.Name = strings.TrimSpace(*update.Name)
@@ -1478,7 +1484,7 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1}}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"name":" Renamed ","enabled":false,"priority":2,"loadFactor":5}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"name":" Renamed ","enabled":false,"priority":2,"loadFactor":5,"maxConcurrentRequests":3}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -1493,11 +1499,14 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Account.ID != 7 || body.Account.Name != "Renamed" || body.Account.Enabled || body.Account.Priority != 2 || body.Account.LoadFactor != 5 {
-		t.Fatalf("account = %+v, want renamed disabled account 7 priority 2 load factor 5", body.Account)
+	if body.Account.ID != 7 || body.Account.Name != "Renamed" || body.Account.Enabled || body.Account.Priority != 2 || body.Account.LoadFactor != 5 || body.Account.MaxConcurrentRequests != 3 {
+		t.Fatalf("account = %+v, want renamed disabled account 7 priority 2 load factor 5 max concurrency 3", body.Account)
 	}
 	if providers.lastAccountUpdate.LoadFactor == nil || *providers.lastAccountUpdate.LoadFactor != 5 {
 		t.Fatalf("load factor update = %+v, want 5", providers.lastAccountUpdate.LoadFactor)
+	}
+	if providers.lastAccountUpdate.MaxConcurrentRequests == nil || *providers.lastAccountUpdate.MaxConcurrentRequests != 3 {
+		t.Fatalf("max concurrency update = %+v, want 3", providers.lastAccountUpdate.MaxConcurrentRequests)
 	}
 }
 
@@ -1543,7 +1552,7 @@ func TestAdminCanBulkUpdateUnifiedProviderAccountScheduling(t *testing.T) {
 		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-update", strings.NewReader(`{"accountIds":[7,8,7],"priority":2,"loadFactor":5}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-update", strings.NewReader(`{"accountIds":[7,8,7],"priority":2,"loadFactor":5,"maxConcurrentRequests":3}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -1562,6 +1571,9 @@ func TestAdminCanBulkUpdateUnifiedProviderAccountScheduling(t *testing.T) {
 		if update.LoadFactor == nil || *update.LoadFactor != 5 {
 			t.Fatalf("update %d load factor = %+v, want 5", index, update.LoadFactor)
 		}
+		if update.MaxConcurrentRequests == nil || *update.MaxConcurrentRequests != 3 {
+			t.Fatalf("update %d max concurrency = %+v, want 3", index, update.MaxConcurrentRequests)
+		}
 	}
 	var body struct {
 		Accounts []provider.Account `json:"accounts"`
@@ -1569,8 +1581,8 @@ func TestAdminCanBulkUpdateUnifiedProviderAccountScheduling(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if len(body.Accounts) != 2 || body.Accounts[0].Priority != 2 || body.Accounts[1].LoadFactor != 5 {
-		t.Fatalf("accounts = %+v, want two accounts with priority 2 load factor 5", body.Accounts)
+	if len(body.Accounts) != 2 || body.Accounts[0].Priority != 2 || body.Accounts[1].LoadFactor != 5 || body.Accounts[0].MaxConcurrentRequests != 3 || body.Accounts[1].MaxConcurrentRequests != 3 {
+		t.Fatalf("accounts = %+v, want two accounts with priority 2 load factor 5 max concurrency 3", body.Accounts)
 	}
 }
 
