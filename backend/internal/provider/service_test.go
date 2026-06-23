@@ -1148,8 +1148,8 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 	if account.ID == 0 || account.Provider != "openai" || account.AccountType != AccountTypeAPIUpstream {
 		t.Fatalf("account identity = %+v", account)
 	}
-	if account.Name != "OpenAI proxy" || account.Credential.BaseURL != "https://upstream.example.test/v1" {
-		t.Fatalf("account = %+v, want trimmed name and base URL", account)
+	if account.Name != "OpenAI proxy" || account.Credential.BaseURL != "https://upstream.example.test" {
+		t.Fatalf("account = %+v, want trimmed name and normalized base URL", account)
 	}
 	if !account.Enabled || account.Priority != 12 || account.Status != AccountStatusActive {
 		t.Fatalf("account scheduling = %+v, want enabled priority 12 active", account)
@@ -1167,7 +1167,7 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 	if decrypted != "upstream-secret" {
 		t.Fatalf("decrypted API key = %q, want upstream-secret", decrypted)
 	}
-	if saved := repo.accounts[0]; saved.Credential.EncryptedAPIKey != account.Credential.EncryptedAPIKey || saved.Credential.BaseURL != "https://upstream.example.test/v1" {
+	if saved := repo.accounts[0]; saved.Credential.EncryptedAPIKey != account.Credential.EncryptedAPIKey || saved.Credential.BaseURL != "https://upstream.example.test" {
 		t.Fatalf("saved account credential = %+v", saved.Credential)
 	}
 	models, err := service.ListAccountModels(context.Background(), account.ID)

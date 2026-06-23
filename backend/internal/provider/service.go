@@ -665,7 +665,7 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 
 func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstreamInput) (Account, error) {
 	name := strings.TrimSpace(input.Name)
-	baseURL := strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
+	baseURL := normalizeOpenAICompatibleBaseURL(input.BaseURL)
 	apiKey := strings.TrimSpace(input.APIKey)
 	if name == "" || baseURL == "" || apiKey == "" {
 		return Account{}, ErrInvalidInput
@@ -716,6 +716,14 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 		}
 	}
 	return account, nil
+}
+
+func normalizeOpenAICompatibleBaseURL(value string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(value), "/")
+	if strings.HasSuffix(baseURL, "/v1") {
+		return strings.TrimSuffix(baseURL, "/v1")
+	}
+	return baseURL
 }
 
 func (s *Service) DisconnectAccount(ctx context.Context, id int64) error {
