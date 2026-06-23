@@ -293,6 +293,42 @@ func TestUpdateAPIKeyModelPolicyRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestUpdateAPIKeyLimitsPersistsNonNegativeLimits(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{})
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	updated, err := service.UpdateAPIKeyLimits(context.Background(), result.Key.ID, 12, 40000)
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyLimits returned error: %v", err)
+	}
+	if updated.RequestsPerMinute != 12 || updated.TokensPerMinute != 40000 {
+		t.Fatalf("updated limits = %d/%d, want 12/40000", updated.RequestsPerMinute, updated.TokensPerMinute)
+	}
+
+	found, err := service.AuthenticateAPIKey(context.Background(), result.Secret)
+	if err != nil {
+		t.Fatalf("AuthenticateAPIKey returned error: %v", err)
+	}
+	if found.RequestsPerMinute != 12 || found.TokensPerMinute != 40000 {
+		t.Fatalf("authenticated limits = %d/%d, want 12/40000", found.RequestsPerMinute, found.TokensPerMinute)
+	}
+}
+
+func TestUpdateAPIKeyLimitsRejectsNegativeLimits(t *testing.T) {
+	service := NewService(newMemoryRepo(), Config{})
+
+	if _, err := service.UpdateAPIKeyLimits(context.Background(), 7, -1, 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateAPIKeyLimits negative requests error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.UpdateAPIKeyLimits(context.Background(), 7, 0, -1); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateAPIKeyLimits negative tokens error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -741,6 +777,17 @@ func (r *memoryRepo) UpdateAPIKeyModelPolicy(_ context.Context, id int64, policy
 	}
 	key.ModelPolicy = policy
 	key.AllowedModels = append([]string(nil), models...)
+	r.keys[id] = key
+	return key.APIKey, nil
+}
+
+func (r *memoryRepo) UpdateAPIKeyLimits(_ context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error) {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt != nil {
+		return APIKey{}, ErrNotFound
+	}
+	key.RequestsPerMinute = requestsPerMinute
+	key.TokensPerMinute = tokensPerMinute
 	r.keys[id] = key
 	return key.APIKey, nil
 }

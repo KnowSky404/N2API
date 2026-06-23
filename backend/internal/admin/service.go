@@ -185,6 +185,7 @@ type Repository interface {
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
+	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error)
@@ -343,6 +344,13 @@ func (s *Service) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy 
 	default:
 		return APIKey{}, ErrInvalidInput
 	}
+}
+
+func (s *Service) UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error) {
+	if requestsPerMinute < 0 || tokensPerMinute < 0 {
+		return APIKey{}, ErrInvalidInput
+	}
+	return s.repo.UpdateAPIKeyLimits(ctx, id, requestsPerMinute, tokensPerMinute)
 }
 
 func (s *Service) APIKeyAllowsModel(key APIKey, model string) bool {

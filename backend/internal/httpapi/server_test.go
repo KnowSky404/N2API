@@ -38,6 +38,10 @@ type fakeAdminService struct {
 	modelPolicy        string
 	modelPolicyModels  []string
 	modelPolicyErr     error
+	limitKeyID         int64
+	requestsPerMinute  int
+	tokensPerMinute    int
+	limitsErr          error
 	usageSummary       admin.UsageSummary
 	usageRange         string
 	usageGroupBy       string
@@ -154,6 +158,24 @@ func (s *fakeAdminService) UpdateAPIKeyModelPolicy(_ context.Context, id int64, 
 			} else {
 				key.AllowedModels = append([]string(nil), models...)
 			}
+			s.keys[i] = key
+			return key, nil
+		}
+	}
+	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) UpdateAPIKeyLimits(_ context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error) {
+	s.limitKeyID = id
+	s.requestsPerMinute = requestsPerMinute
+	s.tokensPerMinute = tokensPerMinute
+	if s.limitsErr != nil {
+		return admin.APIKey{}, s.limitsErr
+	}
+	for i, key := range s.keys {
+		if key.ID == id {
+			key.RequestsPerMinute = requestsPerMinute
+			key.TokensPerMinute = tokensPerMinute
 			s.keys[i] = key
 			return key, nil
 		}
@@ -808,6 +830,78 @@ func TestUpdateAPIKeyModelPolicyEndpointMapsErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			admins := newFakeAdminService()
 			admins.modelPolicyErr = tc.serviceErr
+			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+			req := httptest.NewRequest(http.MethodPut, tc.path, strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestUpdateAPIKeyLimitsEndpoint(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/limits", strings.NewReader(`{"requestsPerMinute":12,"tokensPerMinute":40000}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Key admin.APIKey `json:"key"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Key.ID != 7 || body.Key.RequestsPerMinute != 12 || body.Key.TokensPerMinute != 40000 {
+		t.Fatalf("key = %+v, want key limit updates", body.Key)
+	}
+	if admins.limitKeyID != 7 || admins.requestsPerMinute != 12 || admins.tokensPerMinute != 40000 {
+		t.Fatalf("recorded limits = id:%d requests:%d tokens:%d", admins.limitKeyID, admins.requestsPerMinute, admins.tokensPerMinute)
+	}
+}
+
+func TestUpdateAPIKeyLimitsEndpointMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path       string
+		body       string
+		serviceErr error
+		wantStatus int
+	}{
+		{
+			name:       "invalid id",
+			path:       "/api/admin/keys/not-a-number/limits",
+			body:       `{"requestsPerMinute":12,"tokensPerMinute":40000}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid input",
+			path:       "/api/admin/keys/7/limits",
+			body:       `{"requestsPerMinute":-1,"tokensPerMinute":40000}`,
+			serviceErr: admin.ErrInvalidInput,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			path:       "/api/admin/keys/99/limits",
+			body:       `{"requestsPerMinute":12,"tokensPerMinute":40000}`,
+			serviceErr: admin.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admins := newFakeAdminService()
+			admins.limitsErr = tc.serviceErr
 			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
 			req := httptest.NewRequest(http.MethodPut, tc.path, strings.NewReader(tc.body))
 			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})

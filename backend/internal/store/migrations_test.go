@@ -230,6 +230,23 @@ func TestRequestLogSessionIDMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestClientAPIKeyLimitsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00014_client_api_key_limits.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE client_api_keys ADD COLUMN IF NOT EXISTS requests_per_minute INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE client_api_keys ADD COLUMN IF NOT EXISTS tokens_per_minute INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE client_api_keys DROP COLUMN IF EXISTS tokens_per_minute",
+		"ALTER TABLE client_api_keys DROP COLUMN IF EXISTS requests_per_minute",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestRequestLogModelAttributionMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00010_request_log_model_attribution.sql")
 	if err != nil {
@@ -297,10 +314,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 13 {
-		t.Fatalf("migration sources = %d, want 13", len(sources))
+	if len(sources) != 14 {
+		t.Fatalf("migration sources = %d, want 14", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[12].Path != "00013_request_log_session_id.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[13].Path != "00014_client_api_key_limits.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

@@ -127,7 +127,7 @@ func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix s
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO client_api_keys (name, key_hash, prefix)
 		VALUES ($1, $2, $3)
-		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy, requests_per_minute, tokens_per_minute
 	`, name, hash, prefix).Scan(
 		&created.ID,
 		&created.Name,
@@ -136,6 +136,8 @@ func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix s
 		&created.LastUsedAt,
 		&created.RevokedAt,
 		&created.ModelPolicy,
+		&created.RequestsPerMinute,
+		&created.TokensPerMinute,
 	)
 	if err != nil {
 		return admin.APIKey{}, err
@@ -145,7 +147,7 @@ func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix s
 
 func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, name, prefix, created_at, last_used_at, revoked_at, model_policy
+		SELECT id, name, prefix, created_at, last_used_at, revoked_at, model_policy, requests_per_minute, tokens_per_minute
 		FROM client_api_keys
 		ORDER BY created_at DESC
 	`)
@@ -165,6 +167,8 @@ func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, erro
 			&key.LastUsedAt,
 			&key.RevokedAt,
 			&key.ModelPolicy,
+			&key.RequestsPerMinute,
+			&key.TokensPerMinute,
 		); err != nil {
 			return nil, err
 		}
@@ -186,7 +190,7 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 		UPDATE client_api_keys
 		SET revoked_at = COALESCE(revoked_at, now())
 		WHERE id = $1
-		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy, requests_per_minute, tokens_per_minute
 	`, id).Scan(
 		&revoked.ID,
 		&revoked.Name,
@@ -195,6 +199,8 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 		&revoked.LastUsedAt,
 		&revoked.RevokedAt,
 		&revoked.ModelPolicy,
+		&revoked.RequestsPerMinute,
+		&revoked.TokensPerMinute,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
@@ -215,7 +221,7 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ time.Time) (admin.APIKey, error) {
 	var found admin.APIKey
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, name, prefix, created_at, last_used_at, revoked_at, model_policy
+		SELECT id, name, prefix, created_at, last_used_at, revoked_at, model_policy, requests_per_minute, tokens_per_minute
 		FROM client_api_keys
 		WHERE key_hash = $1
 			AND revoked_at IS NULL
@@ -227,6 +233,8 @@ func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ t
 		&found.LastUsedAt,
 		&found.RevokedAt,
 		&found.ModelPolicy,
+		&found.RequestsPerMinute,
+		&found.TokensPerMinute,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
@@ -258,7 +266,7 @@ func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64,
 		SET model_policy = $2
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy, requests_per_minute, tokens_per_minute
 	`, id, policy).Scan(
 		&updated.ID,
 		&updated.Name,
@@ -267,6 +275,8 @@ func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64,
 		&updated.LastUsedAt,
 		&updated.RevokedAt,
 		&updated.ModelPolicy,
+		&updated.RequestsPerMinute,
+		&updated.TokensPerMinute,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
@@ -293,6 +303,42 @@ func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64,
 
 	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
+	}
+	return updated, nil
+}
+
+func (r *AdminRepository) UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error) {
+	var updated admin.APIKey
+	err := r.pool.QueryRow(ctx, `
+		UPDATE client_api_keys
+		SET requests_per_minute = $2,
+			tokens_per_minute = $3
+		WHERE id = $1
+			AND revoked_at IS NULL
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy, requests_per_minute, tokens_per_minute
+	`, id, requestsPerMinute, tokensPerMinute).Scan(
+		&updated.ID,
+		&updated.Name,
+		&updated.Prefix,
+		&updated.CreatedAt,
+		&updated.LastUsedAt,
+		&updated.RevokedAt,
+		&updated.ModelPolicy,
+		&updated.RequestsPerMinute,
+		&updated.TokensPerMinute,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKey{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if updated.ModelPolicy == admin.APIKeyModelPolicySelected {
+		models, err := r.ListAPIKeyModels(ctx, updated.ID)
+		if err != nil {
+			return admin.APIKey{}, err
+		}
+		updated.AllowedModels = models
 	}
 	return updated, nil
 }
