@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
@@ -104,6 +105,7 @@ type Config struct {
 	UpstreamBaseURL              string
 	CodexResponsesBaseURL        string
 	MaxConcurrentGatewayRequests int
+	MaxRequestsPerMinutePerKey   int
 	Logger                       RequestLogger
 	ModelProvider                ModelProvider
 	UsagePricer                  UsagePricer
@@ -116,6 +118,7 @@ type Proxy struct {
 	upstreamBaseURL string
 	codexBaseURL    string
 	limiter         chan struct{}
+	rateLimiter     *apiKeyRateLimiter
 	logger          RequestLogger
 	models          ModelProvider
 	usagePricer     UsagePricer
@@ -141,6 +144,10 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if cfg.MaxConcurrentGatewayRequests > 0 {
 		limiter = make(chan struct{}, cfg.MaxConcurrentGatewayRequests)
 	}
+	var rateLimiter *apiKeyRateLimiter
+	if cfg.MaxRequestsPerMinutePerKey > 0 {
+		rateLimiter = newAPIKeyRateLimiter(cfg.MaxRequestsPerMinutePerKey, time.Now)
+	}
 	return &Proxy{
 		auth:            auth,
 		accounts:        accounts,
@@ -148,6 +155,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		upstreamBaseURL: upstreamBaseURL,
 		codexBaseURL:    codexBaseURL,
 		limiter:         limiter,
+		rateLimiter:     rateLimiter,
 		logger:          cfg.Logger,
 		models:          cfg.ModelProvider,
 		usagePricer:     cfg.UsagePricer,
@@ -213,6 +221,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:             startedAt,
 		})
 	}()
+
+	if !p.allowAPIKeyRequest(key.ID) {
+		errorCode = "rate_limit_exceeded"
+		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key request rate limit exceeded")
+		return
+	}
 
 	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
 		if err := p.writeLocalModels(r.Context(), recorder, key); err != nil {
@@ -333,6 +347,13 @@ func (p *Proxy) tryAcquireGatewaySlot() (func(), bool) {
 	}
 }
 
+func (p *Proxy) allowAPIKeyRequest(keyID int64) bool {
+	if p.rateLimiter == nil {
+		return true
+	}
+	return p.rateLimiter.Allow(keyID)
+}
+
 func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if sessionID != "" {
 		if sticky, ok := p.accounts.(StickyAccountProvider); ok {
@@ -340,6 +361,48 @@ func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excl
 		}
 	}
 	return p.accounts.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+type apiKeyRateLimiter struct {
+	limit int
+	now   func() time.Time
+	mu    sync.Mutex
+	keys  map[int64]apiKeyRateWindow
+}
+
+type apiKeyRateWindow struct {
+	start time.Time
+	count int
+}
+
+func newAPIKeyRateLimiter(limit int, now func() time.Time) *apiKeyRateLimiter {
+	return &apiKeyRateLimiter{
+		limit: limit,
+		now:   now,
+		keys:  map[int64]apiKeyRateWindow{},
+	}
+}
+
+func (l *apiKeyRateLimiter) Allow(keyID int64) bool {
+	if l == nil || l.limit <= 0 {
+		return true
+	}
+	now := l.now()
+	windowStart := now.Truncate(time.Minute)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	window := l.keys[keyID]
+	if window.start.IsZero() || !window.start.Equal(windowStart) {
+		l.keys[keyID] = apiKeyRateWindow{start: windowStart, count: 1}
+		return true
+	}
+	if window.count >= l.limit {
+		return false
+	}
+	window.count++
+	l.keys[keyID] = window
+	return true
 }
 
 func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string) Usage {

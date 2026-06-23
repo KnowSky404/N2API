@@ -7,20 +7,21 @@ import (
 )
 
 type Config struct {
-	Host                         string
-	Port                         int
-	PublicURL                    string
-	DatabaseURL                  string
-	AdminUsername                string
-	AdminPassword                string
-	EncryptionSecret             string
-	OpenAIOAuthClientID          string
-	OpenAIOAuthSecret            string
-	OpenAIOAuthRedirectURL       string
-	OpenAIOAuthAuthURL           string
-	OpenAIOAuthTokenURL          string
-	OpenAIAPIBaseURL             string
-	GatewayMaxConcurrentRequests int
+	Host                           string
+	Port                           int
+	PublicURL                      string
+	DatabaseURL                    string
+	AdminUsername                  string
+	AdminPassword                  string
+	EncryptionSecret               string
+	OpenAIOAuthClientID            string
+	OpenAIOAuthSecret              string
+	OpenAIOAuthRedirectURL         string
+	OpenAIOAuthAuthURL             string
+	OpenAIOAuthTokenURL            string
+	OpenAIAPIBaseURL               string
+	GatewayMaxConcurrentRequests   int
+	GatewayRequestsPerMinutePerKey int
 }
 
 const (
@@ -57,6 +58,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.GatewayMaxConcurrentRequests = maxConcurrent
+	requestsPerMinute, err := parseNonNegativeInt(lookup("N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY"), "N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GatewayRequestsPerMinutePerKey = requestsPerMinute
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")

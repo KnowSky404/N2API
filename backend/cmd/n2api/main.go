@@ -165,6 +165,7 @@ func main() {
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL:              cfg.OpenAIAPIBaseURL,
 		MaxConcurrentGatewayRequests: cfg.GatewayMaxConcurrentRequests,
+		MaxRequestsPerMinutePerKey:   cfg.GatewayRequestsPerMinutePerKey,
 		Logger:                       store.NewGatewayRepository(pool),
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,

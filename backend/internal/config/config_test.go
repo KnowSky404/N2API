@@ -116,6 +116,33 @@ func TestLoadGatewayConcurrencyLimitConfig(t *testing.T) {
 	}
 }
 
+func TestLoadGatewayRequestRateLimitConfig(t *testing.T) {
+	defaultCfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if defaultCfg.GatewayRequestsPerMinutePerKey != 0 {
+		t.Fatalf("GatewayRequestsPerMinutePerKey = %d, want default disabled 0", defaultCfg.GatewayRequestsPerMinutePerKey)
+	}
+
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                              "postgres://example",
+		"N2API_ENCRYPTION_SECRET":                   "encryption-secret",
+		"N2API_ADMIN_PASSWORD":                      "admin-password",
+		"N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY": "60",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.GatewayRequestsPerMinutePerKey != 60 {
+		t.Fatalf("GatewayRequestsPerMinutePerKey = %d, want 60", cfg.GatewayRequestsPerMinutePerKey)
+	}
+}
+
 func TestLoadRejectsInvalidGatewayConcurrencyLimit(t *testing.T) {
 	for _, value := range []string{"abc", "-1"} {
 		t.Run(value, func(t *testing.T) {
@@ -127,6 +154,22 @@ func TestLoadRejectsInvalidGatewayConcurrencyLimit(t *testing.T) {
 			}))
 			if err == nil {
 				t.Fatal("Load returned nil error, want invalid gateway concurrency limit error")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidGatewayRequestRateLimit(t *testing.T) {
+	for _, value := range []string{"abc", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Load(mapLookup(map[string]string{
+				"DATABASE_URL":                              "postgres://example",
+				"N2API_ENCRYPTION_SECRET":                   "encryption-secret",
+				"N2API_ADMIN_PASSWORD":                      "admin-password",
+				"N2API_GATEWAY_REQUESTS_PER_MINUTE_PER_KEY": value,
+			}))
+			if err == nil {
+				t.Fatal("Load returned nil error, want invalid gateway request rate limit error")
 			}
 		})
 	}
