@@ -247,6 +247,7 @@ export const providerAccounts = $state({ loading: false, saving: false, error: '
 export const providerConnectForm = $state({ name: '', priority: 100, enabled: true });
 export const providerAccountPauseForm = $state({ durationSeconds: 300 });
 export const providerAccountBulkSchedulingForm = $state({ priority: '', loadFactor: '' });
+export const providerAccountBulkModelsForm = $state({ text: '' });
 export const providerOAuth = $state({ authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
 export const apiUpstreamForm = $state({
   name: '',
@@ -481,6 +482,10 @@ export function clearProviderAccountSelection() {
 export function clearProviderAccountBulkSchedulingForm() {
   providerAccountBulkSchedulingForm.priority = '';
   providerAccountBulkSchedulingForm.loadFactor = '';
+}
+
+export function clearProviderAccountBulkModelsForm() {
+  providerAccountBulkModelsForm.text = '';
 }
 
 export function getProviderStateLabel() {
@@ -1365,6 +1370,50 @@ export async function bulkUpdateSelectedProviderAccountScheduling() {
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     const message = error instanceof Error ? error.message : 'Bulk scheduling update failed';
+    providerAccounts.error = message;
+    await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = message;
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
+export async function bulkReplaceSelectedProviderAccountModels() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const accountIds = Object.keys(selectedProviderAccountIds)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (accountIds.length === 0) {
+    providerAccounts.error = 'Select at least one provider account';
+    return;
+  }
+
+  const models = parseAccountModelsText(providerAccountBulkModelsForm.text);
+  if (models.length === 0) {
+    providerAccounts.error = 'Enter at least one model for selected accounts';
+    return;
+  }
+
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  try {
+    await requestJSON('/api/admin/provider-accounts/bulk-models', {
+      method: 'POST',
+      body: JSON.stringify({ accountIds, models })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    for (const id of accountIds) {
+      delete accountModels[String(id)];
+    }
+    clearProviderAccountSelection();
+    clearProviderAccountBulkModelsForm();
+    await loadProviderAccounts();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    const message = error instanceof Error ? error.message : 'Bulk model update failed';
     providerAccounts.error = message;
     await loadProviderAccounts();
     if (!isCurrentAuthenticated(version)) return;

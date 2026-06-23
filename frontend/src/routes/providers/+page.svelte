@@ -2,6 +2,7 @@
   import {
     accountLabel,
     accountTypeLabel,
+    bulkReplaceSelectedProviderAccountModels,
     bulkUpdateSelectedProviderAccountScheduling,
     bulkUpdateSelectedProviderAccounts,
     clearProviderAccountSelection,
@@ -26,6 +27,7 @@
     apiUpstreamForm,
     provider,
     providerAccounts,
+    providerAccountBulkModelsForm,
     providerAccountBulkSchedulingForm,
     providerAccountPauseForm,
     providerConnectForm,
@@ -696,6 +698,23 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         onclick={bulkUpdateSelectedProviderAccountScheduling}
       >
         Apply scheduling
+      </button>
+      <label class="grid min-w-48 flex-1 gap-1 text-xs font-medium text-[#3c3c3c]">
+        Bulk models
+        <textarea
+          class="min-h-20 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+          placeholder={'gpt-5\ngpt-5-mini'}
+          bind:value={providerAccountBulkModelsForm.text}
+          disabled={providerAccounts.saving}
+        ></textarea>
+      </label>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
+        onclick={bulkReplaceSelectedProviderAccountModels}
+      >
+        Apply models
       </button>
       <button
         class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"

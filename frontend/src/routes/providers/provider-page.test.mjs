@@ -209,6 +209,23 @@ test('provider account state can bulk pause and reset selected accounts', () => 
   assert.match(adminStateSource, /clearProviderAccountSelection/);
 });
 
+test('provider account state can bulk replace selected account models', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /providerAccountBulkModelsForm/);
+  assert.match(adminStateSource, /bulkReplaceSelectedProviderAccountModels/);
+  assert.match(adminStateSource, /parseAccountModelsText/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-models/);
+  assert.match(adminStateSource, /loadModelRouting/);
+});
+
+test('provider account page exposes bulk model replacement controls', () => {
+  assert.match(source, /providerAccountBulkModelsForm/);
+  assert.match(source, /bulkReplaceSelectedProviderAccountModels/);
+  assert.match(source, /Bulk models/);
+  assert.match(source, /Apply models/);
+});
+
 test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {
   const warnings = apiKeyModelWarnings(
     {
