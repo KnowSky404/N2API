@@ -184,6 +184,22 @@ func TestUnifiedProviderAccountMigrationCopiesOAuthData(t *testing.T) {
 	}
 }
 
+func TestRequestLogProviderAccountAttributionMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00009_request_log_provider_account_attribution.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS provider_account_id",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS provider_account_type",
+		"request_logs_provider_account_created_at_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountPoolMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00004_oauth_account_pool.sql")
 	if err != nil {
@@ -213,10 +229,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 8 {
-		t.Fatalf("migration sources = %d, want 8", len(sources))
+	if len(sources) != 9 {
+		t.Fatalf("migration sources = %d, want 9", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[7].Path != "00008_unified_provider_accounts.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[8].Path != "00009_request_log_provider_account_attribution.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

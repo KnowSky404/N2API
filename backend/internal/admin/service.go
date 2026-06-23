@@ -55,16 +55,19 @@ type APIKey struct {
 }
 
 type RequestLog struct {
-	ID         int64     `json:"id"`
-	RequestID  string    `json:"requestId"`
-	ClientKey  string    `json:"clientKey"`
-	Provider   string    `json:"provider"`
-	Route      string    `json:"route"`
-	Method     string    `json:"method"`
-	StatusCode int       `json:"statusCode"`
-	LatencyMS  int       `json:"latencyMs"`
-	Error      string    `json:"error"`
-	CreatedAt  time.Time `json:"createdAt"`
+	ID                  int64     `json:"id"`
+	RequestID           string    `json:"requestId"`
+	ClientKey           string    `json:"clientKey"`
+	Provider            string    `json:"provider"`
+	ProviderAccountID   int64     `json:"providerAccountId"`
+	ProviderAccountType string    `json:"providerAccountType"`
+	ProviderAccountName string    `json:"providerAccountName"`
+	Route               string    `json:"route"`
+	Method              string    `json:"method"`
+	StatusCode          int       `json:"statusCode"`
+	LatencyMS           int       `json:"latencyMs"`
+	Error               string    `json:"error"`
+	CreatedAt           time.Time `json:"createdAt"`
 }
 
 type ModelSettings struct {

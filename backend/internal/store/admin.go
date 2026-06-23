@@ -376,6 +376,9 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			l.request_id,
 			COALESCE(k.name || ' (' || k.prefix || ')', ''),
 			l.provider,
+			COALESCE(l.provider_account_id, 0),
+			COALESCE(NULLIF(l.provider_account_type, ''), a.account_type, ''),
+			COALESCE(NULLIF(a.display_name, ''), a.name, ''),
 			l.route,
 			l.method,
 			l.status_code,
@@ -384,6 +387,7 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			l.created_at
 		FROM request_logs l
 		LEFT JOIN client_api_keys k ON k.id = l.client_key_id
+		LEFT JOIN provider_accounts a ON a.id = l.provider_account_id
 		ORDER BY l.created_at DESC, l.id DESC
 		LIMIT $1
 	`, limit)
@@ -400,6 +404,9 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			&log.RequestID,
 			&log.ClientKey,
 			&log.Provider,
+			&log.ProviderAccountID,
+			&log.ProviderAccountType,
+			&log.ProviderAccountName,
 			&log.Route,
 			&log.Method,
 			&log.StatusCode,

@@ -297,7 +297,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	repo.logs = []RequestLog{
-		{ID: 2, RequestID: "req_2", Route: "/v1/chat/completions", StatusCode: 200},
+		{ID: 2, RequestID: "req_2", Route: "/v1/chat/completions", StatusCode: 200, ProviderAccountID: 7, ProviderAccountType: "api_upstream", ProviderAccountName: "Upstream A"},
 		{ID: 1, RequestID: "req_1", Route: "/v1/models", StatusCode: 503},
 	}
 
@@ -310,6 +310,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if len(logs) != 2 || logs[0].RequestID != "req_2" {
 		t.Fatalf("logs = %+v", logs)
+	}
+	if logs[0].ProviderAccountID != 7 || logs[0].ProviderAccountType != "api_upstream" || logs[0].ProviderAccountName != "Upstream A" {
+		t.Fatalf("log account attribution = %+v", logs[0])
 	}
 
 	if _, err := service.ListRequestLogs(context.Background(), 500); err != nil {

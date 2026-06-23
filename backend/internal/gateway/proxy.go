@@ -61,15 +61,17 @@ type RequestLogger interface {
 }
 
 type RequestLog struct {
-	RequestID   string
-	ClientKeyID int64
-	Provider    string
-	Route       string
-	Method      string
-	StatusCode  int
-	Latency     time.Duration
-	Error       string
-	CreatedAt   time.Time
+	RequestID           string
+	ClientKeyID         int64
+	Provider            string
+	ProviderAccountID   int64
+	ProviderAccountType string
+	Route               string
+	Method              string
+	StatusCode          int
+	Latency             time.Duration
+	Error               string
+	CreatedAt           time.Time
 }
 
 type Config struct {
@@ -143,17 +145,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	recorder := &statusRecorder{ResponseWriter: w}
 	startedAt := time.Now()
 	errorCode := ""
+	var loggedAccount SelectedAccount
 	defer func() {
 		p.logRequest(r.Context(), RequestLog{
-			RequestID:   newRequestID(),
-			ClientKeyID: key.ID,
-			Provider:    "openai",
-			Route:       r.URL.Path,
-			Method:      r.Method,
-			StatusCode:  recorder.statusCode(),
-			Latency:     time.Since(startedAt),
-			Error:       errorCode,
-			CreatedAt:   startedAt,
+			RequestID:           newRequestID(),
+			ClientKeyID:         key.ID,
+			Provider:            "openai",
+			ProviderAccountID:   loggedAccount.AccountID,
+			ProviderAccountType: loggedAccount.AccountType,
+			Route:               r.URL.Path,
+			Method:              r.Method,
+			StatusCode:          recorder.statusCode(),
+			Latency:             time.Since(startedAt),
+			Error:               errorCode,
+			CreatedAt:           startedAt,
 		})
 	}()
 
@@ -223,6 +228,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 			return
 		}
+		loggedAccount = selected
 
 		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 		if err != nil {
