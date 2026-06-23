@@ -6,6 +6,7 @@ import { mock } from 'bun:test';
 globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
+  apiKeys,
   apiKeyModelWarnings,
   accountModelsText,
   modelListText,
@@ -15,8 +16,10 @@ const {
   parseModelLines,
   pruneAccountModelStates,
   removeAccountModel,
+  session,
   setAccountModelEnabled,
-  shouldApplyAccountModelsResponse
+  shouldApplyAccountModelsResponse,
+  updateAPIKeyLimits
 } = await import('../../lib/admin-state.svelte.js');
 
 const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
@@ -269,6 +272,38 @@ test('api keys page surfaces gateway runtime limits', () => {
   assert.match(apiKeysSource, /Requests per minute/);
   assert.match(apiKeysSource, /Tokens per minute/);
   assert.match(apiKeysSource, /loadGatewaySettings/);
+});
+
+test('api key state can save per-key gateway limits', async () => {
+  session.authenticated = true;
+  apiKeys.error = '';
+  apiKeys.items = [{ id: 7, name: 'codex laptop', requestsPerMinute: 0, tokensPerMinute: 0 }];
+  let request = null;
+  globalThis.fetch = async (path, options) => {
+    request = { path, options };
+    return new Response(
+      JSON.stringify({
+        key: { id: 7, name: 'codex laptop', requestsPerMinute: 12, tokensPerMinute: 40000 }
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  await updateAPIKeyLimits(7, '12', '40000');
+
+  assert.equal(request.path, '/api/admin/keys/7/limits');
+  assert.equal(request.options.method, 'PUT');
+  assert.deepEqual(JSON.parse(request.options.body), { requestsPerMinute: 12, tokensPerMinute: 40000 });
+  assert.equal(apiKeys.items[0].requestsPerMinute, 12);
+  assert.equal(apiKeys.items[0].tokensPerMinute, 40000);
+});
+
+test('api keys page edits per-key gateway limits', () => {
+  assert.match(apiKeysSource, /Key limits/);
+  assert.match(apiKeysSource, /requestsPerMinute/);
+  assert.match(apiKeysSource, /tokensPerMinute/);
+  assert.match(apiKeysSource, /updateAPIKeyLimits/);
+  assert.match(apiKeysSource, /\/min/);
 });
 
 test('models page points model access management to api keys', () => {

@@ -21,6 +21,7 @@
     revokeKey,
     saveModelSettings,
     session,
+    updateAPIKeyLimits,
     updateAPIKeyModelPolicy,
     usage,
   } from '$lib/admin-state.svelte.js';
@@ -272,12 +273,13 @@ All routable models
   {/if}
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1080px] text-left text-sm">
+    <table class="w-full min-w-[1280px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Name</th>
     <th class="px-4 py-3 font-medium">Prefix</th>
     <th class="w-80 px-4 py-3 font-medium">Model access</th>
+    <th class="w-72 px-4 py-3 font-medium">Key limits</th>
     <th class="px-4 py-3 font-medium">Created</th>
     <th class="px-4 py-3 font-medium">Last used</th>
     <th class="px-4 py-3 font-medium">Status</th>
@@ -287,11 +289,11 @@ All routable models
 <tbody class="divide-y divide-[#ededed]">
   {#if apiKeys.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading API keys...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading API keys...</td>
     </tr>
   {:else if apiKeys.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys created yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No API keys created yet.</td>
     </tr>
   {:else}
     {#each apiKeys.items as key}
@@ -344,6 +346,59 @@ All routable models
               disabled={Boolean(key.revokedAt)}
             >
               Save access
+            </button>
+          </form>
+        </td>
+        <td class="px-4 py-3">
+          <form
+            class="grid gap-2"
+            onsubmit={(event) => {
+              event.preventDefault();
+              updateAPIKeyLimits(
+                key.id,
+                key.requestsPerMinute ?? 0,
+                key.tokensPerMinute ?? 0
+              );
+            }}
+          >
+            <div class="grid gap-2 sm:grid-cols-2">
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-requests-per-minute-${key.id}`}>
+                Requests /min
+                <input
+                  id={`api-key-requests-per-minute-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.requestsPerMinute ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.requestsPerMinute = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-tokens-per-minute-${key.id}`}>
+                Tokens /min
+                <input
+                  id={`api-key-tokens-per-minute-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.tokensPerMinute ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.tokensPerMinute = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
+            </div>
+            <button
+              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="submit"
+              disabled={Boolean(key.revokedAt)}
+            >
+              Save limits
             </button>
           </form>
         </td>

@@ -11,6 +11,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} createdAt
  * @property {string | null} lastUsedAt
  * @property {string | null} revokedAt
+ * @property {number} requestsPerMinute
+ * @property {number} tokensPerMinute
  */
 
 /**
@@ -1222,6 +1224,39 @@ export async function updateAPIKeyModelPolicy(keyId, modelPolicy, modelsText) {
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update model access';
+  }
+}
+
+/**
+ * @param {number} keyId
+ * @param {string | number} requestsPerMinute
+ * @param {string | number} tokensPerMinute
+ */
+export async function updateAPIKeyLimits(keyId, requestsPerMinute, tokensPerMinute) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  const requestLimit = Number(requestsPerMinute);
+  const tokenLimit = Number(tokensPerMinute);
+  if (!Number.isInteger(requestLimit) || requestLimit < 0 || !Number.isInteger(tokenLimit) || tokenLimit < 0) {
+    apiKeys.error = 'API key limits must be non-negative whole numbers';
+    return;
+  }
+
+  apiKeys.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/keys/${keyId}/limits`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        requestsPerMinute: requestLimit,
+        tokensPerMinute: tokenLimit
+      })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.error = error instanceof Error ? error.message : 'Failed to update key limits';
   }
 }
 
