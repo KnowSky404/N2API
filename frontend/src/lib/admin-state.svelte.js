@@ -693,7 +693,7 @@ export async function connectProvider(account = null) {
   provider.error = '';
 
   try {
-    const payload = await requestJSON('/api/admin/providers/openai/connect', {
+    const payload = await requestJSON('/api/admin/provider-accounts/codex-oauth/connect', {
       method: 'POST',
       body: JSON.stringify({
         name: account ? account.name || account.displayName || '' : providerConnectForm.name,

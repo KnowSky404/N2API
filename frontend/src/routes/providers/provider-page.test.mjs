@@ -92,6 +92,13 @@ test('provider page has a single OAuth account creation entry point', () => {
   assert.match(source, /Add OAuth account/);
 });
 
+test('provider account state uses unified codex oauth connect endpoint', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/connect/);
+  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/connect/);
+});
+
 test('provider account table supports search, sorting, and a pinned actions column', () => {
   assert.match(source, /placeholder="Search accounts"/);
   assert.match(source, /aria-sort=/);

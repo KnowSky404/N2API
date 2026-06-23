@@ -849,6 +849,38 @@ func TestProviderConnectAcceptsAccountOptionsAndFingerprint(t *testing.T) {
 	}
 }
 
+func TestUnifiedProviderAccountCodexOAuthConnectDelegatesToProviderConnect(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp"}`))
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		AuthorizationURL string `json:"authorizationUrl"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.AuthorizationURL == "" {
+		t.Fatal("authorizationUrl is empty")
+	}
+	if providers.connectOptions.Name != "Work Codex" ||
+		providers.connectOptions.Priority != 7 ||
+		providers.connectOptions.Enabled == nil ||
+		*providers.connectOptions.Enabled ||
+		providers.connectOptions.TargetAccountID != 42 {
+		t.Fatalf("connectOptions = %+v", providers.connectOptions)
+	}
+}
+
 func TestProviderConnectReturnsConflictWhenUnconfigured(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.status.Configured = false
@@ -910,6 +942,7 @@ func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
 	}{
 		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
 		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
+		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
@@ -937,6 +970,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 	}{
 		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
 		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
+		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
