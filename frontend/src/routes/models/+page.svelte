@@ -43,7 +43,7 @@
 </script>
 
 <svelte:head>
-  <title>N2API Models</title>
+  <title>N2API Routing Diagnostics</title>
 </svelte:head>
 
 {#if session.loading}
@@ -87,9 +87,9 @@
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Model routing policy</h2>
+          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Routing diagnostics</h2>
           <p class="mt-2 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
-            Gateway default model and API key model access are managed from API Keys. Per-account manual models are managed from Provider accounts.
+            Gateway default model and API key model access are managed from API Keys. Per-account manual models are managed from Provider accounts. This page shows scheduler-visible routing candidates and block reasons.
           </p>
         </div>
         <div class="flex flex-wrap gap-2">

@@ -118,6 +118,8 @@ test('request logs page includes usage accounting UI', () => {
 });
 
 test('models page shows scheduling diagnostics for routing candidates', () => {
+  assert.match(modelsPage, /N2API Routing Diagnostics/);
+  assert.match(modelsPage, /Routing diagnostics/);
   assert.match(modelsPage, /account\.schedulable/);
   assert.match(modelsPage, /account\.unschedulableReason/);
   assert.match(modelsPage, /No schedulable account/);
