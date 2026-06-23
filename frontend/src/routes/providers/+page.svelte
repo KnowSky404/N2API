@@ -145,9 +145,15 @@
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountHoverDetail(account) {
-    return [accountLabel(account), accountSecondaryLabel(account), account.subject || account.provider]
+    return [accountLabel(account), accountSecondaryLabel(account), accountProviderDetail(account)]
       .filter(Boolean)
       .join('\n');
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function accountProviderDetail(account) {
+    const provider = account.provider || 'unknown';
+    return account.subject ? `${provider} / ${account.subject}` : provider;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -606,7 +612,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             <p class="mt-1 max-w-[18rem] truncate text-[#3c3c3c]">{accountSecondaryLabel(account)}</p>
           {/if}
           <p class="mt-1 max-w-[18rem] truncate font-mono text-[13px] text-[#6e6e6e]">
-            {account.subject || account.provider}
+            {accountProviderDetail(account)}
           </p>
         </td>
         <td class="px-4 py-3 align-middle">
@@ -653,7 +659,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         </td>
         <td class="px-4 py-3 align-middle">
           <label class="sr-only" for={`provider-account-priority-${account.id}`}>
-            Priority for {account.displayName || account.subject || account.provider}
+            Priority for {accountLabel(account)}
           </label>
           <input
             id={`provider-account-priority-${account.id}`}
