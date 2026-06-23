@@ -966,16 +966,33 @@ func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, se
 	if err != nil {
 		return SelectedAccount{}, err
 	}
-	sort.SliceStable(accounts, func(i, j int) bool {
-		return accounts[i].ID < accounts[j].ID
-	})
-	if len(accounts) > 1 {
-		start := stickyAccountIndex(sessionID, len(accounts))
-		rotated := append([]Account(nil), accounts[start:]...)
-		rotated = append(rotated, accounts[:start]...)
-		accounts = rotated
-	}
+	accounts = stickySessionCandidates(accounts, sessionID)
 	return s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+}
+
+func stickySessionCandidates(accounts []Account, sessionID string) []Account {
+	if len(accounts) <= 1 {
+		return accounts
+	}
+
+	priority := accounts[0].Priority
+	groupEnd := 0
+	for groupEnd < len(accounts) && accounts[groupEnd].Priority == priority {
+		groupEnd++
+	}
+	if groupEnd <= 1 {
+		return accounts
+	}
+
+	priorityGroup := append([]Account(nil), accounts[:groupEnd]...)
+	sort.SliceStable(priorityGroup, func(i, j int) bool {
+		return priorityGroup[i].ID < priorityGroup[j].ID
+	})
+	start := stickyAccountIndex(sessionID, len(priorityGroup))
+	rotated := append([]Account(nil), priorityGroup[start:]...)
+	rotated = append(rotated, priorityGroup[:start]...)
+	rotated = append(rotated, accounts[groupEnd:]...)
+	return rotated
 }
 
 func stickyAccountIndex(sessionID string, count int) int {

@@ -1147,6 +1147,38 @@ func TestSelectAccountForModelAndSessionUsesStickyHashAcrossCandidateOrder(t *te
 	}
 }
 
+func TestSelectAccountForModelAndSessionKeepsStickySelectionInsideHighestPriorityGroup(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "high-priority-first"),
+		testAccount(t, 2, true, 1, "high-priority-second"),
+		testAccount(t, 3, true, 50, "low-priority"),
+	}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	for _, sessionID := range []string{
+		"workspace-1",
+		"workspace-2",
+		"workspace-3",
+		"workspace-4",
+		"workspace-5",
+		"workspace-6",
+	} {
+		selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", sessionID)
+		if err != nil {
+			t.Fatalf("SelectAccountForModelAndSession(%q) returned error: %v", sessionID, err)
+		}
+		if selected.AccountID == 3 {
+			t.Fatalf("SelectAccountForModelAndSession(%q) selected low-priority account %+v", sessionID, selected)
+		}
+	}
+}
+
 func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
