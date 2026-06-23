@@ -143,6 +143,33 @@ func TestLoadGatewayRequestRateLimitConfig(t *testing.T) {
 	}
 }
 
+func TestLoadGatewayTokenRateLimitConfig(t *testing.T) {
+	defaultCfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":            "postgres://example",
+		"N2API_ENCRYPTION_SECRET": "encryption-secret",
+		"N2API_ADMIN_PASSWORD":    "admin-password",
+	}))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if defaultCfg.GatewayTokensPerMinutePerKey != 0 {
+		t.Fatalf("GatewayTokensPerMinutePerKey = %d, want default disabled 0", defaultCfg.GatewayTokensPerMinutePerKey)
+	}
+
+	cfg, err := Load(mapLookup(map[string]string{
+		"DATABASE_URL":                            "postgres://example",
+		"N2API_ENCRYPTION_SECRET":                 "encryption-secret",
+		"N2API_ADMIN_PASSWORD":                    "admin-password",
+		"N2API_GATEWAY_TOKENS_PER_MINUTE_PER_KEY": "60000",
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.GatewayTokensPerMinutePerKey != 60000 {
+		t.Fatalf("GatewayTokensPerMinutePerKey = %d, want 60000", cfg.GatewayTokensPerMinutePerKey)
+	}
+}
+
 func TestLoadRejectsInvalidGatewayConcurrencyLimit(t *testing.T) {
 	for _, value := range []string{"abc", "-1"} {
 		t.Run(value, func(t *testing.T) {
@@ -170,6 +197,22 @@ func TestLoadRejectsInvalidGatewayRequestRateLimit(t *testing.T) {
 			}))
 			if err == nil {
 				t.Fatal("Load returned nil error, want invalid gateway request rate limit error")
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidGatewayTokenRateLimit(t *testing.T) {
+	for _, value := range []string{"abc", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Load(mapLookup(map[string]string{
+				"DATABASE_URL":                            "postgres://example",
+				"N2API_ENCRYPTION_SECRET":                 "encryption-secret",
+				"N2API_ADMIN_PASSWORD":                    "admin-password",
+				"N2API_GATEWAY_TOKENS_PER_MINUTE_PER_KEY": value,
+			}))
+			if err == nil {
+				t.Fatal("Load returned nil error, want invalid gateway token rate limit error")
 			}
 		})
 	}

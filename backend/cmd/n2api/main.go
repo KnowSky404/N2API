@@ -166,6 +166,7 @@ func main() {
 		UpstreamBaseURL:              cfg.OpenAIAPIBaseURL,
 		MaxConcurrentGatewayRequests: cfg.GatewayMaxConcurrentRequests,
 		MaxRequestsPerMinutePerKey:   cfg.GatewayRequestsPerMinutePerKey,
+		MaxTokensPerMinutePerKey:     cfg.GatewayTokensPerMinutePerKey,
 		Logger:                       store.NewGatewayRepository(pool),
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,

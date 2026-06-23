@@ -22,6 +22,7 @@ type Config struct {
 	OpenAIAPIBaseURL               string
 	GatewayMaxConcurrentRequests   int
 	GatewayRequestsPerMinutePerKey int
+	GatewayTokensPerMinutePerKey   int
 }
 
 const (
@@ -63,6 +64,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.GatewayRequestsPerMinutePerKey = requestsPerMinute
+	tokensPerMinute, err := parseNonNegativeInt(lookup("N2API_GATEWAY_TOKENS_PER_MINUTE_PER_KEY"), "N2API_GATEWAY_TOKENS_PER_MINUTE_PER_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GatewayTokensPerMinutePerKey = tokensPerMinute
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")

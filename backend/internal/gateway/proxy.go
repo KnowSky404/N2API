@@ -106,6 +106,7 @@ type Config struct {
 	CodexResponsesBaseURL        string
 	MaxConcurrentGatewayRequests int
 	MaxRequestsPerMinutePerKey   int
+	MaxTokensPerMinutePerKey     int
 	Logger                       RequestLogger
 	ModelProvider                ModelProvider
 	UsagePricer                  UsagePricer
@@ -119,6 +120,7 @@ type Proxy struct {
 	codexBaseURL    string
 	limiter         chan struct{}
 	rateLimiter     *apiKeyRateLimiter
+	tokenLimiter    *apiKeyTokenLimiter
 	logger          RequestLogger
 	models          ModelProvider
 	usagePricer     UsagePricer
@@ -148,6 +150,10 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if cfg.MaxRequestsPerMinutePerKey > 0 {
 		rateLimiter = newAPIKeyRateLimiter(cfg.MaxRequestsPerMinutePerKey, time.Now)
 	}
+	var tokenLimiter *apiKeyTokenLimiter
+	if cfg.MaxTokensPerMinutePerKey > 0 {
+		tokenLimiter = newAPIKeyTokenLimiter(cfg.MaxTokensPerMinutePerKey, time.Now)
+	}
 	return &Proxy{
 		auth:            auth,
 		accounts:        accounts,
@@ -156,6 +162,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		codexBaseURL:    codexBaseURL,
 		limiter:         limiter,
 		rateLimiter:     rateLimiter,
+		tokenLimiter:    tokenLimiter,
 		logger:          cfg.Logger,
 		models:          cfg.ModelProvider,
 		usagePricer:     cfg.UsagePricer,
@@ -196,6 +203,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if observedUsage.Model == "" {
 			observedUsage.Model = requestModel
 		}
+		p.recordAPIKeyUsage(key.ID, observedUsage.TotalTokens)
 		costEstimate := p.estimateUsageCost(r.Context(), observedUsage)
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:             newRequestID(),
@@ -225,6 +233,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.allowAPIKeyRequest(key.ID) {
 		errorCode = "rate_limit_exceeded"
 		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key request rate limit exceeded")
+		return
+	}
+	if !p.allowAPIKeyTokens(key.ID) {
+		errorCode = "rate_limit_exceeded"
+		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key token rate limit exceeded")
 		return
 	}
 
@@ -354,6 +367,20 @@ func (p *Proxy) allowAPIKeyRequest(keyID int64) bool {
 	return p.rateLimiter.Allow(keyID)
 }
 
+func (p *Proxy) allowAPIKeyTokens(keyID int64) bool {
+	if p.tokenLimiter == nil {
+		return true
+	}
+	return p.tokenLimiter.Allow(keyID)
+}
+
+func (p *Proxy) recordAPIKeyUsage(keyID int64, tokens int) {
+	if p.tokenLimiter == nil || tokens <= 0 {
+		return
+	}
+	p.tokenLimiter.Record(keyID, tokens)
+}
+
 func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if sessionID != "" {
 		if sticky, ok := p.accounts.(StickyAccountProvider); ok {
@@ -403,6 +430,58 @@ func (l *apiKeyRateLimiter) Allow(keyID int64) bool {
 	window.count++
 	l.keys[keyID] = window
 	return true
+}
+
+type apiKeyTokenLimiter struct {
+	limit int
+	now   func() time.Time
+	mu    sync.Mutex
+	keys  map[int64]apiKeyTokenWindow
+}
+
+type apiKeyTokenWindow struct {
+	start  time.Time
+	tokens int
+}
+
+func newAPIKeyTokenLimiter(limit int, now func() time.Time) *apiKeyTokenLimiter {
+	return &apiKeyTokenLimiter{
+		limit: limit,
+		now:   now,
+		keys:  map[int64]apiKeyTokenWindow{},
+	}
+}
+
+func (l *apiKeyTokenLimiter) Allow(keyID int64) bool {
+	if l == nil || l.limit <= 0 {
+		return true
+	}
+	now := l.now()
+	windowStart := now.Truncate(time.Minute)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	window := l.keys[keyID]
+	if window.start.IsZero() || !window.start.Equal(windowStart) {
+		return true
+	}
+	return window.tokens < l.limit
+}
+
+func (l *apiKeyTokenLimiter) Record(keyID int64, tokens int) {
+	if l == nil || l.limit <= 0 || tokens <= 0 {
+		return
+	}
+	now := l.now()
+	windowStart := now.Truncate(time.Minute)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	window := l.keys[keyID]
+	if window.start.IsZero() || !window.start.Equal(windowStart) {
+		l.keys[keyID] = apiKeyTokenWindow{start: windowStart, tokens: tokens}
+		return
+	}
+	window.tokens += tokens
+	l.keys[keyID] = window
 }
 
 func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string) Usage {
