@@ -175,6 +175,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} maxConcurrentRequestsPerKey
  * @property {number} requestsPerMinutePerKey
  * @property {number} tokensPerMinutePerKey
+ * @property {boolean} providerAccountAutoTestEnabled
+ * @property {number} providerAccountAutoTestIntervalSeconds
  */
 
 /**
@@ -1353,7 +1355,9 @@ export async function loadGatewaySettings() {
       maxConcurrentRequestsPerAccount: Number(payload.maxConcurrentRequestsPerAccount ?? 0),
       maxConcurrentRequestsPerKey: Number(payload.maxConcurrentRequestsPerKey ?? 0),
       requestsPerMinutePerKey: Number(payload.requestsPerMinutePerKey ?? 0),
-      tokensPerMinutePerKey: Number(payload.tokensPerMinutePerKey ?? 0)
+      tokensPerMinutePerKey: Number(payload.tokensPerMinutePerKey ?? 0),
+      providerAccountAutoTestEnabled: Boolean(payload.providerAccountAutoTestEnabled),
+      providerAccountAutoTestIntervalSeconds: Number(payload.providerAccountAutoTestIntervalSeconds ?? 300)
     };
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
@@ -1373,12 +1377,27 @@ export async function updateGatewaySettings() {
     maxConcurrentRequestsPerAccount: Number(gatewaySettings.data.maxConcurrentRequestsPerAccount),
     maxConcurrentRequestsPerKey: Number(gatewaySettings.data.maxConcurrentRequestsPerKey),
     requestsPerMinutePerKey: Number(gatewaySettings.data.requestsPerMinutePerKey),
-    tokensPerMinutePerKey: Number(gatewaySettings.data.tokensPerMinutePerKey)
+    tokensPerMinutePerKey: Number(gatewaySettings.data.tokensPerMinutePerKey),
+    providerAccountAutoTestEnabled: Boolean(gatewaySettings.data.providerAccountAutoTestEnabled),
+    providerAccountAutoTestIntervalSeconds: Number(gatewaySettings.data.providerAccountAutoTestIntervalSeconds)
   };
+  const numericValues = [
+    payload.maxConcurrentGatewayRequests,
+    payload.maxConcurrentRequestsPerAccount,
+    payload.maxConcurrentRequestsPerKey,
+    payload.requestsPerMinutePerKey,
+    payload.tokensPerMinutePerKey,
+    payload.providerAccountAutoTestIntervalSeconds
+  ];
   if (
-    Object.values(payload).some((value) => !Number.isInteger(value) || value < 0)
+    numericValues.some((value) => !Number.isInteger(value) || value < 0)
   ) {
-    gatewaySettings.error = 'Gateway limits must be non-negative whole numbers';
+    gatewaySettings.error = 'Gateway settings must use non-negative whole numbers';
+    gatewaySettings.saved = false;
+    return;
+  }
+  if (payload.providerAccountAutoTestEnabled && payload.providerAccountAutoTestIntervalSeconds < 60) {
+    gatewaySettings.error = 'Provider account auto test interval must be at least 60 seconds when enabled';
     gatewaySettings.saved = false;
     return;
   }
@@ -1398,7 +1417,9 @@ export async function updateGatewaySettings() {
       maxConcurrentRequestsPerAccount: Number(saved.maxConcurrentRequestsPerAccount ?? 0),
       maxConcurrentRequestsPerKey: Number(saved.maxConcurrentRequestsPerKey ?? 0),
       requestsPerMinutePerKey: Number(saved.requestsPerMinutePerKey ?? 0),
-      tokensPerMinutePerKey: Number(saved.tokensPerMinutePerKey ?? 0)
+      tokensPerMinutePerKey: Number(saved.tokensPerMinutePerKey ?? 0),
+      providerAccountAutoTestEnabled: Boolean(saved.providerAccountAutoTestEnabled),
+      providerAccountAutoTestIntervalSeconds: Number(saved.providerAccountAutoTestIntervalSeconds ?? 300)
     };
     gatewaySettings.saved = true;
   } catch (error) {

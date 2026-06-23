@@ -263,6 +263,33 @@
             </dd>
           </div>
         </dl>
+        <div class="mt-5 rounded-md border border-[#ededed] bg-[#fafafa] p-4">
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h4 class="text-sm font-semibold text-[#0d0d0d]">Provider account auto tests</h4>
+              <p class="mt-1 max-w-2xl text-sm text-[#6e6e6e]">
+                Run the same probe as Test all accounts on a backend schedule.
+              </p>
+              <label class="mt-4 flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
+                <input
+                  class="h-4 w-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+                  type="checkbox"
+                  bind:checked={gatewaySettings.data.providerAccountAutoTestEnabled}
+                />
+                Enable auto tests
+              </label>
+            </div>
+            <label class="block w-full text-sm font-medium text-[#3c3c3c] lg:w-56">
+              Interval seconds
+              <input
+                class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                type="number"
+                min="0"
+                bind:value={gatewaySettings.data.providerAccountAutoTestIntervalSeconds}
+              />
+            </label>
+          </div>
+        </div>
         <div class="mt-4 flex flex-wrap items-center gap-3">
           <button
             class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
