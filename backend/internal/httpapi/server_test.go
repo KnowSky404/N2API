@@ -2337,14 +2337,15 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 		Models []struct {
 			Model    string `json:"model"`
 			Accounts []struct {
-				ID          int64  `json:"id"`
-				DisplayName string `json:"displayName"`
-				AccountType string `json:"accountType"`
-				Enabled     bool   `json:"enabled"`
-				Priority    int    `json:"priority"`
-				Status      string `json:"status"`
-				LastUsedAt  string `json:"lastUsedAt"`
-				Schedulable bool   `json:"schedulable"`
+				ID           int64  `json:"id"`
+				DisplayName  string `json:"displayName"`
+				AccountType  string `json:"accountType"`
+				Enabled      bool   `json:"enabled"`
+				Priority     int    `json:"priority"`
+				Status       string `json:"status"`
+				LastUsedAt   string `json:"lastUsedAt"`
+				ScheduleRank int    `json:"scheduleRank"`
+				Schedulable  bool   `json:"schedulable"`
 			} `json:"accounts"`
 		} `json:"models"`
 	}
@@ -2360,6 +2361,11 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 	}
 	if accounts[0].ID != 8 || accounts[1].ID != 7 || accounts[2].ID != 9 {
 		t.Fatalf("account order = %+v, want last-used then priority order [8 7 9]", accounts)
+	}
+	for index, account := range accounts {
+		if account.ScheduleRank != index+1 {
+			t.Fatalf("account %d schedule rank = %d, want %d", account.ID, account.ScheduleRank, index+1)
+		}
 	}
 	for index, account := range accounts[:3] {
 		if !account.Schedulable {

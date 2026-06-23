@@ -160,6 +160,7 @@ type ModelRoutingAccount struct {
 	Priority            int        `json:"priority"`
 	Status              string     `json:"status"`
 	LastUsedAt          *time.Time `json:"lastUsedAt"`
+	ScheduleRank        int        `json:"scheduleRank"`
 	Schedulable         bool       `json:"schedulable"`
 	UnschedulableReason string     `json:"unschedulableReason"`
 }

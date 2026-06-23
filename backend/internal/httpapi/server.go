@@ -384,12 +384,12 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		var req struct {
-			Name    string   `json:"name"`
-			BaseURL string   `json:"baseUrl"`
-			APIKey  string   `json:"apiKey"`
-			Enabled *bool    `json:"enabled"`
-			Priority int     `json:"priority"`
-			Models  []string `json:"models"`
+			Name     string   `json:"name"`
+			BaseURL  string   `json:"baseUrl"`
+			APIKey   string   `json:"apiKey"`
+			Enabled  *bool    `json:"enabled"`
+			Priority int      `json:"priority"`
+			Models   []string `json:"models"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
@@ -931,6 +931,9 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 	}
 	for i := range status.Models {
 		sortModelRoutingAccounts(status.Models[i].Accounts, accounts)
+		for index := range status.Models[i].Accounts {
+			status.Models[i].Accounts[index].ScheduleRank = index + 1
+		}
 	}
 	if len(extraModels) > 1 {
 		sort.Strings(extraModels)

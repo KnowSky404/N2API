@@ -126,6 +126,8 @@ test('request logs page formats gateway error codes for scanning', () => {
 test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /N2API Routing Diagnostics/);
   assert.match(modelsPage, /Routing diagnostics/);
+  assert.match(modelsPage, /Schedule rank/);
+  assert.match(modelsPage, /account\.scheduleRank/);
   assert.match(modelsPage, /account\.schedulable/);
   assert.match(modelsPage, /account\.unschedulableReason/);
   assert.match(modelsPage, /No schedulable account/);

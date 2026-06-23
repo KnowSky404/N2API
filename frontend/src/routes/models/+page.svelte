@@ -226,6 +226,7 @@
                                 : 'border-amber-200 bg-amber-50 text-amber-800'
                             ]}
                           >
+                            <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">Schedule rank #{account.scheduleRank}</span>
                             <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
                             <span class="text-[#6e6e6e]">{accountTypeLabel(account.accountType)}</span>
                             <span class="text-[#6e6e6e]">Priority {account.priority}</span>
