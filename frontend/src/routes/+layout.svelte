@@ -14,6 +14,7 @@
 
   const navItems = [
     { href: '/', label: 'Dashboard' },
+    { href: '/gateway', label: 'Gateway' },
     { href: '/providers', label: 'Providers' },
     { href: '/models', label: 'Routing' },
     { href: '/api-keys', label: 'API Keys' },

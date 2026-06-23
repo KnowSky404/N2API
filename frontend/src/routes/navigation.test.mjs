@@ -6,6 +6,7 @@ const expectedFiles = [
   'src/lib/admin-state.svelte.js',
   'src/routes/+layout.svelte',
   'src/routes/+page.svelte',
+  'src/routes/gateway/+page.svelte',
   'src/routes/providers/+page.svelte',
   'src/routes/models/+page.svelte',
   'src/routes/api-keys/+page.svelte',
@@ -14,6 +15,7 @@ const expectedFiles = [
 
 const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
 const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
+const gatewayPage = readFileSync('src/routes/gateway/+page.svelte', 'utf8');
 const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
@@ -23,7 +25,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Providers', 'Routing', 'API Keys', 'Request Logs', 'Sign out']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing', 'API Keys', 'Request Logs', 'Sign out']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -34,7 +36,33 @@ test('primary navigation moves model policy ownership to API keys', () => {
 
   assert.match(layout, /href:\s*'\/models'/);
   assert.match(layout, /label:\s*'Routing'/);
+  assert.match(layout, /href:\s*'\/gateway'/);
   assert.match(layout, /href:\s*'\/api-keys'/);
+});
+
+test('gateway page manages runtime limits and usage visibility', () => {
+  for (const label of [
+    'Gateway management',
+    'Runtime limits',
+    'Gateway concurrency',
+    'Per account concurrency',
+    'Per key concurrency',
+    'Requests per minute',
+    'Tokens per minute',
+    '24h usage',
+    'Top provider accounts',
+    'Top client keys',
+    'Top sessions'
+  ]) {
+    assert.match(gatewayPage, new RegExp(label.replace(' ', '\\s+')), `gateway page should include ${label}`);
+  }
+
+  assert.match(gatewayPage, /loadGatewaySettings/);
+  assert.match(gatewayPage, /loadUsageSummary\('24h', 'provider_account'\)/);
+  assert.match(gatewayPage, /loadUsageSummary\('24h', 'client_key'\)/);
+  assert.match(gatewayPage, /loadUsageSummary\('24h', 'session'\)/);
+  assert.match(gatewayPage, /gatewayLimitLabel/);
+  assert.match(gatewayPage, /formatCostMicrousd/);
 });
 
 test('request logs page shows provider account attribution', () => {
