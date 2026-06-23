@@ -21,9 +21,19 @@ type gatewayAccountProvider struct {
 }
 
 var _ gateway.AccountProvider = gatewayAccountProvider{}
+var _ gateway.StickyAccountProvider = gatewayAccountProvider{}
 
 func (p gatewayAccountProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
 	selected, err := p.service.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+	return selectedGatewayAccount(selected, err)
+}
+
+func (p gatewayAccountProvider) SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
+	selected, err := p.service.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
+	return selectedGatewayAccount(selected, err)
+}
+
+func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gateway.SelectedAccount, error) {
 	if err != nil {
 		return gateway.SelectedAccount{}, err
 	}

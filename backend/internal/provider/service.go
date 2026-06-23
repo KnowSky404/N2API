@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -948,6 +950,44 @@ func (s *Service) SelectAccountForModel(ctx context.Context, model string, exclu
 	if err != nil {
 		return SelectedAccount{}, err
 	}
+	return s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+}
+
+func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+	}
+	if !s.Configured() {
+		return SelectedAccount{}, ErrNotConfigured
+	}
+
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	sort.SliceStable(accounts, func(i, j int) bool {
+		return accounts[i].ID < accounts[j].ID
+	})
+	if len(accounts) > 1 {
+		start := stickyAccountIndex(sessionID, len(accounts))
+		rotated := append([]Account(nil), accounts[start:]...)
+		rotated = append(rotated, accounts[:start]...)
+		accounts = rotated
+	}
+	return s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+}
+
+func stickyAccountIndex(sessionID string, count int) int {
+	if count <= 1 {
+		return 0
+	}
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(sessionID))
+	return int(hash.Sum64() % uint64(count))
+}
+
+func (s *Service) selectFromCandidates(ctx context.Context, accounts []Account, hasEnabled bool, notFoundErr error) (SelectedAccount, error) {
 	for _, account := range accounts {
 		selected, err := s.selectedAccount(ctx, account)
 		if err != nil {

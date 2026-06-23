@@ -43,6 +43,10 @@ type AccountProvider interface {
 	SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
+type StickyAccountProvider interface {
+	SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
 type AccountFailureReporter interface {
 	RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error
 }
@@ -216,7 +220,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bodyFactory, maxAttempts, model, err := p.requestBodyFactory(r)
+	bodyFactory, maxAttempts, model, sessionID, err := p.requestBodyFactory(r)
 	if err != nil {
 		errorCode = requestBodyErrorCode(err)
 		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
@@ -245,7 +249,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	failedAccountIDs := []int64{}
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		selected, err := p.accounts.SelectAccountForModel(r.Context(), model, failedAccountIDs...)
+		selected, err := p.selectAccount(r.Context(), model, sessionID, failedAccountIDs...)
 		if err != nil {
 			if lastRetryableResp != nil {
 				_ = lastRetryableResp.Body.Close()
@@ -300,6 +304,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
 		return
 	}
+}
+
+func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	if sessionID != "" {
+		if sticky, ok := p.accounts.(StickyAccountProvider); ok {
+			return sticky.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
+		}
+	}
+	return p.accounts.SelectAccountForModel(ctx, model, excludedAccountIDs...)
 }
 
 func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string) Usage {
@@ -546,43 +559,44 @@ var (
 	errModelNotFound      = errors.New("model not found")
 )
 
-func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, error) {
+func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", nil
+		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", "", nil
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, maxReplayableRequestBody+1))
 	if err != nil {
-		return nil, 0, "", err
+		return nil, 0, "", "", err
 	}
 	if len(limitedBody) > maxReplayableRequestBody {
 		_ = r.Body.Close()
-		return nil, 0, "", errReplayBodyTooLarge
+		return nil, 0, "", "", errReplayBodyTooLarge
 	}
 	_ = r.Body.Close()
 	model := ""
+	sessionID := ""
 	if routeRequiresModel(r) {
 		var body []byte
-		body, model, err = p.normalizeModelRequestBody(r.Context(), limitedBody)
+		body, model, sessionID, err = p.normalizeModelRequestBody(r.Context(), limitedBody)
 		if err != nil {
-			return nil, 0, "", err
+			return nil, 0, "", "", err
 		}
 		limitedBody = body
 	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
-	}, maxReplayableAttempts, model, nil
+	}, maxReplayableAttempts, model, sessionID, nil
 }
 
 func routeRequiresModel(r *http.Request) bool {
 	return r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/responses")
 }
 
-func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, error) {
+func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, string, error) {
 	payload := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, "", errInvalidJSONBody
+			return nil, "", "", errInvalidJSONBody
 		}
 	}
 
@@ -591,31 +605,39 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if hasModel {
 		modelValue, ok := rawModel.(string)
 		if !ok {
-			return nil, "", errInvalidJSONBody
+			return nil, "", "", errInvalidJSONBody
 		}
 		model = strings.TrimSpace(modelValue)
+	}
+	sessionID := ""
+	if rawSessionID, ok := payload["session_id"]; ok {
+		sessionValue, ok := rawSessionID.(string)
+		if !ok {
+			return nil, "", "", errInvalidJSONBody
+		}
+		sessionID = strings.TrimSpace(sessionValue)
 	}
 	if model == "" {
 		defaultModel, err := p.defaultModel(ctx)
 		if err != nil {
-			return nil, "", err
+			return nil, "", "", err
 		}
 		model = defaultModel
 		payload["model"] = model
 		raw, err = json.Marshal(payload)
 		if err != nil {
-			return nil, "", err
+			return nil, "", "", err
 		}
 	} else if rawModel != model {
 		payload["model"] = model
 		normalized, err := json.Marshal(payload)
 		if err != nil {
-			return nil, "", err
+			return nil, "", "", err
 		}
 		raw = normalized
 	}
 
-	return raw, model, nil
+	return raw, model, sessionID, nil
 }
 
 func (p *Proxy) defaultModel(ctx context.Context) (string, error) {

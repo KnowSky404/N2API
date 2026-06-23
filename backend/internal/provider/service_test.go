@@ -1106,6 +1106,47 @@ func TestSelectAccountForModelRespectsExcludedAccountIDsWithModelFilter(t *testi
 	}
 }
 
+func TestSelectAccountForModelAndSessionUsesStickyHashAcrossCandidateOrder(t *testing.T) {
+	now := time.Now()
+	recent := now.Add(-time.Minute)
+	older := now.Add(-time.Hour)
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 1, "second-token"),
+		testAccount(t, 3, true, 1, "third-token"),
+	}
+	for i := range repo.accounts {
+		repo.accounts[i].LastUsedAt = &older
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSession returned error: %v", err)
+	}
+	repo.accounts[0].LastUsedAt = &recent
+	repo.accounts[1].LastUsedAt = nil
+	repo.accounts[2].LastUsedAt = &older
+	again, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSession after reorder returned error: %v", err)
+	}
+	if again.AccountID != selected.AccountID {
+		t.Fatalf("sticky account = %d after reorder, want original %d", again.AccountID, selected.AccountID)
+	}
+	fallback, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123", selected.AccountID)
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSession fallback returned error: %v", err)
+	}
+	if fallback.AccountID == selected.AccountID {
+		t.Fatalf("fallback account = %d, want account different from excluded sticky account", fallback.AccountID)
+	}
+}
+
 func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{

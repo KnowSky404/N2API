@@ -38,6 +38,7 @@ type fakeSelectedAccountProvider struct {
 	errs       []error
 	calls      int
 	models     []string
+	sessions   []string
 	exclusions [][]int64
 	failures   []reportedAccountFailure
 }
@@ -61,6 +62,11 @@ func (p *fakeSelectedAccountProvider) SelectAccountForModel(ctx context.Context,
 		return p.accounts[i], nil
 	}
 	return SelectedAccount{}, provider.ErrAccountsUnavailable
+}
+
+func (p *fakeSelectedAccountProvider) SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	p.sessions = append(p.sessions, sessionID)
+	return p.SelectAccountForModel(ctx, model, excludedAccountIDs...)
 }
 
 func (p *fakeSelectedAccountProvider) RecordAccountFailure(_ context.Context, accountID int64, statusCode int, retryAfter, message string) error {
@@ -270,6 +276,49 @@ func TestProxyRoutesChatCompletionByRequestedModel(t *testing.T) {
 	}
 	if gotBody != `{"model":"gpt-5","messages":[]}` {
 		t.Fatalf("upstream body = %q", gotBody)
+	}
+}
+
+func TestProxyRoutesRequestWithSessionIDForStickySelection(t *testing.T) {
+	const requestBody = `{"model":"gpt-5","session_id":" workspace-123 ","messages":[]}`
+	var gotBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll returned error: %v", err)
+		}
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_123"}`))
+	}))
+	defer upstream.Close()
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL: upstream.URL,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5-mini",
+			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 1 || len(tokens.models) != 1 || tokens.models[0] != "gpt-5" {
+		t.Fatalf("requested models = %+v, calls=%d; want gpt-5", tokens.models, tokens.calls)
+	}
+	if !slices.Equal(tokens.sessions, []string{"workspace-123"}) {
+		t.Fatalf("sessions = %+v, want trimmed workspace-123", tokens.sessions)
+	}
+	if gotBody != requestBody {
+		t.Fatalf("upstream body = %q, want original body", gotBody)
 	}
 }
 
