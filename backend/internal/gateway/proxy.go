@@ -22,6 +22,7 @@ const defaultCodexResponsesBaseURL = "https://chatgpt.com/backend-api/codex"
 const defaultCodexUserAgent = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
 const defaultCodexInstructions = "You are Codex, a coding agent."
 const maxReplayableRequestBody = 1 << 20
+const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 
 type APIKeyAuthenticator interface {
@@ -238,14 +239,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var firstAccountID int64
+	failedAccountIDs := []int64{}
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		var excluded []int64
-		if attempt > 0 && firstAccountID > 0 {
-			excluded = append(excluded, firstAccountID)
-		}
-		selected, err := p.accounts.SelectAccountForModel(r.Context(), model, excluded...)
+		selected, err := p.accounts.SelectAccountForModel(r.Context(), model, failedAccountIDs...)
 		if err != nil {
 			if lastRetryableResp != nil {
 				_ = lastRetryableResp.Body.Close()
@@ -259,9 +256,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = lastRetryableResp.Body.Close()
 			lastRetryableResp = nil
 		}
-		if attempt == 0 {
-			firstAccountID = selected.AccountID
-		} else if selected.AccountID != 0 && selected.AccountID == firstAccountID {
+		if selected.AccountID != 0 && containsInt64(failedAccountIDs, selected.AccountID) {
 			errorCode = "upstream_unavailable"
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 			return
@@ -277,6 +272,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		upstreamResp, err := p.client.Do(upstreamReq)
 		if err != nil {
 			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", err.Error())
+			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				continue
 			}
@@ -288,6 +284,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if retryableUpstreamStatus(upstreamResp.StatusCode) {
 			message := captureFailureMessage(upstreamResp)
 			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
+			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				lastRetryableResp = upstreamResp
 				continue
@@ -360,6 +357,22 @@ func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statu
 		return
 	}
 	_ = reporter.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
+}
+
+func containsInt64(values []int64, target int64) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueInt64(values []int64, value int64) []int64 {
+	if value == 0 || containsInt64(values, value) {
+		return values
+	}
+	return append(values, value)
 }
 
 func (p *Proxy) writeLocalModels(ctx context.Context, w http.ResponseWriter, key admin.APIKey) error {
@@ -532,7 +545,7 @@ var (
 
 func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return func() io.ReadCloser { return nil }, 2, "", nil
+		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", nil
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, maxReplayableRequestBody+1))
@@ -555,7 +568,7 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
-	}, 2, model, nil
+	}, maxReplayableAttempts, model, nil
 }
 
 func routeRequiresModel(r *http.Request) bool {

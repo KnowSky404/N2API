@@ -1172,6 +1172,46 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	}
 }
 
+func TestProxyExcludesEveryFailedAccountBeforeStreaming(t *testing.T) {
+	transportCalls := 0
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AuthorizationToken: "first-token"},
+		{AccountID: 2, AuthorizationToken: "second-token"},
+		{AccountID: 3, AuthorizationToken: "third-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls < 3 {
+			return nil, errors.New("upstream unavailable")
+		}
+		if r.Header.Get("Authorization") != "Bearer third-token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 3 {
+		t.Fatalf("token calls = %d, want 3", tokens.calls)
+	}
+	if !slices.Equal(tokens.exclusions[1], []int64{1}) || !slices.Equal(tokens.exclusions[2], []int64{1, 2}) {
+		t.Fatalf("exclusions = %+v, want retry calls excluding all failed accounts", tokens.exclusions)
+	}
+}
+
 func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	transportCalls := 0
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "rate-limited-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
