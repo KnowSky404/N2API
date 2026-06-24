@@ -1465,6 +1465,9 @@ func providerErrorCodeForSelection(err error, selected SelectedAccount) string {
 	if errors.Is(err, provider.ErrAccountsDisabled) && strings.TrimSpace(selected.RoutingPoolError) == provider.RoutingPoolErrorDisabled {
 		return provider.RoutingPoolErrorDisabled
 	}
+	if errors.Is(err, provider.ErrModelUnavailable) && strings.TrimSpace(selected.RoutingPoolError) == provider.RoutingPoolErrorExhausted {
+		return provider.RoutingPoolErrorExhausted
+	}
 	return providerErrorCode(err)
 }
 
@@ -1484,6 +1487,8 @@ func providerErrorMessage(code string) string {
 		return "routing pool has no eligible accounts"
 	case "routing_pool_disabled":
 		return "routing pool is disabled"
+	case "routing_pool_exhausted":
+		return "routing pool fallback chain is exhausted"
 	case "provider_accounts_unavailable":
 		return "provider accounts are unavailable"
 	case "model_unavailable":

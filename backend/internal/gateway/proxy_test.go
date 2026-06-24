@@ -2359,14 +2359,14 @@ func TestProxyLogsRoutingPoolExhaustedDiagnosticsOnSelectionError(t *testing.T) 
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "model_unavailable") {
-		t.Fatalf("body = %s, want model_unavailable", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "routing_pool_exhausted") {
+		t.Fatalf("body = %s, want routing_pool_exhausted", recorder.Body.String())
 	}
 	if len(logger.entries) != 1 {
 		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
 	}
 	entry := logger.entries[0]
-	if entry.RoutingPoolID != 1 || entry.RoutingPoolFallbackChain != "primary -> secondary" || entry.RoutingPoolError != provider.RoutingPoolErrorExhausted {
+	if entry.RoutingPoolID != 1 || entry.RoutingPoolFallbackChain != "primary -> secondary" || entry.RoutingPoolError != provider.RoutingPoolErrorExhausted || entry.Error != provider.RoutingPoolErrorExhausted {
 		t.Fatalf("routing pool diagnostics = %+v, want exhausted chain", entry)
 	}
 }
@@ -2450,6 +2450,16 @@ func TestProviderErrorCodeForSelectionKeepsGlobalDisabledDistinctFromRoutingPool
 	selected := SelectedAccount{RoutingPoolError: provider.RoutingPoolErrorDisabled}
 	if got := providerErrorCodeForSelection(provider.ErrAccountsDisabled, selected); got != provider.RoutingPoolErrorDisabled {
 		t.Fatalf("routing pool disabled error code = %q, want %s", got, provider.RoutingPoolErrorDisabled)
+	}
+}
+
+func TestProviderErrorCodeForSelectionKeepsModelUnavailableDistinctFromRoutingPoolExhausted(t *testing.T) {
+	if got := providerErrorCodeForSelection(provider.ErrModelUnavailable, SelectedAccount{}); got != "model_unavailable" {
+		t.Fatalf("model unavailable error code = %q, want model_unavailable", got)
+	}
+	selected := SelectedAccount{RoutingPoolError: provider.RoutingPoolErrorExhausted}
+	if got := providerErrorCodeForSelection(provider.ErrModelUnavailable, selected); got != provider.RoutingPoolErrorExhausted {
+		t.Fatalf("routing pool exhausted error code = %q, want %s", got, provider.RoutingPoolErrorExhausted)
 	}
 }
 
