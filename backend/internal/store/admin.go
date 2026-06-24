@@ -760,6 +760,11 @@ func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 		conditions = append(conditions, "l.provider_account_id = $"+strconv.Itoa(len(args)))
 	}
 
+	if filter.RoutingPoolID > 0 {
+		args = append(args, filter.RoutingPoolID)
+		conditions = append(conditions, "l.routing_pool_id = $"+strconv.Itoa(len(args)))
+	}
+
 	if filter.ClientKeyID > 0 {
 		args = append(args, filter.ClientKeyID)
 		conditions = append(conditions, "l.client_key_id = $"+strconv.Itoa(len(args)))

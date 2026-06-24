@@ -197,6 +197,27 @@ func TestGatewayDocumentationMentionsAPIKeyBudgets(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsRoutingPools(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Routing pools",
+			"API key can be bound to one routing pool",
+			"pool-bound key",
+			"global provider account pool",
+			"`routing_pool_unavailable`",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in routing pool documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

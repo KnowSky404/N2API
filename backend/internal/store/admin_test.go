@@ -83,17 +83,19 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		Query:             "codex",
 		StatusClass:       admin.RequestLogStatusServerError,
 		ProviderAccountID: 7,
+		RoutingPoolID:     9,
 		ClientKeyID:       12,
 		Model:             "gpt-5",
 		SessionID:         "workspace-123",
 	})
-	if len(args) != 5 || args[0] != int64(7) || args[1] != int64(12) || args[2] != "gpt-5" || args[3] != "workspace-123" || args[4] != "codex" {
-		t.Fatalf("args = %+v, want provider account 7, client key 12, model gpt-5, session workspace-123, and codex args", args)
+	if len(args) != 6 || args[0] != int64(7) || args[1] != int64(9) || args[2] != int64(12) || args[3] != "gpt-5" || args[4] != "workspace-123" || args[5] != "codex" {
+		t.Fatalf("args = %+v, want provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, and codex args", args)
 	}
 	for _, want := range []string{
 		"ILIKE '%' || $",
 		"l.status_code >= 500",
 		"l.provider_account_id = $",
+		"l.routing_pool_id = $",
 		"l.client_key_id = $",
 		"l.model = $",
 		"l.session_id = $",

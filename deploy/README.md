@@ -27,6 +27,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - Selected provider accounts can also receive the same model capability list. Enter one model per line in **Bulk models**, then use **Apply models** to replace the selected accounts' manual model lists together; this controls which models the scheduler can route to those accounts.
 - Use API Keys to control which configured models are exposed to clients and which model is used as the default when a POST request omits `model`. Global routable model settings do not make an account eligible for a model it has not configured.
 - Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it.
+- Routing pools let the admin partition provider accounts into named account pools for different agents, devices, or risk profiles. An API key can be bound to one routing pool from the API Keys page. A pool-bound key only schedules accounts that are members of that pool, including sticky session bindings scoped to that pool; an unbound key keeps using the global provider account pool. Missing or deleted pools fail closed with `routing_pool_unavailable`, and Request Logs retain the routing pool name/id for attribution.
 - The API Keys page supports local search and status filtering by name, prefix, model policy, selected model, active/revoked status, and limiter state, so a busy or revoked client key can be found without leaving the page.
 - API key names can be renamed from the API Keys page without rotating or revealing the secret, so labels can be kept in sync with devices, agents, or usage purpose.
 - API keys can be temporarily disabled and re-enabled without revoking or rotating the secret; disabled keys cannot authenticate gateway requests but remain visible for configuration and logs.
@@ -75,7 +76,7 @@ Request Logs keep local gateway rejections diagnosable while client responses st
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.
 
-Request Logs support exact **Provider account**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management, 24h usage rows for **Top provider accounts**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, API-key, model, and sticky-session filters when the row identifies a concrete entity.
+Request Logs support exact **Provider account**, **Routing pool**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management, 24h usage rows for **Top provider accounts**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 
 API upstream accounts require HTTPS by default so upstream API keys are not sent over plaintext HTTP. Set `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP upstreams that you control.
 

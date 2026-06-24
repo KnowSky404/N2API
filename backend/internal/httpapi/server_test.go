@@ -3507,7 +3507,7 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 
 	admins := newFakeAdminService()
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&clientKeyId=12&model=gpt-5&sessionId=workspace-123", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -3530,6 +3530,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if admins.requestLogFilter.ProviderAccountID != 7 {
 		t.Fatalf("request log provider account ID = %d, want 7", admins.requestLogFilter.ProviderAccountID)
+	}
+	if admins.requestLogFilter.RoutingPoolID != 9 {
+		t.Fatalf("request log routing pool ID = %d, want 9", admins.requestLogFilter.RoutingPoolID)
 	}
 	if admins.requestLogFilter.ClientKeyID != 12 {
 		t.Fatalf("request log client key ID = %d, want 12", admins.requestLogFilter.ClientKeyID)

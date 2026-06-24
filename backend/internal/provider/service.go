@@ -1758,7 +1758,7 @@ func (s *Service) selectionCandidatesForRoutingPool(ctx context.Context, routing
 	pool, err := s.repo.FindRoutingPool(ctx, routingPoolID)
 	if err != nil {
 		if errors.Is(err, ErrRoutingPoolNotFound) {
-			return nil, false, ErrAccountsUnavailable, nil
+			return nil, true, ErrRoutingPoolNotFound, nil
 		}
 		return nil, false, ErrAccountsUnavailable, err
 	}

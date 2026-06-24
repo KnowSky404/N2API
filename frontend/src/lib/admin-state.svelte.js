@@ -110,6 +110,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} providerAccountId
  * @property {string} providerAccountType
  * @property {string} providerAccountName
+ * @property {number} routingPoolId
+ * @property {string} routingPoolName
  * @property {string} sessionId
  * @property {string} route
  * @property {string} method
@@ -353,13 +355,14 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, clientKeyId: string, model: string, sessionId: string, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
   query: '',
   statusClass: 'all',
   providerAccountId: 'all',
+  routingPoolId: 'all',
   clientKeyId: 'all',
   model: '',
   sessionId: '',
@@ -838,6 +841,7 @@ function clearRequestLogs() {
     query: '',
     statusClass: 'all',
     providerAccountId: 'all',
+    routingPoolId: 'all',
     clientKeyId: 'all',
     model: '',
     sessionId: '',
@@ -2485,6 +2489,9 @@ export async function loadRequestLogs() {
     }
     if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') {
       params.set('providerAccountId', requestLogs.providerAccountId);
+    }
+    if (requestLogs.routingPoolId && requestLogs.routingPoolId !== 'all') {
+      params.set('routingPoolId', requestLogs.routingPoolId);
     }
     if (requestLogs.clientKeyId && requestLogs.clientKeyId !== 'all') {
       params.set('clientKeyId', requestLogs.clientKeyId);

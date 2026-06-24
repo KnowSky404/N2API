@@ -7,6 +7,7 @@
     formatTokens,
     loadKeys,
     loadProviderAccounts,
+    loadRoutingPools,
     loadUsagePricing,
     loadUsageSummary,
     loadRequestLogs,
@@ -14,6 +15,7 @@
     loginForm,
     providerAccounts,
     requestLogs,
+    routingPools,
     saveUsagePricing,
     session,
     usage,
@@ -21,6 +23,7 @@
   } from '$lib/admin-state.svelte.js';
 
   let providerAccountsRequested = $state(false);
+  let routingPoolsRequested = $state(false);
   let apiKeysRequested = $state(false);
   let requestLogsInitialized = $state(false);
 
@@ -29,6 +32,11 @@
     const providerAccountId = params.get('providerAccountId') ?? '';
     if (/^[1-9]\d*$/.test(providerAccountId)) {
       requestLogs.providerAccountId = providerAccountId;
+    }
+
+    const routingPoolId = params.get('routingPoolId') ?? '';
+    if (/^[1-9]\d*$/.test(routingPoolId)) {
+      requestLogs.routingPoolId = routingPoolId;
     }
 
     const clientKeyId = params.get('clientKeyId') ?? '';
@@ -60,6 +68,7 @@
   $effect(() => {
     if (!session.authenticated) {
       providerAccountsRequested = false;
+      routingPoolsRequested = false;
       apiKeysRequested = false;
       requestLogsInitialized = false;
       return;
@@ -72,6 +81,10 @@
     if (!providerAccountsRequested && providerAccounts.items.length === 0) {
       providerAccountsRequested = true;
       void loadProviderAccounts();
+    }
+    if (!routingPoolsRequested && routingPools.items.length === 0) {
+      routingPoolsRequested = true;
+      void loadRoutingPools();
     }
     if (!apiKeysRequested && apiKeys.items.length === 0) {
       apiKeysRequested = true;
@@ -431,6 +444,18 @@
         </select>
       </label>
       <label class="block text-sm font-medium text-[#3c3c3c]">
+        Routing pool
+        <select
+          class="mt-2 max-w-[240px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.routingPoolId}
+        >
+          <option value="all">All routing pools</option>
+          {#each routingPools.items as pool}
+            <option value={String(pool.id)}>{pool.name}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
         API key
         <select
           class="mt-2 max-w-[240px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -466,6 +491,7 @@
     <th class="px-4 py-3 font-medium">Time</th>
     <th class="px-4 py-3 font-medium">Key</th>
     <th class="px-4 py-3 font-medium">Provider account</th>
+    <th class="px-4 py-3 font-medium">Routing pool</th>
     <th class="px-4 py-3 font-medium">Model</th>
     <th class="px-4 py-3 font-medium">Session</th>
     <th class="px-4 py-3 font-medium">Tokens</th>
@@ -482,11 +508,11 @@
 <tbody class="divide-y divide-[#ededed]">
   {#if requestLogs.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="14">Loading request logs...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="15">Loading request logs...</td>
     </tr>
   {:else if requestLogs.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="14">No gateway requests yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="15">No gateway requests yet.</td>
     </tr>
   {:else}
     {#each requestLogs.items as log}
@@ -503,6 +529,16 @@
             </div>
           {:else}
             <span class="text-[#6e6e6e]">Unassigned</span>
+          {/if}
+        </td>
+        <td class="px-4 py-3 text-[#3c3c3c]">
+          {#if log.routingPoolId}
+            <div class="max-w-[180px]">
+              <p class="truncate font-medium text-[#0d0d0d]">{log.routingPoolName || `Pool ${log.routingPoolId}`}</p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">ID {log.routingPoolId}</p>
+            </div>
+          {:else}
+            <span class="text-[#6e6e6e]">Global pool</span>
           {/if}
         </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.model || '-'}</td>

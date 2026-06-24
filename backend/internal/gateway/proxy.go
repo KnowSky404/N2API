@@ -1391,6 +1391,8 @@ func providerErrorCode(err error) string {
 		return "provider_not_configured"
 	case errors.Is(err, provider.ErrAccountsDisabled):
 		return "provider_accounts_disabled"
+	case errors.Is(err, provider.ErrRoutingPoolNotFound):
+		return "routing_pool_unavailable"
 	case errors.Is(err, provider.ErrAccountsUnavailable):
 		return "provider_accounts_unavailable"
 	case errors.Is(err, provider.ErrModelUnavailable):
@@ -1408,6 +1410,8 @@ func providerErrorMessage(code string) string {
 		return "provider account is not configured"
 	case "provider_accounts_disabled":
 		return "provider accounts are disabled"
+	case "routing_pool_unavailable":
+		return "routing pool is unavailable"
 	case "provider_accounts_unavailable":
 		return "provider accounts are unavailable"
 	case "model_unavailable":

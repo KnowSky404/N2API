@@ -581,6 +581,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{ProviderAccountID: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs invalid provider account ID error = %v, want ErrInvalidInput", err)
 	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{RoutingPoolID: -1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs invalid routing pool ID error = %v, want ErrInvalidInput", err)
+	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{ClientKeyID: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs invalid client key ID error = %v, want ErrInvalidInput", err)
 	}

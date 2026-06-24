@@ -643,6 +643,15 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			providerAccountID = parsed
 		}
+		var routingPoolID int64
+		if rawRoutingPoolID := r.URL.Query().Get("routingPoolId"); rawRoutingPoolID != "" {
+			parsed, err := strconv.ParseInt(rawRoutingPoolID, 10, 64)
+			if err != nil || parsed < 1 {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			routingPoolID = parsed
+		}
 		var clientKeyID int64
 		if rawClientKeyID := r.URL.Query().Get("clientKeyId"); rawClientKeyID != "" {
 			parsed, err := strconv.ParseInt(rawClientKeyID, 10, 64)
@@ -657,6 +666,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			Query:             r.URL.Query().Get("q"),
 			StatusClass:       r.URL.Query().Get("statusClass"),
 			ProviderAccountID: providerAccountID,
+			RoutingPoolID:     routingPoolID,
 			ClientKeyID:       clientKeyID,
 			Model:             r.URL.Query().Get("model"),
 			SessionID:         r.URL.Query().Get("sessionId"),

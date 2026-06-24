@@ -135,6 +135,7 @@ type RequestLogFilter struct {
 	Query             string
 	StatusClass       string
 	ProviderAccountID int64
+	RoutingPoolID     int64
 	ClientKeyID       int64
 	Model             string
 	SessionID         string
@@ -626,6 +627,9 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 		return nil, ErrInvalidInput
 	}
 	if filter.ProviderAccountID < 0 {
+		return nil, ErrInvalidInput
+	}
+	if filter.RoutingPoolID < 0 {
 		return nil, ErrInvalidInput
 	}
 	if filter.ClientKeyID < 0 {

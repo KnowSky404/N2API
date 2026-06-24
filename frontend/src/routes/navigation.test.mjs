@@ -144,6 +144,10 @@ test('request logs page shows provider account attribution', () => {
   assert.match(requestLogsPage, /log\.providerAccountName/);
   assert.match(requestLogsPage, /log\.providerAccountType/);
   assert.match(requestLogsPage, /log\.providerAccountId/);
+  assert.match(requestLogsPage, /Routing pool/);
+  assert.match(requestLogsPage, /log\.routingPoolName/);
+  assert.match(requestLogsPage, /log\.routingPoolId/);
+  assert.match(requestLogsPage, /Global pool/);
 });
 
 test('request logs page shows request model', () => {
@@ -154,7 +158,7 @@ test('request logs page shows request model', () => {
 test('request logs page shows sticky session attribution', () => {
   assert.match(requestLogsPage, />Session</);
   assert.match(requestLogsPage, /log\.sessionId/);
-  assert.match(requestLogsPage, /colspan="14"/);
+  assert.match(requestLogsPage, /colspan="15"/);
 });
 
 test('request logs page shows token usage', () => {
@@ -223,18 +227,25 @@ test('request logs page filters by provider account', () => {
   assert.match(requestLogsPage, /providerAccounts/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.providerAccountId\}/);
   assert.match(requestLogsPage, /All provider accounts/);
+  assert.match(requestLogsPage, /routingPools/);
+  assert.match(requestLogsPage, /loadRoutingPools\(\)/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolId\}/);
+  assert.match(requestLogsPage, /All routing pools/);
   assert.match(requestLogsPage, /apiKeys/);
   assert.match(requestLogsPage, /loadKeys\(\)/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.clientKeyId\}/);
   assert.match(requestLogsPage, /All API keys/);
   assert.match(adminState, /params\.set\('providerAccountId'/);
+  assert.match(adminState, /params\.set\('routingPoolId'/);
   assert.match(adminState, /requestLogs\.providerAccountId/);
+  assert.match(adminState, /requestLogs\.routingPoolId/);
   assert.match(requestLogsPage, /loadProviderAccounts\(\)/);
 });
 
 test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /URLSearchParams\(window\.location\.search\)/);
   assert.match(requestLogsPage, /requestLogs\.providerAccountId = providerAccountId/);
+  assert.match(requestLogsPage, /requestLogs\.routingPoolId = routingPoolId/);
   assert.match(requestLogsPage, /requestLogs\.clientKeyId = clientKeyId/);
   assert.match(requestLogsPage, /requestLogs\.model = model/);
   assert.match(requestLogsPage, /requestLogs\.sessionId = sessionId/);
@@ -242,6 +253,7 @@ test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /requestLogs\.statusClass = statusClass/);
   assert.match(requestLogsPage, /void loadRequestLogs\(\)/);
   assert.match(adminState, /params\.set\('clientKeyId'/);
+  assert.match(adminState, /routingPoolId: 'all'/);
   assert.match(adminState, /clientKeyId: 'all'/);
   assert.match(adminState, /model: ''/);
   assert.match(adminState, /sessionId: ''/);

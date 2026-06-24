@@ -2193,6 +2193,35 @@ func TestProxyRoutesPoolBoundAPIKeyThroughRoutingPool(t *testing.T) {
 	}
 }
 
+func TestProxyReturnsRoutingPoolUnavailableForMissingPool(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	poolID := int64(7)
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "pool key", RoutingPoolID: &poolID, RoutingPoolName: "primary"}},
+		&fakeSelectedAccountProvider{errs: []error{provider.ErrRoutingPoolNotFound}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			t.Fatal("upstream should not be called for unavailable routing pool")
+			return nil, nil
+		})},
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "routing_pool_unavailable") {
+		t.Fatalf("body = %s, want routing_pool_unavailable", recorder.Body.String())
+	}
+	if len(logger.entries) != 1 || logger.entries[0].RoutingPoolID != 7 || logger.entries[0].Error != "routing_pool_unavailable" {
+		t.Fatalf("logged entry = %+v, want pool attribution and routing_pool_unavailable", logger.entries)
+	}
+}
+
 func TestProxyLogsRequestModel(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

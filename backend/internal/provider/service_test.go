@@ -1674,6 +1674,19 @@ func TestSelectAccountForModelInRoutingPoolScopesCandidates(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolMissingPoolFailsClosed(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "global-token"),
+	}
+	repo.accountModels[1] = []AccountModel{{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccountForModelInRoutingPool(context.Background(), 99, "gpt-5"); !errors.Is(err, ErrRoutingPoolNotFound) {
+		t.Fatalf("SelectAccountForModelInRoutingPool error = %v, want ErrRoutingPoolNotFound", err)
+	}
+}
+
 func TestSelectAccountForModelAndSessionInRoutingPoolDoesNotCrossScope(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
