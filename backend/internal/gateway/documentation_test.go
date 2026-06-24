@@ -121,6 +121,24 @@ func TestGatewayDocumentationMentionsAPIKeyRateWindowVisibility(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsAPIKeyListFiltering(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"API Keys page supports local search and status filtering",
+			"name, prefix, model policy, selected model, active/revoked status, and limiter state",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in API key list filtering documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

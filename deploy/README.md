@@ -27,6 +27,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - Selected provider accounts can also receive the same model capability list. Enter one model per line in **Bulk models**, then use **Apply models** to replace the selected accounts' manual model lists together; this controls which models the scheduler can route to those accounts.
 - Use API Keys to control which configured models are exposed to clients and which model is used as the default when a POST request omits `model`. Global routable model settings do not make an account eligible for a model it has not configured.
 - Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it.
+- The API Keys page supports local search and status filtering by name, prefix, model policy, selected model, active/revoked status, and limiter state, so a busy or revoked client key can be found without leaving the page.
 - Use **Refresh** to force a token refresh for one account and clear stale transient state after a successful refresh.
 - Use **Reauthorize** on an existing row to bind a fresh OAuth login back to that account instead of creating a second row.
 - API upstream credentials can be updated from the account row. Rotating the encrypted API key or base URL clears local failure status so the account can be scheduled again with the new upstream settings.
