@@ -22,6 +22,7 @@
     getSchedulableProviderAccounts,
     getUnschedulableProviderAccountSummary,
     loadProviderAccounts,
+    loadRoutingPools,
     loadUsageSummary,
     login,
     loginForm,
@@ -55,12 +56,14 @@
     updateProviderAccountMaxConcurrentRequests,
     updateProviderAccountName,
     updateProviderAccountPriority,
+    routingPools,
     usage
   } from '$lib/admin-state.svelte.js';
 
   let accountSearch = $state('');
   let accountSort = $state({ key: 'priority', direction: 'asc' });
   let providerUsageRequested = $state(false);
+  let routingPoolsRequested = $state(false);
 
   const providerStateLabel = $derived(getProviderStateLabel());
   const schedulableProviderAccounts = $derived(getSchedulableProviderAccounts());
@@ -80,11 +83,16 @@
   $effect(() => {
     if (!session.authenticated) {
       providerUsageRequested = false;
+      routingPoolsRequested = false;
       return;
     }
     if (!providerUsageRequested) {
       providerUsageRequested = true;
       void loadUsageSummary('24h', 'provider_account');
+    }
+    if (!routingPoolsRequested) {
+      routingPoolsRequested = true;
+      void loadRoutingPools();
     }
   });
 
@@ -97,6 +105,7 @@
       account.baseUrl,
       account.provider,
       accountTypeLabel(account),
+      accountRoutingPoolNames(account.id).join(' '),
       statusLabel(account.status),
       account.statusReason,
       account.lastError
@@ -176,9 +185,26 @@
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountHoverDetail(account) {
-    return [accountLabel(account), accountSecondaryLabel(account), accountProviderDetail(account)]
+    const pools = accountRoutingPoolNames(account.id);
+    return [
+      accountLabel(account),
+      accountSecondaryLabel(account),
+      accountProviderDetail(account),
+      pools.length > 0 ? `Routing pools: ${pools.join(', ')}` : ''
+    ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  /** @param {number} accountId */
+  function accountRoutingPoolNames(accountId) {
+    return routingPools.items
+      .filter((pool) => {
+        if ((pool.accountIds ?? []).includes(accountId)) return true;
+        return (pool.accounts ?? []).some((account) => account.accountId === accountId);
+      })
+      .map((pool) => pool.name)
+      .filter(Boolean);
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -832,6 +858,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       {@const modelState = getAccountModelsState(account.id)}
       {@const historyState = getAccountTestResultsState(account.id)}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
+      {@const routingPoolNames = accountRoutingPoolNames(account.id)}
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle">
           <label class="inline-flex items-center">
@@ -863,6 +890,16 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           <p class="mt-1 max-w-[18rem] truncate font-mono text-[13px] text-[#6e6e6e]">
             {accountProviderDetail(account)}
           </p>
+          {#if routingPoolNames.length > 0}
+            <div class="mt-2 flex max-w-[18rem] flex-wrap gap-1" aria-label={`Routing pools for ${accountLabel(account)}`}>
+              <span class="mr-1 text-xs font-medium text-[#6e6e6e]">Routing pools</span>
+              {#each routingPoolNames as poolName}
+                <span class="inline-flex max-w-full truncate rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#3c3c3c]" title={poolName}>
+                  {poolName}
+                </span>
+              {/each}
+            </div>
+          {/if}
           {#if account.accountType === 'api_upstream'}
             <form
               class="mt-3 grid max-w-[18rem] gap-2"

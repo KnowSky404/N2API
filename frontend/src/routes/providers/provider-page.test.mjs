@@ -524,6 +524,13 @@ test('provider account rows expose manual model controls and routing warning', (
   assert.match(source, /cannot receive model-routed POST traffic/);
 });
 
+test('provider account rows show routing pool memberships', () => {
+  assert.match(source, /loadRoutingPools/);
+  assert.match(source, /routingPools/);
+  assert.match(source, /accountRoutingPoolNames\(account\.id\)/);
+  assert.match(source, /Routing pools/);
+});
+
 test('providers page is account-oriented and supports api upstream accounts', () => {
   assert.match(source, /Provider accounts/);
   assert.match(source, /Codex OAuth/);
