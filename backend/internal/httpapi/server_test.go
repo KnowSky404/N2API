@@ -51,6 +51,9 @@ type fakeAdminService struct {
 	renameKeyID        int64
 	renameName         string
 	renameErr          error
+	disabledKeyID      int64
+	disabledValue      bool
+	disabledErr        error
 	limitKeyID         int64
 	requestsPerMinute  int
 	tokensPerMinute    int
@@ -208,6 +211,27 @@ func (s *fakeAdminService) UpdateAPIKeyName(_ context.Context, id int64, name st
 	for i, key := range s.keys {
 		if key.ID == id {
 			key.Name = strings.TrimSpace(name)
+			s.keys[i] = key
+			return key, nil
+		}
+	}
+	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) SetAPIKeyDisabled(_ context.Context, id int64, disabled bool) (admin.APIKey, error) {
+	s.disabledKeyID = id
+	s.disabledValue = disabled
+	if s.disabledErr != nil {
+		return admin.APIKey{}, s.disabledErr
+	}
+	for i, key := range s.keys {
+		if key.ID == id {
+			if disabled {
+				now := time.Unix(3500, 0).UTC()
+				key.DisabledAt = &now
+			} else {
+				key.DisabledAt = nil
+			}
 			s.keys[i] = key
 			return key, nil
 		}
@@ -1129,6 +1153,99 @@ func TestUpdateAPIKeyNameEndpointMapsErrors(t *testing.T) {
 
 			if recorder.Code != tc.wantStatus {
 				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestSetAPIKeyDisabledEndpoint(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/disabled", strings.NewReader(`{"disabled":true}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Key admin.APIKey `json:"key"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Key.ID != 7 || body.Key.DisabledAt == nil {
+		t.Fatalf("key = %+v, want disabled key 7", body.Key)
+	}
+	if admins.disabledKeyID != 7 || !admins.disabledValue {
+		t.Fatalf("disabled call = (%d, %t), want (7, true)", admins.disabledKeyID, admins.disabledValue)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/disabled", strings.NewReader(`{"disabled":false}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("enable status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode enable response: %v", err)
+	}
+	if body.Key.ID != 7 || body.Key.DisabledAt != nil {
+		t.Fatalf("key = %+v, want enabled key 7", body.Key)
+	}
+	if admins.disabledKeyID != 7 || admins.disabledValue {
+		t.Fatalf("disabled call = (%d, %t), want (7, false)", admins.disabledKeyID, admins.disabledValue)
+	}
+}
+
+func TestSetAPIKeyDisabledEndpointMapsErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		body       string
+		serviceErr error
+		wantStatus int
+	}{
+		{
+			name:       "invalid id",
+			path:       "/api/admin/keys/not-a-number/disabled",
+			body:       `{"disabled":true}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "bad json",
+			path:       "/api/admin/keys/7/disabled",
+			body:       `{`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			path:       "/api/admin/keys/99/disabled",
+			body:       `{"disabled":true}`,
+			serviceErr: admin.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			admins := newFakeAdminService()
+			admins.disabledErr = tt.serviceErr
+			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+			req := httptest.NewRequest(http.MethodPut, tt.path, strings.NewReader(tt.body))
+			req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d, body = %s, want %d", recorder.Code, recorder.Body.String(), tt.wantStatus)
 			}
 		})
 	}

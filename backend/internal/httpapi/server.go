@@ -35,6 +35,7 @@ type AdminService interface {
 	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error)
+	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
@@ -331,6 +332,32 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				writeError(w, http.StatusBadRequest, "invalid_input")
 				return
 			}
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
+	}))
+
+	mux.HandleFunc("PUT /api/admin/keys/{id}/disabled", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		var req struct {
+			Disabled bool `json:"disabled"`
+		}
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		key, err := admins.SetAPIKeyDisabled(r.Context(), id, req.Disabled)
+		if err != nil {
 			if errors.Is(err, admin.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "not_found")
 				return
