@@ -1,4 +1,5 @@
 <script>
+  import { page } from '$app/state';
   import {
     accountLabel,
     apiKeys,
@@ -26,11 +27,12 @@
   let providerAccountsRequested = $state(false);
   let routingPoolsRequested = $state(false);
   let apiKeysRequested = $state(false);
-  let requestLogsInitialized = $state(false);
+  let appliedRequestLogSearch = $state('');
 
-  function applyRequestLogURLFilters() {
+  /** @param {string} search */
+  function applyRequestLogURLFilters(search) {
     resetRequestLogFilters();
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(search);
     const providerAccountId = params.get('providerAccountId') ?? '';
     if (/^[1-9]\d*$/.test(providerAccountId)) {
       requestLogs.providerAccountId = providerAccountId;
@@ -91,12 +93,12 @@
       providerAccountsRequested = false;
       routingPoolsRequested = false;
       apiKeysRequested = false;
-      requestLogsInitialized = false;
+      appliedRequestLogSearch = '';
       return;
     }
-    if (!requestLogsInitialized) {
-      requestLogsInitialized = true;
-      applyRequestLogURLFilters();
+    if (appliedRequestLogSearch !== page.url.search) {
+      appliedRequestLogSearch = page.url.search;
+      applyRequestLogURLFilters(page.url.search);
       void loadRequestLogs();
     }
     if (!providerAccountsRequested && providerAccounts.items.length === 0) {

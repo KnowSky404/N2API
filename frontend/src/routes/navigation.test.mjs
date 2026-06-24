@@ -298,7 +298,8 @@ test('api keys page initializes key search from client key URL param', () => {
 });
 
 test('request logs page initializes filters from URL params', () => {
-  assert.match(requestLogsPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(requestLogsPage, /from '\$app\/state'/);
+  assert.match(requestLogsPage, /page\.url\.search/);
   assert.match(requestLogsPage, /requestLogs\.providerAccountId = providerAccountId/);
   assert.match(requestLogsPage, /requestLogs\.routingPoolId = routingPoolId/);
   assert.match(requestLogsPage, /requestLogs\.clientKeyId = clientKeyId/);
