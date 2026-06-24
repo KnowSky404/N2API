@@ -40,6 +40,7 @@
     refreshProviderAccount,
     refreshSelectedProviderAccounts,
     removeAccountModel,
+    removeSelectedProviderAccountsFromRoutingPool,
     resetProviderAccountStatus,
     resetSelectedProviderAccountStatus,
     saveAccountModels,
@@ -782,6 +783,14 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         onclick={() => addSelectedProviderAccountsToRoutingPool(bulkRoutingPoolId)}
       >
         Apply pool
+      </button>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving || bulkRoutingPoolId === '0'}
+        onclick={() => removeSelectedProviderAccountsFromRoutingPool(bulkRoutingPoolId)}
+      >
+        Remove pool
       </button>
       <label class="grid min-w-48 flex-1 gap-1 text-xs font-medium text-[#3c3c3c]">
         Bulk models

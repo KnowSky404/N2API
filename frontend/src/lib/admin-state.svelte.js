@@ -1631,6 +1631,52 @@ export async function addSelectedProviderAccountsToRoutingPool(poolId) {
   }
 }
 
+/** @param {string | number | null | undefined} poolId */
+export async function removeSelectedProviderAccountsFromRoutingPool(poolId) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const targetPoolId = Number(poolId ?? 0);
+  if (!Number.isInteger(targetPoolId) || targetPoolId <= 0) {
+    providerAccounts.error = 'Select a routing pool';
+    return;
+  }
+  const accountIds = Object.keys(selectedProviderAccountIds)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (accountIds.length === 0) {
+    providerAccounts.error = 'Select at least one provider account';
+    return;
+  }
+  const pool = routingPools.items.find((item) => item.id === targetPoolId);
+  if (!pool) {
+    providerAccounts.error = 'Routing pool not found';
+    return;
+  }
+
+  const removed = new Set(accountIds);
+  const accounts = (pool.accounts ?? []).filter((account) => !removed.has(Number(account.accountId)));
+
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  routingPools.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/routing-pools/${targetPoolId}/accounts`, {
+      method: 'PUT',
+      body: JSON.stringify({ accounts })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    routingPools.items = routingPools.items.map((item) => (item.id === targetPoolId ? payload.pool : item));
+    clearProviderAccountSelection();
+    await loadRoutingPools();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = error instanceof Error ? error.message : 'Failed to remove routing pool membership';
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
 /**
  * @param {ProviderAccount} account
  * @param {Event & { currentTarget: HTMLInputElement }} event

@@ -37,6 +37,7 @@ const {
   updateAPIKeyLimits,
   updateAPIKeyBudgets,
   addSelectedProviderAccountsToRoutingPool,
+  removeSelectedProviderAccountsFromRoutingPool,
   clearProviderAccountSelection,
   validateProviderAccountPauseDuration
 } = await import('../../lib/admin-state.svelte.js');
@@ -313,6 +314,68 @@ test('provider account state can add selected accounts to a routing pool', async
   assert.deepEqual(routingPools.items[0].accountIds, [7, 8]);
 });
 
+test('provider account state can remove selected accounts from a routing pool', async () => {
+  session.authenticated = true;
+  clearProviderAccountSelection();
+  providerAccounts.error = '';
+  routingPools.error = '';
+  routingPools.items = [
+    {
+      id: 3,
+      name: 'primary',
+      accounts: [
+        { accountId: 7, priority: 5 },
+        { accountId: 8, priority: 0 },
+        { accountId: 9, priority: 2 }
+      ],
+      accountIds: [7, 8, 9]
+    }
+  ];
+  toggleProviderAccountSelection(8, true);
+  toggleProviderAccountSelection(9, true);
+  const requests = [];
+  globalThis.fetch = async (path, options) => {
+    requests.push({ path, options });
+    if (path === '/api/admin/routing-pools') {
+      return new Response(
+        JSON.stringify({
+          pools: [
+            {
+              id: 3,
+              name: 'primary',
+              accounts: [{ accountId: 7, priority: 5 }],
+              accountIds: [7]
+            }
+          ]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        pool: {
+          id: 3,
+          name: 'primary',
+          accounts: [{ accountId: 7, priority: 5 }],
+          accountIds: [7]
+        }
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  await removeSelectedProviderAccountsFromRoutingPool('3');
+
+  const membershipRequest = requests.find((request) => request.path === '/api/admin/routing-pools/3/accounts');
+  assert.ok(membershipRequest);
+  assert.equal(membershipRequest.options.method, 'PUT');
+  assert.deepEqual(JSON.parse(membershipRequest.options.body), {
+    accounts: [{ accountId: 7, priority: 5 }]
+  });
+  assert.deepEqual(Object.keys(selectedProviderAccountIds), []);
+  assert.deepEqual(routingPools.items[0].accountIds, [7]);
+});
+
 test('provider account page exposes bulk model replacement controls', () => {
   assert.match(source, /providerAccountBulkModelsForm/);
   assert.match(source, /bulkReplaceSelectedProviderAccountModels/);
@@ -323,8 +386,10 @@ test('provider account page exposes bulk model replacement controls', () => {
 test('provider account page exposes bulk routing pool assignment controls', () => {
   assert.match(source, /bulkRoutingPoolId/);
   assert.match(source, /addSelectedProviderAccountsToRoutingPool/);
+  assert.match(source, /removeSelectedProviderAccountsFromRoutingPool/);
   assert.match(source, /Bulk routing pool/);
   assert.match(source, /Apply pool/);
+  assert.match(source, /Remove pool/);
 });
 
 test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {
