@@ -122,6 +122,8 @@ type RequestLog struct {
 	UsageSource           string
 	EstimatedCostMicrousd int64
 	PricingSnapshot       map[string]any
+	GatewayAttemptCount   int
+	GatewayFallbackCount  int
 	CreatedAt             time.Time
 }
 
@@ -233,6 +235,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestModel := ""
 	requestSessionID := ""
 	observedUsage := Usage{Source: "missing"}
+	gatewayAttemptCount := 0
+	gatewayFallbackCount := 0
 	defer func() {
 		if observedUsage.Model == "" {
 			observedUsage.Model = requestModel
@@ -261,6 +265,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			UsageSource:           observedUsage.Source,
 			EstimatedCostMicrousd: costEstimate.CostMicrousd,
 			PricingSnapshot:       costEstimate.Snapshot,
+			GatewayAttemptCount:   gatewayAttemptCount,
+			GatewayFallbackCount:  gatewayFallbackCount,
 			CreatedAt:             startedAt,
 		})
 	}()
@@ -353,6 +359,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
 			return
 		}
+		gatewayAttemptCount++
 		if lastRetryableResp != nil {
 			_ = lastRetryableResp.Body.Close()
 			lastRetryableResp = nil
@@ -367,6 +374,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			accountConcurrencyLimited = true
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
+			gatewayFallbackCount++
 			if attempt+1 < maxAttempts {
 				continue
 			}
@@ -395,6 +403,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", err.Error())
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
+				gatewayFallbackCount++
 				continue
 			}
 			errorCode = "upstream_unavailable"
@@ -408,6 +417,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				releaseAccount()
+				gatewayFallbackCount++
 				lastRetryableResp = upstreamResp
 				continue
 			}

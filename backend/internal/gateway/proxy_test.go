@@ -2536,6 +2536,91 @@ func TestProxyLogsPreciseProviderAccountConcurrencyLimitReason(t *testing.T) {
 	assertLastLoggedError(t, logger, "provider_account_concurrency_limited")
 }
 
+func TestProxyLogsGatewayFallbackCountsForRetryableUpstreamFailure(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "first-token"},
+		{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "second-token"},
+	}}
+	transportCalls := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls == 1 {
+			return &http.Response{
+				StatusCode: http.StatusTooManyRequests,
+				Header:     http.Header{"Retry-After": []string{"30"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"rate limited"}}`)),
+				Request:    r,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.GatewayAttemptCount != 2 || entry.GatewayFallbackCount != 1 {
+		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", entry.GatewayAttemptCount, entry.GatewayFallbackCount)
+	}
+}
+
+func TestProxyLogsGatewayFallbackCountsForBusyAccountFallback(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "first-token"},
+		{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "second-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL:                 "https://upstream.example.test",
+		MaxConcurrentRequestsPerAccount: 1,
+		Logger:                          logger,
+	}, client)
+	release, ok := proxy.tryAcquireAccountSlot(1, 1)
+	if !ok {
+		t.Fatal("failed to acquire setup account slot")
+	}
+	defer release()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.GatewayAttemptCount != 2 || entry.GatewayFallbackCount != 1 {
+		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", entry.GatewayAttemptCount, entry.GatewayFallbackCount)
+	}
+}
+
 func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	transportCalls := 0
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}

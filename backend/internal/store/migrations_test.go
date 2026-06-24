@@ -418,6 +418,21 @@ func TestRequestUsageAccountingMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestRequestLogFallbackDiagnosticsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00021_request_log_fallback_diagnostics.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS gateway_attempt_count INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS gateway_fallback_count INTEGER NOT NULL DEFAULT 0",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountPoolMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00004_oauth_account_pool.sql")
 	if err != nil {
