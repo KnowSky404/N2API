@@ -81,14 +81,16 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		Query:             "codex",
 		StatusClass:       admin.RequestLogStatusServerError,
 		ProviderAccountID: 7,
+		ClientKeyID:       12,
 	})
-	if len(args) != 2 || args[0] != int64(7) || args[1] != "codex" {
-		t.Fatalf("args = %+v, want provider account 7 and codex args", args)
+	if len(args) != 3 || args[0] != int64(7) || args[1] != int64(12) || args[2] != "codex" {
+		t.Fatalf("args = %+v, want provider account 7, client key 12, and codex args", args)
 	}
 	for _, want := range []string{
 		"ILIKE '%' || $",
 		"l.status_code >= 500",
 		"l.provider_account_id = $",
+		"l.client_key_id = $",
 		"l.request_id",
 		"l.error",
 		"l.status_code::text",

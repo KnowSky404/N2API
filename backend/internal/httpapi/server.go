@@ -391,11 +391,21 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			providerAccountID = parsed
 		}
+		var clientKeyID int64
+		if rawClientKeyID := r.URL.Query().Get("clientKeyId"); rawClientKeyID != "" {
+			parsed, err := strconv.ParseInt(rawClientKeyID, 10, 64)
+			if err != nil || parsed < 1 {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			clientKeyID = parsed
+		}
 		filter := admin.RequestLogFilter{
 			Limit:             limit,
 			Query:             r.URL.Query().Get("q"),
 			StatusClass:       r.URL.Query().Get("statusClass"),
 			ProviderAccountID: providerAccountID,
+			ClientKeyID:       clientKeyID,
 		}
 		logs, err := admins.ListRequestLogs(r.Context(), filter)
 		if err != nil {

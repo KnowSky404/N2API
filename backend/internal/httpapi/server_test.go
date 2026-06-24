@@ -2988,7 +2988,7 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 
 	admins := newFakeAdminService()
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&clientKeyId=12", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -3012,6 +3012,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	if admins.requestLogFilter.ProviderAccountID != 7 {
 		t.Fatalf("request log provider account ID = %d, want 7", admins.requestLogFilter.ProviderAccountID)
 	}
+	if admins.requestLogFilter.ClientKeyID != 12 {
+		t.Fatalf("request log client key ID = %d, want 12", admins.requestLogFilter.ClientKeyID)
+	}
 	if body.Logs[0].GatewayAttemptCount != 2 || body.Logs[0].GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", body.Logs[0].GatewayAttemptCount, body.Logs[0].GatewayFallbackCount)
 	}
@@ -3033,6 +3036,19 @@ func TestListRequestLogsRejectsInvalidFilter(t *testing.T) {
 func TestListRequestLogsRejectsInvalidProviderAccountID(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?providerAccountId=abc", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
+func TestListRequestLogsRejectsInvalidClientKeyID(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?clientKeyId=abc", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 

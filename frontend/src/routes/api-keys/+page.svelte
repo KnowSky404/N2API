@@ -467,6 +467,14 @@ All routable models
           </span>
         </td>
         <td class="px-4 py-3 text-right">
+          <a
+            class="mr-2 inline-flex rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            href={`/request-logs?clientKeyId=${key.id}`}
+            title="View request logs"
+            aria-label="View request logs"
+          >
+            Logs
+          </a>
           <button
             class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"

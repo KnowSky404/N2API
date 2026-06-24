@@ -28,6 +28,11 @@
       requestLogs.providerAccountId = providerAccountId;
     }
 
+    const clientKeyId = params.get('clientKeyId') ?? '';
+    if (/^[1-9]\d*$/.test(clientKeyId)) {
+      requestLogs.clientKeyId = clientKeyId;
+    }
+
     const query = params.get('q');
     if (query !== null) {
       requestLogs.query = query;

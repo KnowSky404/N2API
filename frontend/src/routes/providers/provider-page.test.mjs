@@ -557,6 +557,8 @@ test('api key state can save per-key gateway limits', async () => {
 });
 
 test('api keys page edits per-key gateway limits', () => {
+  assert.match(apiKeysSource, /href=\{`\/request-logs\?clientKeyId=\$\{key\.id\}`\}/);
+  assert.match(apiKeysSource, /View request logs/);
   assert.match(apiKeysSource, /Key limits/);
   assert.match(apiKeysSource, /keyLimitLabel/);
   assert.match(apiKeysSource, /Default/);

@@ -309,13 +309,14 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, clientKeyId: string, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
   query: '',
   statusClass: 'all',
   providerAccountId: 'all',
+  clientKeyId: 'all',
   items: []
 });
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
@@ -791,6 +792,7 @@ function clearRequestLogs() {
     query: '',
     statusClass: 'all',
     providerAccountId: 'all',
+    clientKeyId: 'all',
     items: []
   });
 }
@@ -2193,6 +2195,9 @@ export async function loadRequestLogs() {
     }
     if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') {
       params.set('providerAccountId', requestLogs.providerAccountId);
+    }
+    if (requestLogs.clientKeyId && requestLogs.clientKeyId !== 'all') {
+      params.set('clientKeyId', requestLogs.clientKeyId);
     }
     const payload = await requestJSON(`/api/admin/request-logs?${params.toString()}`);
     if (!isCurrentAuthenticated(version)) return;
