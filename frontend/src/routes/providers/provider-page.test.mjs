@@ -632,6 +632,8 @@ test('models page can preview sticky session routing', () => {
   assert.match(modelsSource, /No schedulable account/);
   assert.match(modelsSource, /account\.schedulable === false/);
   assert.match(modelsSource, /account\.unschedulableReason/);
+  assert.match(modelsSource, /account\.scheduleReason/);
+  assert.match(modelsSource, /Schedule reason/);
   assert.match(modelsSource, /account\.lastTestAt/);
   assert.match(modelsSource, /account\.lastTestStatus/);
   assert.match(modelsSource, /account\.lastTestError/);

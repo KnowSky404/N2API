@@ -300,6 +300,9 @@
                 <span>Priority {account.priority}</span>
                 <span>Load {account.loadFactor || 1}</span>
                 <span>Active {account.currentConcurrentRequests || 0} / {previewConcurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}</span>
+                {#if account.scheduleReason}
+                  <span>Schedule reason {account.scheduleReason}</span>
+                {/if}
                 <span>Used {formatDate(account.lastUsedAt)}</span>
                 {#if account.lastTestAt}
                   <span>Test {account.lastTestStatus || 'checked'} {formatDate(account.lastTestAt)}</span>

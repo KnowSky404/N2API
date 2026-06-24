@@ -163,7 +163,9 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /N2API Routing Diagnostics/);
   assert.match(modelsPage, /Routing diagnostics/);
   assert.match(modelsPage, /Schedule rank/);
+  assert.match(modelsPage, /Schedule reason/);
   assert.match(modelsPage, /account\.scheduleRank/);
+  assert.match(modelsPage, /account\.scheduleReason/);
   assert.match(modelsPage, /account\.schedulable/);
   assert.match(modelsPage, /account\.unschedulableReason/);
   assert.match(modelsPage, /No schedulable account/);
@@ -173,6 +175,7 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(adminState, /currentConcurrentRequests/);
   assert.match(adminState, /effectiveMaxConcurrentRequests/);
   assert.match(adminState, /concurrencyBlocked/);
+  assert.match(adminState, /scheduleReason/);
   assert.match(modelsPage, /Excluded account IDs/);
   assert.match(modelsPage, /bind:value=\{modelRoutingPreview\.excludedAccountIds\}/);
   assert.match(modelsPage, /excluding \{modelRoutingPreview\.excludedAccountIds\}/);
