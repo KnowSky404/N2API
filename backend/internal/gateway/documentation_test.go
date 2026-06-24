@@ -553,6 +553,25 @@ func TestGatewayDocumentationMentionsProviderAccountBulkModels(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsProviderAccountBulkRoutingPoolMembership(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Apply pool",
+			"Remove pool",
+			"add or remove selected provider accounts",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account bulk routing pool documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsSelectedProviderAccountTests(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
