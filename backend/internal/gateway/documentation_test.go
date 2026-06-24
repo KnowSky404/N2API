@@ -102,6 +102,25 @@ func TestGatewayDocumentationMentionsAPIKeyActiveConcurrency(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsAPIKeyRateWindowVisibility(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Requests window",
+			"Tokens window",
+			"process-local fixed one-minute",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in API key rate window visibility documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
