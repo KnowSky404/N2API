@@ -58,6 +58,12 @@ type fakeAdminService struct {
 	requestsPerMinute  int
 	tokensPerMinute    int
 	limitsErr          error
+	budgetKeyID        int64
+	requestBudget24h   int
+	tokenBudget24h     int
+	requestBudget30d   int
+	tokenBudget30d     int
+	budgetsErr         error
 	budgetUsage        map[int64]admin.APIKeyBudgetUsage
 	usageSummary       admin.UsageSummary
 	usageRange         string
@@ -274,6 +280,28 @@ func (s *fakeAdminService) UpdateAPIKeyLimits(_ context.Context, id int64, reque
 		if key.ID == id {
 			key.RequestsPerMinute = requestsPerMinute
 			key.TokensPerMinute = tokensPerMinute
+			s.keys[i] = key
+			return key, nil
+		}
+	}
+	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error) {
+	s.budgetKeyID = id
+	s.requestBudget24h = requestBudget24h
+	s.tokenBudget24h = tokenBudget24h
+	s.requestBudget30d = requestBudget30d
+	s.tokenBudget30d = tokenBudget30d
+	if s.budgetsErr != nil {
+		return admin.APIKey{}, s.budgetsErr
+	}
+	for i, key := range s.keys {
+		if key.ID == id {
+			key.RequestBudget24h = requestBudget24h
+			key.TokenBudget24h = tokenBudget24h
+			key.RequestBudget30d = requestBudget30d
+			key.TokenBudget30d = tokenBudget30d
 			s.keys[i] = key
 			return key, nil
 		}
@@ -1452,6 +1480,78 @@ func TestUpdateAPIKeyLimitsEndpointMapsErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			admins := newFakeAdminService()
 			admins.limitsErr = tc.serviceErr
+			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+			req := httptest.NewRequest(http.MethodPut, tc.path, strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestUpdateAPIKeyBudgetsEndpoint(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/budgets", strings.NewReader(`{"requestBudget24h":10,"tokenBudget24h":1000,"requestBudget30d":300,"tokenBudget30d":30000}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Key admin.APIKey `json:"key"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Key.ID != 7 || body.Key.RequestBudget24h != 10 || body.Key.TokenBudget24h != 1000 || body.Key.RequestBudget30d != 300 || body.Key.TokenBudget30d != 30000 {
+		t.Fatalf("key = %+v, want key budget updates", body.Key)
+	}
+	if admins.budgetKeyID != 7 || admins.requestBudget24h != 10 || admins.tokenBudget24h != 1000 || admins.requestBudget30d != 300 || admins.tokenBudget30d != 30000 {
+		t.Fatalf("recorded budgets = id:%d request24h:%d token24h:%d request30d:%d token30d:%d", admins.budgetKeyID, admins.requestBudget24h, admins.tokenBudget24h, admins.requestBudget30d, admins.tokenBudget30d)
+	}
+}
+
+func TestUpdateAPIKeyBudgetsEndpointMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path       string
+		body       string
+		serviceErr error
+		wantStatus int
+	}{
+		{
+			name:       "invalid id",
+			path:       "/api/admin/keys/not-a-number/budgets",
+			body:       `{"requestBudget24h":10,"tokenBudget24h":1000,"requestBudget30d":300,"tokenBudget30d":30000}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid input",
+			path:       "/api/admin/keys/7/budgets",
+			body:       `{"requestBudget24h":-1,"tokenBudget24h":1000,"requestBudget30d":300,"tokenBudget30d":30000}`,
+			serviceErr: admin.ErrInvalidInput,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			path:       "/api/admin/keys/99/budgets",
+			body:       `{"requestBudget24h":10,"tokenBudget24h":1000,"requestBudget30d":300,"tokenBudget30d":30000}`,
+			serviceErr: admin.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admins := newFakeAdminService()
+			admins.budgetsErr = tc.serviceErr
 			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
 			req := httptest.NewRequest(http.MethodPut, tc.path, strings.NewReader(tc.body))
 			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})

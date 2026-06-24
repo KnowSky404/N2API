@@ -38,6 +38,7 @@ type AdminService interface {
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
+	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error)
 	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
@@ -427,6 +428,39 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		key, err := admins.UpdateAPIKeyLimits(r.Context(), id, req.RequestsPerMinute, req.TokensPerMinute)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
+	}))
+
+	mux.HandleFunc("PUT /api/admin/keys/{id}/budgets", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		var req struct {
+			RequestBudget24h int `json:"requestBudget24h"`
+			TokenBudget24h   int `json:"tokenBudget24h"`
+			RequestBudget30d int `json:"requestBudget30d"`
+			TokenBudget30d   int `json:"tokenBudget30d"`
+		}
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		key, err := admins.UpdateAPIKeyBudgets(r.Context(), id, req.RequestBudget24h, req.TokenBudget24h, req.RequestBudget30d, req.TokenBudget30d)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")
