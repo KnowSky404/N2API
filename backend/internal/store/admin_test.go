@@ -324,6 +324,52 @@ func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
 	}
 }
 
+func TestAdminRepositoryRoutingPools(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+
+	accountID := insertProviderAccount(t, repo.pool, "openai", "api_upstream", "upstream")
+
+	pool, err := repo.CreateRoutingPool(ctx, "codex primary", "daily pool", true)
+	if err != nil {
+		t.Fatalf("CreateRoutingPool returned error: %v", err)
+	}
+	if pool.Name != "codex primary" || pool.Description != "daily pool" || !pool.Enabled {
+		t.Fatalf("pool = %+v, want created pool", pool)
+	}
+
+	pool, err = repo.ReplaceRoutingPoolAccounts(ctx, pool.ID, []admin.RoutingPoolAccount{{AccountID: accountID, Priority: 5}})
+	if err != nil {
+		t.Fatalf("ReplaceRoutingPoolAccounts returned error: %v", err)
+	}
+	if len(pool.Accounts) != 1 || pool.Accounts[0].AccountID != accountID || pool.Accounts[0].Priority != 5 {
+		t.Fatalf("pool accounts = %+v, want account membership", pool.Accounts)
+	}
+	if len(pool.AccountIDs) != 1 || pool.AccountIDs[0] != accountID {
+		t.Fatalf("pool account ids = %+v, want account id %d", pool.AccountIDs, accountID)
+	}
+
+	key, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-routing-pool", "n2api_")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	key, err = repo.UpdateAPIKeyRoutingPool(ctx, key.ID, &pool.ID)
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyRoutingPool returned error: %v", err)
+	}
+	if key.RoutingPoolID == nil || *key.RoutingPoolID != pool.ID || key.RoutingPoolName != "codex primary" {
+		t.Fatalf("key routing pool = %+v, want pool binding", key)
+	}
+
+	keys, err := repo.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListAPIKeys returned error: %v", err)
+	}
+	if len(keys) != 1 || keys[0].RoutingPoolID == nil || *keys[0].RoutingPoolID != pool.ID || keys[0].RoutingPoolName != "codex primary" {
+		t.Fatalf("keys = %+v, want pool binding in list", keys)
+	}
+}
+
 func newTestAdminRepository(t *testing.T) *AdminRepository {
 	t.Helper()
 
@@ -337,10 +383,30 @@ func newTestAdminRepository(t *testing.T) *AdminRepository {
 	}
 	t.Cleanup(pool.Close)
 
-	if _, err := pool.Exec(context.Background(), "TRUNCATE client_api_key_models, request_logs, client_api_keys, admin_sessions, admins, settings RESTART IDENTITY CASCADE"); err != nil {
+	if _, err := pool.Exec(context.Background(), "TRUNCATE client_api_key_models, request_logs, client_api_keys, provider_account_models, provider_account_credentials, provider_accounts, admin_sessions, admins, settings RESTART IDENTITY CASCADE"); err != nil {
 		t.Fatalf("test database cleanup failed: %v", err)
 	}
 	return NewAdminRepository(pool)
+}
+
+func insertProviderAccount(t *testing.T, pool *pgxpool.Pool, providerName, accountType, name string) int64 {
+	t.Helper()
+
+	var accountID int64
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO provider_accounts (provider, account_type, name, subject, display_name, enabled, priority)
+		VALUES ($1, $2, $3, $4, $5, true, 100)
+		RETURNING id
+	`, providerName, accountType, name, name+"-subject", name).Scan(&accountID); err != nil {
+		t.Fatalf("insert provider account failed: %v", err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO provider_account_credentials (account_id, credential_type, encrypted_api_key, base_url)
+		VALUES ($1, 'api_key', 'encrypted', 'https://upstream.example.test')
+	`, accountID); err != nil {
+		t.Fatalf("insert provider account credentials failed: %v", err)
+	}
+	return accountID
 }
 
 func insertRequestLog(t *testing.T, pool *pgxpool.Pool, keyID int64, createdAt time.Time, statusCode, totalTokens int) {

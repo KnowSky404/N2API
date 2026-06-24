@@ -283,6 +283,28 @@ func TestClientAPIKeyBudgetsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestRoutingPoolsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00024_routing_pools.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS routing_pools",
+		"name TEXT NOT NULL UNIQUE",
+		"CREATE TABLE IF NOT EXISTS routing_pool_accounts",
+		"PRIMARY KEY (pool_id, account_id)",
+		"ALTER TABLE client_api_keys ADD COLUMN IF NOT EXISTS routing_pool_id",
+		"ALTER TABLE provider_session_bindings ADD COLUMN IF NOT EXISTS routing_pool_id",
+		"provider_session_bindings_pool_scope_idx",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS routing_pool_id",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS routing_pool_name",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("routing pools migration missing %q", want)
+		}
+	}
+}
+
 func TestSingleAccountModelBackfillMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00015_single_account_model_backfill.sql")
 	if err != nil {
@@ -498,10 +520,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 23 {
-		t.Fatalf("migration sources = %d, want 23", len(sources))
+	if len(sources) != 24 {
+		t.Fatalf("migration sources = %d, want 24", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[22].Path != "00023_client_api_key_budgets.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[23].Path != "00024_routing_pools.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

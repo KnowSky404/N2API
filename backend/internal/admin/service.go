@@ -66,6 +66,24 @@ type APIKey struct {
 	TokenBudget24h    int        `json:"tokenBudget24h"`
 	RequestBudget30d  int        `json:"requestBudget30d"`
 	TokenBudget30d    int        `json:"tokenBudget30d"`
+	RoutingPoolID     *int64     `json:"routingPoolId"`
+	RoutingPoolName   string     `json:"routingPoolName"`
+}
+
+type RoutingPool struct {
+	ID          int64                `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Enabled     bool                 `json:"enabled"`
+	AccountIDs  []int64              `json:"accountIds"`
+	Accounts    []RoutingPoolAccount `json:"accounts,omitempty"`
+	CreatedAt   time.Time            `json:"createdAt"`
+	UpdatedAt   time.Time            `json:"updatedAt"`
+}
+
+type RoutingPoolAccount struct {
+	AccountID int64 `json:"accountId"`
+	Priority  int   `json:"priority"`
 }
 
 type APIKeyBudgetUsage struct {
@@ -240,6 +258,12 @@ type Repository interface {
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error)
+	ListRoutingPools(ctx context.Context) ([]RoutingPool, error)
+	CreateRoutingPool(ctx context.Context, name, description string, enabled bool) (RoutingPool, error)
+	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool) (RoutingPool, error)
+	DeleteRoutingPool(ctx context.Context, id int64) error
+	ReplaceRoutingPoolAccounts(ctx context.Context, id int64, accounts []RoutingPoolAccount) (RoutingPool, error)
+	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (APIKey, error)
 	GetAPIKeyBudgetUsage(ctx context.Context, keyID int64, now time.Time) (APIKeyBudgetUsage, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
@@ -429,6 +453,67 @@ func (s *Service) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudg
 		return APIKey{}, ErrInvalidInput
 	}
 	return s.repo.UpdateAPIKeyBudgets(ctx, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d)
+}
+
+func (s *Service) ListRoutingPools(ctx context.Context) ([]RoutingPool, error) {
+	return s.repo.ListRoutingPools(ctx)
+}
+
+func (s *Service) CreateRoutingPool(ctx context.Context, name, description string, enabled bool) (RoutingPool, error) {
+	name = strings.TrimSpace(name)
+	description = strings.TrimSpace(description)
+	if name == "" {
+		return RoutingPool{}, ErrInvalidInput
+	}
+	return s.repo.CreateRoutingPool(ctx, name, description, enabled)
+}
+
+func (s *Service) UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool) (RoutingPool, error) {
+	name = strings.TrimSpace(name)
+	description = strings.TrimSpace(description)
+	if id <= 0 || name == "" {
+		return RoutingPool{}, ErrInvalidInput
+	}
+	return s.repo.UpdateRoutingPool(ctx, id, name, description, enabled)
+}
+
+func (s *Service) DeleteRoutingPool(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrInvalidInput
+	}
+	return s.repo.DeleteRoutingPool(ctx, id)
+}
+
+func (s *Service) ReplaceRoutingPoolAccounts(ctx context.Context, id int64, accounts []RoutingPoolAccount) (RoutingPool, error) {
+	if id <= 0 {
+		return RoutingPool{}, ErrInvalidInput
+	}
+	normalized := make([]RoutingPoolAccount, 0, len(accounts))
+	seen := map[int64]struct{}{}
+	for _, account := range accounts {
+		if account.AccountID <= 0 || account.Priority < 0 {
+			return RoutingPool{}, ErrInvalidInput
+		}
+		if _, ok := seen[account.AccountID]; ok {
+			continue
+		}
+		seen[account.AccountID] = struct{}{}
+		normalized = append(normalized, account)
+	}
+	return s.repo.ReplaceRoutingPoolAccounts(ctx, id, normalized)
+}
+
+func (s *Service) UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (APIKey, error) {
+	if id <= 0 {
+		return APIKey{}, ErrInvalidInput
+	}
+	if routingPoolID != nil && *routingPoolID < 0 {
+		return APIKey{}, ErrInvalidInput
+	}
+	if routingPoolID != nil && *routingPoolID == 0 {
+		routingPoolID = nil
+	}
+	return s.repo.UpdateAPIKeyRoutingPool(ctx, id, routingPoolID)
 }
 
 func (s *Service) GetAPIKeyBudgetUsage(ctx context.Context, key APIKey, now time.Time) (APIKeyBudgetUsage, error) {

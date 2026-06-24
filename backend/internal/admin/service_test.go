@@ -210,6 +210,38 @@ func TestUpdateAPIKeyBudgetsValidatesNonNegativeValues(t *testing.T) {
 	}
 }
 
+func TestRoutingPoolServiceValidatesNameAndMembership(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{})
+
+	if _, err := service.CreateRoutingPool(context.Background(), " ", "", true); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CreateRoutingPool blank error = %v, want ErrInvalidInput", err)
+	}
+
+	pool, err := service.CreateRoutingPool(context.Background(), " codex primary ", " daily pool ", true)
+	if err != nil {
+		t.Fatalf("CreateRoutingPool returned error: %v", err)
+	}
+	if pool.Name != "codex primary" || pool.Description != "daily pool" || !pool.Enabled {
+		t.Fatalf("pool = %+v, want trimmed enabled pool", pool)
+	}
+
+	if _, err := service.ReplaceRoutingPoolAccounts(context.Background(), pool.ID, []RoutingPoolAccount{{AccountID: -1, Priority: 0}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative account id error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ReplaceRoutingPoolAccounts(context.Background(), pool.ID, []RoutingPoolAccount{{AccountID: 7, Priority: -1}}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative priority error = %v, want ErrInvalidInput", err)
+	}
+
+	updated, err := service.ReplaceRoutingPoolAccounts(context.Background(), pool.ID, []RoutingPoolAccount{{AccountID: 7, Priority: 10}})
+	if err != nil {
+		t.Fatalf("ReplaceRoutingPoolAccounts returned error: %v", err)
+	}
+	if len(updated.Accounts) != 1 || updated.Accounts[0].AccountID != 7 || updated.Accounts[0].Priority != 10 {
+		t.Fatalf("pool accounts = %+v, want account 7 priority 10", updated.Accounts)
+	}
+}
+
 func TestAPIKeyBudgetUsageComputesRemainingAndExceeded(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{})
@@ -932,6 +964,7 @@ type memoryRepo struct {
 	logs             []RequestLog
 	lastLogFilter    RequestLogFilter
 	budgetUsage      map[int64]APIKeyBudgetUsage
+	routingPools     map[int64]RoutingPool
 	usageSummary     UsageSummary
 	lastUsageSince   time.Time
 	lastUsageGroupBy string
@@ -957,6 +990,7 @@ func newMemoryRepo() *memoryRepo {
 		sessions:     map[string]memorySession{},
 		keys:         map[int64]memoryAPIKey{},
 		budgetUsage:  map[int64]APIKeyBudgetUsage{},
+		routingPools: map[int64]RoutingPool{},
 		nextAPIKeyID: 1,
 	}
 }
@@ -1104,6 +1138,73 @@ func (r *memoryRepo) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBud
 	key.TokenBudget24h = tokenBudget24h
 	key.RequestBudget30d = requestBudget30d
 	key.TokenBudget30d = tokenBudget30d
+	r.keys[id] = key
+	return key.APIKey, nil
+}
+
+func (r *memoryRepo) ListRoutingPools(_ context.Context) ([]RoutingPool, error) {
+	pools := make([]RoutingPool, 0, len(r.routingPools))
+	for _, pool := range r.routingPools {
+		pools = append(pools, pool)
+	}
+	return pools, nil
+}
+
+func (r *memoryRepo) CreateRoutingPool(_ context.Context, name, description string, enabled bool) (RoutingPool, error) {
+	r.nextAPIKeyID++
+	pool := RoutingPool{ID: r.nextAPIKeyID, Name: name, Description: description, Enabled: enabled}
+	r.routingPools[pool.ID] = pool
+	return pool, nil
+}
+
+func (r *memoryRepo) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool) (RoutingPool, error) {
+	pool, ok := r.routingPools[id]
+	if !ok {
+		return RoutingPool{}, ErrNotFound
+	}
+	pool.Name = name
+	pool.Description = description
+	pool.Enabled = enabled
+	r.routingPools[id] = pool
+	return pool, nil
+}
+
+func (r *memoryRepo) DeleteRoutingPool(_ context.Context, id int64) error {
+	if _, ok := r.routingPools[id]; !ok {
+		return ErrNotFound
+	}
+	delete(r.routingPools, id)
+	return nil
+}
+
+func (r *memoryRepo) ReplaceRoutingPoolAccounts(_ context.Context, id int64, accounts []RoutingPoolAccount) (RoutingPool, error) {
+	pool, ok := r.routingPools[id]
+	if !ok {
+		return RoutingPool{}, ErrNotFound
+	}
+	pool.Accounts = append([]RoutingPoolAccount(nil), accounts...)
+	pool.AccountIDs = make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		pool.AccountIDs = append(pool.AccountIDs, account.AccountID)
+	}
+	r.routingPools[id] = pool
+	return pool, nil
+}
+
+func (r *memoryRepo) UpdateAPIKeyRoutingPool(_ context.Context, id int64, routingPoolID *int64) (APIKey, error) {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt != nil {
+		return APIKey{}, ErrNotFound
+	}
+	key.RoutingPoolID = routingPoolID
+	key.RoutingPoolName = ""
+	if routingPoolID != nil {
+		pool, ok := r.routingPools[*routingPoolID]
+		if !ok {
+			return APIKey{}, ErrNotFound
+		}
+		key.RoutingPoolName = pool.Name
+	}
 	r.keys[id] = key
 	return key.APIKey, nil
 }

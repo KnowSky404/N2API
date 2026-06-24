@@ -20,7 +20,12 @@ type AdminRepository struct {
 const modelSettingsKey = "model_settings"
 const usagePricingKey = "usage_pricing"
 const gatewaySettingsKey = "gateway_settings"
-const apiKeyColumns = "id, name, prefix, created_at, last_used_at, revoked_at, disabled_at, model_policy, requests_per_minute, tokens_per_minute, request_budget_24h, token_budget_24h, request_budget_30d, token_budget_30d"
+const apiKeySelectColumns = `
+	k.id, k.name, k.prefix, k.created_at, k.last_used_at, k.revoked_at, k.disabled_at,
+	k.model_policy, k.requests_per_minute, k.tokens_per_minute,
+	k.request_budget_24h, k.token_budget_24h, k.request_budget_30d, k.token_budget_30d,
+	k.routing_pool_id, COALESCE(rp.name, '')
+`
 
 func NewAdminRepository(pool *pgxpool.Pool) *AdminRepository {
 	return &AdminRepository{pool: pool}
@@ -42,7 +47,33 @@ func scanAPIKey(key *admin.APIKey) []any {
 		&key.TokenBudget24h,
 		&key.RequestBudget30d,
 		&key.TokenBudget30d,
+		&key.RoutingPoolID,
+		&key.RoutingPoolName,
 	}
+}
+
+func (r *AdminRepository) loadAPIKey(ctx context.Context, id int64) (admin.APIKey, error) {
+	var key admin.APIKey
+	err := r.pool.QueryRow(ctx, `
+		SELECT `+apiKeySelectColumns+`
+		FROM client_api_keys k
+		LEFT JOIN routing_pools rp ON rp.id = k.routing_pool_id
+		WHERE k.id = $1
+	`, id).Scan(scanAPIKey(&key)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKey{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if key.ModelPolicy == admin.APIKeyModelPolicySelected {
+		models, err := r.ListAPIKeyModels(ctx, key.ID)
+		if err != nil {
+			return admin.APIKey{}, err
+		}
+		key.AllowedModels = models
+	}
+	return key, nil
 }
 
 func (r *AdminRepository) FindBootstrapAdmin(ctx context.Context) (admin.Admin, error) {
@@ -145,23 +176,24 @@ func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) e
 }
 
 func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix string) (admin.APIKey, error) {
-	var created admin.APIKey
+	var id int64
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO client_api_keys (name, key_hash, prefix)
 		VALUES ($1, $2, $3)
-		RETURNING `+apiKeyColumns+`
-	`, name, hash, prefix).Scan(scanAPIKey(&created)...)
+		RETURNING id
+	`, name, hash, prefix).Scan(&id)
 	if err != nil {
 		return admin.APIKey{}, err
 	}
-	return created, nil
+	return r.loadAPIKey(ctx, id)
 }
 
 func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT `+apiKeyColumns+`
-		FROM client_api_keys
-		ORDER BY created_at DESC
+		SELECT `+apiKeySelectColumns+`
+		FROM client_api_keys k
+		LEFT JOIN routing_pools rp ON rp.id = k.routing_pool_id
+		ORDER BY k.created_at DESC
 	`)
 	if err != nil {
 		return nil, err
@@ -187,37 +219,31 @@ func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, erro
 }
 
 func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error) {
-	var revoked admin.APIKey
+	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET revoked_at = COALESCE(revoked_at, now())
 		WHERE id = $1
-		RETURNING `+apiKeyColumns+`
-	`, id).Scan(scanAPIKey(&revoked)...)
+		RETURNING id
+	`, id).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
 		return admin.APIKey{}, err
 	}
-	if revoked.ModelPolicy == admin.APIKeyModelPolicySelected {
-		models, err := r.ListAPIKeyModels(ctx, revoked.ID)
-		if err != nil {
-			return admin.APIKey{}, err
-		}
-		revoked.AllowedModels = models
-	}
-	return revoked, nil
+	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ time.Time) (admin.APIKey, error) {
 	var found admin.APIKey
 	err := r.pool.QueryRow(ctx, `
-		SELECT `+apiKeyColumns+`
-		FROM client_api_keys
-		WHERE key_hash = $1
-			AND revoked_at IS NULL
-			AND disabled_at IS NULL
+		SELECT `+apiKeySelectColumns+`
+		FROM client_api_keys k
+		LEFT JOIN routing_pools rp ON rp.id = k.routing_pool_id
+		WHERE k.key_hash = $1
+			AND k.revoked_at IS NULL
+			AND k.disabled_at IS NULL
 	`, hash).Scan(scanAPIKey(&found)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
@@ -236,53 +262,39 @@ func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ t
 }
 
 func (r *AdminRepository) UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error) {
-	var updated admin.APIKey
+	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET name = $2
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING `+apiKeyColumns+`
-	`, id, name).Scan(scanAPIKey(&updated)...)
+		RETURNING id
+	`, id, name).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
 		return admin.APIKey{}, err
 	}
-	if updated.ModelPolicy == admin.APIKeyModelPolicySelected {
-		models, err := r.ListAPIKeyModels(ctx, updated.ID)
-		if err != nil {
-			return admin.APIKey{}, err
-		}
-		updated.AllowedModels = models
-	}
-	return updated, nil
+	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error) {
-	var updated admin.APIKey
+	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) ELSE NULL END
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING `+apiKeyColumns+`
-	`, id, disabled).Scan(scanAPIKey(&updated)...)
+		RETURNING id
+	`, id, disabled).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
 		return admin.APIKey{}, err
 	}
-	if updated.ModelPolicy == admin.APIKeyModelPolicySelected {
-		models, err := r.ListAPIKeyModels(ctx, updated.ID)
-		if err != nil {
-			return admin.APIKey{}, err
-		}
-		updated.AllowedModels = models
-	}
-	return updated, nil
+	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error) {
@@ -293,14 +305,14 @@ func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64,
 	}
 	defer tx.Rollback(ctx)
 
-	var updated admin.APIKey
+	var updatedID int64
 	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET model_policy = $2
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING `+apiKeyColumns+`
-	`, id, policy).Scan(scanAPIKey(&updated)...)
+		RETURNING id
+	`, id, policy).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
@@ -322,42 +334,33 @@ func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64,
 			return admin.APIKey{}, err
 		}
 	}
-	updated.AllowedModels = append([]string(nil), models...)
-
 	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
 	}
-	return updated, nil
+	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error) {
-	var updated admin.APIKey
+	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET requests_per_minute = $2,
 			tokens_per_minute = $3
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING `+apiKeyColumns+`
-	`, id, requestsPerMinute, tokensPerMinute).Scan(scanAPIKey(&updated)...)
+		RETURNING id
+	`, id, requestsPerMinute, tokensPerMinute).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
 		return admin.APIKey{}, err
 	}
-	if updated.ModelPolicy == admin.APIKeyModelPolicySelected {
-		models, err := r.ListAPIKeyModels(ctx, updated.ID)
-		if err != nil {
-			return admin.APIKey{}, err
-		}
-		updated.AllowedModels = models
-	}
-	return updated, nil
+	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error) {
-	var updated admin.APIKey
+	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET request_budget_24h = $2,
@@ -366,22 +369,194 @@ func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, req
 			token_budget_30d = $5
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING `+apiKeyColumns+`
-	`, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d).Scan(scanAPIKey(&updated)...)
+		RETURNING id
+	`, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
 		return admin.APIKey{}, err
 	}
-	if updated.ModelPolicy == admin.APIKeyModelPolicySelected {
-		models, err := r.ListAPIKeyModels(ctx, updated.ID)
-		if err != nil {
-			return admin.APIKey{}, err
-		}
-		updated.AllowedModels = models
+	return r.loadAPIKey(ctx, updatedID)
+}
+
+func (r *AdminRepository) ListRoutingPools(ctx context.Context) ([]admin.RoutingPool, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id
+		FROM routing_pools
+		ORDER BY name ASC, id ASC
+	`)
+	if err != nil {
+		return nil, err
 	}
-	return updated, nil
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	pools := make([]admin.RoutingPool, 0, len(ids))
+	for _, id := range ids {
+		pool, err := r.getRoutingPool(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		pools = append(pools, pool)
+	}
+	return pools, nil
+}
+
+func (r *AdminRepository) CreateRoutingPool(ctx context.Context, name, description string, enabled bool) (admin.RoutingPool, error) {
+	var id int64
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO routing_pools (name, description, enabled)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, name, description, enabled).Scan(&id)
+	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	return r.getRoutingPool(ctx, id)
+}
+
+func (r *AdminRepository) UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool) (admin.RoutingPool, error) {
+	var updatedID int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE routing_pools
+		SET name = $2,
+			description = $3,
+			enabled = $4,
+			updated_at = now()
+		WHERE id = $1
+		RETURNING id
+	`, id, name, description, enabled).Scan(&updatedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.RoutingPool{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	return r.getRoutingPool(ctx, updatedID)
+}
+
+func (r *AdminRepository) DeleteRoutingPool(ctx context.Context, id int64) error {
+	tag, err := r.pool.Exec(ctx, `DELETE FROM routing_pools WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return admin.ErrNotFound
+	}
+	return nil
+}
+
+func (r *AdminRepository) ReplaceRoutingPoolAccounts(ctx context.Context, id int64, accounts []admin.RoutingPoolAccount) (admin.RoutingPool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM routing_pools WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return admin.RoutingPool{}, err
+	}
+	if !exists {
+		return admin.RoutingPool{}, admin.ErrNotFound
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM routing_pool_accounts WHERE pool_id = $1`, id); err != nil {
+		return admin.RoutingPool{}, err
+	}
+	for _, account := range accounts {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO routing_pool_accounts (pool_id, account_id, priority)
+			VALUES ($1, $2, $3)
+		`, id, account.AccountID, account.Priority); err != nil {
+			return admin.RoutingPool{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return admin.RoutingPool{}, err
+	}
+	return r.getRoutingPool(ctx, id)
+}
+
+func (r *AdminRepository) UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (admin.APIKey, error) {
+	var updatedID int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE client_api_keys
+		SET routing_pool_id = $2
+		WHERE id = $1
+			AND revoked_at IS NULL
+		RETURNING id
+	`, id, routingPoolID).Scan(&updatedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKey{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	return r.loadAPIKey(ctx, updatedID)
+}
+
+func (r *AdminRepository) getRoutingPool(ctx context.Context, id int64) (admin.RoutingPool, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			p.id, p.name, p.description, p.enabled, p.created_at, p.updated_at,
+			rpa.account_id, rpa.priority
+		FROM routing_pools p
+		LEFT JOIN routing_pool_accounts rpa ON rpa.pool_id = p.id
+		WHERE p.id = $1
+		ORDER BY rpa.priority ASC, rpa.account_id ASC
+	`, id)
+	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	defer rows.Close()
+
+	var pool admin.RoutingPool
+	found := false
+	for rows.Next() {
+		var accountID *int64
+		var priority *int
+		if err := rows.Scan(
+			&pool.ID,
+			&pool.Name,
+			&pool.Description,
+			&pool.Enabled,
+			&pool.CreatedAt,
+			&pool.UpdatedAt,
+			&accountID,
+			&priority,
+		); err != nil {
+			return admin.RoutingPool{}, err
+		}
+		found = true
+		if accountID != nil {
+			account := admin.RoutingPoolAccount{AccountID: *accountID}
+			if priority != nil {
+				account.Priority = *priority
+			}
+			pool.Accounts = append(pool.Accounts, account)
+			pool.AccountIDs = append(pool.AccountIDs, *accountID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return admin.RoutingPool{}, err
+	}
+	if !found {
+		return admin.RoutingPool{}, admin.ErrNotFound
+	}
+	return pool, nil
 }
 
 func (r *AdminRepository) GetAPIKeyBudgetUsage(ctx context.Context, keyID int64, now time.Time) (admin.APIKeyBudgetUsage, error) {
