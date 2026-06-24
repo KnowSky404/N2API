@@ -215,6 +215,17 @@ test('provider account state can refresh selected accounts', () => {
   assert.match(adminStateSource, /loadModelRouting\(\)/);
 });
 
+test('provider account state can disconnect selected accounts', () => {
+  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+  assert.match(adminStateSource, /disconnectSelectedProviderAccounts/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-disconnect/);
+  assert.match(adminStateSource, /accountIds/);
+  assert.match(adminStateSource, /clearProviderAccountSelection/);
+  assert.match(adminStateSource, /loadProvider\(\)/);
+  assert.match(adminStateSource, /loadModelRouting\(\)/);
+});
+
 test('provider account state can bulk pause and reset selected accounts', () => {
   const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
@@ -372,11 +383,13 @@ test('provider account table exposes bulk selection controls', () => {
   assert.match(source, /providerAccountBulkSchedulingForm/);
   assert.match(source, /testSelectedProviderAccounts/);
   assert.match(source, /refreshSelectedProviderAccounts/);
+  assert.match(source, /disconnectSelectedProviderAccounts/);
   assert.match(source, /pauseSelectedProviderAccounts/);
   assert.match(source, /resetSelectedProviderAccountStatus/);
   assert.match(source, /clearProviderAccountSelection/);
   assert.match(source, />\s*Test selected\s*</);
   assert.match(source, />\s*Refresh selected\s*</);
+  assert.match(source, />\s*Disconnect selected\s*</);
   assert.match(source, />\s*Pause selected\s*</);
   assert.match(source, />\s*Reset selected\s*</);
   assert.match(source, />\s*Enable selected\s*</);

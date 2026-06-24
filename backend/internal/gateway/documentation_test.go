@@ -591,6 +591,25 @@ func TestGatewayDocumentationMentionsProviderAccountBulkRefresh(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsProviderAccountBulkDisconnect(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Disconnect selected",
+			"selected provider accounts",
+			"deletes the selected provider accounts",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account bulk disconnect documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountBulkStatusActions(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

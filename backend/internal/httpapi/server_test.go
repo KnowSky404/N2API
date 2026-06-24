@@ -79,49 +79,50 @@ type fakeAdminService struct {
 }
 
 type fakeProviderService struct {
-	status                provider.Status
-	connect               provider.ConnectResult
-	connectOptions        provider.ConnectOptions
-	createdAPIUpstream    provider.APIUpstreamInput
-	accounts              []provider.Account
-	accountModels         map[int64][]provider.AccountModel
-	accountTestResults    []provider.AccountTestResult
-	exposedModels         []provider.ExposedModel
-	selectionPreview      provider.SelectionPreview
-	previewModel          string
-	previewSessionID      string
-	previewExcludedIDs    []int64
-	previewRoutingPoolID  int64
-	lastAccountUpdate     provider.AccountUpdate
-	accountUpdateIDs      []int64
-	accountUpdates        []provider.AccountUpdate
-	replacedModelIDs      []int64
-	replacedModels        [][]provider.AccountModelInput
-	updateErr             error
-	accountModelsErr      error
-	accountTestResultsErr error
-	replaceModelsErr      error
-	exposedModelsErr      error
-	refreshErr            error
-	resetStatusErr        error
-	disconnectErr         error
-	callbackErr           error
-	callbackCode          string
-	callbackState         string
-	disconnected          bool
-	refreshedAccountID    int64
-	refreshedAccountIDs   []int64
-	testedAccountID       int64
-	testedAccountIDs      []int64
-	testResultsAccountID  int64
-	testResultsLimit      int
-	testedAllAccounts     bool
-	pausedAccountID       int64
-	pausedAccountIDs      []int64
-	pauseDuration         time.Duration
-	resetStatusAccountID  int64
-	resetStatusAccountIDs []int64
-	disconnectedAccountID int64
+	status                 provider.Status
+	connect                provider.ConnectResult
+	connectOptions         provider.ConnectOptions
+	createdAPIUpstream     provider.APIUpstreamInput
+	accounts               []provider.Account
+	accountModels          map[int64][]provider.AccountModel
+	accountTestResults     []provider.AccountTestResult
+	exposedModels          []provider.ExposedModel
+	selectionPreview       provider.SelectionPreview
+	previewModel           string
+	previewSessionID       string
+	previewExcludedIDs     []int64
+	previewRoutingPoolID   int64
+	lastAccountUpdate      provider.AccountUpdate
+	accountUpdateIDs       []int64
+	accountUpdates         []provider.AccountUpdate
+	replacedModelIDs       []int64
+	replacedModels         [][]provider.AccountModelInput
+	updateErr              error
+	accountModelsErr       error
+	accountTestResultsErr  error
+	replaceModelsErr       error
+	exposedModelsErr       error
+	refreshErr             error
+	resetStatusErr         error
+	disconnectErr          error
+	callbackErr            error
+	callbackCode           string
+	callbackState          string
+	disconnected           bool
+	refreshedAccountID     int64
+	refreshedAccountIDs    []int64
+	testedAccountID        int64
+	testedAccountIDs       []int64
+	testResultsAccountID   int64
+	testResultsLimit       int
+	testedAllAccounts      bool
+	pausedAccountID        int64
+	pausedAccountIDs       []int64
+	pauseDuration          time.Duration
+	resetStatusAccountID   int64
+	resetStatusAccountIDs  []int64
+	disconnectedAccountID  int64
+	disconnectedAccountIDs []int64
 }
 
 type fakeGatewayHandler struct {
@@ -821,6 +822,7 @@ func (s *fakeProviderService) DisconnectAccount(_ context.Context, id int64) err
 	for i, account := range s.accounts {
 		if account.ID == id {
 			s.disconnectedAccountID = id
+			s.disconnectedAccountIDs = append(s.disconnectedAccountIDs, id)
 			s.accounts = append(s.accounts[:i], s.accounts[i+1:]...)
 			return nil
 		}
@@ -2575,6 +2577,60 @@ func TestAdminBulkProviderAccountRefreshValidatesInput(t *testing.T) {
 			}
 			if len(providers.refreshedAccountIDs) != 0 {
 				t.Fatalf("refresh ids = %+v, want no refreshes", providers.refreshedAccountIDs)
+			}
+		})
+	}
+}
+
+func TestAdminCanBulkDisconnectUnifiedProviderAccounts(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true},
+		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-disconnect", strings.NewReader(`{"accountIds":[7,8,7]}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s, want 204", recorder.Code, recorder.Body.String())
+	}
+	if !reflect.DeepEqual(providers.disconnectedAccountIDs, []int64{7, 8}) {
+		t.Fatalf("disconnect ids = %+v, want [7 8]", providers.disconnectedAccountIDs)
+	}
+	if len(providers.accounts) != 0 {
+		t.Fatalf("accounts = %+v, want all selected accounts removed", providers.accounts)
+	}
+}
+
+func TestAdminBulkProviderAccountDisconnectValidatesInput(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "empty ids", body: `{"accountIds":[]}`},
+		{name: "bad id", body: `{"accountIds":[0]}`},
+		{name: "too many ids", body: `{"accountIds":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true}}
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-disconnect", strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+			}
+			if len(providers.disconnectedAccountIDs) != 0 {
+				t.Fatalf("disconnect ids = %+v, want no disconnects", providers.disconnectedAccountIDs)
 			}
 		})
 	}

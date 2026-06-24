@@ -1777,6 +1777,41 @@ export async function refreshSelectedProviderAccounts() {
   }
 }
 
+export async function disconnectSelectedProviderAccounts() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const accountIds = Object.keys(selectedProviderAccountIds)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0);
+  if (accountIds.length === 0) {
+    providerAccounts.error = 'Select at least one provider account';
+    return;
+  }
+
+  providerAccounts.saving = true;
+  providerAccounts.error = '';
+  try {
+    await requestJSON('/api/admin/provider-accounts/bulk-disconnect', {
+      method: 'POST',
+      body: JSON.stringify({ accountIds })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    clearProviderAccountSelection();
+    await loadProvider();
+    await loadProviderAccounts();
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    const message = error instanceof Error ? error.message : 'Selected account disconnect failed';
+    providerAccounts.error = message;
+    await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version)) return;
+    providerAccounts.error = message;
+  } finally {
+    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
+  }
+}
+
 export async function pauseSelectedProviderAccounts() {
 	const version = sessionVersion;
 	if (!isCurrentAuthenticated(version)) return;

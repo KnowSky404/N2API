@@ -868,6 +868,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleBulkRefreshProviderAccounts(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleBulkDisconnectProviderAccounts(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-pause", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleBulkPauseProviderAccountScheduling(w, r, providers)
 	}))
@@ -1511,6 +1515,32 @@ func handleBulkRefreshProviderAccounts(w http.ResponseWriter, r *http.Request, p
 		accounts = append(accounts, account)
 	}
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+}
+
+func handleBulkDisconnectProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	var req struct {
+		AccountIDs []int64 `json:"accountIds"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	accountIDs, ok := parseBulkProviderAccountIDs(w, req.AccountIDs)
+	if !ok {
+		return
+	}
+
+	for _, id := range accountIDs {
+		if err := providers.DisconnectAccount(r.Context(), id); err != nil {
+			writeProviderAccountError(w, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleBulkPauseProviderAccountScheduling(w http.ResponseWriter, r *http.Request, providers ProviderService) {

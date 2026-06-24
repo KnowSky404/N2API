@@ -11,6 +11,7 @@
     copyAuthorizationURL,
     createAPIUpstreamAccount,
     disconnectProviderAccount,
+    disconnectSelectedProviderAccounts,
     formatCostMicrousd,
     formatDate,
     formatTokens,
@@ -651,6 +652,14 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         onclick={refreshSelectedProviderAccounts}
       >
         Refresh selected
+      </button>
+      <button
+        class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
+        onclick={disconnectSelectedProviderAccounts}
+      >
+        Disconnect selected
       </button>
       <button
         class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
