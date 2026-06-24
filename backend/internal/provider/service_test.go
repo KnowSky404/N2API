@@ -1741,6 +1741,36 @@ func TestSelectAccountForModelInRoutingPoolChainFallsBackByModel(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolChainSkipsDisabledFallbackPool(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "disabled fallback", Enabled: false, FallbackPoolID: ptrInt64(3)}
+	repo.routingPools[3] = RoutingPool{ID: 3, Name: "emergency", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 10, true, 1, "primary-token"),
+		testAccount(t, 20, true, 1, "disabled-token"),
+		testAccount(t, 30, true, 1, "emergency-token"),
+	}
+	repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10, Priority: 0}}
+	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
+	repo.routingPoolAccounts[3] = []RoutingPoolAccount{{AccountID: 30, Priority: 0}}
+	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
+	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	repo.accountModels[30] = []AccountModel{{AccountID: 30, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelInRoutingPoolChain returned error: %v", err)
+	}
+	if selected.AccountID != 30 || selected.RoutingPoolID != 3 || selected.RoutingPoolFallbackDepth != 2 {
+		t.Fatalf("selected = %+v, want emergency fallback account 30 at depth 2", selected)
+	}
+	if selected.RoutingPoolFallbackChain != "primary -> disabled fallback -> emergency" {
+		t.Fatalf("chain = %q, want full fallback chain", selected.RoutingPoolFallbackChain)
+	}
+}
+
 func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
