@@ -214,11 +214,11 @@ func TestRoutingPoolServiceValidatesNameAndMembership(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{})
 
-	if _, err := service.CreateRoutingPool(context.Background(), " ", "", true); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.CreateRoutingPool(context.Background(), " ", "", true, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("CreateRoutingPool blank error = %v, want ErrInvalidInput", err)
 	}
 
-	pool, err := service.CreateRoutingPool(context.Background(), " codex primary ", " daily pool ", true)
+	pool, err := service.CreateRoutingPool(context.Background(), " codex primary ", " daily pool ", true, nil)
 	if err != nil {
 		t.Fatalf("CreateRoutingPool returned error: %v", err)
 	}
@@ -239,6 +239,45 @@ func TestRoutingPoolServiceValidatesNameAndMembership(t *testing.T) {
 	}
 	if len(updated.Accounts) != 1 || updated.Accounts[0].AccountID != 7 || updated.Accounts[0].Priority != 10 {
 		t.Fatalf("pool accounts = %+v, want account 7 priority 10", updated.Accounts)
+	}
+}
+
+func TestRoutingPoolFallbackValidationRejectsSelfAndCycles(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{})
+
+	primary, err := service.CreateRoutingPool(context.Background(), "primary", "", true, nil)
+	if err != nil {
+		t.Fatalf("CreateRoutingPool primary returned error: %v", err)
+	}
+	secondary, err := service.CreateRoutingPool(context.Background(), "secondary", "", true, nil)
+	if err != nil {
+		t.Fatalf("CreateRoutingPool secondary returned error: %v", err)
+	}
+
+	if _, err := service.UpdateRoutingPool(context.Background(), primary.ID, "primary", "", true, &primary.ID); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("self fallback error = %v, want ErrInvalidInput", err)
+	}
+
+	if _, err := service.UpdateRoutingPool(context.Background(), primary.ID, "primary", "", true, &secondary.ID); err != nil {
+		t.Fatalf("primary fallback update returned error: %v", err)
+	}
+	if _, err := service.UpdateRoutingPool(context.Background(), secondary.ID, "secondary", "", true, &primary.ID); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("cycle fallback error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestRoutingPoolFallbackValidationRejectsMissingTarget(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{})
+
+	pool, err := service.CreateRoutingPool(context.Background(), "primary", "", true, nil)
+	if err != nil {
+		t.Fatalf("CreateRoutingPool returned error: %v", err)
+	}
+	missing := int64(999)
+	if _, err := service.UpdateRoutingPool(context.Background(), pool.ID, "primary", "", true, &missing); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("missing fallback error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -1153,23 +1192,68 @@ func (r *memoryRepo) ListRoutingPools(_ context.Context) ([]RoutingPool, error) 
 	return pools, nil
 }
 
-func (r *memoryRepo) CreateRoutingPool(_ context.Context, name, description string, enabled bool) (RoutingPool, error) {
+func (r *memoryRepo) CreateRoutingPool(_ context.Context, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error) {
+	if err := r.validateRoutingPoolFallback(0, fallbackPoolID); err != nil {
+		return RoutingPool{}, err
+	}
 	r.nextAPIKeyID++
-	pool := RoutingPool{ID: r.nextAPIKeyID, Name: name, Description: description, Enabled: enabled}
+	pool := RoutingPool{ID: r.nextAPIKeyID, Name: name, Description: description, Enabled: enabled, FallbackPoolID: fallbackPoolID}
+	if fallbackPoolID != nil {
+		pool.FallbackPoolName = r.routingPools[*fallbackPoolID].Name
+	}
 	r.routingPools[pool.ID] = pool
 	return pool, nil
 }
 
-func (r *memoryRepo) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool) (RoutingPool, error) {
+func (r *memoryRepo) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error) {
 	pool, ok := r.routingPools[id]
 	if !ok {
 		return RoutingPool{}, ErrNotFound
 	}
+	if err := r.validateRoutingPoolFallback(id, fallbackPoolID); err != nil {
+		return RoutingPool{}, err
+	}
 	pool.Name = name
 	pool.Description = description
 	pool.Enabled = enabled
+	pool.FallbackPoolID = fallbackPoolID
+	pool.FallbackPoolName = ""
+	if fallbackPoolID != nil {
+		pool.FallbackPoolName = r.routingPools[*fallbackPoolID].Name
+	}
 	r.routingPools[id] = pool
 	return pool, nil
+}
+
+func (r *memoryRepo) validateRoutingPoolFallback(poolID int64, fallbackPoolID *int64) error {
+	if fallbackPoolID == nil {
+		return nil
+	}
+	if *fallbackPoolID == poolID {
+		return ErrInvalidInput
+	}
+	if _, ok := r.routingPools[*fallbackPoolID]; !ok {
+		return ErrInvalidInput
+	}
+	seen := map[int64]struct{}{}
+	if poolID > 0 {
+		seen[poolID] = struct{}{}
+	}
+	for currentID := *fallbackPoolID; currentID > 0; {
+		if _, ok := seen[currentID]; ok {
+			return ErrInvalidInput
+		}
+		seen[currentID] = struct{}{}
+		current := r.routingPools[currentID]
+		if current.FallbackPoolID == nil {
+			return nil
+		}
+		if _, ok := r.routingPools[*current.FallbackPoolID]; !ok {
+			return ErrInvalidInput
+		}
+		currentID = *current.FallbackPoolID
+	}
+	return nil
 }
 
 func (r *memoryRepo) DeleteRoutingPool(_ context.Context, id int64) error {

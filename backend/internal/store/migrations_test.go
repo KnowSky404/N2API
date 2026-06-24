@@ -305,6 +305,25 @@ func TestRoutingPoolsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestRoutingPoolFallbackMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00025_routing_pool_fallback.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE routing_pools ADD COLUMN IF NOT EXISTS fallback_pool_id",
+		"REFERENCES routing_pools(id) ON DELETE SET NULL",
+		"routing_pools_fallback_pool_idx",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS routing_pool_fallback_depth",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS routing_pool_fallback_chain",
+		"ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS routing_pool_error",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("routing pool fallback migration missing %q", want)
+		}
+	}
+}
+
 func TestSingleAccountModelBackfillMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00015_single_account_model_backfill.sql")
 	if err != nil {
@@ -520,10 +539,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 24 {
-		t.Fatalf("migration sources = %d, want 24", len(sources))
+	if len(sources) != 25 {
+		t.Fatalf("migration sources = %d, want 25", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[23].Path != "00024_routing_pools.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[24].Path != "00025_routing_pool_fallback.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

@@ -40,8 +40,8 @@ type AdminService interface {
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
 	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error)
 	ListRoutingPools(ctx context.Context) ([]admin.RoutingPool, error)
-	CreateRoutingPool(ctx context.Context, name, description string, enabled bool) (admin.RoutingPool, error)
-	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool) (admin.RoutingPool, error)
+	CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error)
+	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error)
 	DeleteRoutingPool(ctx context.Context, id int64) error
 	ReplaceRoutingPoolAccounts(ctx context.Context, id int64, accounts []admin.RoutingPoolAccount) (admin.RoutingPool, error)
 	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (admin.APIKey, error)
@@ -531,7 +531,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		pool, err := admins.CreateRoutingPool(r.Context(), req.Name, req.Description, req.Enabled)
+		pool, err := admins.CreateRoutingPool(r.Context(), req.Name, req.Description, req.Enabled, nil)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")
@@ -558,7 +558,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		pool, err := admins.UpdateRoutingPool(r.Context(), id, req.Name, req.Description, req.Enabled)
+		pool, err := admins.UpdateRoutingPool(r.Context(), id, req.Name, req.Description, req.Enabled, nil)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")

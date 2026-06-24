@@ -71,14 +71,16 @@ type APIKey struct {
 }
 
 type RoutingPool struct {
-	ID          int64                `json:"id"`
-	Name        string               `json:"name"`
-	Description string               `json:"description"`
-	Enabled     bool                 `json:"enabled"`
-	AccountIDs  []int64              `json:"accountIds"`
-	Accounts    []RoutingPoolAccount `json:"accounts,omitempty"`
-	CreatedAt   time.Time            `json:"createdAt"`
-	UpdatedAt   time.Time            `json:"updatedAt"`
+	ID               int64                `json:"id"`
+	Name             string               `json:"name"`
+	Description      string               `json:"description"`
+	Enabled          bool                 `json:"enabled"`
+	FallbackPoolID   *int64               `json:"fallbackPoolId"`
+	FallbackPoolName string               `json:"fallbackPoolName"`
+	AccountIDs       []int64              `json:"accountIds"`
+	Accounts         []RoutingPoolAccount `json:"accounts,omitempty"`
+	CreatedAt        time.Time            `json:"createdAt"`
+	UpdatedAt        time.Time            `json:"updatedAt"`
 }
 
 type RoutingPoolAccount struct {
@@ -262,8 +264,8 @@ type Repository interface {
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error)
 	ListRoutingPools(ctx context.Context) ([]RoutingPool, error)
-	CreateRoutingPool(ctx context.Context, name, description string, enabled bool) (RoutingPool, error)
-	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool) (RoutingPool, error)
+	CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error)
+	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error)
 	DeleteRoutingPool(ctx context.Context, id int64) error
 	ReplaceRoutingPoolAccounts(ctx context.Context, id int64, accounts []RoutingPoolAccount) (RoutingPool, error)
 	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (APIKey, error)
@@ -462,22 +464,44 @@ func (s *Service) ListRoutingPools(ctx context.Context) ([]RoutingPool, error) {
 	return s.repo.ListRoutingPools(ctx)
 }
 
-func (s *Service) CreateRoutingPool(ctx context.Context, name, description string, enabled bool) (RoutingPool, error) {
+func (s *Service) CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error) {
 	name = strings.TrimSpace(name)
 	description = strings.TrimSpace(description)
 	if name == "" {
 		return RoutingPool{}, ErrInvalidInput
 	}
-	return s.repo.CreateRoutingPool(ctx, name, description, enabled)
+	normalizedFallbackPoolID, err := normalizeRoutingPoolFallbackID(fallbackPoolID)
+	if err != nil {
+		return RoutingPool{}, err
+	}
+	return s.repo.CreateRoutingPool(ctx, name, description, enabled, normalizedFallbackPoolID)
 }
 
-func (s *Service) UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool) (RoutingPool, error) {
+func (s *Service) UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error) {
 	name = strings.TrimSpace(name)
 	description = strings.TrimSpace(description)
 	if id <= 0 || name == "" {
 		return RoutingPool{}, ErrInvalidInput
 	}
-	return s.repo.UpdateRoutingPool(ctx, id, name, description, enabled)
+	normalizedFallbackPoolID, err := normalizeRoutingPoolFallbackID(fallbackPoolID)
+	if err != nil {
+		return RoutingPool{}, err
+	}
+	if normalizedFallbackPoolID != nil && *normalizedFallbackPoolID == id {
+		return RoutingPool{}, ErrInvalidInput
+	}
+	return s.repo.UpdateRoutingPool(ctx, id, name, description, enabled, normalizedFallbackPoolID)
+}
+
+func normalizeRoutingPoolFallbackID(id *int64) (*int64, error) {
+	if id == nil || *id == 0 {
+		return nil, nil
+	}
+	if *id < 0 {
+		return nil, ErrInvalidInput
+	}
+	normalized := *id
+	return &normalized, nil
 }
 
 func (s *Service) DeleteRoutingPool(ctx context.Context, id int64) error {

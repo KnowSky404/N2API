@@ -319,7 +319,7 @@ func (s *fakeAdminService) ListRoutingPools(_ context.Context) ([]admin.RoutingP
 	return append([]admin.RoutingPool(nil), s.routingPools...), nil
 }
 
-func (s *fakeAdminService) CreateRoutingPool(_ context.Context, name, description string, enabled bool) (admin.RoutingPool, error) {
+func (s *fakeAdminService) CreateRoutingPool(_ context.Context, name, description string, enabled bool, _ *int64) (admin.RoutingPool, error) {
 	if strings.TrimSpace(name) == "" {
 		return admin.RoutingPool{}, admin.ErrInvalidInput
 	}
@@ -328,7 +328,7 @@ func (s *fakeAdminService) CreateRoutingPool(_ context.Context, name, descriptio
 	return pool, nil
 }
 
-func (s *fakeAdminService) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool) (admin.RoutingPool, error) {
+func (s *fakeAdminService) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool, _ *int64) (admin.RoutingPool, error) {
 	for i, pool := range s.routingPools {
 		if pool.ID == id {
 			pool.Name = strings.TrimSpace(name)

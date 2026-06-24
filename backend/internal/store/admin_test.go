@@ -332,7 +332,7 @@ func TestAdminRepositoryRoutingPools(t *testing.T) {
 
 	accountID := insertProviderAccount(t, repo.pool, "openai", "api_upstream", "upstream")
 
-	pool, err := repo.CreateRoutingPool(ctx, "codex primary", "daily pool", true)
+	pool, err := repo.CreateRoutingPool(ctx, "codex primary", "daily pool", true, nil)
 	if err != nil {
 		t.Fatalf("CreateRoutingPool returned error: %v", err)
 	}

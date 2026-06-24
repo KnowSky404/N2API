@@ -414,30 +414,37 @@ func (r *AdminRepository) ListRoutingPools(ctx context.Context) ([]admin.Routing
 	return pools, nil
 }
 
-func (r *AdminRepository) CreateRoutingPool(ctx context.Context, name, description string, enabled bool) (admin.RoutingPool, error) {
+func (r *AdminRepository) CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error) {
+	if err := r.validateRoutingPoolFallback(ctx, 0, fallbackPoolID); err != nil {
+		return admin.RoutingPool{}, err
+	}
 	var id int64
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO routing_pools (name, description, enabled)
-		VALUES ($1, $2, $3)
+		INSERT INTO routing_pools (name, description, enabled, fallback_pool_id)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id
-	`, name, description, enabled).Scan(&id)
+	`, name, description, enabled, fallbackPoolID).Scan(&id)
 	if err != nil {
 		return admin.RoutingPool{}, err
 	}
 	return r.getRoutingPool(ctx, id)
 }
 
-func (r *AdminRepository) UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool) (admin.RoutingPool, error) {
+func (r *AdminRepository) UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error) {
+	if err := r.validateRoutingPoolFallback(ctx, id, fallbackPoolID); err != nil {
+		return admin.RoutingPool{}, err
+	}
 	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
 		UPDATE routing_pools
 		SET name = $2,
 			description = $3,
 			enabled = $4,
+			fallback_pool_id = $5,
 			updated_at = now()
 		WHERE id = $1
 		RETURNING id
-	`, id, name, description, enabled).Scan(&updatedID)
+	`, id, name, description, enabled, fallbackPoolID).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.RoutingPool{}, admin.ErrNotFound
 	}
@@ -445,6 +452,42 @@ func (r *AdminRepository) UpdateRoutingPool(ctx context.Context, id int64, name,
 		return admin.RoutingPool{}, err
 	}
 	return r.getRoutingPool(ctx, updatedID)
+}
+
+func (r *AdminRepository) validateRoutingPoolFallback(ctx context.Context, poolID int64, fallbackPoolID *int64) error {
+	if fallbackPoolID == nil {
+		return nil
+	}
+	if *fallbackPoolID <= 0 || *fallbackPoolID == poolID {
+		return admin.ErrInvalidInput
+	}
+	seen := map[int64]struct{}{}
+	if poolID > 0 {
+		seen[poolID] = struct{}{}
+	}
+	for currentID := *fallbackPoolID; currentID > 0; {
+		if _, ok := seen[currentID]; ok {
+			return admin.ErrInvalidInput
+		}
+		seen[currentID] = struct{}{}
+		var nextFallbackID *int64
+		err := r.pool.QueryRow(ctx, `
+			SELECT fallback_pool_id
+			FROM routing_pools
+			WHERE id = $1
+		`, currentID).Scan(&nextFallbackID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return admin.ErrInvalidInput
+		}
+		if err != nil {
+			return err
+		}
+		if nextFallbackID == nil {
+			return nil
+		}
+		currentID = *nextFallbackID
+	}
+	return nil
 }
 
 func (r *AdminRepository) DeleteRoutingPool(ctx context.Context, id int64) error {
@@ -511,9 +554,10 @@ func (r *AdminRepository) UpdateAPIKeyRoutingPool(ctx context.Context, id int64,
 func (r *AdminRepository) getRoutingPool(ctx context.Context, id int64) (admin.RoutingPool, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT
-			p.id, p.name, p.description, p.enabled, p.created_at, p.updated_at,
+			p.id, p.name, p.description, p.enabled, p.fallback_pool_id, COALESCE(fp.name, ''), p.created_at, p.updated_at,
 			rpa.account_id, rpa.priority
 		FROM routing_pools p
+		LEFT JOIN routing_pools fp ON fp.id = p.fallback_pool_id
 		LEFT JOIN routing_pool_accounts rpa ON rpa.pool_id = p.id
 		WHERE p.id = $1
 		ORDER BY rpa.priority ASC, rpa.account_id ASC
@@ -533,6 +577,8 @@ func (r *AdminRepository) getRoutingPool(ctx context.Context, id int64) (admin.R
 			&pool.Name,
 			&pool.Description,
 			&pool.Enabled,
+			&pool.FallbackPoolID,
+			&pool.FallbackPoolName,
 			&pool.CreatedAt,
 			&pool.UpdatedAt,
 			&accountID,
