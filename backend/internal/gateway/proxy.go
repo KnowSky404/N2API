@@ -1452,6 +1452,8 @@ func providerErrorCode(err error) string {
 		return "routing_pool_unavailable"
 	case errors.Is(err, provider.ErrRoutingPoolEmpty):
 		return "routing_pool_empty"
+	case errors.Is(err, provider.ErrRoutingPoolExhausted):
+		return "routing_pool_exhausted"
 	case errors.Is(err, provider.ErrAccountsUnavailable):
 		return "provider_accounts_unavailable"
 	case errors.Is(err, provider.ErrModelUnavailable):

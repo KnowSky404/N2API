@@ -2461,6 +2461,9 @@ func TestProviderErrorCodeForSelectionKeepsModelUnavailableDistinctFromRoutingPo
 	if got := providerErrorCodeForSelection(provider.ErrModelUnavailable, selected); got != provider.RoutingPoolErrorExhausted {
 		t.Fatalf("routing pool exhausted error code = %q, want %s", got, provider.RoutingPoolErrorExhausted)
 	}
+	if got := providerErrorCodeForSelection(provider.ErrRoutingPoolExhausted, SelectedAccount{}); got != provider.RoutingPoolErrorExhausted {
+		t.Fatalf("routing pool exhausted provider error code = %q, want %s", got, provider.RoutingPoolErrorExhausted)
+	}
 }
 
 func TestProxyLogsRoutingPoolEmptyDiagnosticsOnSelectionError(t *testing.T) {

@@ -1768,6 +1768,23 @@ func TestSelectAccountForModelInRoutingPoolChainMarksUnavailableDiagnostics(t *t
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolChainMarksMissingFallbackAsExhausted(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if !errors.Is(err, ErrRoutingPoolExhausted) {
+		t.Fatalf("error = %v, want ErrRoutingPoolExhausted", err)
+	}
+	if selected.RoutingPoolError != RoutingPoolErrorExhausted {
+		t.Fatalf("routing pool error = %q, want %s", selected.RoutingPoolError, RoutingPoolErrorExhausted)
+	}
+	if selected.RoutingPoolFallbackChain != "primary" {
+		t.Fatalf("chain = %q, want primary", selected.RoutingPoolFallbackChain)
+	}
+}
+
 func TestSelectAccountForModelInRoutingPoolChainMarksExhaustedDiagnostics(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
@@ -2302,6 +2319,23 @@ func TestPreviewAccountSelectionInRoutingPoolScopesCandidatesAndStickyBinding(t 
 	}
 	if _, ok := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]; ok {
 		t.Fatal("pool preview used global sticky binding scope")
+	}
+}
+
+func TestPreviewAccountSelectionInRoutingPoolMarksMissingFallbackAsExhausted(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	preview, err := service.PreviewAccountSelectionInRoutingPool(context.Background(), 1, "gpt-5", "")
+	if !errors.Is(err, ErrRoutingPoolExhausted) {
+		t.Fatalf("error = %v, want ErrRoutingPoolExhausted", err)
+	}
+	if preview.RoutingPoolError != RoutingPoolErrorExhausted {
+		t.Fatalf("routing pool error = %q, want %s", preview.RoutingPoolError, RoutingPoolErrorExhausted)
+	}
+	if preview.RoutingPoolFallbackChain != "primary" {
+		t.Fatalf("chain = %q, want primary", preview.RoutingPoolFallbackChain)
 	}
 }
 

@@ -92,6 +92,7 @@ var (
 	ErrRoutingPoolNotFound    = errors.New("routing pool not found")
 	ErrRoutingPoolEmpty       = errors.New("routing pool empty")
 	ErrRoutingPoolCycle       = errors.New("routing pool fallback cycle")
+	ErrRoutingPoolExhausted   = errors.New("routing pool fallback chain exhausted")
 )
 
 type Config struct {
@@ -1424,7 +1425,7 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 	}
 	pools, chainLabel, err := s.routingPoolChain(ctx, routingPoolID)
 	if err != nil {
-		return SelectionPreview{RoutingPoolError: routingPoolDiagnosticError(err)}, err
+		return SelectionPreview{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, err
 	}
 	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
@@ -1694,7 +1695,7 @@ func (s *Service) stickySessionCandidatesInRoutingPool(ctx context.Context, rout
 func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	pools, chainLabel, err := s.routingPoolChain(ctx, primaryPoolID)
 	if err != nil {
-		return SelectedAccount{RoutingPoolError: routingPoolDiagnosticError(err)}, err
+		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, err
 	}
 
 	model = strings.TrimSpace(model)
@@ -1782,6 +1783,9 @@ func (s *Service) routingPoolChain(ctx context.Context, primaryPoolID int64) ([]
 		visited[id] = struct{}{}
 		pool, err := s.repo.FindRoutingPool(ctx, id)
 		if err != nil {
+			if errors.Is(err, ErrRoutingPoolNotFound) && len(pools) > 0 {
+				return pools, routingPoolChainLabel(pools), ErrRoutingPoolExhausted
+			}
 			return nil, "", err
 		}
 		pools = append(pools, pool)
@@ -1824,6 +1828,8 @@ func routingPoolDiagnosticError(err error) string {
 		return RoutingPoolErrorCycle
 	case errors.Is(err, ErrRoutingPoolNotFound):
 		return RoutingPoolErrorUnavailable
+	case errors.Is(err, ErrRoutingPoolExhausted):
+		return RoutingPoolErrorExhausted
 	default:
 		return strings.TrimSpace(err.Error())
 	}
