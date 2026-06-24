@@ -213,12 +213,15 @@ test('request logs page shows gateway fallback diagnostics', () => {
   assert.match(requestLogsPage, /log\.routingPoolFallbackChain/);
   assert.match(requestLogsPage, /log\.routingPoolError/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolError\}/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolChain\}/);
   assert.match(requestLogsPage, /Fallback chain/);
   assert.match(adminState, /gatewayAttemptCount/);
   assert.match(adminState, /gatewayFallbackCount/);
   assert.match(adminState, /routingPoolFallbackDepth/);
   assert.match(adminState, /routingPoolError: 'all'/);
+  assert.match(adminState, /routingPoolChain: ''/);
   assert.match(adminState, /params\.set\('routingPoolError'/);
+  assert.match(adminState, /params\.set\('routingPoolChain'/);
 });
 
 test('request logs page filters by search and status class', () => {
@@ -265,6 +268,7 @@ test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /requestLogs\.clientKeyId = clientKeyId/);
   assert.match(requestLogsPage, /requestLogs\.model = model/);
   assert.match(requestLogsPage, /requestLogs\.sessionId = sessionId/);
+  assert.match(requestLogsPage, /requestLogs\.routingPoolChain = routingPoolChain/);
   assert.match(requestLogsPage, /requestLogs\.query = query/);
   assert.match(requestLogsPage, /requestLogs\.statusClass = statusClass/);
   assert.match(requestLogsPage, /void loadRequestLogs\(\)/);
@@ -281,6 +285,7 @@ test('gateway usage rows link to filtered request logs', () => {
   assert.match(gatewayPage, /sessionId=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /providerAccountId=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /routingPoolId=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /routingPoolChain=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /clientKeyId=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /providerAccountUsageId/);
   assert.match(gatewayPage, /href=\{href\}/);

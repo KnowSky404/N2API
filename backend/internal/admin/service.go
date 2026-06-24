@@ -145,6 +145,7 @@ type RequestLogFilter struct {
 	Model             string
 	SessionID         string
 	RoutingPoolError  string
+	RoutingPoolChain  string
 }
 
 type UsageSummary struct {
@@ -643,7 +644,8 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	filter.Model = strings.TrimSpace(filter.Model)
 	filter.SessionID = strings.TrimSpace(filter.SessionID)
 	filter.RoutingPoolError = strings.TrimSpace(filter.RoutingPoolError)
-	if len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.RoutingPoolError) > 100 {
+	filter.RoutingPoolChain = strings.TrimSpace(filter.RoutingPoolChain)
+	if len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.RoutingPoolError) > 100 || len(filter.RoutingPoolChain) > 200 {
 		return nil, ErrInvalidInput
 	}
 	filter.StatusClass = strings.TrimSpace(filter.StatusClass)

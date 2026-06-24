@@ -558,6 +558,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		Model:             " gpt-5 ",
 		SessionID:         " workspace-123 ",
 		RoutingPoolError:  " routing_pool_unavailable ",
+		RoutingPoolChain:  " primary -> secondary ",
 	})
 	if err != nil {
 		t.Fatalf("ListRequestLogs returned error: %v", err)
@@ -582,6 +583,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if repo.lastLogFilter.RoutingPoolError != "routing_pool_unavailable" {
 		t.Fatalf("repository routing pool error = %q, want routing_pool_unavailable", repo.lastLogFilter.RoutingPoolError)
+	}
+	if repo.lastLogFilter.RoutingPoolChain != "primary -> secondary" {
+		t.Fatalf("repository routing pool chain = %q, want primary -> secondary", repo.lastLogFilter.RoutingPoolChain)
 	}
 	if len(logs) != 2 || logs[0].RequestID != "req_2" {
 		t.Fatalf("logs = %+v", logs)
@@ -638,6 +642,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{RoutingPoolError: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long routing pool error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{RoutingPoolChain: strings.Repeat("x", 201)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long routing pool chain error = %v, want ErrInvalidInput", err)
 	}
 }
 

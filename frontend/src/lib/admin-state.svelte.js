@@ -365,7 +365,7 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, routingPoolError: string, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, routingPoolError: string, routingPoolChain: string, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
@@ -377,6 +377,7 @@ export const requestLogs = $state({
   model: '',
   sessionId: '',
   routingPoolError: 'all',
+  routingPoolChain: '',
   items: []
 });
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
@@ -858,6 +859,7 @@ function clearRequestLogs() {
     model: '',
     sessionId: '',
     routingPoolError: 'all',
+    routingPoolChain: '',
     items: []
   });
 }
@@ -2532,6 +2534,10 @@ export async function loadRequestLogs() {
     }
     if (requestLogs.routingPoolError && requestLogs.routingPoolError !== 'all') {
       params.set('routingPoolError', requestLogs.routingPoolError);
+    }
+    const routingPoolChain = requestLogs.routingPoolChain.trim();
+    if (routingPoolChain) {
+      params.set('routingPoolChain', routingPoolChain);
     }
     const payload = await requestJSON(`/api/admin/request-logs?${params.toString()}`);
     if (!isCurrentAuthenticated(version)) return;

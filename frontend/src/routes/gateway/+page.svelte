@@ -102,6 +102,9 @@
     if (sectionTitle === 'Top routing pools' && /^[1-9]\d*$/.test(id)) {
       return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
     }
+    if (sectionTitle === 'Top routing pool chains' && id !== 'none') {
+      return `/request-logs?routingPoolChain=${encodeURIComponent(id)}`;
+    }
     if (sectionTitle === 'Top client keys' && /^[1-9]\d*$/.test(id)) {
       return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
     }

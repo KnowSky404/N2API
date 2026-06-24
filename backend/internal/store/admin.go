@@ -837,6 +837,11 @@ func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 		conditions = append(conditions, "l.routing_pool_error = $"+strconv.Itoa(len(args)))
 	}
 
+	if filter.RoutingPoolChain != "" {
+		args = append(args, filter.RoutingPoolChain)
+		conditions = append(conditions, "l.routing_pool_fallback_chain = $"+strconv.Itoa(len(args)))
+	}
+
 	if filter.Query != "" {
 		args = append(args, filter.Query)
 		param := "$" + strconv.Itoa(len(args))
@@ -853,6 +858,7 @@ func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 			OR COALESCE(l.session_id, '') ILIKE '%' || `+param+` || '%'
 			OR COALESCE(l.route, '') ILIKE '%' || `+param+` || '%'
 			OR COALESCE(l.method, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.routing_pool_fallback_chain, '') ILIKE '%' || `+param+` || '%'
 			OR COALESCE(l.routing_pool_error, '') ILIKE '%' || `+param+` || '%'
 			OR COALESCE(l.error, '') ILIKE '%' || `+param+` || '%'
 			OR l.status_code::text ILIKE '%' || `+param+` || '%'

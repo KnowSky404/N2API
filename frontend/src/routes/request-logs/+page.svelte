@@ -77,6 +77,11 @@
     ) {
       requestLogs.routingPoolError = routingPoolError;
     }
+
+    const routingPoolChain = params.get('routingPoolChain') ?? '';
+    if (routingPoolChain.length > 0 && routingPoolChain.length <= 200) {
+      requestLogs.routingPoolChain = routingPoolChain;
+    }
   }
 
   $effect(() => {
@@ -465,6 +470,14 @@
             <option value={routingPoolError.value}>{routingPoolError.label}</option>
           {/each}
         </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Fallback chain
+        <input
+          class="mt-2 w-56 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.routingPoolChain}
+          placeholder="primary -> secondary"
+        />
       </label>
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Provider account

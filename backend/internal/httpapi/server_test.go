@@ -3556,7 +3556,7 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 
 	admins := newFakeAdminService()
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&routingPoolError=routing_pool_unavailable", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&routingPoolError=routing_pool_unavailable&routingPoolChain=primary+-%3E+secondary", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -3591,6 +3591,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if admins.requestLogFilter.RoutingPoolError != "routing_pool_unavailable" {
 		t.Fatalf("request log routing pool error = %q, want routing_pool_unavailable", admins.requestLogFilter.RoutingPoolError)
+	}
+	if admins.requestLogFilter.RoutingPoolChain != "primary -> secondary" {
+		t.Fatalf("request log routing pool chain = %q, want primary -> secondary", admins.requestLogFilter.RoutingPoolChain)
 	}
 	if body.Logs[0].GatewayAttemptCount != 2 || body.Logs[0].GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", body.Logs[0].GatewayAttemptCount, body.Logs[0].GatewayFallbackCount)
