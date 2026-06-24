@@ -126,6 +126,16 @@ func (l *fakeRequestLogger) CreateRequestLog(_ context.Context, entry RequestLog
 	return nil
 }
 
+func assertLastLoggedError(t *testing.T, logger *fakeRequestLogger, want string) {
+	t.Helper()
+	if len(logger.entries) == 0 {
+		t.Fatalf("logged entries = 0, want last error %q", want)
+	}
+	if got := logger.entries[len(logger.entries)-1].Error; got != want {
+		t.Fatalf("last logged error = %q, want %q", got, want)
+	}
+}
+
 type fakeUsagePricer struct {
 	estimate UsageCostEstimate
 	err      error
@@ -2364,6 +2374,166 @@ func TestProxyLogsFinalRetryableUpstreamStatusAsError(t *testing.T) {
 	if entry.ProviderAccountID != 11 {
 		t.Fatalf("logged account = %d, want final attempted account 11", entry.ProviderAccountID)
 	}
+}
+
+func TestProxyLogsPreciseAPIKeyRequestRateLimitReason(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "first-token"},
+		{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "second-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL:            "https://upstream.example.test",
+		MaxRequestsPerMinutePerKey: 1,
+		Logger:                     logger,
+	}, client)
+	proxy.rateLimiter.now = func() time.Time {
+		return time.Date(2026, 6, 24, 12, 0, 1, 0, time.UTC)
+	}
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	firstReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	proxy.ServeHTTP(httptest.NewRecorder(), firstReq)
+	secondReq := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	secondReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, secondReq)
+
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
+		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
+	}
+	assertLastLoggedError(t, logger, "api_key_request_rate_limited")
+}
+
+func TestProxyLogsPreciseAPIKeyTokenRateLimitReason(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "first-token"},
+		{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "second-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"usage":{"prompt_tokens":8,"completion_tokens":7,"total_tokens":15}}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL:          "https://upstream.example.test",
+		MaxTokensPerMinutePerKey: 10,
+		Logger:                   logger,
+		ModelProvider: fakeModelProvider{
+			defaultModel:  "gpt-5",
+			allowedModels: []string{"gpt-5"},
+		},
+	}, client)
+	proxy.tokenLimiter.now = func() time.Time {
+		return time.Date(2026, 6, 24, 12, 0, 1, 0, time.UTC)
+	}
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	firstReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	firstReq.Header.Set("Content-Type", "application/json")
+	proxy.ServeHTTP(httptest.NewRecorder(), firstReq)
+	secondReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	secondReq.Header.Set("Authorization", "Bearer n2api_client_secret")
+	secondReq.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, secondReq)
+
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
+		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
+	}
+	assertLastLoggedError(t, logger, "api_key_token_rate_limited")
+}
+
+func TestProxyLogsPreciseGatewayConcurrencyLimitReason(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{
+		UpstreamBaseURL:                 "https://upstream.example.test",
+		MaxConcurrentGatewayRequests:    1,
+		MaxConcurrentRequestsPerAccount: 0,
+		Logger:                          logger,
+	}, http.DefaultClient)
+	release, ok := proxy.tryAcquireGatewaySlot(1)
+	if !ok {
+		t.Fatal("failed to acquire setup gateway slot")
+	}
+	defer release()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
+		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
+	}
+	assertLastLoggedError(t, logger, "gateway_concurrency_limited")
+}
+
+func TestProxyLogsPreciseAPIKeyConcurrencyLimitReason(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "busy key"}}, &fakeSelectedAccountProvider{}, Config{
+		UpstreamBaseURL:             "https://upstream.example.test",
+		MaxConcurrentRequestsPerKey: 1,
+		Logger:                      logger,
+	}, http.DefaultClient)
+	release, ok := proxy.tryAcquireAPIKeySlot(42, 1)
+	if !ok {
+		t.Fatal("failed to acquire setup api key slot")
+	}
+	defer release()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
+		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
+	}
+	assertLastLoggedError(t, logger, "api_key_concurrency_limited")
+}
+
+func TestProxyLogsPreciseProviderAccountConcurrencyLimitReason(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "busy-token"}}},
+		Config{
+			UpstreamBaseURL:                 "https://upstream.example.test",
+			MaxConcurrentRequestsPerAccount: 1,
+			Logger:                          logger,
+		},
+		http.DefaultClient,
+	)
+	release, ok := proxy.tryAcquireAccountSlot(7, 1)
+	if !ok {
+		t.Fatal("failed to acquire setup account slot")
+	}
+	defer release()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
+		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
+	}
+	assertLastLoggedError(t, logger, "provider_account_concurrency_limited")
 }
 
 func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {

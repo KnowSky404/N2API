@@ -157,6 +157,20 @@ test('request logs page formats gateway error codes for scanning', () => {
   assert.match(requestLogsPage, /function errorLabel/);
   assert.match(requestLogsPage, /errorLabel\(log\.error\)/);
   assert.match(requestLogsPage, /title=\{log\.error/);
+  for (const code of [
+    'api_key_request_rate_limited',
+    'api_key_token_rate_limited',
+    'gateway_concurrency_limited',
+    'api_key_concurrency_limited',
+    'provider_account_concurrency_limited'
+  ]) {
+    const label = code
+      .split('_')
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+    assert.equal(label.includes('_'), false, `${code} should render without underscores`);
+  }
 });
 
 test('models page shows scheduling diagnostics for routing candidates', () => {

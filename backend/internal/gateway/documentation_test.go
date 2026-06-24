@@ -121,6 +121,29 @@ func TestGatewayDocumentationMentionsAPIKeyRateWindowVisibility(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Request Logs",
+			"`rate_limit_exceeded`",
+			"`api_key_request_rate_limited`",
+			"`api_key_token_rate_limited`",
+			"`gateway_concurrency_limited`",
+			"`api_key_concurrency_limited`",
+			"`provider_account_concurrency_limited`",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in local limit request-log documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

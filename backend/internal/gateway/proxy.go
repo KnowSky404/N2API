@@ -266,9 +266,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if retryAfter, ok := p.allowAPIKeyRequest(key.ID, key.RequestsPerMinute, settings.RequestsPerMinutePerKey); !ok {
-		errorCode = "rate_limit_exceeded"
+		errorCode = "api_key_request_rate_limited"
 		setRetryAfterHeader(recorder.Header(), retryAfter)
-		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key request rate limit exceeded")
+		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key request rate limit exceeded")
 		return
 	}
 
@@ -285,9 +285,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if retryAfter, ok := p.allowAPIKeyTokens(key.ID, key.TokensPerMinute, settings.TokensPerMinutePerKey); !ok {
-		errorCode = "rate_limit_exceeded"
+		errorCode = "api_key_token_rate_limited"
 		setRetryAfterHeader(recorder.Header(), retryAfter)
-		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key token rate limit exceeded")
+		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key token rate limit exceeded")
 		return
 	}
 
@@ -320,16 +320,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	release, ok := p.tryAcquireGatewaySlot(settings.MaxConcurrentGatewayRequests)
 	if !ok {
-		errorCode = "rate_limit_exceeded"
-		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "gateway concurrency limit exceeded")
+		errorCode = "gateway_concurrency_limited"
+		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "gateway concurrency limit exceeded")
 		return
 	}
 	defer release()
 
 	releaseKey, ok := p.tryAcquireAPIKeySlot(key.ID, settings.MaxConcurrentRequestsPerKey)
 	if !ok {
-		errorCode = "rate_limit_exceeded"
-		writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "api key concurrency limit exceeded")
+		errorCode = "api_key_concurrency_limited"
+		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key concurrency limit exceeded")
 		return
 	}
 	defer releaseKey()
@@ -345,8 +345,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				lastRetryableResp = nil
 			}
 			if accountConcurrencyLimited && errors.Is(err, provider.ErrAccountsUnavailable) {
-				errorCode = "rate_limit_exceeded"
-				writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "provider account concurrency limit exceeded")
+				errorCode = "provider_account_concurrency_limited"
+				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 				return
 			}
 			errorCode = providerErrorCode(err)
@@ -370,8 +370,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if attempt+1 < maxAttempts {
 				continue
 			}
-			errorCode = "rate_limit_exceeded"
-			writeOpenAIError(recorder, http.StatusTooManyRequests, errorCode, "provider account concurrency limit exceeded")
+			errorCode = "provider_account_concurrency_limited"
+			writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 			return
 		}
 		if err := p.recordAccountUsed(r.Context(), selected.AccountID); err != nil {
