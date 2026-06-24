@@ -1,4 +1,5 @@
 <script>
+  import { page } from '$app/state';
   import {
     accountLabel,
     accountTypeLabel,
@@ -68,7 +69,7 @@
   let bulkRoutingPoolPriority = $state('0');
   let providerUsageRequested = $state(false);
   let routingPoolsRequested = $state(false);
-  let providerURLFiltersInitialized = $state(false);
+  let appliedProviderAccountSearch = $state('');
 
   const providerStateLabel = $derived(getProviderStateLabel());
   const schedulableProviderAccounts = $derived(getSchedulableProviderAccounts());
@@ -89,9 +90,11 @@
     )
   );
 
-  function applyProviderAccountURLFilters() {
-    const params = new URLSearchParams(window.location.search);
+  /** @param {string} search */
+  function applyProviderAccountURLFilters(search) {
+    const params = new URLSearchParams(search);
     const providerAccountId = params.get('providerAccountId') ?? '';
+    accountSearch = '';
     if (/^[1-9]\d*$/.test(providerAccountId)) {
       accountSearch = `id:${providerAccountId}`;
     }
@@ -101,12 +104,12 @@
     if (!session.authenticated) {
       providerUsageRequested = false;
       routingPoolsRequested = false;
-      providerURLFiltersInitialized = false;
+      appliedProviderAccountSearch = '';
       return;
     }
-    if (!providerURLFiltersInitialized) {
-      providerURLFiltersInitialized = true;
-      applyProviderAccountURLFilters();
+    if (appliedProviderAccountSearch !== page.url.search) {
+      appliedProviderAccountSearch = page.url.search;
+      applyProviderAccountURLFilters(page.url.search);
     }
     if (!providerUsageRequested) {
       providerUsageRequested = true;

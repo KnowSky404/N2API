@@ -284,7 +284,9 @@ test('request logs page filters by provider account', () => {
 });
 
 test('providers page initializes account search from provider account URL param', () => {
-  assert.match(providersPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(providersPage, /from '\$app\/state'/);
+  assert.match(providersPage, /page\.url\.search/);
+  assert.match(providersPage, /appliedProviderAccountSearch/);
   assert.match(providersPage, /providerAccountId = params\.get\('providerAccountId'\)/);
   assert.match(providersPage, /accountSearch = `id:\$\{providerAccountId\}`/);
   assert.match(providersPage, /String\(account\.id\) === idQuery/);
