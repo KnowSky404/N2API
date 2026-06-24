@@ -73,6 +73,14 @@
     return { title, summary };
   }
 
+  /** @param {string | number | null | undefined} id */
+  function providerAccountUsageId(id) {
+    const value = String(id ?? '');
+    const parts = value.split('/');
+    const accountId = parts[parts.length - 1] ?? '';
+    return /^[1-9]\d*$/.test(accountId) ? accountId : '';
+  }
+
   /**
    * @param {string} sectionTitle
    * @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row
@@ -82,6 +90,13 @@
     if (!id || id === 'unknown') return '';
     if (sectionTitle === 'Top models') {
       return `/request-logs?model=${encodeURIComponent(id)}`;
+    }
+    if (sectionTitle === 'Top provider accounts') {
+      const accountId = providerAccountUsageId(id);
+      return accountId ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
+    }
+    if (sectionTitle === 'Top client keys' && /^[1-9]\d*$/.test(id)) {
+      return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
     }
     if (sectionTitle === 'Top sessions' && id !== 'none') {
       return `/request-logs?sessionId=${encodeURIComponent(id)}`;

@@ -209,6 +209,10 @@ test('request logs page filters by provider account', () => {
   assert.match(requestLogsPage, /providerAccounts/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.providerAccountId\}/);
   assert.match(requestLogsPage, /All provider accounts/);
+  assert.match(requestLogsPage, /apiKeys/);
+  assert.match(requestLogsPage, /loadKeys\(\)/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.clientKeyId\}/);
+  assert.match(requestLogsPage, /All API keys/);
   assert.match(adminState, /params\.set\('providerAccountId'/);
   assert.match(adminState, /requestLogs\.providerAccountId/);
   assert.match(requestLogsPage, /loadProviderAccounts\(\)/);
@@ -233,6 +237,9 @@ test('gateway usage rows link to filtered request logs', () => {
   assert.match(gatewayPage, /usageRowHref/);
   assert.match(gatewayPage, /model=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /sessionId=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /providerAccountId=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /clientKeyId=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /providerAccountUsageId/);
   assert.match(gatewayPage, /href=\{href\}/);
 });
 
