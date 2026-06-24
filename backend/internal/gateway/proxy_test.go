@@ -48,6 +48,7 @@ type fakeSelectedAccountProvider struct {
 	calls      int
 	models     []string
 	sessions   []string
+	poolIDs    []int64
 	exclusions [][]int64
 	failures   []reportedAccountFailure
 	used       []int64
@@ -75,6 +76,17 @@ func (p *fakeSelectedAccountProvider) SelectAccountForModel(ctx context.Context,
 }
 
 func (p *fakeSelectedAccountProvider) SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	p.sessions = append(p.sessions, sessionID)
+	return p.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+func (p *fakeSelectedAccountProvider) SelectAccountForModelInRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	p.poolIDs = append(p.poolIDs, routingPoolID)
+	return p.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+func (p *fakeSelectedAccountProvider) SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	p.poolIDs = append(p.poolIDs, routingPoolID)
 	p.sessions = append(p.sessions, sessionID)
 	return p.SelectAccountForModel(ctx, model, excludedAccountIDs...)
 }
@@ -2131,6 +2143,53 @@ func TestProxyLogsAuthenticatedRequests(t *testing.T) {
 	}
 	if entry.Latency < 0 || entry.CreatedAt.After(time.Now().Add(time.Second)) {
 		t.Fatalf("log timing = latency:%s created:%s", entry.Latency, entry.CreatedAt)
+	}
+}
+
+func TestProxyRoutesPoolBoundAPIKeyThroughRoutingPool(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	accounts := &fakeSelectedAccountProvider{
+		accounts: []SelectedAccount{{
+			AccountID:          9,
+			AccountType:        provider.AccountTypeAPIUpstream,
+			DisplayName:        "Pool Upstream",
+			AuthorizationToken: "pool-token",
+			RoutingPoolID:      7,
+			RoutingPoolName:    "primary",
+		}},
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	poolID := int64(7)
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "pool key", RoutingPoolID: &poolID, RoutingPoolName: "primary"}},
+		accounts,
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Equal(accounts.poolIDs, []int64{7}) {
+		t.Fatalf("routing pool calls = %+v, want pool 7", accounts.poolIDs)
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	if logger.entries[0].RoutingPoolID != 7 || logger.entries[0].RoutingPoolName != "primary" {
+		t.Fatalf("logged pool = %d/%q, want 7/primary", logger.entries[0].RoutingPoolID, logger.entries[0].RoutingPoolName)
 	}
 }
 

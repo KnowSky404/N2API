@@ -40,6 +40,8 @@ type SelectedAccount struct {
 	BaseURL               string
 	ChatGPTAccountID      string
 	MaxConcurrentRequests int
+	RoutingPoolID         int64
+	RoutingPoolName       string
 }
 
 type AccountProvider interface {
@@ -48,6 +50,11 @@ type AccountProvider interface {
 
 type StickyAccountProvider interface {
 	SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
+type RoutingPoolAccountProvider interface {
+	SelectAccountForModelInRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
+	SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
 type AccountFailureReporter interface {
@@ -111,6 +118,8 @@ type RequestLog struct {
 	ProviderAccountID     int64
 	ProviderAccountType   string
 	ProviderAccountName   string
+	RoutingPoolID         int64
+	RoutingPoolName       string
 	Model                 string
 	SessionID             string
 	Route                 string
@@ -239,6 +248,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	errorCode := ""
 	var loggedAccount SelectedAccount
+	loggedRoutingPoolID, loggedRoutingPoolName := apiKeyRoutingPool(key)
 	requestModel := ""
 	requestSessionID := ""
 	observedUsage := Usage{Source: "missing"}
@@ -257,6 +267,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ProviderAccountID:     loggedAccount.AccountID,
 			ProviderAccountType:   loggedAccount.AccountType,
 			ProviderAccountName:   loggedAccount.DisplayName,
+			RoutingPoolID:         loggedRoutingPoolID,
+			RoutingPoolName:       loggedRoutingPoolName,
 			Model:                 requestModel,
 			SessionID:             requestSessionID,
 			Route:                 r.URL.Path,
@@ -360,7 +372,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	accountConcurrencyLimited := false
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		selected, err := p.selectAccount(r.Context(), model, sessionID, failedAccountIDs...)
+		selected, err := p.selectAccountForKey(r.Context(), key, model, sessionID, failedAccountIDs...)
 		if err != nil {
 			if lastRetryableResp != nil {
 				_ = lastRetryableResp.Body.Close()
@@ -405,6 +417,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		loggedAccount = selected
+		if selected.RoutingPoolID > 0 {
+			loggedRoutingPoolID = selected.RoutingPoolID
+		}
+		if strings.TrimSpace(selected.RoutingPoolName) != "" {
+			loggedRoutingPoolName = strings.TrimSpace(selected.RoutingPoolName)
+		}
 
 		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 		if err != nil {
@@ -571,13 +589,34 @@ func (p *Proxy) gatewaySettings(ctx context.Context) admin.GatewaySettings {
 	return settings
 }
 
-func (p *Proxy) selectAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	if key.RoutingPoolID != nil && *key.RoutingPoolID > 0 {
+		poolProvider, ok := p.accounts.(RoutingPoolAccountProvider)
+		if !ok {
+			return SelectedAccount{}, provider.ErrAccountsUnavailable
+		}
+		if strings.TrimSpace(sessionID) != "" {
+			return poolProvider.SelectAccountForModelAndSessionInRoutingPool(ctx, *key.RoutingPoolID, model, sessionID, excludedAccountIDs...)
+		}
+		return poolProvider.SelectAccountForModelInRoutingPool(ctx, *key.RoutingPoolID, model, excludedAccountIDs...)
+	}
+	return p.selectGlobalAccount(ctx, model, sessionID, excludedAccountIDs...)
+}
+
+func (p *Proxy) selectGlobalAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if sessionID != "" {
 		if sticky, ok := p.accounts.(StickyAccountProvider); ok {
 			return sticky.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
 		}
 	}
 	return p.accounts.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+func apiKeyRoutingPool(key admin.APIKey) (int64, string) {
+	if key.RoutingPoolID == nil || *key.RoutingPoolID <= 0 {
+		return 0, ""
+	}
+	return *key.RoutingPoolID, strings.TrimSpace(key.RoutingPoolName)
 }
 
 func (p *Proxy) recordAccountUsed(ctx context.Context, accountID int64) error {

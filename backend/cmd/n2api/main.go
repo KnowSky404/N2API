@@ -25,6 +25,7 @@ type gatewayAccountProvider struct {
 
 var _ gateway.AccountProvider = gatewayAccountProvider{}
 var _ gateway.StickyAccountProvider = gatewayAccountProvider{}
+var _ gateway.RoutingPoolAccountProvider = gatewayAccountProvider{}
 var _ gateway.AccountUsageRecorder = gatewayAccountProvider{}
 
 func (p gatewayAccountProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
@@ -34,6 +35,16 @@ func (p gatewayAccountProvider) SelectAccountForModel(ctx context.Context, model
 
 func (p gatewayAccountProvider) SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
 	selected, err := p.service.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
+	return selectedGatewayAccount(selected, err)
+}
+
+func (p gatewayAccountProvider) SelectAccountForModelInRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
+	selected, err := p.service.SelectAccountForModelInRoutingPool(ctx, routingPoolID, model, excludedAccountIDs...)
+	return selectedGatewayAccount(selected, err)
+}
+
+func (p gatewayAccountProvider) SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
+	selected, err := p.service.SelectAccountForModelAndSessionInRoutingPool(ctx, routingPoolID, model, sessionID, excludedAccountIDs...)
 	return selectedGatewayAccount(selected, err)
 }
 

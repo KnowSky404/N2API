@@ -108,6 +108,8 @@ type RequestLog struct {
 	ProviderAccountID     int64     `json:"providerAccountId"`
 	ProviderAccountType   string    `json:"providerAccountType"`
 	ProviderAccountName   string    `json:"providerAccountName"`
+	RoutingPoolID         int64     `json:"routingPoolId"`
+	RoutingPoolName       string    `json:"routingPoolName"`
 	Model                 string    `json:"model"`
 	SessionID             string    `json:"sessionId"`
 	Route                 string    `json:"route"`
