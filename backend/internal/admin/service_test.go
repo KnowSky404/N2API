@@ -664,6 +664,12 @@ func TestGetUsageSummaryValidatesRangeAndGroup(t *testing.T) {
 	if repo.lastUsageGroupBy != "session" {
 		t.Fatalf("repository group = %q, want session", repo.lastUsageGroupBy)
 	}
+	if _, err := service.GetUsageSummary(context.Background(), "7d", "routing_pool"); err != nil {
+		t.Fatalf("GetUsageSummary routing_pool returned error: %v", err)
+	}
+	if repo.lastUsageGroupBy != "routing_pool" {
+		t.Fatalf("repository group = %q, want routing_pool", repo.lastUsageGroupBy)
+	}
 
 	for _, tc := range []struct {
 		name    string

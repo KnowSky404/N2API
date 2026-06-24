@@ -920,6 +920,8 @@ func usageSummaryGroupSQL(groupBy string) (groupExpr, labelExpr, joinSQL string,
 		providerExpr := "COALESCE(NULLIF(l.provider, ''), NULLIF(a.provider, ''), 'unknown')"
 		accountLabelExpr := "COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, 'Unassigned')"
 		return providerExpr + " || '/' || COALESCE(l.provider_account_id::text, 'unassigned')", providerExpr + " || ' / ' || " + accountLabelExpr, "LEFT JOIN provider_accounts a ON a.id = l.provider_account_id", true
+	case "routing_pool":
+		return "COALESCE(l.routing_pool_id::text, 'global')", "COALESCE(NULLIF(l.routing_pool_name, ''), 'Global pool')", "", true
 	case "model":
 		return "COALESCE(NULLIF(l.model, ''), 'unknown')", "COALESCE(NULLIF(l.model, ''), 'Unknown model')", "", true
 	case "session":

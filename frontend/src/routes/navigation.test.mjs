@@ -112,6 +112,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /getActiveKeys/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'model'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'provider_account'\)/);
+  assert.match(gatewayPage, /loadUsageSummary\('24h', 'routing_pool'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'session'\)/);
   assert.match(gatewayPage, /gatewayLimitLabel/);
@@ -222,6 +223,7 @@ test('request logs page filters by search and status class', () => {
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.statusClass\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.model\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.sessionId\}/);
+  assert.match(requestLogsPage, /value: 'routing_pool', label: 'Routing pool'/);
   assert.match(requestLogsPage, /Model filter/);
   assert.match(requestLogsPage, /Session filter/);
   assert.match(requestLogsPage, /statusClass/);
@@ -274,6 +276,7 @@ test('gateway usage rows link to filtered request logs', () => {
   assert.match(gatewayPage, /model=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /sessionId=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /providerAccountId=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /routingPoolId=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /clientKeyId=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /providerAccountUsageId/);
   assert.match(gatewayPage, /href=\{href\}/);
@@ -428,9 +431,11 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(dashboardPage, /usage\.summaries\['24h:/);
   assert.match(dashboardPage, /usage24h\.rows/);
   assert.match(dashboardPage, /usage24hProviderAccounts\.rows/);
+  assert.match(dashboardPage, /usage24hRoutingPools\.rows/);
   assert.match(dashboardPage, /usage24hClientKeys\.rows/);
   assert.match(dashboardPage, /usage24hSessions\.rows/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'provider_account'\)/);
+  assert.match(adminState, /await loadUsageSummary\('24h', 'routing_pool'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'session'\)/);
   assert.match(dashboardPage, /formatTokens/);

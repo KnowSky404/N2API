@@ -136,6 +136,7 @@
     { value: 'model', label: 'Model' },
     { value: 'client_key', label: 'Client key' },
     { value: 'provider_account', label: 'Provider account' },
+    { value: 'routing_pool', label: 'Routing pool' },
     { value: 'session', label: 'Session' }
   ];
   const requestLogStatusClasses = [

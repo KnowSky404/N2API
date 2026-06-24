@@ -19,7 +19,7 @@ func TestAdminRepositoryImplementsInterface(t *testing.T) {
 }
 
 func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
-	for _, groupBy := range []string{"client_key", "provider_account", "model", "session"} {
+	for _, groupBy := range []string{"client_key", "provider_account", "routing_pool", "model", "session"} {
 		t.Run(groupBy, func(t *testing.T) {
 			groupExpr, labelExpr, _, ok := usageSummaryGroupSQL(groupBy)
 			if !ok {
@@ -33,6 +33,19 @@ func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
 
 	if _, _, _, ok := usageSummaryGroupSQL("status; DROP TABLE request_logs"); ok {
 		t.Fatal("usageSummaryGroupSQL accepted an unknown group")
+	}
+}
+
+func TestUsageSummaryRoutingPoolGroupUsesLoggedSnapshot(t *testing.T) {
+	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL("routing_pool")
+	if !ok {
+		t.Fatal("usageSummaryGroupSQL(routing_pool) ok = false, want true")
+	}
+	if !strings.Contains(groupExpr, "l.routing_pool_id") || !strings.Contains(labelExpr, "l.routing_pool_name") {
+		t.Fatalf("routing pool group expressions = %q / %q, want logged routing pool snapshot", groupExpr, labelExpr)
+	}
+	if joinSQL != "" {
+		t.Fatalf("routing pool group join SQL = %q, want no join", joinSQL)
 	}
 }
 

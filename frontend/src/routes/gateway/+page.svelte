@@ -44,6 +44,7 @@
   );
   const usage24hModels = $derived(usage.summaries['24h:model'] ?? null);
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
+  const usage24hRoutingPools = $derived(usage.summaries['24h:routing_pool'] ?? null);
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   const usage24hSessions = $derived(usage.summaries['24h:session'] ?? null);
 
@@ -60,6 +61,7 @@
       void loadKeys();
       void loadUsageSummary('24h', 'model');
       void loadUsageSummary('24h', 'provider_account');
+      void loadUsageSummary('24h', 'routing_pool');
       void loadUsageSummary('24h', 'client_key');
       void loadUsageSummary('24h', 'session');
     }
@@ -95,6 +97,9 @@
       const accountId = providerAccountUsageId(id);
       return accountId ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
     }
+    if (sectionTitle === 'Top routing pools' && /^[1-9]\d*$/.test(id)) {
+      return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
+    }
     if (sectionTitle === 'Top client keys' && /^[1-9]\d*$/.test(id)) {
       return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
     }
@@ -107,6 +112,7 @@
   const usageSections = $derived([
     usageRows('Top models', usage24hModels),
     usageRows('Top provider accounts', usage24hProviderAccounts),
+    usageRows('Top routing pools', usage24hRoutingPools),
     usageRows('Top client keys', usage24hClientKeys),
     usageRows('Top sessions', usage24hSessions)
   ]);
