@@ -850,6 +850,29 @@ func TestProxyRejectsWhenAllSelectedAccountsHitConcurrencyLimit(t *testing.T) {
 	}
 }
 
+func TestAccountConcurrencyLimiterSnapshotIsImmutable(t *testing.T) {
+	limiter := newAccountConcurrencyLimiter()
+	releaseOne, ok := limiter.Acquire(7, 2)
+	if !ok {
+		t.Fatal("first acquire returned false")
+	}
+	defer releaseOne()
+	releaseTwo, ok := limiter.Acquire(7, 2)
+	if !ok {
+		t.Fatal("second acquire returned false")
+	}
+	defer releaseTwo()
+
+	snapshot := limiter.Snapshot()
+	if snapshot[7] != 2 {
+		t.Fatalf("snapshot[7] = %d, want 2", snapshot[7])
+	}
+	snapshot[7] = 99
+	if got := limiter.Snapshot()[7]; got != 2 {
+		t.Fatalf("mutated snapshot changed limiter count to %d, want 2", got)
+	}
+}
+
 func TestProxyRejectsWhenAPIKeyConcurrencyLimitIsFull(t *testing.T) {
 	firstStarted := make(chan struct{})
 	releaseFirst := make(chan struct{})

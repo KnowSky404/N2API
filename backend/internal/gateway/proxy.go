@@ -58,6 +58,10 @@ type AccountUsageRecorder interface {
 	RecordAccountUsed(ctx context.Context, accountID int64) error
 }
 
+type AccountConcurrencySnapshotProvider interface {
+	AccountConcurrencySnapshot() map[int64]int
+}
+
 type ExposedModel struct {
 	ID      string
 	OwnedBy string
@@ -417,6 +421,13 @@ func (p *Proxy) tryAcquireAccountSlot(accountID int64, limit int) (func(), bool)
 	return p.accountLimiter.Acquire(accountID, limit)
 }
 
+func (p *Proxy) AccountConcurrencySnapshot() map[int64]int {
+	if p.accountLimiter == nil {
+		return map[int64]int{}
+	}
+	return p.accountLimiter.Snapshot()
+}
+
 func (p *Proxy) tryAcquireAPIKeySlot(keyID int64, limit int) (func(), bool) {
 	if p.keyLimiter == nil || keyID <= 0 {
 		return func() {}, true
@@ -553,6 +564,21 @@ func (l *accountConcurrencyLimiter) Acquire(accountID int64, limit int) (func(),
 			delete(l.inFlight, accountID)
 		}
 	}, true
+}
+
+func (l *accountConcurrencyLimiter) Snapshot() map[int64]int {
+	if l == nil {
+		return map[int64]int{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	snapshot := make(map[int64]int, len(l.inFlight))
+	for accountID, count := range l.inFlight {
+		if count > 0 {
+			snapshot[accountID] = count
+		}
+	}
+	return snapshot
 }
 
 type apiKeyConcurrencyLimiter struct {
