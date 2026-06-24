@@ -2443,6 +2443,42 @@ func TestProxyLogsRoutingPoolDisabledDiagnosticsOnSelectionError(t *testing.T) {
 	}
 }
 
+func TestProxyLogsRoutingPoolEmptyDiagnosticsOnSelectionError(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	poolID := int64(1)
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "pool key", RoutingPoolID: &poolID, RoutingPoolName: "primary"}},
+		&fakeSelectedAccountProvider{
+			accounts: []SelectedAccount{{
+				RoutingPoolID:    1,
+				RoutingPoolName:  "primary",
+				RoutingPoolError: provider.RoutingPoolErrorEmpty,
+			}},
+			errs: []error{provider.ErrRoutingPoolEmpty},
+		},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			t.Fatal("upstream should not be called when the primary routing pool is empty")
+			return nil, nil
+		})},
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "routing_pool_empty") {
+		t.Fatalf("body = %s, want routing_pool_empty", recorder.Body.String())
+	}
+	if len(logger.entries) != 1 || logger.entries[0].RoutingPoolError != provider.RoutingPoolErrorEmpty || logger.entries[0].Error != "routing_pool_empty" {
+		t.Fatalf("logged entry = %+v, want routing_pool_empty diagnostics", logger.entries)
+	}
+}
+
 func TestProxyLogsRequestModel(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

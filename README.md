@@ -101,7 +101,7 @@ Lower priority numbers are selected first. Within the same priority and health c
 
 Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it. `/v1/models` is also filtered by the authenticated API key: `all` keys see the full routable list, while `selected` keys see the intersection of their selected models and currently routable models.
 
-Routing pools let the admin partition provider accounts into named account pools for different agents, devices, or risk profiles. An API key can be bound to one routing pool from the API Keys page. A pool-bound key only schedules accounts that are members of that pool, including sticky session bindings scoped to that pool; an unbound key keeps using the global provider account pool. Missing or deleted pools fail closed with `routing_pool_unavailable`, and Request Logs retain the routing pool name/id for attribution.
+Routing pools let the admin partition provider accounts into named account pools for different agents, devices, or risk profiles. An API key can be bound to one routing pool from the API Keys page. A pool-bound key only schedules accounts that are members of that pool, including sticky session bindings scoped to that pool; an unbound key keeps using the global provider account pool. Missing or deleted pools fail closed with `routing_pool_unavailable`, empty enabled pools fail closed with `routing_pool_empty`, and Request Logs retain the routing pool name/id for attribution.
 
 The API Keys page supports local search and status filtering by name, prefix, model policy, selected model, active/revoked status, and limiter state, so a busy or revoked client key can be found without leaving the page.
 
@@ -133,7 +133,7 @@ Request Logs keep local gateway rejections diagnosable while client responses st
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.
 
-Routing pool fallback is explicit. A routing pool can point to one fallback pool, forming a simple chain such as `primary -> secondary`. A pool-bound key never falls back to the global provider account pool; it tries only its configured pool and that explicit chain. A disabled primary pool fails closed with `routing_pool_disabled`, cycles fail closed with `routing_pool_cycle`, and exhausted chains are logged as `routing_pool_exhausted`.
+Routing pool fallback is explicit. A routing pool can point to one fallback pool, forming a simple chain such as `primary -> secondary`. A pool-bound key never falls back to the global provider account pool; it tries only its configured pool and that explicit chain. A disabled primary pool fails closed with `routing_pool_disabled`, an empty primary pool fails closed with `routing_pool_empty`, cycles fail closed with `routing_pool_cycle`, and exhausted chains are logged as `routing_pool_exhausted`.
 
 Request Logs support exact **Provider account**, **Routing pool**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management and Dashboard, 24h usage rows for **Top provider accounts**, **Top routing pools**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, routing-pool, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 

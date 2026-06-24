@@ -1450,6 +1450,8 @@ func providerErrorCode(err error) string {
 		return "routing_pool_cycle"
 	case errors.Is(err, provider.ErrRoutingPoolNotFound):
 		return "routing_pool_unavailable"
+	case errors.Is(err, provider.ErrRoutingPoolEmpty):
+		return "routing_pool_empty"
 	case errors.Is(err, provider.ErrAccountsUnavailable):
 		return "provider_accounts_unavailable"
 	case errors.Is(err, provider.ErrModelUnavailable):
@@ -1471,6 +1473,8 @@ func providerErrorMessage(code string) string {
 		return "routing pool fallback chain contains a cycle"
 	case "routing_pool_unavailable":
 		return "routing pool is unavailable"
+	case "routing_pool_empty":
+		return "routing pool has no eligible accounts"
 	case "provider_accounts_unavailable":
 		return "provider accounts are unavailable"
 	case "model_unavailable":

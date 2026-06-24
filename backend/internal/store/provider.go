@@ -363,6 +363,18 @@ func (r *ProviderRepository) FindRoutingPool(ctx context.Context, poolID int64) 
 	return pool, nil
 }
 
+func (r *ProviderRepository) RoutingPoolHasAccounts(ctx context.Context, poolID int64) (bool, error) {
+	var hasAccounts bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM routing_pool_accounts
+			WHERE pool_id = $1
+		)
+	`, poolID).Scan(&hasAccounts)
+	return hasAccounts, err
+}
+
 func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, providerName string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
 	model = strings.TrimSpace(model)
 	excluded := normalizedExcludedAccountIDs(excludedAccountIDs)

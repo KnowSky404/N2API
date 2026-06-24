@@ -224,6 +224,7 @@ test('request logs page filters by search and status class', () => {
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.model\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.sessionId\}/);
   assert.match(requestLogsPage, /value: 'routing_pool', label: 'Routing pool'/);
+  assert.match(requestLogsPage, /routing_pool_empty/);
   assert.match(requestLogsPage, /Model filter/);
   assert.match(requestLogsPage, /Session filter/);
   assert.match(requestLogsPage, /statusClass/);

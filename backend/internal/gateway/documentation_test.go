@@ -210,6 +210,7 @@ func TestGatewayDocumentationMentionsRoutingPools(t *testing.T) {
 			"pool-bound key",
 			"global provider account pool",
 			"`routing_pool_unavailable`",
+			"`routing_pool_empty`",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in routing pool documentation", path, want)
@@ -272,6 +273,7 @@ func TestGatewayDocumentationMentionsRoutingPoolFallback(t *testing.T) {
 			"routing pool fallback",
 			"pool-bound key never falls back to the global provider account pool",
 			"`routing_pool_disabled`",
+			"`routing_pool_empty`",
 			"`routing_pool_cycle`",
 			"`routing_pool_exhausted`",
 		} {

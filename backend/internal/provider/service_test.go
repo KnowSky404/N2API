@@ -1785,6 +1785,23 @@ func TestSelectAccountForModelInRoutingPoolChainMarksDisabledPrimaryDiagnostics(
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolChainMarksEmptyPrimaryDiagnostics(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if !errors.Is(err, ErrRoutingPoolEmpty) {
+		t.Fatalf("error = %v, want ErrRoutingPoolEmpty", err)
+	}
+	if selected.RoutingPoolID != 1 || selected.RoutingPoolName != "primary" {
+		t.Fatalf("selected = %+v, want primary pool diagnostics", selected)
+	}
+	if selected.RoutingPoolError != RoutingPoolErrorEmpty {
+		t.Fatalf("routing pool error = %q, want %s", selected.RoutingPoolError, RoutingPoolErrorEmpty)
+	}
+}
+
 func TestListExposedModelsForRoutingPoolChainIncludesFallbackModels(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
@@ -2964,6 +2981,10 @@ func (r *memoryRepo) FindRoutingPool(ctx context.Context, poolID int64) (Routing
 		return RoutingPool{}, ErrRoutingPoolNotFound
 	}
 	return pool, nil
+}
+
+func (r *memoryRepo) RoutingPoolHasAccounts(ctx context.Context, poolID int64) (bool, error) {
+	return len(r.routingPoolAccounts[poolID]) > 0, nil
 }
 
 func (r *memoryRepo) ListAccountsForRoutingPool(ctx context.Context, providerName string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error) {

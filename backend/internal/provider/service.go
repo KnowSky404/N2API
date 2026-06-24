@@ -47,6 +47,7 @@ const (
 const (
 	RoutingPoolErrorDisabled    = "routing_pool_disabled"
 	RoutingPoolErrorUnavailable = "routing_pool_unavailable"
+	RoutingPoolErrorEmpty       = "routing_pool_empty"
 	RoutingPoolErrorExhausted   = "routing_pool_exhausted"
 	RoutingPoolErrorCycle       = "routing_pool_cycle"
 )
@@ -89,6 +90,7 @@ var (
 	ErrModelUnavailable       = errors.New("model unavailable")
 	ErrSessionBindingNotFound = errors.New("provider session binding not found")
 	ErrRoutingPoolNotFound    = errors.New("routing pool not found")
+	ErrRoutingPoolEmpty       = errors.New("routing pool empty")
 	ErrRoutingPoolCycle       = errors.New("routing pool fallback cycle")
 )
 
@@ -388,6 +390,7 @@ type Repository interface {
 	ListExposedModelsForRoutingPools(ctx context.Context, provider string, poolIDs []int64, allowedModels []string) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error)
+	RoutingPoolHasAccounts(ctx context.Context, poolID int64) (bool, error)
 	ListAccountsForRoutingPool(ctx context.Context, provider string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	FindSessionBinding(ctx context.Context, provider string, model string, sessionID string) (SessionBinding, error)
 	UpsertSessionBinding(ctx context.Context, provider string, model string, sessionID string, accountID int64) error
@@ -1585,6 +1588,15 @@ func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryP
 		}
 		finalErr = moreSpecificSelectionError(finalErr, notFoundErr)
 		if len(accounts) == 0 {
+			if errors.Is(notFoundErr, ErrRoutingPoolEmpty) && depth == 0 {
+				return SelectedAccount{
+					RoutingPoolID:            pool.ID,
+					RoutingPoolName:          pool.Name,
+					RoutingPoolFallbackDepth: depth,
+					RoutingPoolFallbackChain: chainLabel,
+					RoutingPoolError:         RoutingPoolErrorEmpty,
+				}, ErrRoutingPoolEmpty
+			}
 			continue
 		}
 
@@ -1974,10 +1986,17 @@ func (s *Service) selectionCandidatesForRoutingPool(ctx context.Context, routing
 	if len(availableWithoutExclusions) > 0 {
 		return accounts, true, ErrAccountsUnavailable, nil
 	}
+	hasPoolAccounts, err := s.repo.RoutingPoolHasAccounts(ctx, routingPoolID)
+	if err != nil {
+		return nil, false, ErrAccountsUnavailable, err
+	}
+	if !hasPoolAccounts {
+		return accounts, true, ErrRoutingPoolEmpty, nil
+	}
 	if model != "" {
 		return accounts, true, ErrModelUnavailable, nil
 	}
-	return accounts, true, ErrAccountsUnavailable, nil
+	return accounts, true, ErrRoutingPoolEmpty, nil
 }
 
 func normalizedExcludedAccountIDs(ids []int64) []int64 {

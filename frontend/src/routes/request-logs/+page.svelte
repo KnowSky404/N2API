@@ -70,6 +70,7 @@
         'all',
         'routing_pool_disabled',
         'routing_pool_unavailable',
+        'routing_pool_empty',
         'routing_pool_cycle',
         'routing_pool_exhausted'
       ].includes(routingPoolError)
@@ -149,6 +150,7 @@
     { value: 'all', label: 'All routing errors' },
     { value: 'routing_pool_disabled', label: 'Routing pool disabled' },
     { value: 'routing_pool_unavailable', label: 'Routing pool unavailable' },
+    { value: 'routing_pool_empty', label: 'Routing pool empty' },
     { value: 'routing_pool_cycle', label: 'Routing pool cycle' },
     { value: 'routing_pool_exhausted', label: 'Routing pool exhausted' }
   ];
