@@ -141,6 +141,11 @@
     return limit > 0 ? String(limit) : 'unlimited';
   }
 
+  /** @param {number | null | undefined} value */
+  function keyRateRemainingLabel(value) {
+    return `${Math.max(0, Number(value ?? 0))} remaining`;
+  }
+
   /**
    * @param {number | null | undefined} used
    * @param {number | null | undefined} limit
@@ -587,9 +592,15 @@ All routable models
               </p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
                 Requests window {key.currentRequestsThisMinute || 0} / {keyRateWindowLimitLabel(key.effectiveRequestsPerMinute)}
+                {#if key.effectiveRequestsPerMinute > 0}
+                  <span>({keyRateRemainingLabel(key.requestRateRemaining)})</span>
+                {/if}
               </p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
                 Tokens window {formatTokens(key.currentTokensThisMinute || 0)} / {keyRateWindowLimitLabel(key.effectiveTokensPerMinute)}
+                {#if key.effectiveTokensPerMinute > 0}
+                  <span>({keyRateRemainingLabel(key.tokenRateRemaining)})</span>
+                {/if}
               </p>
               {#if key.concurrencyBlocked}
                 <p class="mt-1 text-xs font-medium text-amber-700">Concurrency full</p>

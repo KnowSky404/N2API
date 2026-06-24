@@ -391,7 +391,7 @@ test('providers page shows provider account usage distribution', () => {
 });
 
 test('api keys page shows per-key usage distribution', () => {
-  for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost', 'Active', 'Concurrency full', 'Requests window', 'Tokens window', 'Request limit full', 'Token limit full']) {
+  for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost', 'Active', 'Concurrency full', 'Requests window', 'Tokens window', 'remaining', 'Request limit full', 'Token limit full']) {
     assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
   }
 
@@ -412,6 +412,9 @@ test('api keys page shows per-key usage distribution', () => {
   assert.match(adminState, /tokenRateRemaining/);
   assert.match(adminState, /tokenRateLimited/);
   assert.match(apiKeysPage, /keyRateWindowLimitLabel/);
+  assert.match(apiKeysPage, /keyRateRemainingLabel/);
+  assert.match(apiKeysPage, /requestRateRemaining/);
+  assert.match(apiKeysPage, /tokenRateRemaining/);
 });
 
 test('api keys page filters key list locally', () => {
