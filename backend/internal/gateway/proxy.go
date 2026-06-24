@@ -409,7 +409,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 				return
 			}
-			errorCode = providerErrorCode(err)
+			errorCode = providerErrorCodeForSelection(err, selected)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
 			return
 		}
@@ -1461,6 +1461,13 @@ func providerErrorCode(err error) string {
 	}
 }
 
+func providerErrorCodeForSelection(err error, selected SelectedAccount) string {
+	if errors.Is(err, provider.ErrAccountsDisabled) && strings.TrimSpace(selected.RoutingPoolError) == provider.RoutingPoolErrorDisabled {
+		return provider.RoutingPoolErrorDisabled
+	}
+	return providerErrorCode(err)
+}
+
 func providerErrorMessage(code string) string {
 	switch code {
 	case "provider_not_connected":
@@ -1475,6 +1482,8 @@ func providerErrorMessage(code string) string {
 		return "routing pool is unavailable"
 	case "routing_pool_empty":
 		return "routing pool has no eligible accounts"
+	case "routing_pool_disabled":
+		return "routing pool is disabled"
 	case "provider_accounts_unavailable":
 		return "provider accounts are unavailable"
 	case "model_unavailable":

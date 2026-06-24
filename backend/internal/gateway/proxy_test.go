@@ -2435,11 +2435,21 @@ func TestProxyLogsRoutingPoolDisabledDiagnosticsOnSelectionError(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "provider_accounts_disabled") {
-		t.Fatalf("body = %s, want provider_accounts_disabled", recorder.Body.String())
+	if !strings.Contains(recorder.Body.String(), "routing_pool_disabled") {
+		t.Fatalf("body = %s, want routing_pool_disabled", recorder.Body.String())
 	}
-	if len(logger.entries) != 1 || logger.entries[0].RoutingPoolError != provider.RoutingPoolErrorDisabled {
+	if len(logger.entries) != 1 || logger.entries[0].RoutingPoolError != provider.RoutingPoolErrorDisabled || logger.entries[0].Error != provider.RoutingPoolErrorDisabled {
 		t.Fatalf("logged entry = %+v, want routing_pool_disabled diagnostics", logger.entries)
+	}
+}
+
+func TestProviderErrorCodeForSelectionKeepsGlobalDisabledDistinctFromRoutingPoolDisabled(t *testing.T) {
+	if got := providerErrorCodeForSelection(provider.ErrAccountsDisabled, SelectedAccount{}); got != "provider_accounts_disabled" {
+		t.Fatalf("global disabled error code = %q, want provider_accounts_disabled", got)
+	}
+	selected := SelectedAccount{RoutingPoolError: provider.RoutingPoolErrorDisabled}
+	if got := providerErrorCodeForSelection(provider.ErrAccountsDisabled, selected); got != provider.RoutingPoolErrorDisabled {
+		t.Fatalf("routing pool disabled error code = %q, want %s", got, provider.RoutingPoolErrorDisabled)
 	}
 }
 
