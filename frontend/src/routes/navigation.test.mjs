@@ -52,6 +52,11 @@ test('gateway page manages runtime limits and usage visibility', () => {
     'Schedulable accounts',
     'Routable models',
     'Active API keys',
+    'Scheduling health',
+    'Enabled accounts',
+    'Blocked accounts',
+    'Blocked reasons',
+    'No blocked provider accounts.',
     'Runtime limits',
     'Gateway concurrency',
     'Per account concurrency',
@@ -84,6 +89,9 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /loadModelRouting/);
   assert.match(gatewayPage, /loadKeys/);
   assert.match(gatewayPage, /getSchedulableProviderAccounts/);
+  assert.match(gatewayPage, /getUnschedulableProviderAccountSummary/);
+  assert.match(gatewayPage, /unschedulableAccountSummary/);
+  assert.match(gatewayPage, /enabledProviderAccountCount/);
   assert.match(gatewayPage, /getRoutableModelCount/);
   assert.match(gatewayPage, /getActiveKeys/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'model'\)/);
