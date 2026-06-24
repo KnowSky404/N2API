@@ -317,7 +317,7 @@ test('api keys page shows per-key usage distribution', () => {
 });
 
 test('api keys page filters key list locally', () => {
-  for (const label of ['Search keys', 'Status filter', 'All keys', 'Active keys', 'Revoked keys']) {
+  for (const label of ['Search keys', 'Status filter', 'All keys', 'Active keys', 'Disabled keys', 'Revoked keys']) {
     assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
   }
 
@@ -329,6 +329,21 @@ test('api keys page filters key list locally', () => {
   assert.match(apiKeysPage, /bind:value=\{keyStatusFilter\}/);
   assert.match(apiKeysPage, /Showing \{filteredAPIKeys\.length\} of \{apiKeys\.items\.length\}/);
   assert.match(apiKeysPage, /No API keys match your filters\./);
+});
+
+test('api keys page disables keys reversibly', () => {
+  for (const label of ['Disabled', 'Disable', 'Enable']) {
+    assert.match(apiKeysPage, new RegExp(label), `api keys page should include ${label}`);
+  }
+
+  assert.match(apiKeysPage, /setAPIKeyDisabled/);
+  assert.match(apiKeysPage, /key\.disabledAt/);
+  assert.match(apiKeysPage, /keyStatusFilter === 'disabled'/);
+  assert.match(apiKeysPage, /onclick=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
+  assert.match(adminState, /@property \{string \| null\} disabledAt/);
+  assert.match(adminState, /export async function setAPIKeyDisabled/);
+  assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}\/disabled/);
+  assert.match(adminState, /!key\.revokedAt && !key\.disabledAt/);
 });
 
 test('api keys page renames keys without rotating secrets', () => {

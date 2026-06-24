@@ -21,6 +21,7 @@
     revokeKey,
     saveModelSettings,
     session,
+    setAPIKeyDisabled,
     updateAPIKeyLimits,
     updateAPIKeyName,
     updateAPIKeyModelPolicy,
@@ -34,7 +35,8 @@
   let modelRoutingRequested = $state(false);
   const filteredAPIKeys = $derived(
     apiKeys.items.filter((key) => {
-      if (keyStatusFilter === 'active' && key.revokedAt) return false;
+      if (keyStatusFilter === 'active' && (key.revokedAt || key.disabledAt)) return false;
+      if (keyStatusFilter === 'disabled' && (!key.disabledAt || key.revokedAt)) return false;
       if (keyStatusFilter === 'revoked' && !key.revokedAt) return false;
 
       const query = keySearch.trim().toLowerCase();
@@ -68,7 +70,7 @@
       key.prefix,
       key.modelPolicy === 'selected' ? 'selected models' : 'all routable models',
       ...(key.allowedModels ?? []),
-      key.revokedAt ? 'revoked' : 'active',
+      key.revokedAt ? 'revoked' : key.disabledAt ? 'disabled' : 'active',
       key.concurrencyBlocked ? 'concurrency full' : '',
       key.requestRateLimited ? 'request limit full' : '',
       key.tokenRateLimited ? 'token limit full' : ''
@@ -345,6 +347,7 @@ All routable models
         >
           <option value="all">All keys</option>
           <option value="active">Active keys</option>
+          <option value="disabled">Disabled keys</option>
           <option value="revoked">Revoked keys</option>
         </select>
       </label>
@@ -545,10 +548,12 @@ All routable models
               'inline-flex rounded-full px-2.5 py-1 text-xs font-medium',
               key.revokedAt
                 ? 'bg-red-50 text-red-700'
+                : key.disabledAt
+                  ? 'bg-amber-50 text-amber-700'
                 : 'bg-[#e8f5f0] text-[#0a7a5e]'
             ]}
           >
-            {key.revokedAt ? 'Revoked' : 'Active'}
+            {key.revokedAt ? 'Revoked' : key.disabledAt ? 'Disabled' : 'Active'}
           </span>
         </td>
         <td class="px-4 py-3 text-right">
@@ -560,6 +565,15 @@ All routable models
           >
             Logs
           </a>
+          {#if !key.revokedAt}
+            <button
+              class="mr-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              type="button"
+              onclick={() => setAPIKeyDisabled(key.id, !key.disabledAt)}
+            >
+              {key.disabledAt ? 'Enable' : 'Disable'}
+            </button>
+          {/if}
           <button
             class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"

@@ -11,6 +11,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} createdAt
  * @property {string | null} lastUsedAt
  * @property {string | null} revokedAt
+ * @property {string | null} disabledAt
  * @property {number} requestsPerMinute
  * @property {number} tokensPerMinute
  * @property {number} currentConcurrentRequests
@@ -547,7 +548,7 @@ export function getStatusItems() {
 }
 
 export function getActiveKeys() {
-  return apiKeys.items.filter((key) => !key.revokedAt);
+  return apiKeys.items.filter((key) => !key.revokedAt && !key.disabledAt);
 }
 
 /** @param {string | null | undefined} value */
@@ -2057,6 +2058,29 @@ export async function updateAPIKeyName(keyId, name) {
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update API key name';
+  }
+}
+
+/**
+ * @param {number} keyId
+ * @param {boolean} disabled
+ */
+export async function setAPIKeyDisabled(keyId, disabled) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  apiKeys.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/keys/${keyId}/disabled`, {
+      method: 'PUT',
+      body: JSON.stringify({ disabled: Boolean(disabled) })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
+    await loadRequestLogs();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.error = error instanceof Error ? error.message : 'Failed to update API key status';
   }
 }
 
