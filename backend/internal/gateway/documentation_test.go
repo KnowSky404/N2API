@@ -293,6 +293,7 @@ func TestGatewayDocumentationMentionsAllUsageLogDrilldowns(t *testing.T) {
 			"Top provider accounts",
 			"Top routing pools",
 			"Top client keys",
+			"Gateway management and Dashboard",
 			"provider-account, routing-pool, API-key, model, and sticky-session",
 		} {
 			if !strings.Contains(text, want) {

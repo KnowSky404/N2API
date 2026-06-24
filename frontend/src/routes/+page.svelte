@@ -54,9 +54,35 @@
   const usage24hSessions = $derived(usage.summaries['24h:session'] ?? null);
 
   /** @param {string | number | null | undefined} id */
-  function routingPoolUsageHref(id) {
+  function providerAccountUsageId(id) {
     const value = String(id ?? '');
-    return /^[1-9]\d*$/.test(value) ? `/request-logs?routingPoolId=${encodeURIComponent(value)}` : '';
+    const parts = value.split('/');
+    const accountId = parts[parts.length - 1] ?? '';
+    return /^[1-9]\d*$/.test(accountId) ? accountId : '';
+  }
+
+  /**
+   * @param {string} sectionTitle
+   * @param {{ id?: string | number | null }} row
+   */
+  function dashboardUsageHref(sectionTitle, row) {
+    const id = String(row?.id ?? '');
+    if (!id || id === 'unknown') return '';
+    if (sectionTitle === 'Top models') return `/request-logs?model=${encodeURIComponent(id)}`;
+    if (sectionTitle === 'Top provider accounts') {
+      const accountId = providerAccountUsageId(id);
+      return accountId ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
+    }
+    if (sectionTitle === 'Top routing pools' && /^[1-9]\d*$/.test(id)) {
+      return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
+    }
+    if (sectionTitle === 'Top client keys' && /^[1-9]\d*$/.test(id)) {
+      return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
+    }
+    if (sectionTitle === 'Top sessions' && id !== 'none') {
+      return `/request-logs?sessionId=${encodeURIComponent(id)}`;
+    }
+    return '';
   }
 </script>
 
@@ -213,8 +239,13 @@
         {:else}
           <div class="divide-y divide-[#ededed]">
             {#each usage24h.rows.slice(0, 5) as row}
+              {@const href = dashboardUsageHref('Top models', row)}
               <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-                <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {#if href}
+                  <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={href}>{row.label || row.id}</a>
+                {:else}
+                  <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {/if}
                 <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
                   {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
                 </span>
@@ -232,8 +263,13 @@
         {:else}
           <div class="divide-y divide-[#ededed]">
             {#each usage24hProviderAccounts.rows.slice(0, 5) as row}
+              {@const href = dashboardUsageHref('Top provider accounts', row)}
               <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-                <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {#if href}
+                  <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={href}>{row.label || row.id}</a>
+                {:else}
+                  <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {/if}
                 <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
                   {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
                 </span>
@@ -251,7 +287,7 @@
         {:else}
           <div class="divide-y divide-[#ededed]">
             {#each usage24hRoutingPools.rows.slice(0, 5) as row}
-              {@const href = routingPoolUsageHref(row.id)}
+              {@const href = dashboardUsageHref('Top routing pools', row)}
               <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
                 {#if href}
                   <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={href}>{row.label || row.id}</a>
@@ -275,8 +311,13 @@
         {:else}
           <div class="divide-y divide-[#ededed]">
             {#each usage24hClientKeys.rows.slice(0, 5) as row}
+              {@const href = dashboardUsageHref('Top client keys', row)}
               <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-                <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {#if href}
+                  <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={href}>{row.label || row.id}</a>
+                {:else}
+                  <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {/if}
                 <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
                   {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
                 </span>
@@ -294,8 +335,13 @@
         {:else}
           <div class="divide-y divide-[#ededed]">
             {#each usage24hSessions.rows.slice(0, 5) as row}
+              {@const href = dashboardUsageHref('Top sessions', row)}
               <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-                <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {#if href}
+                  <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={href}>{row.label || row.id}</a>
+                {:else}
+                  <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {/if}
                 <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
                   {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
                 </span>
