@@ -176,6 +176,72 @@ func TestProviderRepositoryUpsertsAndFindsSessionBinding(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryRoutingPoolSelectionAndBinding(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	global := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "global-account",
+		DisplayName:           "Global Account",
+		EncryptedAccessToken:  "global-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              1,
+		Status:                provider.AccountStatusActive,
+	})
+	pooled := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "pooled-account",
+		DisplayName:           "Pooled Account",
+		EncryptedAccessToken:  "pool-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              50,
+		Status:                provider.AccountStatusActive,
+	})
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", global.ID, []provider.AccountModelInput{{Model: "gpt-5", Enabled: true}}); err != nil {
+		t.Fatalf("ReplaceAccountModels global returned error: %v", err)
+	}
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", pooled.ID, []provider.AccountModelInput{{Model: "gpt-5", Enabled: true}}); err != nil {
+		t.Fatalf("ReplaceAccountModels pooled returned error: %v", err)
+	}
+
+	poolID := insertProviderRoutingPool(t, repo.pool, "primary", pooled.ID)
+	pool, err := repo.FindRoutingPool(ctx, poolID)
+	if err != nil {
+		t.Fatalf("FindRoutingPool returned error: %v", err)
+	}
+	if pool.ID != poolID || pool.Name != "primary" || !pool.Enabled {
+		t.Fatalf("pool = %+v, want primary", pool)
+	}
+
+	accounts, err := repo.ListAccountsForRoutingPool(ctx, "openai", poolID, "gpt-5", nil, time.Now())
+	if err != nil {
+		t.Fatalf("ListAccountsForRoutingPool returned error: %v", err)
+	}
+	if got := accountIDs(accounts); !reflect.DeepEqual(got, []int64{pooled.ID}) {
+		t.Fatalf("routing pool accounts = %+v, want only pooled account %d", got, pooled.ID)
+	}
+
+	if err := repo.UpsertSessionBindingInRoutingPool(ctx, "openai", poolID, "gpt-5", "workspace-123", pooled.ID); err != nil {
+		t.Fatalf("UpsertSessionBindingInRoutingPool returned error: %v", err)
+	}
+	binding, err := repo.FindSessionBindingInRoutingPool(ctx, "openai", poolID, "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("FindSessionBindingInRoutingPool returned error: %v", err)
+	}
+	if binding.AccountID != pooled.ID {
+		t.Fatalf("pool binding account = %d, want %d", binding.AccountID, pooled.ID)
+	}
+	if _, err := repo.FindSessionBinding(ctx, "openai", "gpt-5", "workspace-123"); !errors.Is(err, provider.ErrSessionBindingNotFound) {
+		t.Fatalf("global binding error = %v, want ErrSessionBindingNotFound", err)
+	}
+}
+
 func TestProviderRepositoryUpdatesAPIUpstreamCredential(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
@@ -977,6 +1043,27 @@ func saveProviderTestAccount(t *testing.T, repo *ProviderRepository, account pro
 		t.Fatalf("SaveAccount(%q) returned error: %v", account.Subject, err)
 	}
 	return saved
+}
+
+func insertProviderRoutingPool(t *testing.T, pool *pgxpool.Pool, name string, accountID int64) int64 {
+	t.Helper()
+
+	ctx := context.Background()
+	var poolID int64
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO routing_pools (name, description, enabled)
+		VALUES ($1, '', true)
+		RETURNING id
+	`, name).Scan(&poolID); err != nil {
+		t.Fatalf("insert routing pool failed: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO routing_pool_accounts (pool_id, account_id, priority)
+		VALUES ($1, $2, 0)
+	`, poolID, accountID); err != nil {
+		t.Fatalf("insert routing pool account failed: %v", err)
+	}
+	return poolID
 }
 
 func newProviderRepositoryForTest(t *testing.T) (*ProviderRepository, func()) {

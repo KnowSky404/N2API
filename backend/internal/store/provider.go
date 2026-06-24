@@ -162,6 +162,16 @@ func syncAccountLegacyFields(account *provider.Account) {
 	}
 }
 
+func normalizedExcludedAccountIDs(ids []int64) []int64 {
+	excluded := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			excluded = append(excluded, id)
+		}
+	}
+	return excluded
+}
+
 func upsertProviderAccountCredential(ctx context.Context, tx pgx.Tx, account provider.Account) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO provider_account_credentials (
@@ -317,6 +327,7 @@ func (r *ProviderRepository) FindSessionBinding(ctx context.Context, providerNam
 		WHERE provider = $1
 			AND model = $2
 			AND session_id = $3
+			AND routing_pool_id IS NULL
 	`, providerName, model, sessionID).Scan(
 		&binding.ID,
 		&binding.Provider,
@@ -336,19 +347,190 @@ func (r *ProviderRepository) FindSessionBinding(ctx context.Context, providerNam
 	return binding, nil
 }
 
+func (r *ProviderRepository) FindRoutingPool(ctx context.Context, poolID int64) (provider.RoutingPool, error) {
+	var pool provider.RoutingPool
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, name, enabled
+		FROM routing_pools
+		WHERE id = $1
+	`, poolID).Scan(&pool.ID, &pool.Name, &pool.Enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.RoutingPool{}, provider.ErrRoutingPoolNotFound
+	}
+	if err != nil {
+		return provider.RoutingPool{}, err
+	}
+	return pool, nil
+}
+
+func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, providerName string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
+	model = strings.TrimSpace(model)
+	excluded := normalizedExcludedAccountIDs(excludedAccountIDs)
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+providerAccountColumns+`
+		FROM routing_pool_accounts rpa
+		JOIN provider_accounts a ON a.id = rpa.account_id
+		JOIN provider_account_credentials c ON c.account_id = a.id
+		WHERE a.provider = $1
+			AND rpa.pool_id = $2
+			AND a.enabled = true
+			AND a.status = 'active'
+			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= $4)
+			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= $4)
+			AND (c.access_token_expires_at IS NULL OR c.access_token_expires_at > $4)
+			AND NOT (a.id = ANY($5::bigint[]))
+			AND (
+				$3 = ''
+				OR EXISTS (
+					SELECT 1
+					FROM provider_account_models m
+					WHERE m.account_id = a.id
+						AND m.provider = a.provider
+						AND m.model = $3
+						AND m.enabled = true
+				)
+			)
+		ORDER BY
+			rpa.priority ASC,
+			a.priority ASC,
+			a.load_factor DESC,
+			(a.last_error_at IS NOT NULL) ASC,
+			a.last_used_at ASC NULLS FIRST,
+			a.id ASC
+	`, providerName, poolID, model, now, excluded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []provider.Account
+	for rows.Next() {
+		account, err := scanProviderAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return accounts, nil
+}
+
 func (r *ProviderRepository) UpsertSessionBinding(ctx context.Context, providerName, model, sessionID string, accountID int64) error {
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var id int64
+	err = tx.QueryRow(ctx, `
+		SELECT id
+		FROM provider_session_bindings
+		WHERE provider = $1
+			AND model = $2
+			AND session_id = $3
+			AND routing_pool_id IS NULL
+		FOR UPDATE
+	`, providerName, model, sessionID).Scan(&id)
+	if err == nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE provider_session_bindings
+			SET account_id = $2,
+				last_used_at = now(),
+				updated_at = now()
+			WHERE id = $1
+		`, id, accountID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO provider_session_bindings (
 			provider, model, session_id, account_id, last_used_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, now(), now())
-		ON CONFLICT (provider, model, session_id)
-		DO UPDATE SET
-			account_id = EXCLUDED.account_id,
-			last_used_at = now(),
-			updated_at = now()
-	`, providerName, model, sessionID, accountID)
-	return err
+	`, providerName, model, sessionID, accountID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *ProviderRepository) FindSessionBindingInRoutingPool(ctx context.Context, providerName string, routingPoolID int64, model string, sessionID string) (provider.SessionBinding, error) {
+	var binding provider.SessionBinding
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, provider, model, session_id, account_id, last_used_at, created_at, updated_at
+		FROM provider_session_bindings
+		WHERE provider = $1
+			AND model = $2
+			AND session_id = $3
+			AND routing_pool_id = $4
+	`, providerName, model, sessionID, routingPoolID).Scan(
+		&binding.ID,
+		&binding.Provider,
+		&binding.Model,
+		&binding.SessionID,
+		&binding.AccountID,
+		&binding.LastUsedAt,
+		&binding.CreatedAt,
+		&binding.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.SessionBinding{}, provider.ErrSessionBindingNotFound
+	}
+	if err != nil {
+		return provider.SessionBinding{}, err
+	}
+	return binding, nil
+}
+
+func (r *ProviderRepository) UpsertSessionBindingInRoutingPool(ctx context.Context, providerName string, routingPoolID int64, model string, sessionID string, accountID int64) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var id int64
+	err = tx.QueryRow(ctx, `
+		SELECT id
+		FROM provider_session_bindings
+		WHERE provider = $1
+			AND model = $2
+			AND session_id = $3
+			AND routing_pool_id = $4
+		FOR UPDATE
+	`, providerName, model, sessionID, routingPoolID).Scan(&id)
+	if err == nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE provider_session_bindings
+			SET account_id = $2,
+				last_used_at = now(),
+				updated_at = now()
+			WHERE id = $1
+		`, id, accountID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO provider_session_bindings (
+			provider, model, session_id, routing_pool_id, account_id, last_used_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, now(), now())
+	`, providerName, model, sessionID, routingPoolID, accountID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.Account) (provider.Account, error) {

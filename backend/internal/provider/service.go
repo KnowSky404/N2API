@@ -81,6 +81,7 @@ var (
 	ErrAccountsUnavailable    = errors.New("provider accounts unavailable")
 	ErrModelUnavailable       = errors.New("model unavailable")
 	ErrSessionBindingNotFound = errors.New("provider session binding not found")
+	ErrRoutingPoolNotFound    = errors.New("routing pool not found")
 )
 
 type Config struct {
@@ -205,6 +206,17 @@ type SessionBinding struct {
 	LastUsedAt time.Time `json:"lastUsedAt"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
+type RoutingPool struct {
+	ID      int64
+	Name    string
+	Enabled bool
+}
+
+type RoutingPoolAccount struct {
+	AccountID int64
+	Priority  int
 }
 
 type AccountCredential struct {
@@ -360,8 +372,12 @@ type Repository interface {
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
+	FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error)
+	ListAccountsForRoutingPool(ctx context.Context, provider string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	FindSessionBinding(ctx context.Context, provider string, model string, sessionID string) (SessionBinding, error)
 	UpsertSessionBinding(ctx context.Context, provider string, model string, sessionID string, accountID int64) error
+	FindSessionBindingInRoutingPool(ctx context.Context, provider string, routingPoolID int64, model string, sessionID string) (SessionBinding, error)
+	UpsertSessionBindingInRoutingPool(ctx context.Context, provider string, routingPoolID int64, model string, sessionID string, accountID int64) error
 	CreateState(ctx context.Context, state OAuthState) error
 	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
 }
@@ -1238,6 +1254,50 @@ func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, se
 	return selected, nil
 }
 
+func (s *Service) SelectAccountForModelInRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	if routingPoolID <= 0 {
+		return s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+	}
+	if !s.Configured() {
+		return SelectedAccount{}, ErrNotConfigured
+	}
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, routingPoolID, model, excludedAccountIDs)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	return s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+}
+
+func (s *Service) SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	if routingPoolID <= 0 {
+		return s.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
+	}
+	model = strings.TrimSpace(model)
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return s.SelectAccountForModelInRoutingPool(ctx, routingPoolID, model, excludedAccountIDs...)
+	}
+	if !s.Configured() {
+		return SelectedAccount{}, ErrNotConfigured
+	}
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, routingPoolID, model, excludedAccountIDs)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	accounts, _, err = s.stickySessionCandidatesInRoutingPool(ctx, routingPoolID, accounts, model, sessionID)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	selected, err := s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	if err := s.repo.UpsertSessionBindingInRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, sessionID, selected.AccountID); err != nil {
+		return SelectedAccount{}, fmt.Errorf("upsert provider session binding: %w", err)
+	}
+	return selected, nil
+}
+
 func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
 	if !s.Configured() {
 		return SelectionPreview{}, ErrNotConfigured
@@ -1383,6 +1443,29 @@ func (s *Service) stickySessionCandidates(ctx context.Context, accounts []Accoun
 		return accounts, 0, nil
 	}
 	binding, err := s.repo.FindSessionBinding(ctx, s.cfg.Provider, model, sessionID)
+	if err != nil && !errors.Is(err, ErrSessionBindingNotFound) {
+		return nil, 0, err
+	}
+	if err == nil {
+		for i, account := range accounts {
+			if account.ID != binding.AccountID {
+				continue
+			}
+			ordered := make([]Account, 0, len(accounts))
+			ordered = append(ordered, account)
+			ordered = append(ordered, accounts[:i]...)
+			ordered = append(ordered, accounts[i+1:]...)
+			return ordered, binding.AccountID, nil
+		}
+	}
+	return stickySessionHashCandidates(accounts, sessionID), 0, nil
+}
+
+func (s *Service) stickySessionCandidatesInRoutingPool(ctx context.Context, routingPoolID int64, accounts []Account, model, sessionID string) ([]Account, int64, error) {
+	if len(accounts) <= 1 {
+		return accounts, 0, nil
+	}
+	binding, err := s.repo.FindSessionBindingInRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, sessionID)
 	if err != nil && !errors.Is(err, ErrSessionBindingNotFound) {
 		return nil, 0, err
 	}
@@ -1669,6 +1752,42 @@ func (s *Service) selectionCandidates(ctx context.Context, model string, exclude
 		candidates = append(candidates, account)
 	}
 	return candidates, hasEnabled, ErrAccountsUnavailable, nil
+}
+
+func (s *Service) selectionCandidatesForRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
+	pool, err := s.repo.FindRoutingPool(ctx, routingPoolID)
+	if err != nil {
+		if errors.Is(err, ErrRoutingPoolNotFound) {
+			return nil, false, ErrAccountsUnavailable, nil
+		}
+		return nil, false, ErrAccountsUnavailable, err
+	}
+	if !pool.Enabled {
+		return nil, false, ErrAccountsDisabled, nil
+	}
+
+	model = strings.TrimSpace(model)
+	now := time.Now()
+	excluded := normalizedExcludedAccountIDs(excludedAccountIDs)
+	accounts, err := s.repo.ListAccountsForRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, excluded, now)
+	if err != nil {
+		return nil, false, ErrAccountsUnavailable, err
+	}
+	if len(accounts) > 0 {
+		return accounts, true, ErrAccountsUnavailable, nil
+	}
+
+	availableWithoutExclusions, err := s.repo.ListAccountsForRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, nil, now)
+	if err != nil {
+		return nil, false, ErrAccountsUnavailable, err
+	}
+	if len(availableWithoutExclusions) > 0 {
+		return accounts, true, ErrAccountsUnavailable, nil
+	}
+	if model != "" {
+		return accounts, true, ErrModelUnavailable, nil
+	}
+	return accounts, true, ErrAccountsUnavailable, nil
 }
 
 func normalizedExcludedAccountIDs(ids []int64) []int64 {

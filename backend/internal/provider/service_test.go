@@ -1650,6 +1650,60 @@ func TestSelectAccountForModelAndSessionPersistsAndReusesBinding(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolScopesCandidates(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "global-token"),
+		testAccount(t, 2, true, 50, "pool-token"),
+	}
+	repo.routingPoolAccounts[7] = []RoutingPoolAccount{{AccountID: 2, Priority: 0}}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPool(context.Background(), 7, "gpt-5")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelInRoutingPool returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.AuthorizationToken != "pool-token" {
+		t.Fatalf("selected = %+v, want pool account 2", selected)
+	}
+}
+
+func TestSelectAccountForModelAndSessionInRoutingPoolDoesNotCrossScope(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
+	repo.routingPools[8] = RoutingPool{ID: 8, Name: "secondary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 1, "second-token"),
+	}
+	repo.routingPoolAccounts[7] = []RoutingPoolAccount{{AccountID: 1, Priority: 0}}
+	repo.routingPoolAccounts[8] = []RoutingPoolAccount{{AccountID: 2, Priority: 0}}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	first, err := service.SelectAccountForModelAndSessionInRoutingPool(context.Background(), 7, "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("pool 7 selection returned error: %v", err)
+	}
+	second, err := service.SelectAccountForModelAndSessionInRoutingPool(context.Background(), 8, "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("pool 8 selection returned error: %v", err)
+	}
+	if first.AccountID != 1 || second.AccountID != 2 {
+		t.Fatalf("pool scoped selections = %d/%d, want 1/2", first.AccountID, second.AccountID)
+	}
+}
+
 func TestSelectAccountForModelAndSessionRebindsWhenBoundAccountExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -2263,11 +2317,13 @@ func TestRecordAccountUsedReturnsMarkAccountUsedFailure(t *testing.T) {
 }
 
 type memoryRepo struct {
-	accounts           []Account
-	accountModels      map[int64][]AccountModel
-	accountTestResults []AccountTestResult
-	sessionBindings    map[string]SessionBinding
-	states             []OAuthState
+	accounts            []Account
+	accountModels       map[int64][]AccountModel
+	accountTestResults  []AccountTestResult
+	sessionBindings     map[string]SessionBinding
+	routingPools        map[int64]RoutingPool
+	routingPoolAccounts map[int64][]RoutingPoolAccount
+	states              []OAuthState
 
 	saveCount           int
 	nextID              int64
@@ -2279,9 +2335,11 @@ type memoryRepo struct {
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		accountModels:   make(map[int64][]AccountModel),
-		sessionBindings: make(map[string]SessionBinding),
-		nextID:          1,
+		accountModels:       make(map[int64][]AccountModel),
+		sessionBindings:     make(map[string]SessionBinding),
+		routingPools:        make(map[int64]RoutingPool),
+		routingPoolAccounts: make(map[int64][]RoutingPoolAccount),
+		nextID:              1,
 	}
 }
 
@@ -2730,6 +2788,60 @@ func (r *memoryRepo) ListEligibleAccountsForModel(ctx context.Context, providerN
 	return eligible, nil
 }
 
+func (r *memoryRepo) FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error) {
+	pool, ok := r.routingPools[poolID]
+	if !ok {
+		return RoutingPool{}, ErrRoutingPoolNotFound
+	}
+	return pool, nil
+}
+
+func (r *memoryRepo) ListAccountsForRoutingPool(ctx context.Context, providerName string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error) {
+	excluded := map[int64]bool{}
+	for _, id := range excludedAccountIDs {
+		if id > 0 {
+			excluded[id] = true
+		}
+	}
+	poolAccounts := r.routingPoolAccounts[poolID]
+	poolAccountIDs := map[int64]int{}
+	for _, account := range poolAccounts {
+		poolAccountIDs[account.AccountID] = account.Priority
+	}
+	accounts, err := r.ListAccounts(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
+	eligible := []Account{}
+	for _, account := range accounts {
+		poolPriority, inPool := poolAccountIDs[account.ID]
+		if !inPool || excluded[account.ID] || !accountSchedulable(account, now) {
+			continue
+		}
+		if model != "" {
+			hasModel := false
+			for _, accountModel := range r.accountModels[account.ID] {
+				if accountModel.Provider == providerName && accountModel.Model == model && accountModel.Enabled {
+					hasModel = true
+					break
+				}
+			}
+			if !hasModel {
+				continue
+			}
+		}
+		account.Priority = poolPriority
+		eligible = append(eligible, account)
+	}
+	sort.SliceStable(eligible, func(i, j int) bool {
+		if eligible[i].Priority != eligible[j].Priority {
+			return eligible[i].Priority < eligible[j].Priority
+		}
+		return eligible[i].ID < eligible[j].ID
+	})
+	return eligible, nil
+}
+
 func (r *memoryRepo) FindSessionBinding(ctx context.Context, providerName string, model string, sessionID string) (SessionBinding, error) {
 	binding, ok := r.sessionBindings[sessionBindingKey(providerName, model, sessionID)]
 	if !ok {
@@ -2756,8 +2868,38 @@ func (r *memoryRepo) UpsertSessionBinding(ctx context.Context, providerName stri
 	return nil
 }
 
+func (r *memoryRepo) FindSessionBindingInRoutingPool(ctx context.Context, providerName string, routingPoolID int64, model string, sessionID string) (SessionBinding, error) {
+	binding, ok := r.sessionBindings[routingPoolSessionBindingKey(providerName, routingPoolID, model, sessionID)]
+	if !ok {
+		return SessionBinding{}, ErrSessionBindingNotFound
+	}
+	return binding, nil
+}
+
+func (r *memoryRepo) UpsertSessionBindingInRoutingPool(ctx context.Context, providerName string, routingPoolID int64, model string, sessionID string, accountID int64) error {
+	now := time.Now()
+	key := routingPoolSessionBindingKey(providerName, routingPoolID, model, sessionID)
+	binding := r.sessionBindings[key]
+	if binding.ID == 0 {
+		binding.ID = int64(len(r.sessionBindings) + 1)
+		binding.CreatedAt = now
+	}
+	binding.Provider = providerName
+	binding.Model = model
+	binding.SessionID = sessionID
+	binding.AccountID = accountID
+	binding.LastUsedAt = now
+	binding.UpdatedAt = now
+	r.sessionBindings[key] = binding
+	return nil
+}
+
 func sessionBindingKey(providerName string, model string, sessionID string) string {
 	return providerName + "\x00" + model + "\x00" + sessionID
+}
+
+func routingPoolSessionBindingKey(providerName string, routingPoolID int64, model string, sessionID string) string {
+	return providerName + "\x00" + strconv.FormatInt(routingPoolID, 10) + "\x00" + model + "\x00" + sessionID
 }
 
 func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
