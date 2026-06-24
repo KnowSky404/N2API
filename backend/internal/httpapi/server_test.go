@@ -2988,7 +2988,7 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 
 	admins := newFakeAdminService()
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&clientKeyId=12", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&clientKeyId=12&model=gpt-5&sessionId=workspace-123", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -3014,6 +3014,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if admins.requestLogFilter.ClientKeyID != 12 {
 		t.Fatalf("request log client key ID = %d, want 12", admins.requestLogFilter.ClientKeyID)
+	}
+	if admins.requestLogFilter.Model != "gpt-5" || admins.requestLogFilter.SessionID != "workspace-123" {
+		t.Fatalf("request log model/session = %q/%q, want gpt-5/workspace-123", admins.requestLogFilter.Model, admins.requestLogFilter.SessionID)
 	}
 	if body.Logs[0].GatewayAttemptCount != 2 || body.Logs[0].GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", body.Logs[0].GatewayAttemptCount, body.Logs[0].GatewayFallbackCount)

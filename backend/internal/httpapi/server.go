@@ -406,6 +406,8 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			StatusClass:       r.URL.Query().Get("statusClass"),
 			ProviderAccountID: providerAccountID,
 			ClientKeyID:       clientKeyID,
+			Model:             r.URL.Query().Get("model"),
+			SessionID:         r.URL.Query().Get("sessionId"),
 		}
 		logs, err := admins.ListRequestLogs(r.Context(), filter)
 		if err != nil {

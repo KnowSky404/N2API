@@ -342,6 +342,8 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		StatusClass:       "server_error",
 		ProviderAccountID: 7,
 		ClientKeyID:       12,
+		Model:             " gpt-5 ",
+		SessionID:         " workspace-123 ",
 	})
 	if err != nil {
 		t.Fatalf("ListRequestLogs returned error: %v", err)
@@ -360,6 +362,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if repo.lastLogFilter.ClientKeyID != 12 {
 		t.Fatalf("repository client key ID = %d, want 12", repo.lastLogFilter.ClientKeyID)
+	}
+	if repo.lastLogFilter.Model != "gpt-5" || repo.lastLogFilter.SessionID != "workspace-123" {
+		t.Fatalf("repository model/session = %q/%q, want gpt-5/workspace-123", repo.lastLogFilter.Model, repo.lastLogFilter.SessionID)
 	}
 	if len(logs) != 2 || logs[0].RequestID != "req_2" {
 		t.Fatalf("logs = %+v", logs)
@@ -404,6 +409,12 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{ClientKeyID: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs invalid client key ID error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Model: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long model error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{SessionID: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long session error = %v, want ErrInvalidInput", err)
 	}
 }
 

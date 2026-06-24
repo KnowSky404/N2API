@@ -97,6 +97,8 @@ type RequestLogFilter struct {
 	StatusClass       string
 	ProviderAccountID int64
 	ClientKeyID       int64
+	Model             string
+	SessionID         string
 }
 
 type UsageSummary struct {
@@ -439,6 +441,11 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	}
 	filter.Query = strings.TrimSpace(filter.Query)
 	if len(filter.Query) > maxRequestLogQueryLen {
+		return nil, ErrInvalidInput
+	}
+	filter.Model = strings.TrimSpace(filter.Model)
+	filter.SessionID = strings.TrimSpace(filter.SessionID)
+	if len(filter.Model) > 100 || len(filter.SessionID) > 100 {
 		return nil, ErrInvalidInput
 	}
 	filter.StatusClass = strings.TrimSpace(filter.StatusClass)
