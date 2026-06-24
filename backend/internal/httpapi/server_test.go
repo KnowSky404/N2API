@@ -141,7 +141,7 @@ func newFakeAdminService() *fakeAdminService {
 			{ID: 7, Name: "codex laptop", Prefix: "n2api_abc", CreatedAt: time.Unix(1000, 0).UTC()},
 		},
 		logs: []admin.RequestLog{
-			{ID: 3, RequestID: "req_3", ClientKey: "codex laptop (n2api_abc)", Provider: "openai", Route: "/v1/models", Method: http.MethodGet, StatusCode: 200, LatencyMS: 12, CreatedAt: time.Unix(4000, 0).UTC()},
+			{ID: 3, RequestID: "req_3", ClientKey: "codex laptop (n2api_abc)", Provider: "openai", Route: "/v1/models", Method: http.MethodGet, StatusCode: 200, LatencyMS: 12, GatewayAttemptCount: 2, GatewayFallbackCount: 1, CreatedAt: time.Unix(4000, 0).UTC()},
 		},
 		modelSettings: admin.ModelSettings{
 			DefaultModel:  "gpt-4.1",
@@ -2997,6 +2997,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if len(body.Logs) != 1 || body.Logs[0].RequestID != "req_3" {
 		t.Fatalf("logs = %+v", body.Logs)
+	}
+	if body.Logs[0].GatewayAttemptCount != 2 || body.Logs[0].GatewayFallbackCount != 1 {
+		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", body.Logs[0].GatewayAttemptCount, body.Logs[0].GatewayFallbackCount)
 	}
 }
 

@@ -58,6 +58,24 @@ func TestListRequestLogsPrefersProviderAccountNameSnapshot(t *testing.T) {
 	}
 }
 
+func TestListRequestLogsSelectsGatewayFallbackDiagnostics(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("ReadFile admin.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"COALESCE(l.gateway_attempt_count, 0)",
+		"COALESCE(l.gateway_fallback_count, 0)",
+		"&log.GatewayAttemptCount",
+		"&log.GatewayFallbackCount",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("ListRequestLogs source missing %q", want)
+		}
+	}
+}
+
 func TestUsageSummaryProviderAccountGroupPrefersLoggedNameSnapshot(t *testing.T) {
 	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL("provider_account")
 	if !ok {

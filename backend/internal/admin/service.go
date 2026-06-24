@@ -81,6 +81,8 @@ type RequestLog struct {
 	UsageSource           string    `json:"usageSource"`
 	EstimatedCostMicrousd int64     `json:"estimatedCostMicrousd"`
 	PricingMatched        bool      `json:"pricingMatched"`
+	GatewayAttemptCount   int       `json:"gatewayAttemptCount"`
+	GatewayFallbackCount  int       `json:"gatewayFallbackCount"`
 	CreatedAt             time.Time `json:"createdAt"`
 }
 

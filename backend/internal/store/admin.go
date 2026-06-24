@@ -442,6 +442,8 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			l.usage_source,
 			l.estimated_cost_microusd,
 			COALESCE((l.pricing_snapshot->>'matched')::boolean, false),
+			COALESCE(l.gateway_attempt_count, 0),
+			COALESCE(l.gateway_fallback_count, 0),
 			l.created_at
 		FROM request_logs l
 		LEFT JOIN client_api_keys k ON k.id = l.client_key_id
@@ -480,6 +482,8 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 			&log.UsageSource,
 			&log.EstimatedCostMicrousd,
 			&log.PricingMatched,
+			&log.GatewayAttemptCount,
+			&log.GatewayFallbackCount,
 			&log.CreatedAt,
 		); err != nil {
 			return nil, err
