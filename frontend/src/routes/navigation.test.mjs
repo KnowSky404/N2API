@@ -62,7 +62,9 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /poolAccountRows\(pool\)/);
   assert.match(poolsPage, /poolHasAccount\(pool,\s*left\.id\)/);
   assert.match(poolsPage, /poolAccountPriority\(pool,\s*left\.id\)\s*-\s*poolAccountPriority\(pool,\s*right\.id\)/);
-  assert.match(poolsPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(poolsPage, /from '\$app\/state'/);
+  assert.match(poolsPage, /page\.url\.search/);
+  assert.match(poolsPage, /appliedRoutingPoolSearch/);
   assert.match(poolsPage, /routingPoolId = params\.get\('routingPoolId'\)/);
   assert.match(poolsPage, /selectedRoutingPoolId = routingPoolId/);
   assert.match(poolsPage, /visibleRoutingPools/);

@@ -1,4 +1,5 @@
 <script>
+  import { page } from '$app/state';
   import {
     apiKeys,
     createRoutingPool,
@@ -18,7 +19,7 @@
   } from '$lib/admin-state.svelte.js';
 
   let requested = $state(false);
-  let routingPoolURLFiltersInitialized = $state(false);
+  let appliedRoutingPoolSearch = $state('');
   let selectedRoutingPoolId = $state('all');
   const visibleRoutingPools = $derived(
     selectedRoutingPoolId === 'all'
@@ -26,9 +27,11 @@
       : routingPools.items.filter((pool) => String(pool.id) === selectedRoutingPoolId)
   );
 
-  function applyRoutingPoolURLFilters() {
-    const params = new URLSearchParams(window.location.search);
+  /** @param {string} search */
+  function applyRoutingPoolURLFilters(search) {
+    const params = new URLSearchParams(search);
     const routingPoolId = params.get('routingPoolId') ?? '';
+    selectedRoutingPoolId = 'all';
     if (/^[1-9]\d*$/.test(routingPoolId)) {
       selectedRoutingPoolId = routingPoolId;
     }
@@ -37,13 +40,13 @@
   $effect(() => {
     if (!session.authenticated) {
       requested = false;
-      routingPoolURLFiltersInitialized = false;
+      appliedRoutingPoolSearch = '';
       selectedRoutingPoolId = 'all';
       return;
     }
-    if (!routingPoolURLFiltersInitialized) {
-      routingPoolURLFiltersInitialized = true;
-      applyRoutingPoolURLFilters();
+    if (appliedRoutingPoolSearch !== page.url.search) {
+      appliedRoutingPoolSearch = page.url.search;
+      applyRoutingPoolURLFilters(page.url.search);
     }
     if (!requested) {
       requested = true;
