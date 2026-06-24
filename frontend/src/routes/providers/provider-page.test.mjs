@@ -30,6 +30,7 @@ const {
   shouldApplyAccountModelsResponse,
   shouldApplyAccountTestResultsResponse,
   toggleProviderAccountSelection,
+  updateAPIKeyRoutingPool,
   updateAPIKeyLimits,
   updateAPIKeyBudgets,
   clearProviderAccountSelection,
@@ -673,4 +674,25 @@ test('models page can preview sticky session routing', () => {
   assert.match(modelsSource, /account\.lastTestStatus/);
   assert.match(modelsSource, /account\.lastTestError/);
   assert.match(modelsSource, /Blocked/);
+});
+
+test('api key state can save routing pool binding', async () => {
+  session.authenticated = true;
+  apiKeys.error = '';
+  apiKeys.items = [{ id: 7, name: 'codex laptop', routingPoolId: null }];
+  let request = null;
+  globalThis.fetch = async (path, options) => {
+    request = { path, options };
+    return new Response(JSON.stringify({ key: { id: 7, name: 'codex laptop', routingPoolId: 3, routingPoolName: 'primary' } }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  await updateAPIKeyRoutingPool(7, '3');
+
+  assert.equal(request.path, '/api/admin/keys/7/routing-pool');
+  assert.equal(request.options.method, 'PUT');
+  assert.deepEqual(JSON.parse(request.options.body), { routingPoolId: 3 });
+  assert.equal(apiKeys.items[0].routingPoolId, 3);
 });

@@ -12,6 +12,7 @@
     getActiveKeys,
     loadGatewaySettings,
     loadModelRouting,
+    loadRoutingPools,
     loadUsageSummary,
     login,
     loginForm,
@@ -19,6 +20,7 @@
     modelRouting,
     modelSettings,
     revokeKey,
+    routingPools,
     saveModelSettings,
     session,
     setAPIKeyDisabled,
@@ -26,6 +28,7 @@
     updateAPIKeyLimits,
     updateAPIKeyName,
     updateAPIKeyModelPolicy,
+    updateAPIKeyRoutingPool,
     usage,
   } from '$lib/admin-state.svelte.js';
 
@@ -55,6 +58,7 @@
       modelRoutingRequested = true;
       void loadModelRouting();
       void loadGatewaySettings();
+      void loadRoutingPools();
       void loadUsageSummary('24h', 'client_key');
     }
   });
@@ -69,6 +73,8 @@
     return [
       key.name,
       key.prefix,
+      key.routingPoolName,
+      key.routingPoolId ? 'routing pool' : 'global pool',
       key.modelPolicy === 'selected' ? 'selected models' : 'all routable models',
       ...(key.allowedModels ?? []),
       key.revokedAt ? 'revoked' : key.disabledAt ? 'disabled' : 'active',
@@ -473,6 +479,26 @@ All routable models
               Save access
             </button>
           </form>
+          <div class="mt-4 border-t border-[#ededed] pt-4">
+            <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-routing-pool-${key.id}`}>
+              Routing pool
+              <select
+                id={`api-key-routing-pool-${key.id}`}
+                class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                value={key.routingPoolId ?? 0}
+                disabled={Boolean(key.revokedAt) || routingPools.loading}
+                onchange={(event) => updateAPIKeyRoutingPool(key.id, Number(event.currentTarget.value || 0))}
+              >
+                <option value={0}>Global provider account pool</option>
+                {#each routingPools.items as pool}
+                  <option value={pool.id}>{pool.name}</option>
+                {/each}
+              </select>
+            </label>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              {key.routingPoolName || 'Global pool'}
+            </p>
+          </div>
         </td>
         <td class="px-4 py-3">
           <form

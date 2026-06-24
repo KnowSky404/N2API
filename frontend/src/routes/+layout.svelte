@@ -16,6 +16,7 @@
     { href: '/', label: 'Dashboard' },
     { href: '/gateway', label: 'Gateway' },
     { href: '/providers', label: 'Providers' },
+    { href: '/routing-pools', label: 'Routing pools' },
     { href: '/api-keys', label: 'API Keys' },
     { href: '/request-logs', label: 'Request Logs' }
   ];

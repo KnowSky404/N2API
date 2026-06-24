@@ -8,6 +8,7 @@ const expectedFiles = [
   'src/routes/+page.svelte',
   'src/routes/gateway/+page.svelte',
   'src/routes/providers/+page.svelte',
+  'src/routes/routing-pools/+page.svelte',
   'src/routes/models/+page.svelte',
   'src/routes/api-keys/+page.svelte',
   'src/routes/request-logs/+page.svelte'
@@ -27,7 +28,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'API Keys', 'Request Logs', 'Sign out']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Sign out']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -40,6 +41,19 @@ test('primary navigation moves model policy ownership to API keys', () => {
   assert.doesNotMatch(layout, /label:\s*'Routing'/);
   assert.match(layout, /href:\s*'\/gateway'/);
   assert.match(layout, /href:\s*'\/api-keys'/);
+});
+
+test('routing pools page manages account pools', () => {
+  const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
+  const poolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
+
+  assert.match(layout, /href:\s*'\/routing-pools'/);
+  for (const label of ['Routing pools', 'Create pool', 'Pool accounts', 'Save membership', 'Enabled']) {
+    assert.match(poolsPage, new RegExp(label.replace(' ', '\\s+')), `routing pools page should include ${label}`);
+  }
+  assert.match(adminState, /loadRoutingPools/);
+  assert.match(adminState, /createRoutingPool/);
+  assert.match(adminState, /replaceRoutingPoolAccounts/);
 });
 
 test('gateway page manages runtime limits and usage visibility', () => {
