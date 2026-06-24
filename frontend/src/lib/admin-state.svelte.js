@@ -1579,8 +1579,11 @@ export async function bulkReplaceSelectedProviderAccountModels() {
   }
 }
 
-/** @param {string | number | null | undefined} poolId */
-export async function addSelectedProviderAccountsToRoutingPool(poolId) {
+/**
+ * @param {string | number | null | undefined} poolId
+ * @param {string | number | null | undefined} priorityValue
+ */
+export async function addSelectedProviderAccountsToRoutingPool(poolId, priorityValue = 0) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
   const targetPoolId = Number(poolId ?? 0);
@@ -1600,12 +1603,13 @@ export async function addSelectedProviderAccountsToRoutingPool(poolId) {
     providerAccounts.error = 'Routing pool not found';
     return;
   }
+  const priority = Math.max(0, Number(priorityValue || 0));
 
   const accounts = [...(pool.accounts ?? [])];
   const existing = new Set(accounts.map((account) => Number(account.accountId)));
   for (const accountId of accountIds) {
     if (!existing.has(accountId)) {
-      accounts.push({ accountId, priority: 0 });
+      accounts.push({ accountId, priority });
       existing.add(accountId);
     }
   }

@@ -274,7 +274,7 @@ test('provider account state can add selected accounts to a routing pool', async
               name: 'primary',
               accounts: [
                 { accountId: 7, priority: 5 },
-                { accountId: 8, priority: 0 }
+                { accountId: 8, priority: 4 }
               ],
               accountIds: [7, 8]
             }
@@ -290,7 +290,7 @@ test('provider account state can add selected accounts to a routing pool', async
           name: 'primary',
           accounts: [
             { accountId: 7, priority: 5 },
-            { accountId: 8, priority: 0 }
+            { accountId: 8, priority: 4 }
           ],
           accountIds: [7, 8]
         }
@@ -299,7 +299,7 @@ test('provider account state can add selected accounts to a routing pool', async
     );
   };
 
-  await addSelectedProviderAccountsToRoutingPool('3');
+  await addSelectedProviderAccountsToRoutingPool('3', '4');
 
   const membershipRequest = requests.find((request) => request.path === '/api/admin/routing-pools/3/accounts');
   assert.ok(membershipRequest);
@@ -307,7 +307,7 @@ test('provider account state can add selected accounts to a routing pool', async
   assert.deepEqual(JSON.parse(membershipRequest.options.body), {
     accounts: [
       { accountId: 7, priority: 5 },
-      { accountId: 8, priority: 0 }
+      { accountId: 8, priority: 4 }
     ]
   });
   assert.deepEqual(Object.keys(selectedProviderAccountIds), []);
@@ -385,9 +385,11 @@ test('provider account page exposes bulk model replacement controls', () => {
 
 test('provider account page exposes bulk routing pool assignment controls', () => {
   assert.match(source, /bulkRoutingPoolId/);
+  assert.match(source, /bulkRoutingPoolPriority/);
   assert.match(source, /addSelectedProviderAccountsToRoutingPool/);
   assert.match(source, /removeSelectedProviderAccountsFromRoutingPool/);
   assert.match(source, /Bulk routing pool/);
+  assert.match(source, /Pool priority/);
   assert.match(source, /Apply pool/);
   assert.match(source, /Remove pool/);
 });

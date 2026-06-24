@@ -65,6 +65,7 @@
   let accountSearch = $state('');
   let accountSort = $state({ key: 'priority', direction: 'asc' });
   let bulkRoutingPoolId = $state('0');
+  let bulkRoutingPoolPriority = $state('0');
   let providerUsageRequested = $state(false);
   let routingPoolsRequested = $state(false);
 
@@ -776,11 +777,22 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           {/each}
         </select>
       </label>
+      <label class="grid w-28 gap-1 text-xs font-medium text-[#3c3c3c]">
+        Pool priority
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+          type="number"
+          min="0"
+          step="1"
+          bind:value={bulkRoutingPoolPriority}
+          disabled={providerAccounts.saving}
+        />
+      </label>
       <button
         class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={selectedProviderAccountCount === 0 || providerAccounts.saving || bulkRoutingPoolId === '0'}
-        onclick={() => addSelectedProviderAccountsToRoutingPool(bulkRoutingPoolId)}
+        onclick={() => addSelectedProviderAccountsToRoutingPool(bulkRoutingPoolId, bulkRoutingPoolPriority)}
       >
         Apply pool
       </button>
