@@ -699,17 +699,19 @@ export function gatewayLimitLabel(value) {
 /**
  * @param {Partial<APIKey>} key
  * @param {Array<Partial<ModelRoutingModel> & { model: string }>} routingModels
+ * @param {Array<Partial<RoutingPool> & { id: number }>} [pools]
  */
-export function apiKeyModelWarnings(key, routingModels) {
+export function apiKeyModelWarnings(key, routingModels, pools = []) {
   if (key.revokedAt || key.modelPolicy !== 'selected') return [];
   const routingPoolID = Number(key.routingPoolId ?? 0);
+  const routingPoolIDs = routingPoolChainIDs(routingPoolID, pools);
   const routable = new Set(
     routingModels
       .filter((model) => {
         if (routingPoolID <= 0) return Number(model.enabledCount ?? 0) > 0;
         return (model.accounts ?? []).some((account) => {
           if (!account.schedulable) return false;
-          return (account.routingPoolIds ?? []).some((poolID) => Number(poolID) === routingPoolID);
+          return (account.routingPoolIds ?? []).some((poolID) => routingPoolIDs.has(Number(poolID)));
         });
       })
       .map((model) => String(model.model ?? '').trim())
@@ -718,6 +720,23 @@ export function apiKeyModelWarnings(key, routingModels) {
   return (key.allowedModels ?? [])
     .map((model) => String(model ?? '').trim())
     .filter((model, index, models) => model && models.indexOf(model) === index && !routable.has(model));
+}
+
+/**
+ * @param {number} routingPoolID
+ * @param {Array<Partial<RoutingPool> & { id: number }>} pools
+ */
+function routingPoolChainIDs(routingPoolID, pools) {
+  const ids = new Set();
+  if (routingPoolID <= 0) return ids;
+  const poolByID = new Map(pools.map((pool) => [Number(pool.id), pool]));
+  let currentID = routingPoolID;
+  while (currentID > 0 && !ids.has(currentID)) {
+    ids.add(currentID);
+    const pool = poolByID.get(currentID);
+    currentID = Number(pool?.fallbackPoolId ?? 0);
+  }
+  return ids;
 }
 
 /**

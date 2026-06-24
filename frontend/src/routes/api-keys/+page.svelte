@@ -65,7 +65,7 @@
 
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
   function unroutableModelsForKey(key) {
-    return apiKeyModelWarnings(key, modelRouting.models);
+    return apiKeyModelWarnings(key, modelRouting.models, routingPools.items);
   }
 
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */

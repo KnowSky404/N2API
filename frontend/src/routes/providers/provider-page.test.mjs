@@ -294,6 +294,29 @@ test('apiKeyModelWarnings respects routing pool scoped schedulability', () => {
   assert.deepEqual(warnings, ['gpt-5']);
 });
 
+test('apiKeyModelWarnings treats fallback pool accounts as routable for bound keys', () => {
+  const warnings = apiKeyModelWarnings(
+    {
+      modelPolicy: 'selected',
+      routingPoolId: 3,
+      allowedModels: ['gpt-5']
+    },
+    [
+      {
+        model: 'gpt-5',
+        enabledCount: 1,
+        accounts: [{ id: 8, schedulable: true, routingPoolIds: [4] }]
+      }
+    ],
+    [
+      { id: 3, name: 'primary', fallbackPoolId: 4 },
+      { id: 4, name: 'secondary', fallbackPoolId: null }
+    ]
+  );
+
+  assert.deepEqual(warnings, []);
+});
+
 test('apiKeyModelWarnings ignores all-model policy and revoked keys', () => {
   const routing = [{ model: 'gpt-5', enabledCount: 0 }];
 
