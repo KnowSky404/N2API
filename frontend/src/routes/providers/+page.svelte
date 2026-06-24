@@ -68,6 +68,7 @@
   let bulkRoutingPoolPriority = $state('0');
   let providerUsageRequested = $state(false);
   let routingPoolsRequested = $state(false);
+  let providerURLFiltersInitialized = $state(false);
 
   const providerStateLabel = $derived(getProviderStateLabel());
   const schedulableProviderAccounts = $derived(getSchedulableProviderAccounts());
@@ -79,16 +80,33 @@
       providerAccounts.items.filter((account) => {
         const query = accountSearch.trim().toLowerCase();
         if (!query) return true;
+        if (/^id:[1-9]\d*$/.test(query)) {
+          const idQuery = query.slice(3);
+          return String(account.id) === idQuery;
+        }
         return accountSearchText(account).includes(query);
       })
     )
   );
 
+  function applyProviderAccountURLFilters() {
+    const params = new URLSearchParams(window.location.search);
+    const providerAccountId = params.get('providerAccountId') ?? '';
+    if (/^[1-9]\d*$/.test(providerAccountId)) {
+      accountSearch = `id:${providerAccountId}`;
+    }
+  }
+
   $effect(() => {
     if (!session.authenticated) {
       providerUsageRequested = false;
       routingPoolsRequested = false;
+      providerURLFiltersInitialized = false;
       return;
+    }
+    if (!providerURLFiltersInitialized) {
+      providerURLFiltersInitialized = true;
+      applyProviderAccountURLFilters();
     }
     if (!providerUsageRequested) {
       providerUsageRequested = true;

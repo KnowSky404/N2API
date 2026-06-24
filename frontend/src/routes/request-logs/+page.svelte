@@ -570,7 +570,14 @@
         <td class="px-4 py-3">
           {#if log.providerAccountId}
             <div class="max-w-[220px]">
-              <p class="truncate font-medium text-[#0d0d0d]">{log.providerAccountName || `Account ${log.providerAccountId}`}</p>
+              <a
+                class="block truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]"
+                href={`/providers?providerAccountId=${log.providerAccountId}`}
+                title="View provider account"
+                aria-label="View provider account"
+              >
+                {log.providerAccountName || `Account ${log.providerAccountId}`}
+              </a>
               <p class="mt-1 text-xs text-[#6e6e6e]">
                 {log.provider || 'Unknown'} · {accountTypeLabel(log.providerAccountType)} · ID {log.providerAccountId}
               </p>

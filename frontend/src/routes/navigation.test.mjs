@@ -252,6 +252,8 @@ test('request logs page filters by provider account', () => {
   assert.match(requestLogsPage, /providerAccounts/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.providerAccountId\}/);
   assert.match(requestLogsPage, /All provider accounts/);
+  assert.match(requestLogsPage, /href=\{`\/providers\?providerAccountId=\$\{log\.providerAccountId\}`\}/);
+  assert.match(requestLogsPage, /View provider account/);
   assert.match(requestLogsPage, /routingPools/);
   assert.match(requestLogsPage, /loadRoutingPools\(\)/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolId\}/);
@@ -265,6 +267,13 @@ test('request logs page filters by provider account', () => {
   assert.match(adminState, /requestLogs\.providerAccountId/);
   assert.match(adminState, /requestLogs\.routingPoolId/);
   assert.match(requestLogsPage, /loadProviderAccounts\(\)/);
+});
+
+test('providers page initializes account search from provider account URL param', () => {
+  assert.match(providersPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(providersPage, /providerAccountId = params\.get\('providerAccountId'\)/);
+  assert.match(providersPage, /accountSearch = `id:\$\{providerAccountId\}`/);
+  assert.match(providersPage, /String\(account\.id\) === idQuery/);
 });
 
 test('request logs page initializes filters from URL params', () => {
