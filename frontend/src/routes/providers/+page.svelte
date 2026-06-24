@@ -189,7 +189,9 @@
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountHoverDetail(account) {
-    const pools = accountRoutingPools(account.id).map((pool) => pool.name);
+    const pools = accountRoutingPools(account.id).map(
+      (pool) => `${pool.name} p${accountRoutingPoolPriority(pool, account.id)}`
+    );
     return [
       accountLabel(account),
       accountSecondaryLabel(account),
@@ -208,6 +210,14 @@
         return (pool.accounts ?? []).some((account) => account.accountId === accountId);
       })
       .filter((pool) => pool.name);
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
+   * @param {number} accountId
+   */
+  function accountRoutingPoolPriority(pool, accountId) {
+    return (pool.accounts ?? []).find((account) => account.accountId === accountId)?.priority ?? 0;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -938,11 +948,12 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
               <span class="mr-1 text-xs font-medium text-[#6e6e6e]">Routing pools</span>
               {#each accountPools as pool}
                 <a
-                  class="inline-flex max-w-full truncate rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#3c3c3c] hover:bg-[#e8f5f0] hover:text-[#0a7a5e]"
+                  class="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#3c3c3c] hover:bg-[#e8f5f0] hover:text-[#0a7a5e]"
                   href={`/routing-pools#routing-pool-${pool.id}`}
-                  title={`Open routing pool ${pool.name}`}
+                  title={`Open routing pool ${pool.name}. Pool priority ${accountRoutingPoolPriority(pool, account.id)}`}
                 >
-                  {pool.name}
+                  <span class="truncate">{pool.name}</span>
+                  <span class="text-[#6e6e6e]">p{accountRoutingPoolPriority(pool, account.id)}</span>
                 </a>
               {/each}
             </div>
