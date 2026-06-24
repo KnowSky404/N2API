@@ -20,7 +20,7 @@ type AdminRepository struct {
 const modelSettingsKey = "model_settings"
 const usagePricingKey = "usage_pricing"
 const gatewaySettingsKey = "gateway_settings"
-const apiKeyColumns = "id, name, prefix, created_at, last_used_at, revoked_at, disabled_at, model_policy, requests_per_minute, tokens_per_minute"
+const apiKeyColumns = "id, name, prefix, created_at, last_used_at, revoked_at, disabled_at, model_policy, requests_per_minute, tokens_per_minute, request_budget_24h, token_budget_24h, request_budget_30d, token_budget_30d"
 
 func NewAdminRepository(pool *pgxpool.Pool) *AdminRepository {
 	return &AdminRepository{pool: pool}
@@ -38,6 +38,10 @@ func scanAPIKey(key *admin.APIKey) []any {
 		&key.ModelPolicy,
 		&key.RequestsPerMinute,
 		&key.TokensPerMinute,
+		&key.RequestBudget24h,
+		&key.TokenBudget24h,
+		&key.RequestBudget30d,
+		&key.TokenBudget30d,
 	}
 }
 
@@ -336,6 +340,34 @@ func (r *AdminRepository) UpdateAPIKeyLimits(ctx context.Context, id int64, requ
 			AND revoked_at IS NULL
 		RETURNING `+apiKeyColumns+`
 	`, id, requestsPerMinute, tokensPerMinute).Scan(scanAPIKey(&updated)...)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKey{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if updated.ModelPolicy == admin.APIKeyModelPolicySelected {
+		models, err := r.ListAPIKeyModels(ctx, updated.ID)
+		if err != nil {
+			return admin.APIKey{}, err
+		}
+		updated.AllowedModels = models
+	}
+	return updated, nil
+}
+
+func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error) {
+	var updated admin.APIKey
+	err := r.pool.QueryRow(ctx, `
+		UPDATE client_api_keys
+		SET request_budget_24h = $2,
+			token_budget_24h = $3,
+			request_budget_30d = $4,
+			token_budget_30d = $5
+		WHERE id = $1
+			AND revoked_at IS NULL
+		RETURNING `+apiKeyColumns+`
+	`, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d).Scan(scanAPIKey(&updated)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}

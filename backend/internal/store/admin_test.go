@@ -243,6 +243,21 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 		t.Fatalf("FindAPIKeyByHash after enable returned error: %v", err)
 	}
 
+	budgeted, err := repo.UpdateAPIKeyBudgets(ctx, created.ID, 12, 1200, 300, 30000)
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
+	}
+	if budgeted.RequestBudget24h != 12 || budgeted.TokenBudget24h != 1200 || budgeted.RequestBudget30d != 300 || budgeted.TokenBudget30d != 30000 {
+		t.Fatalf("budgeted key = %+v", budgeted)
+	}
+	keys, err = repo.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListAPIKeys after budgets returned error: %v", err)
+	}
+	if len(keys) != 1 || keys[0].RequestBudget24h != 12 || keys[0].TokenBudget30d != 30000 {
+		t.Fatalf("listed budget fields = %+v", keys)
+	}
+
 	cleared, err := repo.UpdateAPIKeyModelPolicy(ctx, created.ID, admin.APIKeyModelPolicyAll, nil)
 	if err != nil {
 		t.Fatalf("UpdateAPIKeyModelPolicy all returned error: %v", err)
@@ -273,6 +288,9 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	}
 	if _, err := repo.SetAPIKeyDisabled(ctx, created.ID, true); !errors.Is(err, admin.ErrNotFound) {
 		t.Fatalf("SetAPIKeyDisabled revoked error = %v, want ErrNotFound", err)
+	}
+	if _, err := repo.UpdateAPIKeyBudgets(ctx, created.ID, 1, 1, 1, 1); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("UpdateAPIKeyBudgets revoked error = %v, want ErrNotFound", err)
 	}
 }
 

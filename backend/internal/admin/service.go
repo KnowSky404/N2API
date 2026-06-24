@@ -62,6 +62,10 @@ type APIKey struct {
 	AllowedModels     []string   `json:"allowedModels"`
 	RequestsPerMinute int        `json:"requestsPerMinute"`
 	TokensPerMinute   int        `json:"tokensPerMinute"`
+	RequestBudget24h  int        `json:"requestBudget24h"`
+	TokenBudget24h    int        `json:"tokenBudget24h"`
+	RequestBudget30d  int        `json:"requestBudget30d"`
+	TokenBudget30d    int        `json:"tokenBudget30d"`
 }
 
 type RequestLog struct {
@@ -221,6 +225,7 @@ type Repository interface {
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
+	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error)
@@ -402,6 +407,13 @@ func (s *Service) UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerM
 		return APIKey{}, ErrInvalidInput
 	}
 	return s.repo.UpdateAPIKeyLimits(ctx, id, requestsPerMinute, tokensPerMinute)
+}
+
+func (s *Service) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error) {
+	if requestBudget24h < 0 || tokenBudget24h < 0 || requestBudget30d < 0 || tokenBudget30d < 0 {
+		return APIKey{}, ErrInvalidInput
+	}
+	return s.repo.UpdateAPIKeyBudgets(ctx, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d)
 }
 
 func (s *Service) APIKeyAllowsModel(key APIKey, model string) bool {

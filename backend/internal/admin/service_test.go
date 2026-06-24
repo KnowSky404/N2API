@@ -180,6 +180,36 @@ func TestSetAPIKeyDisabledBlocksAndRestoresAuthentication(t *testing.T) {
 	}
 }
 
+func TestUpdateAPIKeyBudgetsValidatesNonNegativeValues(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{})
+	result, err := service.CreateAPIKey(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	updated, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 10, 1000, 300, 30000)
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
+	}
+	if updated.RequestBudget24h != 10 || updated.TokenBudget24h != 1000 || updated.RequestBudget30d != 300 || updated.TokenBudget30d != 30000 {
+		t.Fatalf("budgets = %+v, want configured values", updated)
+	}
+
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, -1, 0, 0, 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative requestBudget24h error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, -1, 0, 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative tokenBudget24h error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, -1, 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative requestBudget30d error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, 0, -1); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative tokenBudget30d error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestAuthenticateAPIKeyMapsTouchNotFoundToUnauthorized(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1012,6 +1042,19 @@ func (r *memoryRepo) UpdateAPIKeyLimits(_ context.Context, id int64, requestsPer
 	}
 	key.RequestsPerMinute = requestsPerMinute
 	key.TokensPerMinute = tokensPerMinute
+	r.keys[id] = key
+	return key.APIKey, nil
+}
+
+func (r *memoryRepo) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error) {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt != nil {
+		return APIKey{}, ErrNotFound
+	}
+	key.RequestBudget24h = requestBudget24h
+	key.TokenBudget24h = tokenBudget24h
+	key.RequestBudget30d = requestBudget30d
+	key.TokenBudget30d = tokenBudget30d
 	r.keys[id] = key
 	return key.APIKey, nil
 }
