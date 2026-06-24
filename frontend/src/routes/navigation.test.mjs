@@ -191,6 +191,15 @@ test('request logs page filters by search and status class', () => {
   assert.match(adminState, /requestLogs\.statusClass/);
 });
 
+test('request logs page filters by provider account', () => {
+  assert.match(requestLogsPage, /providerAccounts/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.providerAccountId\}/);
+  assert.match(requestLogsPage, /All provider accounts/);
+  assert.match(adminState, /params\.set\('providerAccountId'/);
+  assert.match(adminState, /requestLogs\.providerAccountId/);
+  assert.match(requestLogsPage, /loadProviderAccounts\(\)/);
+});
+
 test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /N2API Routing Diagnostics/);
   assert.match(modelsPage, /Routing diagnostics/);

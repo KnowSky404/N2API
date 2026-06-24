@@ -309,12 +309,13 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
   query: '',
   statusClass: 'all',
+  providerAccountId: 'all',
   items: []
 });
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
@@ -789,6 +790,7 @@ function clearRequestLogs() {
     error: '',
     query: '',
     statusClass: 'all',
+    providerAccountId: 'all',
     items: []
   });
 }
@@ -2188,6 +2190,9 @@ export async function loadRequestLogs() {
     }
     if (requestLogs.statusClass && requestLogs.statusClass !== 'all') {
       params.set('statusClass', requestLogs.statusClass);
+    }
+    if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') {
+      params.set('providerAccountId', requestLogs.providerAccountId);
     }
     const payload = await requestJSON(`/api/admin/request-logs?${params.toString()}`);
     if (!isCurrentAuthenticated(version)) return;

@@ -92,9 +92,10 @@ type RequestLog struct {
 }
 
 type RequestLogFilter struct {
-	Limit       int
-	Query       string
-	StatusClass string
+	Limit             int
+	Query             string
+	StatusClass       string
+	ProviderAccountID int64
 }
 
 type UsageSummary struct {
@@ -446,6 +447,9 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	switch filter.StatusClass {
 	case RequestLogStatusAll, RequestLogStatusSuccess, RequestLogStatusClientError, RequestLogStatusServerError:
 	default:
+		return nil, ErrInvalidInput
+	}
+	if filter.ProviderAccountID < 0 {
 		return nil, ErrInvalidInput
 	}
 	return s.repo.ListRequestLogs(ctx, filter)

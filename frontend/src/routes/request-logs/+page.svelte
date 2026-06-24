@@ -1,19 +1,35 @@
 <script>
   import {
+    accountLabel,
     formatDate,
     formatCostMicrousd,
     formatTokens,
+    loadProviderAccounts,
     loadUsagePricing,
     loadUsageSummary,
     loadRequestLogs,
     login,
     loginForm,
+    providerAccounts,
     requestLogs,
     saveUsagePricing,
     session,
     usage,
     usagePricing,
   } from '$lib/admin-state.svelte.js';
+
+  let providerAccountsRequested = $state(false);
+
+  $effect(() => {
+    if (!session.authenticated) {
+      providerAccountsRequested = false;
+      return;
+    }
+    if (!providerAccountsRequested && providerAccounts.items.length === 0) {
+      providerAccountsRequested = true;
+      void loadProviderAccounts();
+    }
+  });
 
   /** @param {string | null | undefined} value */
   function accountTypeLabel(value) {
@@ -335,6 +351,18 @@
         >
           {#each requestLogStatusClasses as statusClass}
             <option value={statusClass.value}>{statusClass.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Provider account
+        <select
+          class="mt-2 max-w-[260px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.providerAccountId}
+        >
+          <option value="all">All provider accounts</option>
+          {#each providerAccounts.items as account}
+            <option value={String(account.id)}>{accountLabel(account)}</option>
           {/each}
         </select>
       </label>

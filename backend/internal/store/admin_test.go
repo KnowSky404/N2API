@@ -78,15 +78,17 @@ func TestListRequestLogsSelectsGatewayFallbackDiagnostics(t *testing.T) {
 
 func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 	whereSQL, args := requestLogFilterSQL(admin.RequestLogFilter{
-		Query:       "codex",
-		StatusClass: admin.RequestLogStatusServerError,
+		Query:             "codex",
+		StatusClass:       admin.RequestLogStatusServerError,
+		ProviderAccountID: 7,
 	})
-	if len(args) != 1 || args[0] != "codex" {
-		t.Fatalf("args = %+v, want single codex arg", args)
+	if len(args) != 2 || args[0] != int64(7) || args[1] != "codex" {
+		t.Fatalf("args = %+v, want provider account 7 and codex args", args)
 	}
 	for _, want := range []string{
 		"ILIKE '%' || $",
 		"l.status_code >= 500",
+		"l.provider_account_id = $",
 		"l.request_id",
 		"l.error",
 		"l.status_code::text",
