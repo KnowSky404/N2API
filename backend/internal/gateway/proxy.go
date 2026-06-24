@@ -62,6 +62,10 @@ type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
 
+type APIKeyConcurrencySnapshotProvider interface {
+	APIKeyConcurrencySnapshot() map[int64]int
+}
+
 type ExposedModel struct {
 	ID      string
 	OwnedBy string
@@ -428,6 +432,13 @@ func (p *Proxy) AccountConcurrencySnapshot() map[int64]int {
 	return p.accountLimiter.Snapshot()
 }
 
+func (p *Proxy) APIKeyConcurrencySnapshot() map[int64]int {
+	if p.keyLimiter == nil {
+		return map[int64]int{}
+	}
+	return p.keyLimiter.Snapshot()
+}
+
 func (p *Proxy) tryAcquireAPIKeySlot(keyID int64, limit int) (func(), bool) {
 	if p.keyLimiter == nil || keyID <= 0 {
 		return func() {}, true
@@ -608,6 +619,21 @@ func (l *apiKeyConcurrencyLimiter) Acquire(keyID int64, limit int) (func(), bool
 			delete(l.inFlight, keyID)
 		}
 	}, true
+}
+
+func (l *apiKeyConcurrencyLimiter) Snapshot() map[int64]int {
+	if l == nil {
+		return map[int64]int{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	snapshot := make(map[int64]int, len(l.inFlight))
+	for keyID, count := range l.inFlight {
+		if count > 0 {
+			snapshot[keyID] = count
+		}
+	}
+	return snapshot
 }
 
 type apiKeyRateLimiter struct {

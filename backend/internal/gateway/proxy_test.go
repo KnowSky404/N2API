@@ -1010,6 +1010,29 @@ func TestProxyAllowsDifferentAPIKeysWhenOneKeyConcurrencyLimitIsFull(t *testing.
 	}
 }
 
+func TestAPIKeyConcurrencyLimiterSnapshotIsImmutable(t *testing.T) {
+	limiter := newAPIKeyConcurrencyLimiter()
+	releaseOne, ok := limiter.Acquire(42, 2)
+	if !ok {
+		t.Fatal("first acquire returned false")
+	}
+	defer releaseOne()
+	releaseTwo, ok := limiter.Acquire(42, 2)
+	if !ok {
+		t.Fatal("second acquire returned false")
+	}
+	defer releaseTwo()
+
+	snapshot := limiter.Snapshot()
+	if snapshot[42] != 2 {
+		t.Fatalf("snapshot[42] = %d, want 2", snapshot[42])
+	}
+	snapshot[42] = 99
+	if got := limiter.Snapshot()[42]; got != 2 {
+		t.Fatalf("mutated snapshot changed limiter count to %d, want 2", got)
+	}
+}
+
 func TestProxyRejectsWhenAPIKeyRequestRateLimitIsExceeded(t *testing.T) {
 	var transportCalls int32
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
