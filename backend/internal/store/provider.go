@@ -30,6 +30,16 @@ const providerAccountColumns = `
 	c.base_url, c.metadata
 `
 
+const routingPoolProviderAccountColumns = `
+	a.id, a.provider, a.account_type, a.subject, a.name, a.display_name, a.enabled, rpa.priority,
+	a.load_factor, a.max_concurrent_requests, a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
+	a.user_agent_hash, a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until,
+	a.last_test_at, a.last_test_status, a.last_test_error, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
+	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
+	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
+	c.base_url, c.metadata
+`
+
 const providerAccountModelColumns = `
 	id, account_id, provider, model, enabled, source, last_seen_at, last_error, metadata, created_at, updated_at
 `
@@ -379,7 +389,7 @@ func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, pro
 	model = strings.TrimSpace(model)
 	excluded := normalizedExcludedAccountIDs(excludedAccountIDs)
 	rows, err := r.pool.Query(ctx, `
-		SELECT `+providerAccountColumns+`
+		SELECT `+routingPoolProviderAccountColumns+`
 		FROM routing_pool_accounts rpa
 		JOIN provider_accounts a ON a.id = rpa.account_id
 		JOIN provider_account_credentials c ON c.account_id = a.id
@@ -410,6 +420,41 @@ func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, pro
 			a.last_used_at ASC NULLS FIRST,
 			a.id ASC
 	`, providerName, poolID, model, now, excluded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var accounts []provider.Account
+	for rows.Next() {
+		account, err := scanProviderAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, account)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return accounts, nil
+}
+
+func (r *ProviderRepository) ListRoutingPoolAccounts(ctx context.Context, providerName string, poolID int64) ([]provider.Account, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+routingPoolProviderAccountColumns+`
+		FROM routing_pool_accounts rpa
+		JOIN provider_accounts a ON a.id = rpa.account_id
+		JOIN provider_account_credentials c ON c.account_id = a.id
+		WHERE a.provider = $1
+			AND rpa.pool_id = $2
+		ORDER BY
+			rpa.priority ASC,
+			a.priority ASC,
+			a.load_factor DESC,
+			(a.last_error_at IS NOT NULL) ASC,
+			a.last_used_at ASC NULLS FIRST,
+			a.id ASC
+	`, providerName, poolID)
 	if err != nil {
 		return nil, err
 	}

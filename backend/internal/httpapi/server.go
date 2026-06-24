@@ -69,6 +69,7 @@ type ProviderService interface {
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
+	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccounts(ctx context.Context) ([]provider.Account, error)
@@ -1052,6 +1053,18 @@ func parsePositivePathID(r *http.Request, name string) (int64, error) {
 	return id, nil
 }
 
+func parseOptionalPositiveInt64(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id < 0 {
+		return 0, errors.New("invalid id")
+	}
+	return id, nil
+}
+
 func writeProviderAccountError(w http.ResponseWriter, err error) {
 	if errors.Is(err, provider.ErrInvalidInput) {
 		writeError(w, http.StatusBadRequest, "invalid_input")
@@ -1175,7 +1188,17 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, admins Ad
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	preview, err := providers.PreviewAccountSelection(r.Context(), model, r.URL.Query().Get("sessionId"), excludedIDs...)
+	routingPoolID, err := parseOptionalPositiveInt64(r.URL.Query().Get("routingPoolId"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	var preview provider.SelectionPreview
+	if routingPoolID > 0 {
+		preview, err = providers.PreviewAccountSelectionInRoutingPool(r.Context(), routingPoolID, model, r.URL.Query().Get("sessionId"), excludedIDs...)
+	} else {
+		preview, err = providers.PreviewAccountSelection(r.Context(), model, r.URL.Query().Get("sessionId"), excludedIDs...)
+	}
 	if err != nil {
 		if errors.Is(err, provider.ErrInvalidInput) {
 			writeError(w, http.StatusBadRequest, "invalid_input")

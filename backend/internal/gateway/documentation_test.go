@@ -428,6 +428,7 @@ func TestGatewayDocumentationMentionsRoutingPreviewConcurrency(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"Routing preview",
+			"Routing pool",
 			"active concurrency",
 			"Concurrency full",
 		} {

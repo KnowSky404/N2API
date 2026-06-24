@@ -2237,6 +2237,74 @@ func TestPreviewAccountSelectionReturnsBlockedCandidatesWhenNoneSchedulable(t *t
 	}
 }
 
+func TestPreviewAccountSelectionInRoutingPoolScopesCandidatesAndStickyBinding(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "global-token"),
+		testAccount(t, 2, true, 10, "pool-token"),
+		testAccount(t, 3, false, 10, "pool-disabled-token"),
+	}
+	repo.routingPoolAccounts[7] = []RoutingPoolAccount{
+		{AccountID: 2, Priority: 20},
+		{AccountID: 3, Priority: 30},
+	}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	createdAt := time.Now().Add(-time.Hour)
+	repo.sessionBindings[routingPoolSessionBindingKey("openai", 7, "gpt-5", "workspace-123")] = SessionBinding{
+		ID:         1,
+		Provider:   "openai",
+		Model:      "gpt-5",
+		SessionID:  "workspace-123",
+		AccountID:  2,
+		CreatedAt:  createdAt,
+		UpdatedAt:  createdAt,
+		LastUsedAt: createdAt,
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	preview, err := service.PreviewAccountSelectionInRoutingPool(context.Background(), 7, "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("PreviewAccountSelectionInRoutingPool returned error: %v", err)
+	}
+
+	if preview.Model != "gpt-5" || preview.SessionID != "workspace-123" || preview.SelectedAccountID != 2 || preview.StickyBoundAccountID != 2 {
+		t.Fatalf("preview metadata = %+v, want pool-scoped sticky account 2", preview)
+	}
+	if len(preview.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want pool account and blocked pool member only", preview.Candidates)
+	}
+	want := map[int64]struct {
+		schedulable bool
+		selected    bool
+		priority    int
+		reason      string
+	}{
+		2: {schedulable: true, selected: true, priority: 20},
+		3: {schedulable: false, priority: 30, reason: "account disabled"},
+	}
+	for _, candidate := range preview.Candidates {
+		expected, ok := want[candidate.ID]
+		if !ok {
+			t.Fatalf("unexpected candidate %+v", candidate)
+		}
+		if candidate.Schedulable != expected.schedulable || candidate.Selected != expected.selected || candidate.Priority != expected.priority || candidate.UnschedulableReason != expected.reason {
+			t.Fatalf("candidate %d = schedulable:%v selected:%v priority:%d reason:%q, want schedulable:%v selected:%v priority:%d reason:%q", candidate.ID, candidate.Schedulable, candidate.Selected, candidate.Priority, candidate.UnschedulableReason, expected.schedulable, expected.selected, expected.priority, expected.reason)
+		}
+		delete(want, candidate.ID)
+	}
+	if len(want) > 0 {
+		t.Fatalf("missing candidates: %+v", want)
+	}
+	if _, ok := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]; ok {
+		t.Fatal("pool preview used global sticky binding scope")
+	}
+}
+
 func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -3058,6 +3126,33 @@ func (r *memoryRepo) ListAccountsForRoutingPool(ctx context.Context, providerNam
 		return eligible[i].ID < eligible[j].ID
 	})
 	return eligible, nil
+}
+
+func (r *memoryRepo) ListRoutingPoolAccounts(ctx context.Context, providerName string, poolID int64) ([]Account, error) {
+	poolAccountPriority := map[int64]int{}
+	for _, account := range r.routingPoolAccounts[poolID] {
+		poolAccountPriority[account.AccountID] = account.Priority
+	}
+	accounts, err := r.ListAccounts(ctx, providerName)
+	if err != nil {
+		return nil, err
+	}
+	members := []Account{}
+	for _, account := range accounts {
+		priority, ok := poolAccountPriority[account.ID]
+		if !ok {
+			continue
+		}
+		account.Priority = priority
+		members = append(members, account)
+	}
+	sort.SliceStable(members, func(i, j int) bool {
+		if members[i].Priority != members[j].Priority {
+			return members[i].Priority < members[j].Priority
+		}
+		return members[i].ID < members[j].ID
+	})
+	return members, nil
 }
 
 func (r *memoryRepo) FindSessionBinding(ctx context.Context, providerName string, model string, sessionID string) (SessionBinding, error) {

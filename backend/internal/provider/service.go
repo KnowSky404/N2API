@@ -392,6 +392,7 @@ type Repository interface {
 	FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error)
 	RoutingPoolHasAccounts(ctx context.Context, poolID int64) (bool, error)
 	ListAccountsForRoutingPool(ctx context.Context, provider string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
+	ListRoutingPoolAccounts(ctx context.Context, provider string, poolID int64) ([]Account, error)
 	FindSessionBinding(ctx context.Context, provider string, model string, sessionID string) (SessionBinding, error)
 	UpsertSessionBinding(ctx context.Context, provider string, model string, sessionID string, accountID int64) error
 	FindSessionBindingInRoutingPool(ctx context.Context, provider string, routingPoolID int64, model string, sessionID string) (SessionBinding, error)
@@ -1409,8 +1410,88 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 	return preview, nil
 }
 
+func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
+	if routingPoolID <= 0 {
+		return s.PreviewAccountSelection(ctx, model, sessionID, excludedAccountIDs...)
+	}
+	if !s.Configured() {
+		return SelectionPreview{}, ErrNotConfigured
+	}
+	model = strings.TrimSpace(model)
+	sessionID = strings.TrimSpace(sessionID)
+	now := time.Now()
+	accounts, _, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, routingPoolID, model, excludedAccountIDs)
+	if err != nil {
+		return SelectionPreview{}, err
+	}
+	stickyBoundAccountID := int64(0)
+	if sessionID != "" {
+		accounts, stickyBoundAccountID, err = s.stickySessionCandidatesInRoutingPool(ctx, routingPoolID, accounts, model, sessionID)
+		if err != nil {
+			return SelectionPreview{}, err
+		}
+	}
+	if len(accounts) == 0 {
+		blocked := s.unschedulableSelectionCandidatesInRoutingPool(ctx, routingPoolID, model, nil, excludedAccountIDs, now)
+		if len(blocked) > 0 {
+			return SelectionPreview{
+				Model:      model,
+				SessionID:  sessionID,
+				Candidates: blocked,
+			}, nil
+		}
+		return SelectionPreview{}, notFoundErr
+	}
+
+	preview := SelectionPreview{
+		Model:                model,
+		SessionID:            sessionID,
+		SelectedAccountID:    accounts[0].ID,
+		StickyBoundAccountID: stickyBoundAccountID,
+		Candidates:           make([]SelectionCandidate, 0, len(accounts)),
+	}
+	for index, account := range accounts {
+		candidate := selectionCandidate(account, index+1, index == 0, true, "")
+		candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
+		candidate.ScheduleReason = scheduleReason(candidate.Selected, candidate.StickyBound)
+		preview.Candidates = append(preview.Candidates, candidate)
+	}
+	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidatesInRoutingPool(ctx, routingPoolID, model, accounts, excludedAccountIDs, now)...)
+	return preview, nil
+}
+
 func (s *Service) unschedulableSelectionCandidates(ctx context.Context, model string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {
 	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
+	if err != nil {
+		return nil
+	}
+	selectedIDs := make(map[int64]struct{}, len(selected))
+	for _, account := range selected {
+		selectedIDs[account.ID] = struct{}{}
+	}
+	excluded := make(map[int64]struct{}, len(excludedAccountIDs))
+	for _, id := range excludedAccountIDs {
+		if id > 0 {
+			excluded[id] = struct{}{}
+		}
+	}
+
+	candidates := make([]SelectionCandidate, 0, len(accounts))
+	for _, account := range accounts {
+		if _, ok := selectedIDs[account.ID]; ok {
+			continue
+		}
+		reason := s.selectionUnschedulableReason(ctx, account, model, excluded, now)
+		if reason == "" {
+			continue
+		}
+		candidates = append(candidates, selectionCandidate(account, 0, false, false, reason))
+	}
+	return candidates
+}
+
+func (s *Service) unschedulableSelectionCandidatesInRoutingPool(ctx context.Context, routingPoolID int64, model string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {
+	accounts, err := s.repo.ListRoutingPoolAccounts(ctx, s.cfg.Provider, routingPoolID)
 	if err != nil {
 		return nil
 	}
@@ -1526,7 +1607,7 @@ func (s *Service) stickySessionCandidates(ctx context.Context, accounts []Accoun
 }
 
 func (s *Service) stickySessionCandidatesInRoutingPool(ctx context.Context, routingPoolID int64, accounts []Account, model, sessionID string) ([]Account, int64, error) {
-	if len(accounts) <= 1 {
+	if len(accounts) == 0 {
 		return accounts, 0, nil
 	}
 	binding, err := s.repo.FindSessionBindingInRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, sessionID)

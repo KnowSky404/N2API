@@ -301,12 +301,16 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(adminState, /concurrencyBlocked/);
   assert.match(adminState, /scheduleReason/);
   assert.match(modelsPage, /Excluded account IDs/);
+  assert.match(modelsPage, /Routing pool/);
+  assert.match(modelsPage, /bind:value=\{modelRoutingPreview\.routingPoolId\}/);
   assert.match(modelsPage, /bind:value=\{modelRoutingPreview\.excludedAccountIds\}/);
   assert.match(modelsPage, /excluding \{modelRoutingPreview\.excludedAccountIds\}/);
   assert.match(modelsPage, /previewConcurrencyLimitLabel/);
   assert.match(modelsPage, /Active/);
   assert.match(modelsPage, /Concurrency full/);
   assert.match(adminState, /excludedAccountIds: ''/);
+  assert.match(adminState, /routingPoolId: '0'/);
+  assert.match(adminState, /params\.set\('routingPoolId'/);
   assert.match(adminState, /params\.set\('excludedAccountIds'/);
 });
 

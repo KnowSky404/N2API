@@ -91,6 +91,7 @@ type fakeProviderService struct {
 	previewModel          string
 	previewSessionID      string
 	previewExcludedIDs    []int64
+	previewRoutingPoolID  int64
 	lastAccountUpdate     provider.AccountUpdate
 	accountUpdateIDs      []int64
 	accountUpdates        []provider.AccountUpdate
@@ -641,6 +642,17 @@ func (s *fakeProviderService) ListExposedModels(_ context.Context, allowedModels
 }
 
 func (s *fakeProviderService) PreviewAccountSelection(_ context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
+	s.previewModel = model
+	s.previewSessionID = sessionID
+	s.previewExcludedIDs = append([]int64(nil), excludedAccountIDs...)
+	if s.selectionPreview.Model == "" {
+		return provider.SelectionPreview{}, provider.ErrModelUnavailable
+	}
+	return s.selectionPreview, nil
+}
+
+func (s *fakeProviderService) PreviewAccountSelectionInRoutingPool(_ context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
+	s.previewRoutingPoolID = routingPoolID
 	s.previewModel = model
 	s.previewSessionID = sessionID
 	s.previewExcludedIDs = append([]int64(nil), excludedAccountIDs...)
@@ -4302,6 +4314,32 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 	if body.Candidates[0].ScheduleReason != "sticky session binding" || body.Candidates[1].ScheduleReason != "ordered by priority, load factor, and least-recently-used order" {
 		t.Fatalf("preview schedule reasons = %+v, want provider reasons preserved", body.Candidates)
+	}
+}
+
+func TestModelRoutingPreviewSupportsRoutingPoolScope(t *testing.T) {
+	admins := newFakeAdminService()
+	providers := newFakeProviderService()
+	providers.selectionPreview = provider.SelectionPreview{
+		Model:             "gpt-5",
+		SessionID:         "workspace-123",
+		SelectedAccountID: 8,
+		Candidates: []provider.SelectionCandidate{
+			{ID: 8, DisplayName: "Pool account", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true},
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?model=gpt-5&sessionId=workspace-123&routingPoolId=7&excludedAccountIds=9", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.previewRoutingPoolID != 7 || providers.previewModel != "gpt-5" || providers.previewSessionID != "workspace-123" || !reflect.DeepEqual(providers.previewExcludedIDs, []int64{9}) {
+		t.Fatalf("preview call = pool:%d model:%q session:%q excluded:%+v, want pool 7 gpt-5 workspace-123 [9]", providers.previewRoutingPoolID, providers.previewModel, providers.previewSessionID, providers.previewExcludedIDs)
 	}
 }
 

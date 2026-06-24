@@ -3,10 +3,12 @@
     formatDate,
     loadModelRouting,
     loadModelRoutingPreview,
+    loadRoutingPools,
     login,
     loginForm,
     modelRouting,
     modelRoutingPreview,
+    routingPools,
     session
   } from '$lib/admin-state.svelte.js';
 
@@ -20,6 +22,7 @@
     if (!modelRoutingRequested) {
       modelRoutingRequested = true;
       void loadModelRouting();
+      void loadRoutingPools();
     }
   });
 
@@ -230,6 +233,19 @@
               bind:value={modelRoutingPreview.sessionId}
               placeholder="workspace-123"
             />
+          </label>
+          <label class="block text-sm font-medium text-[#3c3c3c]">
+            Routing pool
+            <select
+              class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelRoutingPreview.routingPoolId}
+              disabled={routingPools.loading}
+            >
+              <option value="0">Global provider pool</option>
+              {#each routingPools.items as pool}
+                <option value={String(pool.id)}>{pool.name}</option>
+              {/each}
+            </select>
           </label>
           <label class="block text-sm font-medium text-[#3c3c3c]">
             Excluded account IDs
