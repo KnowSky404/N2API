@@ -50,6 +50,39 @@
     return (pool.accounts ?? []).find((account) => account.accountId === accountId)?.priority ?? 0;
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function poolAccountRows(pool) {
+    return [...providerAccounts.items].sort((left, right) => {
+      const leftIncluded = poolHasAccount(pool, left.id);
+      const rightIncluded = poolHasAccount(pool, right.id);
+      if (leftIncluded !== rightIncluded) return leftIncluded ? -1 : 1;
+      if (leftIncluded && rightIncluded) {
+        return (
+          poolAccountPriority(pool, left.id) - poolAccountPriority(pool, right.id) ||
+          left.priority - right.priority ||
+          accountDisplayName(left).localeCompare(accountDisplayName(right), undefined, {
+            numeric: true,
+            sensitivity: 'base'
+          }) ||
+          left.id - right.id
+        );
+      }
+      return (
+        left.priority - right.priority ||
+        accountDisplayName(left).localeCompare(accountDisplayName(right), undefined, {
+          numeric: true,
+          sensitivity: 'base'
+        }) ||
+        left.id - right.id
+      );
+    });
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function accountDisplayName(account) {
+    return account.displayName || account.name || account.subject || account.provider || `Account ${account.id}`;
+  }
+
   /**
    * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
    * @param {number} accountId
@@ -256,7 +289,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-[#f3f3f3]">
-                    {#each providerAccounts.items as account (account.id)}
+                    {#each poolAccountRows(pool) as account (account.id)}
                       <tr>
                         <td class="py-2 pr-3">
                           <input
@@ -266,7 +299,7 @@
                           />
                         </td>
                         <td class="px-3 py-2">
-                          <div class="font-medium text-[#0d0d0d]">{account.displayName || account.name || account.subject || account.provider}</div>
+                          <div class="font-medium text-[#0d0d0d]">{accountDisplayName(account)}</div>
                           <div class="font-mono text-xs text-[#6e6e6e]">#{account.id}</div>
                         </td>
                         <td class="px-3 py-2 text-[#3c3c3c]">{account.accountType}</td>
