@@ -144,6 +144,26 @@ func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsRequestLogFallbackDiagnostics(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Request Logs",
+			"gateway fallback diagnostics",
+			"attempts",
+			"fallbacks",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in request-log fallback diagnostics documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

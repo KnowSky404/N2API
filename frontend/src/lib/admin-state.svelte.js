@@ -89,6 +89,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} usageSource
  * @property {number} estimatedCostMicrousd
  * @property {boolean} pricingMatched
+ * @property {number} gatewayAttemptCount
+ * @property {number} gatewayFallbackCount
  * @property {string} createdAt
  */
 

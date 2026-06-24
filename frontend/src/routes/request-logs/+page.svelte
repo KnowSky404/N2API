@@ -329,7 +329,7 @@ onclick={loadRequestLogs}
   {/if}
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1440px] text-left text-sm">
+    <table class="w-full min-w-[1560px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Time</th>
@@ -340,6 +340,7 @@ onclick={loadRequestLogs}
     <th class="px-4 py-3 font-medium">Tokens</th>
     <th class="px-4 py-3 font-medium">Estimated cost</th>
     <th class="px-4 py-3 font-medium">Usage</th>
+    <th class="px-4 py-3 font-medium">Gateway diagnostics</th>
     <th class="px-4 py-3 font-medium">Route</th>
     <th class="px-4 py-3 font-medium">Method</th>
     <th class="px-4 py-3 font-medium">Status</th>
@@ -350,11 +351,11 @@ onclick={loadRequestLogs}
 <tbody class="divide-y divide-[#ededed]">
   {#if requestLogs.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="13">Loading request logs...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="14">Loading request logs...</td>
     </tr>
   {:else if requestLogs.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="13">No gateway requests yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="14">No gateway requests yet.</td>
     </tr>
   {:else}
     {#each requestLogs.items as log}
@@ -390,6 +391,10 @@ onclick={loadRequestLogs}
         </td>
         <td class="px-4 py-3 text-[#3c3c3c]">
           <span class="text-sm">{usageSourceLabel(log.usageSource)}</span>
+        </td>
+        <td class="px-4 py-3 text-[#3c3c3c]">
+          <span class="text-sm tabular-nums">Attempts {log.gatewayAttemptCount ?? 0}</span>
+          <p class="mt-1 text-xs text-[#6e6e6e]">Fallbacks {log.gatewayFallbackCount ?? 0}</p>
         </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{log.route}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.method}</td>

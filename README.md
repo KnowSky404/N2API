@@ -119,6 +119,8 @@ All five gateway default limits are local to the running process. Set a gateway 
 
 Request Logs keep local gateway rejections diagnosable while client responses stay OpenAI-compatible. Local limit responses still return `rate_limit_exceeded` to clients, but the stored request-log error identifies the guard as `api_key_request_rate_limited`, `api_key_token_rate_limited`, `gateway_concurrency_limited`, `api_key_concurrency_limited`, or `provider_account_concurrency_limited`.
 
+Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.
+
 For sticky session routing, POST bodies may include `session_id`. Header-based clients can send `session_id` or the proxy-friendly `X-N2API-Session-ID`; the body value takes precedence when both are present. If N2API is behind Nginx and clients send the `session_id` header, set `underscores_in_headers on;` in the relevant `http` or `server` block so Nginx does not drop that header before it reaches the gateway.
 
 Sticky session bindings are persisted by provider, model, and `session_id`. A healthy bound account is reused while it remains schedulable; if fallback excludes it before streaming starts, the successful fallback account can rebind that session.

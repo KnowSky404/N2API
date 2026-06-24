@@ -132,7 +132,7 @@ test('request logs page shows request model', () => {
 test('request logs page shows sticky session attribution', () => {
   assert.match(requestLogsPage, />Session</);
   assert.match(requestLogsPage, /log\.sessionId/);
-  assert.match(requestLogsPage, /colspan="13"/);
+  assert.match(requestLogsPage, /colspan="14"/);
 });
 
 test('request logs page shows token usage', () => {
@@ -171,6 +171,14 @@ test('request logs page formats gateway error codes for scanning', () => {
       .join(' ');
     assert.equal(label.includes('_'), false, `${code} should render without underscores`);
   }
+});
+
+test('request logs page shows gateway fallback diagnostics', () => {
+  assert.match(requestLogsPage, /Gateway diagnostics/);
+  assert.match(requestLogsPage, /log\.gatewayAttemptCount/);
+  assert.match(requestLogsPage, /log\.gatewayFallbackCount/);
+  assert.match(adminState, /gatewayAttemptCount/);
+  assert.match(adminState, /gatewayFallbackCount/);
 });
 
 test('models page shows scheduling diagnostics for routing candidates', () => {

@@ -462,10 +462,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 20 {
-		t.Fatalf("migration sources = %d, want 20", len(sources))
+	if len(sources) != 21 {
+		t.Fatalf("migration sources = %d, want 21", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[19].Path != "00020_provider_session_bindings.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[20].Path != "00021_request_log_fallback_diagnostics.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
