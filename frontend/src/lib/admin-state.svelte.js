@@ -309,7 +309,7 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, clientKeyId: string, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, clientKeyId: string, model: string, sessionId: string, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
@@ -317,6 +317,8 @@ export const requestLogs = $state({
   statusClass: 'all',
   providerAccountId: 'all',
   clientKeyId: 'all',
+  model: '',
+  sessionId: '',
   items: []
 });
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
@@ -793,6 +795,8 @@ function clearRequestLogs() {
     statusClass: 'all',
     providerAccountId: 'all',
     clientKeyId: 'all',
+    model: '',
+    sessionId: '',
     items: []
   });
 }
@@ -2198,6 +2202,14 @@ export async function loadRequestLogs() {
     }
     if (requestLogs.clientKeyId && requestLogs.clientKeyId !== 'all') {
       params.set('clientKeyId', requestLogs.clientKeyId);
+    }
+    const model = requestLogs.model.trim();
+    if (model) {
+      params.set('model', model);
+    }
+    const sessionId = requestLogs.sessionId.trim();
+    if (sessionId) {
+      params.set('sessionId', sessionId);
     }
     const payload = await requestJSON(`/api/admin/request-logs?${params.toString()}`);
     if (!isCurrentAuthenticated(version)) return;

@@ -73,6 +73,22 @@
     return { title, summary };
   }
 
+  /**
+   * @param {string} sectionTitle
+   * @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row
+   */
+  function usageRowHref(sectionTitle, row) {
+    const id = String(row?.id ?? '');
+    if (!id || id === 'unknown') return '';
+    if (sectionTitle === 'Top models') {
+      return `/request-logs?model=${encodeURIComponent(id)}`;
+    }
+    if (sectionTitle === 'Top sessions' && id !== 'none') {
+      return `/request-logs?sessionId=${encodeURIComponent(id)}`;
+    }
+    return '';
+  }
+
   const usageSections = $derived([
     usageRows('Top models', usage24hModels),
     usageRows('Top provider accounts', usage24hProviderAccounts),
@@ -415,8 +431,13 @@
             {:else}
               <div class="divide-y divide-[#ededed]">
                 {#each section.summary.rows.slice(0, 5) as row}
+                  {@const href = usageRowHref(section.title, row)}
                   <div class="grid gap-2 px-4 py-3 text-sm">
-                    <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                    {#if href}
+                      <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]" href={href}>{row.label || row.id}</a>
+                    {:else}
+                      <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                    {/if}
                     <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
                       {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens · {formatCostMicrousd(row.estimatedCostMicrousd)}
                     </span>

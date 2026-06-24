@@ -192,9 +192,15 @@ test('request logs page shows gateway fallback diagnostics', () => {
 test('request logs page filters by search and status class', () => {
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.query\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.statusClass\}/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.model\}/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.sessionId\}/);
+  assert.match(requestLogsPage, /Model filter/);
+  assert.match(requestLogsPage, /Session filter/);
   assert.match(requestLogsPage, /statusClass/);
   assert.match(adminState, /params\.set\('q'/);
   assert.match(adminState, /params\.set\('statusClass'/);
+  assert.match(adminState, /params\.set\('model'/);
+  assert.match(adminState, /params\.set\('sessionId'/);
   assert.match(adminState, /requestLogs\.query/);
   assert.match(adminState, /requestLogs\.statusClass/);
 });
@@ -212,11 +218,22 @@ test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /URLSearchParams\(window\.location\.search\)/);
   assert.match(requestLogsPage, /requestLogs\.providerAccountId = providerAccountId/);
   assert.match(requestLogsPage, /requestLogs\.clientKeyId = clientKeyId/);
+  assert.match(requestLogsPage, /requestLogs\.model = model/);
+  assert.match(requestLogsPage, /requestLogs\.sessionId = sessionId/);
   assert.match(requestLogsPage, /requestLogs\.query = query/);
   assert.match(requestLogsPage, /requestLogs\.statusClass = statusClass/);
   assert.match(requestLogsPage, /void loadRequestLogs\(\)/);
   assert.match(adminState, /params\.set\('clientKeyId'/);
   assert.match(adminState, /clientKeyId: 'all'/);
+  assert.match(adminState, /model: ''/);
+  assert.match(adminState, /sessionId: ''/);
+});
+
+test('gateway usage rows link to filtered request logs', () => {
+  assert.match(gatewayPage, /usageRowHref/);
+  assert.match(gatewayPage, /model=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /sessionId=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /href=\{href\}/);
 });
 
 test('models page shows scheduling diagnostics for routing candidates', () => {
