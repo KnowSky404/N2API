@@ -34,6 +34,7 @@ type AdminService interface {
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
 	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
+	UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
@@ -300,6 +301,36 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 		key, err := admins.RevokeAPIKey(r.Context(), id)
 		if err != nil {
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
+	}))
+
+	mux.HandleFunc("PATCH /api/admin/keys/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		key, err := admins.UpdateAPIKeyName(r.Context(), id, req.Name)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
 			if errors.Is(err, admin.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "not_found")
 				return

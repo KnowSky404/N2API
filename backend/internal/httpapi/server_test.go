@@ -48,6 +48,9 @@ type fakeAdminService struct {
 	modelPolicy        string
 	modelPolicyModels  []string
 	modelPolicyErr     error
+	renameKeyID        int64
+	renameName         string
+	renameErr          error
 	limitKeyID         int64
 	requestsPerMinute  int
 	tokensPerMinute    int
@@ -190,6 +193,22 @@ func (s *fakeAdminService) RevokeAPIKey(_ context.Context, id int64) (admin.APIK
 		if key.ID == id {
 			now := time.Unix(3000, 0).UTC()
 			key.RevokedAt = &now
+			return key, nil
+		}
+	}
+	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) UpdateAPIKeyName(_ context.Context, id int64, name string) (admin.APIKey, error) {
+	s.renameKeyID = id
+	s.renameName = name
+	if s.renameErr != nil {
+		return admin.APIKey{}, s.renameErr
+	}
+	for i, key := range s.keys {
+		if key.ID == id {
+			key.Name = strings.TrimSpace(name)
+			s.keys[i] = key
 			return key, nil
 		}
 	}
@@ -1037,6 +1056,81 @@ func TestRevokeAPIKeyParsesIDAndReturnsRevokedKey(t *testing.T) {
 	}
 	if body.Key.ID != 7 || body.Key.RevokedAt == nil {
 		t.Fatalf("revoked key = %+v, want revoked key 7", body)
+	}
+}
+
+func TestUpdateAPIKeyNameEndpoint(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/keys/7", strings.NewReader(`{"name":" renamed codex "}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Key admin.APIKey `json:"key"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Key.ID != 7 || body.Key.Name != "renamed codex" {
+		t.Fatalf("key = %+v, want renamed key 7", body.Key)
+	}
+	if admins.renameKeyID != 7 || admins.renameName != " renamed codex " {
+		t.Fatalf("recorded rename = id:%d name:%q", admins.renameKeyID, admins.renameName)
+	}
+	if strings.Contains(recorder.Body.String(), "secret") {
+		t.Fatalf("response leaked secret: %s", recorder.Body.String())
+	}
+}
+
+func TestUpdateAPIKeyNameEndpointMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path       string
+		body       string
+		serviceErr error
+		wantStatus int
+	}{
+		{
+			name:       "invalid id",
+			path:       "/api/admin/keys/not-a-number",
+			body:       `{"name":"renamed"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid name",
+			path:       "/api/admin/keys/7",
+			body:       `{"name":" "}`,
+			serviceErr: admin.ErrInvalidInput,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "not found",
+			path:       "/api/admin/keys/99",
+			body:       `{"name":"renamed"}`,
+			serviceErr: admin.ErrNotFound,
+			wantStatus: http.StatusNotFound,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admins := newFakeAdminService()
+			admins.renameErr = tc.serviceErr
+			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+			req := httptest.NewRequest(http.MethodPatch, tc.path, strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.wantStatus)
+			}
+		})
 	}
 }
 
