@@ -45,9 +45,10 @@ const (
 )
 
 const (
-	RoutingPoolErrorDisabled  = "routing_pool_disabled"
-	RoutingPoolErrorExhausted = "routing_pool_exhausted"
-	RoutingPoolErrorCycle     = "routing_pool_cycle"
+	RoutingPoolErrorDisabled    = "routing_pool_disabled"
+	RoutingPoolErrorUnavailable = "routing_pool_unavailable"
+	RoutingPoolErrorExhausted   = "routing_pool_exhausted"
+	RoutingPoolErrorCycle       = "routing_pool_cycle"
 )
 
 const (
@@ -1666,6 +1667,8 @@ func routingPoolDiagnosticError(err error) string {
 	switch {
 	case errors.Is(err, ErrRoutingPoolCycle):
 		return RoutingPoolErrorCycle
+	case errors.Is(err, ErrRoutingPoolNotFound):
+		return RoutingPoolErrorUnavailable
 	default:
 		return strings.TrimSpace(err.Error())
 	}

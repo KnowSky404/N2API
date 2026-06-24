@@ -1729,6 +1729,18 @@ func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolChainMarksUnavailableDiagnostics(t *testing.T) {
+	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 99, "gpt-5")
+	if !errors.Is(err, ErrRoutingPoolNotFound) {
+		t.Fatalf("error = %v, want ErrRoutingPoolNotFound", err)
+	}
+	if selected.RoutingPoolError != RoutingPoolErrorUnavailable {
+		t.Fatalf("routing pool error = %q, want %s", selected.RoutingPoolError, RoutingPoolErrorUnavailable)
+	}
+}
+
 func TestSelectAccountForModelInRoutingPoolChainMarksExhaustedDiagnostics(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
