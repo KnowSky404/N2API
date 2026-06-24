@@ -83,6 +83,25 @@ func TestGatewayDocumentationMentionsAPIKeyLimitInheritance(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsAPIKeyActiveConcurrency(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"API Keys page shows active concurrency",
+			"process-local",
+			"Concurrency full",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in API key active concurrency documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
