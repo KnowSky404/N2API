@@ -45,6 +45,7 @@ const (
 )
 
 const (
+	RoutingPoolErrorDisabled  = "routing_pool_disabled"
 	RoutingPoolErrorExhausted = "routing_pool_exhausted"
 	RoutingPoolErrorCycle     = "routing_pool_cycle"
 )
@@ -1561,7 +1562,7 @@ func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryP
 					RoutingPoolName:          pool.Name,
 					RoutingPoolFallbackDepth: depth,
 					RoutingPoolFallbackChain: chainLabel,
-					RoutingPoolError:         ErrAccountsDisabled.Error(),
+					RoutingPoolError:         RoutingPoolErrorDisabled,
 				}, ErrAccountsDisabled
 			}
 			continue

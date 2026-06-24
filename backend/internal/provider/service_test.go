@@ -1755,6 +1755,24 @@ func TestSelectAccountForModelInRoutingPoolChainMarksExhaustedDiagnostics(t *tes
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolChainMarksDisabledPrimaryDiagnostics(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: false, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if !errors.Is(err, ErrAccountsDisabled) {
+		t.Fatalf("error = %v, want ErrAccountsDisabled", err)
+	}
+	if selected.RoutingPoolID != 1 || selected.RoutingPoolName != "primary" {
+		t.Fatalf("selected = %+v, want primary pool diagnostics", selected)
+	}
+	if selected.RoutingPoolError != RoutingPoolErrorDisabled {
+		t.Fatalf("routing pool error = %q, want %s", selected.RoutingPoolError, RoutingPoolErrorDisabled)
+	}
+}
+
 func TestListExposedModelsForRoutingPoolChainIncludesFallbackModels(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
