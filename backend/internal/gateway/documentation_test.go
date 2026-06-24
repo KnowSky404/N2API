@@ -253,6 +253,25 @@ func TestGatewayDocumentationMentionsRoutingPreviewConcurrency(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsRoutingPreviewScheduleReasons(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Schedule reason",
+			"diagnostic text",
+			"does not change scheduler behavior",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in routing preview schedule reason documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
