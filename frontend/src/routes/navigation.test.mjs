@@ -316,6 +316,21 @@ test('api keys page shows per-key usage distribution', () => {
   assert.match(apiKeysPage, /keyRateWindowLimitLabel/);
 });
 
+test('api keys page filters key list locally', () => {
+  for (const label of ['Search keys', 'Status filter', 'All keys', 'Active keys', 'Revoked keys']) {
+    assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
+  }
+
+  assert.match(apiKeysPage, /let keySearch = \$state\(''\)/);
+  assert.match(apiKeysPage, /let keyStatusFilter = \$state\('all'\)/);
+  assert.match(apiKeysPage, /filteredAPIKeys/);
+  assert.match(apiKeysPage, /apiKeySearchText/);
+  assert.match(apiKeysPage, /bind:value=\{keySearch\}/);
+  assert.match(apiKeysPage, /bind:value=\{keyStatusFilter\}/);
+  assert.match(apiKeysPage, /Showing \{filteredAPIKeys\.length\} of \{apiKeys\.items\.length\}/);
+  assert.match(apiKeysPage, /No API keys match your filters\./);
+});
+
 test('dashboard shows gateway scheduling capacity', () => {
   for (const label of ['Provider accounts', 'Schedulable accounts', 'Unschedulable accounts', 'Routable models', 'Active API keys']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);

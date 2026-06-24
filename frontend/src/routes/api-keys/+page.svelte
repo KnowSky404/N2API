@@ -28,7 +28,19 @@
 
   const activeKeys = $derived(getActiveKeys());
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
+  let keySearch = $state('');
+  let keyStatusFilter = $state('all');
   let modelRoutingRequested = $state(false);
+  const filteredAPIKeys = $derived(
+    apiKeys.items.filter((key) => {
+      if (keyStatusFilter === 'active' && key.revokedAt) return false;
+      if (keyStatusFilter === 'revoked' && !key.revokedAt) return false;
+
+      const query = keySearch.trim().toLowerCase();
+      if (!query) return true;
+      return apiKeySearchText(key).includes(query);
+    })
+  );
 
   $effect(() => {
     if (!session.authenticated) {
@@ -46,6 +58,23 @@
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
   function unroutableModelsForKey(key) {
     return apiKeyModelWarnings(key, modelRouting.models);
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function apiKeySearchText(key) {
+    return [
+      key.name,
+      key.prefix,
+      key.modelPolicy === 'selected' ? 'selected models' : 'all routable models',
+      ...(key.allowedModels ?? []),
+      key.revokedAt ? 'revoked' : 'active',
+      key.concurrencyBlocked ? 'concurrency full' : '',
+      key.requestRateLimited ? 'request limit full' : '',
+      key.tokenRateLimited ? 'token limit full' : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
   }
 
   /**
@@ -296,6 +325,34 @@ All routable models
     </p>
   {/if}
 
+  <div class="mt-6 flex flex-wrap items-end justify-between gap-3">
+    <div class="flex flex-wrap items-end gap-3">
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Search keys
+        <input
+          class="mt-2 w-64 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          type="search"
+          bind:value={keySearch}
+          placeholder="name, prefix, model, status"
+        />
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Status filter
+        <select
+          class="mt-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={keyStatusFilter}
+        >
+          <option value="all">All keys</option>
+          <option value="active">Active keys</option>
+          <option value="revoked">Revoked keys</option>
+        </select>
+      </label>
+    </div>
+    <p class="text-sm text-[#6e6e6e]">
+      Showing {filteredAPIKeys.length} of {apiKeys.items.length}
+    </p>
+  </div>
+
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
     <table class="w-full min-w-[1280px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
@@ -319,8 +376,12 @@ All routable models
     <tr>
       <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No API keys created yet.</td>
     </tr>
+  {:else if filteredAPIKeys.length === 0}
+    <tr>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No API keys match your filters.</td>
+    </tr>
   {:else}
-    {#each apiKeys.items as key}
+    {#each filteredAPIKeys as key}
       <tr class="bg-white">
         <td class="px-4 py-3 font-medium text-[#0d0d0d]">{key.name}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</td>
