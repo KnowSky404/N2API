@@ -59,6 +59,12 @@
     const fallback = Number(defaultValue ?? 0);
     return fallback > 0 ? `Default (${fallback})` : 'Default (disabled)';
   }
+
+  /** @param {number | null | undefined} value */
+  function keyConcurrencyLimitLabel(value) {
+    const limit = Number(value ?? 0);
+    return limit > 0 ? String(limit) : 'unlimited';
+  }
 </script>
 
 <svelte:head>
@@ -410,6 +416,14 @@ All routable models
                   {keyLimitLabel(key.tokensPerMinute, gatewaySettings.data?.tokensPerMinutePerKey)}
                 </span>
               </label>
+            </div>
+            <div>
+              <p class="text-xs text-[#6e6e6e]">
+                Active {key.currentConcurrentRequests || 0} / {keyConcurrencyLimitLabel(key.effectiveMaxConcurrentRequests)}
+              </p>
+              {#if key.concurrencyBlocked}
+                <p class="mt-1 text-xs font-medium text-amber-700">Concurrency full</p>
+              {/if}
             </div>
             <button
               class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"

@@ -13,6 +13,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string | null} revokedAt
  * @property {number} requestsPerMinute
  * @property {number} tokensPerMinute
+ * @property {number} currentConcurrentRequests
+ * @property {number} effectiveMaxConcurrentRequests
+ * @property {boolean} concurrencyBlocked
  */
 
 /**

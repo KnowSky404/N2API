@@ -206,7 +206,7 @@ test('providers page shows provider account usage distribution', () => {
 });
 
 test('api keys page shows per-key usage distribution', () => {
-  for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost']) {
+  for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost', 'Active', 'Concurrency full']) {
     assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
   }
 
@@ -214,6 +214,10 @@ test('api keys page shows per-key usage distribution', () => {
   assert.match(apiKeysPage, /usage24hClientKeys/);
   assert.match(apiKeysPage, /formatTokens/);
   assert.match(apiKeysPage, /formatCostMicrousd/);
+  assert.match(apiKeysPage, /keyConcurrencyLimitLabel/);
+  assert.match(adminState, /currentConcurrentRequests/);
+  assert.match(adminState, /effectiveMaxConcurrentRequests/);
+  assert.match(adminState, /concurrencyBlocked/);
 });
 
 test('dashboard shows gateway scheduling capacity', () => {
