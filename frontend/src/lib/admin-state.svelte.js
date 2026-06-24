@@ -114,6 +114,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} providerAccountName
  * @property {number} routingPoolId
  * @property {string} routingPoolName
+ * @property {number} routingPoolFallbackDepth
+ * @property {string} routingPoolFallbackChain
+ * @property {string} routingPoolError
  * @property {string} sessionId
  * @property {string} route
  * @property {string} method

@@ -261,6 +261,26 @@ func TestGatewayDocumentationMentionsRequestLogFallbackDiagnostics(t *testing.T)
 	}
 }
 
+func TestGatewayDocumentationMentionsRoutingPoolFallback(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"routing pool fallback",
+			"pool-bound key never falls back to the global provider account pool",
+			"`routing_pool_cycle`",
+			"`routing_pool_exhausted`",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in routing pool fallback documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsAllUsageLogDrilldowns(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

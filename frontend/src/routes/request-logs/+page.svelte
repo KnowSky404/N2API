@@ -536,6 +536,14 @@
             <div class="max-w-[180px]">
               <p class="truncate font-medium text-[#0d0d0d]">{log.routingPoolName || `Pool ${log.routingPoolId}`}</p>
               <p class="mt-1 text-xs text-[#6e6e6e]">ID {log.routingPoolId}</p>
+              {#if log.routingPoolFallbackDepth > 0}
+                <p class="mt-1 text-xs text-[#6e6e6e]">Fallback depth {log.routingPoolFallbackDepth}</p>
+              {/if}
+              {#if log.routingPoolFallbackChain}
+                <p class="mt-1 max-w-[180px] truncate text-xs text-[#6e6e6e]" title={log.routingPoolFallbackChain}>
+                  Fallback chain {log.routingPoolFallbackChain}
+                </p>
+              {/if}
             </div>
           {:else}
             <span class="text-[#6e6e6e]">Global pool</span>
@@ -562,6 +570,9 @@
         <td class="px-4 py-3 text-[#3c3c3c]">
           <span class="text-sm tabular-nums">Attempts {log.gatewayAttemptCount ?? 0}</span>
           <p class="mt-1 text-xs text-[#6e6e6e]">Fallbacks {log.gatewayFallbackCount ?? 0}</p>
+          {#if log.routingPoolError}
+            <p class="mt-1 text-xs font-medium text-amber-700">{errorLabel(log.routingPoolError)}</p>
+          {/if}
         </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{log.route}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.method}</td>
