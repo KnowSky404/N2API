@@ -177,6 +177,25 @@ func TestGatewayDocumentationMentionsProviderAccountConcurrencyOverride(t *testi
 	}
 }
 
+func TestGatewayDocumentationMentionsProviderAccountActiveConcurrency(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"active concurrency",
+			"process-local",
+			"unlimited",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in provider account active concurrency documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

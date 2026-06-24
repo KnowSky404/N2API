@@ -95,7 +95,7 @@ Selected provider accounts can be paused and reset together. Use **Pause selecte
 
 During migration, an install with a single connected provider account and no account-specific models backfills that account from the global allowed model list. Installs with multiple provider accounts keep models manual so the gateway does not assume every account can serve every globally allowed model.
 
-Lower priority numbers are selected first. Within the same priority and health class, accounts with a higher load factor are considered before lower-capacity accounts; keep weak or quota-sensitive accounts at load factor `1` and raise stronger accounts when you want them to carry more traffic. Provider accounts also expose **Max concurrency** for per-account concurrency overrides. A value of `0` inherits the gateway default from Gateway Settings; set a positive value when one account should use its own local concurrency cap.
+Lower priority numbers are selected first. Within the same priority and health class, accounts with a higher load factor are considered before lower-capacity accounts; keep weak or quota-sensitive accounts at load factor `1` and raise stronger accounts when you want them to carry more traffic. Provider accounts also expose **Max concurrency** for per-account concurrency overrides. A value of `0` inherits the gateway default from Gateway Settings; set a positive value when one account should use its own local concurrency cap. The account row shows active concurrency as a process-local runtime snapshot beside the effective cap; a cap of `0` is shown as unlimited, and the active count resets when the backend process restarts.
 
 ## API Key Model Access
 
