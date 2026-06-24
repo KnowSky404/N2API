@@ -383,6 +383,19 @@ export const requestLogs = $state({
   routingPoolChain: '',
   items: []
 });
+
+export function resetRequestLogFilters() {
+  requestLogs.error = '';
+  requestLogs.query = '';
+  requestLogs.statusClass = 'all';
+  requestLogs.providerAccountId = 'all';
+  requestLogs.routingPoolId = 'all';
+  requestLogs.clientKeyId = 'all';
+  requestLogs.model = '';
+  requestLogs.sessionId = '';
+  requestLogs.routingPoolError = 'all';
+  requestLogs.routingPoolChain = '';
+}
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
 export const usage = $state({
   loading: false,

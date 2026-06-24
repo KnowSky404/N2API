@@ -15,6 +15,7 @@
     loginForm,
     providerAccounts,
     requestLogs,
+    resetRequestLogFilters,
     routingPools,
     saveUsagePricing,
     session,
@@ -28,6 +29,7 @@
   let requestLogsInitialized = $state(false);
 
   function applyRequestLogURLFilters() {
+    resetRequestLogFilters();
     const params = new URLSearchParams(window.location.search);
     const providerAccountId = params.get('providerAccountId') ?? '';
     if (/^[1-9]\d*$/.test(providerAccountId)) {

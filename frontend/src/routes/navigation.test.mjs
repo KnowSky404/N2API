@@ -274,6 +274,8 @@ test('request logs page filters by provider account', () => {
   assert.match(requestLogsPage, /loadKeys\(\)/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.clientKeyId\}/);
   assert.match(requestLogsPage, /All API keys/);
+  assert.match(requestLogsPage, /resetRequestLogFilters\(\)/);
+  assert.match(adminState, /export function resetRequestLogFilters/);
   assert.match(adminState, /params\.set\('providerAccountId'/);
   assert.match(adminState, /params\.set\('routingPoolId'/);
   assert.match(adminState, /requestLogs\.providerAccountId/);
