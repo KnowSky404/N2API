@@ -71,7 +71,7 @@ Request Logs keep local gateway rejections diagnosable while client responses st
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.
 
-Request Logs support exact **Model filter** and **Session filter** fields. On Gateway management, **Top models** and **Top sessions** usage rows link to Request Logs with those filters applied so model and sticky-session traffic can be inspected directly.
+Request Logs support exact **Provider account**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management, 24h usage rows for **Top provider accounts**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 
 API upstream accounts require HTTPS by default so upstream API keys are not sent over plaintext HTTP. Set `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP upstreams that you control.
 

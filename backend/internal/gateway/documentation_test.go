@@ -164,6 +164,25 @@ func TestGatewayDocumentationMentionsRequestLogFallbackDiagnostics(t *testing.T)
 	}
 }
 
+func TestGatewayDocumentationMentionsAllUsageLogDrilldowns(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Top provider accounts",
+			"Top client keys",
+			"provider-account, API-key, model, and sticky-session",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in gateway usage log drilldown documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

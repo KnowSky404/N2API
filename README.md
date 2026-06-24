@@ -123,7 +123,7 @@ Request Logs keep local gateway rejections diagnosable while client responses st
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.
 
-Request Logs support exact **Model filter** and **Session filter** fields. On Gateway management, **Top models** and **Top sessions** usage rows link to Request Logs with those filters applied so model and sticky-session traffic can be inspected directly.
+Request Logs support exact **Provider account**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management, 24h usage rows for **Top provider accounts**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 
 For sticky session routing, POST bodies may include `session_id`. Header-based clients can send `session_id` or the proxy-friendly `X-N2API-Session-ID`; the body value takes precedence when both are present. If N2API is behind Nginx and clients send the `session_id` header, set `underscores_in_headers on;` in the relevant `http` or `server` block so Nginx does not drop that header before it reaches the gateway.
 
