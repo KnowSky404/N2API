@@ -5,6 +5,7 @@
     apiKeys,
     formatDate,
     formatCostMicrousd,
+    formatRequestLogCost,
     formatTokens,
     loadKeys,
     loadProviderAccounts,
@@ -568,6 +569,7 @@
     </tr>
   {:else}
     {#each requestLogs.items as log}
+      {@const requestLogCost = formatRequestLogCost(log)}
       <tr class="bg-white">
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(log.createdAt)}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">
@@ -637,10 +639,10 @@
           <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total</p>
         </td>
         <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
-          {#if !log.pricingMatched && (log.inputTokens || log.outputTokens || log.totalTokens)}
-            <span class="font-sans text-sm text-[#6e6e6e]">Unpriced</span>
+          {#if requestLogCost === 'Unpriced'}
+            <span class="font-sans text-sm text-[#6e6e6e]">{requestLogCost}</span>
           {:else}
-            {formatCostMicrousd(log.estimatedCostMicrousd)}
+            {requestLogCost}
           {/if}
         </td>
         <td class="px-4 py-3 text-[#3c3c3c]">

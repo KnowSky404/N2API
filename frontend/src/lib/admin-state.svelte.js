@@ -831,6 +831,20 @@ export function formatCostMicrousd(value) {
   return `$${(Number(value ?? 0) / 1_000_000).toFixed(4)}`;
 }
 
+/** @param {Partial<RequestLog> | null | undefined} log */
+export function formatRequestLogCost(log) {
+  if (
+    log &&
+    !log.pricingMatched &&
+    (Number(log.inputTokens ?? 0) > 0 ||
+      Number(log.outputTokens ?? 0) > 0 ||
+      Number(log.totalTokens ?? 0) > 0)
+  ) {
+    return 'Unpriced';
+  }
+  return formatCostMicrousd(log?.estimatedCostMicrousd);
+}
+
 /** @param {Partial<ProviderAccountAutoTestStatus> | null | undefined} status */
 function normalizeProviderAccountAutoTestStatus(status) {
   return {
