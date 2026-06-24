@@ -3649,8 +3649,8 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 		SelectedAccountID:    8,
 		StickyBoundAccountID: 8,
 		Candidates: []provider.SelectionCandidate{
-			{ID: 8, DisplayName: "Sticky", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true, StickyBound: true},
-			{ID: 7, DisplayName: "Fallback", AccountType: provider.AccountTypeCodexOAuth, Priority: 1, ScheduleRank: 2},
+			{ID: 8, DisplayName: "Sticky", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, ScheduleReason: "sticky session binding", Selected: true, StickyBound: true},
+			{ID: 7, DisplayName: "Fallback", AccountType: provider.AccountTypeCodexOAuth, Priority: 1, ScheduleRank: 2, ScheduleReason: "ordered by priority, load factor, and least-recently-used order"},
 		},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
@@ -3675,6 +3675,9 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 	if body.StickyBoundAccountID != 8 || !body.Candidates[0].StickyBound {
 		t.Fatalf("preview sticky binding = %+v, want sticky bound account 8", body)
+	}
+	if body.Candidates[0].ScheduleReason != "sticky session binding" || body.Candidates[1].ScheduleReason != "ordered by priority, load factor, and least-recently-used order" {
+		t.Fatalf("preview schedule reasons = %+v, want provider reasons preserved", body.Candidates)
 	}
 }
 
