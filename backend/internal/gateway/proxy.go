@@ -311,12 +311,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	}()
 
-	if retryAfter, ok := p.allowAPIKeyRequest(key.ID, key.RequestsPerMinute, settings.RequestsPerMinutePerKey); !ok {
-		errorCode = "api_key_request_rate_limited"
-		setRetryAfterHeader(recorder.Header(), retryAfter)
-		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key request rate limit exceeded")
-		return
-	}
 	if budgetErrorCode, err := p.apiKeyBudgetErrorCode(r.Context(), key, startedAt); err != nil {
 		errorCode = "internal_error"
 		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not check api key budget")
@@ -324,6 +318,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else if budgetErrorCode != "" {
 		errorCode = budgetErrorCode
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
+		return
+	}
+	if retryAfter, ok := p.allowAPIKeyRequest(key.ID, key.RequestsPerMinute, settings.RequestsPerMinutePerKey); !ok {
+		errorCode = "api_key_request_rate_limited"
+		setRetryAfterHeader(recorder.Header(), retryAfter)
+		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key request rate limit exceeded")
 		return
 	}
 
