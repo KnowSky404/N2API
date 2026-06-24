@@ -82,6 +82,7 @@ var (
 	ErrModelUnavailable       = errors.New("model unavailable")
 	ErrSessionBindingNotFound = errors.New("provider session binding not found")
 	ErrRoutingPoolNotFound    = errors.New("routing pool not found")
+	ErrRoutingPoolCycle       = errors.New("routing pool fallback cycle")
 )
 
 type Config struct {
@@ -209,9 +210,10 @@ type SessionBinding struct {
 }
 
 type RoutingPool struct {
-	ID      int64
-	Name    string
-	Enabled bool
+	ID             int64
+	Name           string
+	Enabled        bool
+	FallbackPoolID *int64
 }
 
 type RoutingPoolAccount struct {
@@ -280,14 +282,19 @@ type AccountUpdate struct {
 }
 
 type SelectedAccount struct {
-	AccountID             int64
-	Provider              string
-	AccountType           string
-	DisplayName           string
-	AuthorizationToken    string
-	BaseURL               string
-	ChatGPTAccountID      string
-	MaxConcurrentRequests int
+	AccountID                int64
+	Provider                 string
+	AccountType              string
+	DisplayName              string
+	AuthorizationToken       string
+	BaseURL                  string
+	ChatGPTAccountID         string
+	MaxConcurrentRequests    int
+	RoutingPoolID            int64
+	RoutingPoolName          string
+	RoutingPoolFallbackDepth int
+	RoutingPoolFallbackChain string
+	RoutingPoolError         string
 }
 
 type SelectionPreview struct {
@@ -1268,6 +1275,16 @@ func (s *Service) SelectAccountForModelInRoutingPool(ctx context.Context, routin
 	return s.selectFromCandidates(ctx, accounts, hasEnabled, notFoundErr)
 }
 
+func (s *Service) SelectAccountForModelInRoutingPoolChain(ctx context.Context, primaryPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	if primaryPoolID <= 0 {
+		return s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+	}
+	if !s.Configured() {
+		return SelectedAccount{}, ErrNotConfigured
+	}
+	return s.selectAccountForRoutingPoolChain(ctx, primaryPoolID, model, "", excludedAccountIDs...)
+}
+
 func (s *Service) SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if routingPoolID <= 0 {
 		return s.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
@@ -1296,6 +1313,21 @@ func (s *Service) SelectAccountForModelAndSessionInRoutingPool(ctx context.Conte
 		return SelectedAccount{}, fmt.Errorf("upsert provider session binding: %w", err)
 	}
 	return selected, nil
+}
+
+func (s *Service) SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, primaryPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	if primaryPoolID <= 0 {
+		return s.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
+	}
+	model = strings.TrimSpace(model)
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return s.SelectAccountForModelInRoutingPoolChain(ctx, primaryPoolID, model, excludedAccountIDs...)
+	}
+	if !s.Configured() {
+		return SelectedAccount{}, ErrNotConfigured
+	}
+	return s.selectAccountForRoutingPoolChain(ctx, primaryPoolID, model, sessionID, excludedAccountIDs...)
 }
 
 func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
@@ -1482,6 +1514,124 @@ func (s *Service) stickySessionCandidatesInRoutingPool(ctx context.Context, rout
 		}
 	}
 	return stickySessionHashCandidates(accounts, sessionID), 0, nil
+}
+
+func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	pools, chainLabel, err := s.routingPoolChain(ctx, primaryPoolID)
+	if err != nil {
+		return SelectedAccount{RoutingPoolError: err.Error()}, err
+	}
+
+	model = strings.TrimSpace(model)
+	sessionID = strings.TrimSpace(sessionID)
+	var finalErr error = ErrAccountsUnavailable
+	hasEnabled := false
+	for depth, pool := range pools {
+		if !pool.Enabled {
+			if depth == 0 {
+				return SelectedAccount{
+					RoutingPoolID:            pool.ID,
+					RoutingPoolName:          pool.Name,
+					RoutingPoolFallbackDepth: depth,
+					RoutingPoolFallbackChain: chainLabel,
+					RoutingPoolError:         ErrAccountsDisabled.Error(),
+				}, ErrAccountsDisabled
+			}
+			continue
+		}
+		hasEnabled = true
+
+		accounts, poolHasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, pool.ID, model, excludedAccountIDs)
+		if err != nil {
+			return SelectedAccount{
+				RoutingPoolID:            pool.ID,
+				RoutingPoolName:          pool.Name,
+				RoutingPoolFallbackDepth: depth,
+				RoutingPoolFallbackChain: chainLabel,
+				RoutingPoolError:         err.Error(),
+			}, err
+		}
+		if poolHasEnabled {
+			hasEnabled = true
+		}
+		finalErr = moreSpecificSelectionError(finalErr, notFoundErr)
+		if len(accounts) == 0 {
+			continue
+		}
+
+		if sessionID != "" {
+			accounts, _, err = s.stickySessionCandidatesInRoutingPool(ctx, pool.ID, accounts, model, sessionID)
+			if err != nil {
+				return SelectedAccount{}, err
+			}
+		}
+		selected, err := s.selectFromCandidates(ctx, accounts, poolHasEnabled, notFoundErr)
+		if err != nil {
+			finalErr = moreSpecificSelectionError(finalErr, err)
+			continue
+		}
+		selected.RoutingPoolID = pool.ID
+		selected.RoutingPoolName = pool.Name
+		selected.RoutingPoolFallbackDepth = depth
+		selected.RoutingPoolFallbackChain = chainLabel
+		if sessionID != "" {
+			if err := s.repo.UpsertSessionBindingInRoutingPool(ctx, s.cfg.Provider, pool.ID, model, sessionID, selected.AccountID); err != nil {
+				return SelectedAccount{}, fmt.Errorf("upsert provider session binding: %w", err)
+			}
+		}
+		return selected, nil
+	}
+
+	if !hasEnabled {
+		finalErr = ErrAccountsDisabled
+	}
+	return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: finalErr.Error()}, finalErr
+}
+
+func (s *Service) routingPoolChain(ctx context.Context, primaryPoolID int64) ([]RoutingPool, string, error) {
+	visited := map[int64]struct{}{}
+	pools := []RoutingPool{}
+	for id := primaryPoolID; id > 0; {
+		if _, ok := visited[id]; ok {
+			return nil, "", ErrRoutingPoolCycle
+		}
+		visited[id] = struct{}{}
+		pool, err := s.repo.FindRoutingPool(ctx, id)
+		if err != nil {
+			return nil, "", err
+		}
+		pools = append(pools, pool)
+		if pool.FallbackPoolID == nil || *pool.FallbackPoolID <= 0 {
+			break
+		}
+		id = *pool.FallbackPoolID
+	}
+	return pools, routingPoolChainLabel(pools), nil
+}
+
+func routingPoolChainLabel(pools []RoutingPool) string {
+	labels := make([]string, 0, len(pools))
+	for _, pool := range pools {
+		name := strings.TrimSpace(pool.Name)
+		if name == "" {
+			name = "pool " + strconv.FormatInt(pool.ID, 10)
+		}
+		labels = append(labels, name)
+	}
+	return strings.Join(labels, " -> ")
+}
+
+func moreSpecificSelectionError(current, next error) error {
+	if next == nil {
+		return current
+	}
+	if current == nil || errors.Is(current, ErrAccountsUnavailable) {
+		return next
+	}
+	if errors.Is(next, ErrModelUnavailable) {
+		return next
+	}
+	return current
 }
 
 func stickySessionHashCandidates(accounts []Account, sessionID string) []Account {

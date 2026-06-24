@@ -210,13 +210,17 @@ func TestProviderRepositoryRoutingPoolSelectionAndBinding(t *testing.T) {
 		t.Fatalf("ReplaceAccountModels pooled returned error: %v", err)
 	}
 
-	poolID := insertProviderRoutingPool(t, repo.pool, "primary", pooled.ID)
+	fallbackPoolID := insertProviderRoutingPool(t, repo.pool, "secondary", pooled.ID)
+	poolID := insertProviderRoutingPoolWithFallback(t, repo.pool, "primary", pooled.ID, &fallbackPoolID)
 	pool, err := repo.FindRoutingPool(ctx, poolID)
 	if err != nil {
 		t.Fatalf("FindRoutingPool returned error: %v", err)
 	}
 	if pool.ID != poolID || pool.Name != "primary" || !pool.Enabled {
 		t.Fatalf("pool = %+v, want primary", pool)
+	}
+	if pool.FallbackPoolID == nil || *pool.FallbackPoolID != fallbackPoolID {
+		t.Fatalf("fallback pool ID = %v, want %d", pool.FallbackPoolID, fallbackPoolID)
 	}
 
 	accounts, err := repo.ListAccountsForRoutingPool(ctx, "openai", poolID, "gpt-5", nil, time.Now())
@@ -1047,14 +1051,19 @@ func saveProviderTestAccount(t *testing.T, repo *ProviderRepository, account pro
 
 func insertProviderRoutingPool(t *testing.T, pool *pgxpool.Pool, name string, accountID int64) int64 {
 	t.Helper()
+	return insertProviderRoutingPoolWithFallback(t, pool, name, accountID, nil)
+}
+
+func insertProviderRoutingPoolWithFallback(t *testing.T, pool *pgxpool.Pool, name string, accountID int64, fallbackPoolID *int64) int64 {
+	t.Helper()
 
 	ctx := context.Background()
 	var poolID int64
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO routing_pools (name, description, enabled)
-		VALUES ($1, '', true)
+		INSERT INTO routing_pools (name, description, enabled, fallback_pool_id)
+		VALUES ($1, '', true, $2)
 		RETURNING id
-	`, name).Scan(&poolID); err != nil {
+	`, name, fallbackPoolID).Scan(&poolID); err != nil {
 		t.Fatalf("insert routing pool failed: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `

@@ -1687,6 +1687,43 @@ func TestSelectAccountForModelInRoutingPoolMissingPoolFailsClosed(t *testing.T) 
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolChainFallsBackByModel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 10, true, 1, "primary-token"),
+		testAccount(t, 20, true, 1, "secondary-token"),
+	}
+	repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10, Priority: 0}}
+	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
+	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
+	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelInRoutingPoolChain returned error: %v", err)
+	}
+	if selected.AccountID != 20 || selected.RoutingPoolID != 2 || selected.RoutingPoolFallbackDepth != 1 {
+		t.Fatalf("selected = %+v, want account 20 in fallback pool 2 depth 1", selected)
+	}
+	if selected.RoutingPoolFallbackChain != "primary -> secondary" {
+		t.Fatalf("chain = %q, want primary -> secondary", selected.RoutingPoolFallbackChain)
+	}
+}
+
+func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true, FallbackPoolID: ptrInt64(1)}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if _, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5"); !errors.Is(err, ErrRoutingPoolCycle) {
+		t.Fatalf("cycle error = %v, want ErrRoutingPoolCycle", err)
+	}
+}
+
 func TestSelectAccountForModelAndSessionInRoutingPoolDoesNotCrossScope(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
@@ -3118,6 +3155,10 @@ func testExpiredAccount(t *testing.T, id int64, enabled bool, priority int, acce
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
+}
+
+func ptrInt64(value int64) *int64 {
+	return &value
 }
 
 func valueOrDefaultInt64(value, fallback int64) int64 {

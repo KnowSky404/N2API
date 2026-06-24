@@ -350,10 +350,10 @@ func (r *ProviderRepository) FindSessionBinding(ctx context.Context, providerNam
 func (r *ProviderRepository) FindRoutingPool(ctx context.Context, poolID int64) (provider.RoutingPool, error) {
 	var pool provider.RoutingPool
 	err := r.pool.QueryRow(ctx, `
-		SELECT id, name, enabled
+		SELECT id, name, enabled, fallback_pool_id
 		FROM routing_pools
 		WHERE id = $1
-	`, poolID).Scan(&pool.ID, &pool.Name, &pool.Enabled)
+	`, poolID).Scan(&pool.ID, &pool.Name, &pool.Enabled, &pool.FallbackPoolID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.RoutingPool{}, provider.ErrRoutingPoolNotFound
 	}
