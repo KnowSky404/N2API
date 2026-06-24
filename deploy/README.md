@@ -76,7 +76,7 @@ Request Logs keep local gateway rejections diagnosable while client responses st
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.
 
-Routing pool fallback is explicit. The routing pool fallback chain can point to one fallback pool at each step, forming a simple chain such as `primary -> secondary`. A pool-bound key never falls back to the global provider account pool; it tries only its configured pool and that explicit chain. Cycles fail closed with `routing_pool_cycle`, and exhausted chains are logged as `routing_pool_exhausted`.
+Routing pool fallback is explicit. The routing pool fallback chain can point to one fallback pool at each step, forming a simple chain such as `primary -> secondary`. A pool-bound key never falls back to the global provider account pool; it tries only its configured pool and that explicit chain. A disabled primary pool fails closed with `routing_pool_disabled`, cycles fail closed with `routing_pool_cycle`, and exhausted chains are logged as `routing_pool_exhausted`.
 
 Request Logs support exact **Provider account**, **Routing pool**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management, 24h usage rows for **Top provider accounts**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 

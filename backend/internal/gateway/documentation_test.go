@@ -271,6 +271,7 @@ func TestGatewayDocumentationMentionsRoutingPoolFallback(t *testing.T) {
 		for _, want := range []string{
 			"routing pool fallback",
 			"pool-bound key never falls back to the global provider account pool",
+			"`routing_pool_disabled`",
 			"`routing_pool_cycle`",
 			"`routing_pool_exhausted`",
 		} {
