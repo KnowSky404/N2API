@@ -407,6 +407,8 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /pauseProviderAccount/);
   assert.match(source, /sr-only">Pause scheduling/);
   assert.match(source, /sr-only">Refresh account/);
+  assert.match(source, /disconnectProviderAccount/);
+  assert.match(source, /sr-only">Disconnect account/);
   assert.match(source, /title=\{accountHoverDetail\(account\)\}/);
   assert.match(source, /title=\{statusHoverDetail\(account\)\}/);
   assert.match(source, /account\.lastTestAt/);
@@ -415,6 +417,14 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /account\.provider\s*\|\|\s*'unknown'/);
   assert.doesNotMatch(source, /account\.subject\s*\|\|\s*account\.provider/);
   assert.doesNotMatch(source, />\s*\{account\.lastError\}\s*</);
+});
+
+test('provider account state can disconnect a single account', () => {
+  assert.match(adminStateSource, /export async function disconnectProviderAccount/);
+  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}/);
+  assert.match(adminStateSource, /method:\s*'DELETE'/);
+  assert.match(adminStateSource, /loadProviderAccounts\(\)/);
+  assert.match(adminStateSource, /loadModelRouting\(\)/);
 });
 
 test('provider account rows show remaining scheduling block windows', () => {
