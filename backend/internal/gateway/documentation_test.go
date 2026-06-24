@@ -208,6 +208,7 @@ func TestGatewayDocumentationMentionsRoutingPools(t *testing.T) {
 			"Routing pools",
 			"API key can be bound to one routing pool",
 			"pool-bound key",
+			"Pool membership priority",
 			"global provider account pool",
 			"`routing_pool_unavailable`",
 			"`routing_pool_empty`",

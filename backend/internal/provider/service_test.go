@@ -1675,6 +1675,33 @@ func TestSelectAccountForModelInRoutingPoolScopesCandidates(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolUsesMembershipPriority(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "global-high-priority-token"),
+		testAccount(t, 2, true, 100, "pool-high-priority-token"),
+	}
+	repo.routingPoolAccounts[7] = []RoutingPoolAccount{
+		{AccountID: 1, Priority: 50},
+		{AccountID: 2, Priority: 0},
+	}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPool(context.Background(), 7, "gpt-5")
+	if err != nil {
+		t.Fatalf("SelectAccountForModelInRoutingPool returned error: %v", err)
+	}
+	if selected.AccountID != 2 || selected.AuthorizationToken != "pool-high-priority-token" {
+		t.Fatalf("selected = %+v, want pool membership priority account 2", selected)
+	}
+}
+
 func TestSelectAccountForModelInRoutingPoolMissingPoolFailsClosed(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{

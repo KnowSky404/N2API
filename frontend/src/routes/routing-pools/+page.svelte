@@ -232,7 +232,7 @@
             <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#ededed] pt-4">
               <div>
                 <h3 class="text-base font-semibold text-[#0d0d0d]">Pool accounts</h3>
-                <p class="mt-1 text-sm text-[#6e6e6e]">Created {formatDate(pool.createdAt)}.</p>
+                <p class="mt-1 text-sm text-[#6e6e6e]">Created {formatDate(pool.createdAt)}. Pool priority overrides account priority inside this pool.</p>
               </div>
               <button class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
                 Save membership
@@ -252,7 +252,7 @@
                       <th class="px-3 py-2 font-medium">Account</th>
                       <th class="px-3 py-2 font-medium">Type</th>
                       <th class="px-3 py-2 font-medium">Status</th>
-                      <th class="px-3 py-2 font-medium">Priority</th>
+                      <th class="px-3 py-2 font-medium">Pool priority</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-[#f3f3f3]">

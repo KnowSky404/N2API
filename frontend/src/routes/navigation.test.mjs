@@ -48,7 +48,7 @@ test('routing pools page manages account pools', () => {
   const poolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
 
   assert.match(layout, /href:\s*'\/routing-pools'/);
-  for (const label of ['Routing pools', 'Create pool', 'Pool accounts', 'Save membership', 'Enabled', 'Fallback pool', 'No fallback']) {
+  for (const label of ['Routing pools', 'Create pool', 'Pool accounts', 'Save membership', 'Enabled', 'Fallback pool', 'No fallback', 'Pool priority']) {
     assert.match(poolsPage, new RegExp(label.replace(' ', '\\s+')), `routing pools page should include ${label}`);
   }
   assert.match(poolsPage, /pool\.fallbackPoolId/);
