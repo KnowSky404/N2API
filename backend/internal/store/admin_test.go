@@ -222,6 +222,27 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 		t.Fatalf("found key = %+v, want selected policy with models", found)
 	}
 
+	disabled, err := repo.SetAPIKeyDisabled(ctx, created.ID, true)
+	if err != nil {
+		t.Fatalf("SetAPIKeyDisabled true returned error: %v", err)
+	}
+	if disabled.DisabledAt == nil || disabled.ModelPolicy != admin.APIKeyModelPolicySelected || !slices.Equal(disabled.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+		t.Fatalf("disabled key = %+v, want disabled selected-policy key", disabled)
+	}
+	if _, err := repo.FindAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("FindAPIKeyByHash disabled error = %v, want ErrNotFound", err)
+	}
+	enabled, err := repo.SetAPIKeyDisabled(ctx, created.ID, false)
+	if err != nil {
+		t.Fatalf("SetAPIKeyDisabled false returned error: %v", err)
+	}
+	if enabled.DisabledAt != nil {
+		t.Fatalf("DisabledAt = %v, want nil after enable", enabled.DisabledAt)
+	}
+	if _, err := repo.FindAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt); err != nil {
+		t.Fatalf("FindAPIKeyByHash after enable returned error: %v", err)
+	}
+
 	cleared, err := repo.UpdateAPIKeyModelPolicy(ctx, created.ID, admin.APIKeyModelPolicyAll, nil)
 	if err != nil {
 		t.Fatalf("UpdateAPIKeyModelPolicy all returned error: %v", err)
@@ -249,6 +270,9 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	}
 	if _, err := repo.UpdateAPIKeyName(ctx, created.ID, "revoked rename"); !errors.Is(err, admin.ErrNotFound) {
 		t.Fatalf("UpdateAPIKeyName revoked error = %v, want ErrNotFound", err)
+	}
+	if _, err := repo.SetAPIKeyDisabled(ctx, created.ID, true); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("SetAPIKeyDisabled revoked error = %v, want ErrNotFound", err)
 	}
 }
 

@@ -57,6 +57,7 @@ type APIKey struct {
 	CreatedAt         time.Time  `json:"createdAt"`
 	LastUsedAt        *time.Time `json:"lastUsedAt"`
 	RevokedAt         *time.Time `json:"revokedAt"`
+	DisabledAt        *time.Time `json:"disabledAt"`
 	ModelPolicy       string     `json:"modelPolicy"`
 	AllowedModels     []string   `json:"allowedModels"`
 	RequestsPerMinute int        `json:"requestsPerMinute"`
@@ -217,6 +218,7 @@ type Repository interface {
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error)
+	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
@@ -372,6 +374,10 @@ func (s *Service) UpdateAPIKeyName(ctx context.Context, id int64, name string) (
 	return s.repo.UpdateAPIKeyName(ctx, id, name)
 }
 
+func (s *Service) SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (APIKey, error) {
+	return s.repo.SetAPIKeyDisabled(ctx, id, disabled)
+}
+
 func (s *Service) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error) {
 	policy = strings.TrimSpace(policy)
 	switch policy {
@@ -429,6 +435,9 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (APIKey
 		return APIKey{}, err
 	}
 	if key.RevokedAt != nil {
+		return APIKey{}, ErrUnauthorized
+	}
+	if key.DisabledAt != nil {
 		return APIKey{}, ErrUnauthorized
 	}
 	if err := s.repo.TouchAPIKey(ctx, key.ID, time.Now()); err != nil {

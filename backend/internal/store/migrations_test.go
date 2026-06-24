@@ -247,6 +247,21 @@ func TestClientAPIKeyLimitsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestClientAPIKeyDisabledAtMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00022_client_api_key_disabled_at.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE client_api_keys ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ",
+		"ALTER TABLE client_api_keys DROP COLUMN IF EXISTS disabled_at",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestSingleAccountModelBackfillMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00015_single_account_model_backfill.sql")
 	if err != nil {
@@ -462,10 +477,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 21 {
-		t.Fatalf("migration sources = %d, want 21", len(sources))
+	if len(sources) != 22 {
+		t.Fatalf("migration sources = %d, want 22", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[20].Path != "00021_request_log_fallback_diagnostics.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[21].Path != "00022_client_api_key_disabled_at.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

@@ -149,6 +149,37 @@ func TestCreateAPIKeyReturnsSecretOnceAndAuthenticateRejectsRevoked(t *testing.T
 	}
 }
 
+func TestSetAPIKeyDisabledBlocksAndRestoresAuthentication(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	disabled, err := service.SetAPIKeyDisabled(context.Background(), result.Key.ID, true)
+	if err != nil {
+		t.Fatalf("SetAPIKeyDisabled true returned error: %v", err)
+	}
+	if disabled.DisabledAt == nil {
+		t.Fatalf("DisabledAt = nil, want timestamp")
+	}
+	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("AuthenticateAPIKey disabled error = %v, want ErrUnauthorized", err)
+	}
+
+	enabled, err := service.SetAPIKeyDisabled(context.Background(), result.Key.ID, false)
+	if err != nil {
+		t.Fatalf("SetAPIKeyDisabled false returned error: %v", err)
+	}
+	if enabled.DisabledAt != nil {
+		t.Fatalf("DisabledAt = %v, want nil", enabled.DisabledAt)
+	}
+	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); err != nil {
+		t.Fatalf("AuthenticateAPIKey after enable returned error: %v", err)
+	}
+}
+
 func TestAuthenticateAPIKeyMapsTouchNotFoundToUnauthorized(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -948,6 +979,21 @@ func (r *memoryRepo) UpdateAPIKeyName(_ context.Context, id int64, name string) 
 	return key.APIKey, nil
 }
 
+func (r *memoryRepo) SetAPIKeyDisabled(_ context.Context, id int64, disabled bool) (APIKey, error) {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt != nil {
+		return APIKey{}, ErrNotFound
+	}
+	if disabled {
+		now := time.Now()
+		key.DisabledAt = &now
+	} else {
+		key.DisabledAt = nil
+	}
+	r.keys[id] = key
+	return key.APIKey, nil
+}
+
 func (r *memoryRepo) UpdateAPIKeyModelPolicy(_ context.Context, id int64, policy string, models []string) (APIKey, error) {
 	key, ok := r.keys[id]
 	if !ok || key.RevokedAt != nil {
@@ -980,7 +1026,7 @@ func (r *memoryRepo) ListAPIKeyModels(_ context.Context, id int64) ([]string, er
 
 func (r *memoryRepo) FindAPIKeyByHash(_ context.Context, hash string, _ time.Time) (APIKey, error) {
 	for _, key := range r.keys {
-		if key.Hash == hash && key.RevokedAt == nil {
+		if key.Hash == hash && key.RevokedAt == nil && key.DisabledAt == nil {
 			return key.APIKey, nil
 		}
 	}
