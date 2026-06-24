@@ -1647,7 +1647,7 @@ func scheduleReason(selected, stickyBound bool) string {
 }
 
 func (s *Service) stickySessionCandidates(ctx context.Context, accounts []Account, model, sessionID string) ([]Account, int64, error) {
-	if len(accounts) <= 1 {
+	if len(accounts) == 0 {
 		return accounts, 0, nil
 	}
 	binding, err := s.repo.FindSessionBinding(ctx, s.cfg.Provider, model, sessionID)

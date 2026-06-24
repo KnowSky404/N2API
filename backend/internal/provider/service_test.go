@@ -2197,6 +2197,45 @@ func TestPreviewAccountSelectionReportsStoredStickyBindingWithoutMutation(t *tes
 	}
 }
 
+func TestPreviewAccountSelectionReportsStoredStickyBindingForSingleCandidate(t *testing.T) {
+	older := time.Now().Add(-time.Hour)
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 7, true, 1, "bound-token"),
+	}
+	repo.accounts[0].LastUsedAt = &older
+	repo.accountModels[7] = []AccountModel{
+		{AccountID: 7, Provider: "openai", Model: "gpt-5", Enabled: true},
+	}
+	createdAt := time.Now().Add(-time.Hour)
+	repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")] = SessionBinding{
+		ID:         1,
+		Provider:   "openai",
+		Model:      "gpt-5",
+		SessionID:  "workspace-123",
+		AccountID:  7,
+		CreatedAt:  createdAt,
+		UpdatedAt:  createdAt,
+		LastUsedAt: createdAt,
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("PreviewAccountSelection returned error: %v", err)
+	}
+
+	if preview.StickyBoundAccountID != 7 {
+		t.Fatalf("StickyBoundAccountID = %d, want 7", preview.StickyBoundAccountID)
+	}
+	if len(preview.Candidates) != 1 || !preview.Candidates[0].StickyBound || preview.Candidates[0].ScheduleReason != "sticky session binding" {
+		t.Fatalf("candidate = %+v, want single sticky-bound candidate", preview.Candidates)
+	}
+	if got := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]; !got.UpdatedAt.Equal(createdAt) {
+		t.Fatalf("binding UpdatedAt = %v, want unchanged %v", got.UpdatedAt, createdAt)
+	}
+}
+
 func TestPreviewAccountSelectionIncludesUnschedulableReasons(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
