@@ -33,6 +33,24 @@ func TestSaveAccountSubjectConflictPreservesSchedulingFields(t *testing.T) {
 	}
 }
 
+func TestRoutingPoolHasAccountsUsesMembershipRows(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	for _, want := range []string{
+		"FUNC (R *PROVIDERREPOSITORY) ROUTINGPOOLHASACCOUNTS",
+		"SELECT EXISTS",
+		"FROM ROUTING_POOL_ACCOUNTS",
+		"WHERE POOL_ID = $1",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("RoutingPoolHasAccounts query must include %q", want)
+		}
+	}
+}
+
 func TestProviderRepositorySubjectConflictPreservesSchedulingFields(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
@@ -243,6 +261,41 @@ func TestProviderRepositoryRoutingPoolSelectionAndBinding(t *testing.T) {
 	}
 	if _, err := repo.FindSessionBinding(ctx, "openai", "gpt-5", "workspace-123"); !errors.Is(err, provider.ErrSessionBindingNotFound) {
 		t.Fatalf("global binding error = %v, want ErrSessionBindingNotFound", err)
+	}
+}
+
+func TestProviderRepositoryRoutingPoolHasAccounts(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	emptyPoolID := insertProviderRoutingPool(t, repo.pool, "empty", 0)
+	hasAccounts, err := repo.RoutingPoolHasAccounts(ctx, emptyPoolID)
+	if err != nil {
+		t.Fatalf("RoutingPoolHasAccounts empty returned error: %v", err)
+	}
+	if hasAccounts {
+		t.Fatalf("RoutingPoolHasAccounts empty = true, want false")
+	}
+
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "routing-pool-member",
+		DisplayName:           "Routing Pool Member",
+		EncryptedAccessToken:  "member-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              1,
+		Status:                provider.AccountStatusActive,
+	})
+	nonEmptyPoolID := insertProviderRoutingPool(t, repo.pool, "non-empty", account.ID)
+	hasAccounts, err = repo.RoutingPoolHasAccounts(ctx, nonEmptyPoolID)
+	if err != nil {
+		t.Fatalf("RoutingPoolHasAccounts non-empty returned error: %v", err)
+	}
+	if !hasAccounts {
+		t.Fatalf("RoutingPoolHasAccounts non-empty = false, want true")
 	}
 }
 
@@ -1117,6 +1170,9 @@ func insertProviderRoutingPoolWithFallback(t *testing.T, pool *pgxpool.Pool, nam
 		RETURNING id
 	`, name, fallbackPoolID).Scan(&poolID); err != nil {
 		t.Fatalf("insert routing pool failed: %v", err)
+	}
+	if accountID <= 0 {
+		return poolID
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO routing_pool_accounts (pool_id, account_id, priority)
