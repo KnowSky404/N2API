@@ -107,6 +107,7 @@ type fakeProviderService struct {
 type fakeGatewayHandler struct {
 	called             bool
 	accountConcurrency map[int64]int
+	apiKeyConcurrency  map[int64]int
 }
 
 func (h *fakeGatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +119,10 @@ func (h *fakeGatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *fakeGatewayHandler) AccountConcurrencySnapshot() map[int64]int {
 	return h.accountConcurrency
+}
+
+func (h *fakeGatewayHandler) APIKeyConcurrencySnapshot() map[int64]int {
+	return h.apiKeyConcurrency
 }
 
 func newFakeAdminService() *fakeAdminService {
@@ -890,6 +895,39 @@ func TestListAPIKeysRequiresSessionAndReturnsKeys(t *testing.T) {
 	}
 	if len(body.Keys) != 1 || body.Keys[0].ID != 7 {
 		t.Fatalf("keys = %+v, want key 7", body.Keys)
+	}
+}
+
+func TestListAPIKeysIncludesConcurrencyState(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.gatewaySettings.MaxConcurrentRequestsPerKey = 2
+	gateway := &fakeGatewayHandler{apiKeyConcurrency: map[int64]int{7: 2}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService(), gateway)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/keys", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Keys []struct {
+			admin.APIKey
+			CurrentConcurrentRequests      int  `json:"currentConcurrentRequests"`
+			EffectiveMaxConcurrentRequests int  `json:"effectiveMaxConcurrentRequests"`
+			ConcurrencyBlocked             bool `json:"concurrencyBlocked"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Keys) != 1 {
+		t.Fatalf("keys = %+v, want one key", body.Keys)
+	}
+	if body.Keys[0].CurrentConcurrentRequests != 2 || body.Keys[0].EffectiveMaxConcurrentRequests != 2 || !body.Keys[0].ConcurrencyBlocked {
+		t.Fatalf("key concurrency = %+v, want current 2 effective 2 blocked", body.Keys[0])
 	}
 }
 

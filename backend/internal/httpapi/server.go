@@ -77,9 +77,20 @@ type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
 
+type APIKeyConcurrencySnapshotProvider interface {
+	APIKeyConcurrencySnapshot() map[int64]int
+}
+
 type gatewaySettingsResponse struct {
 	admin.GatewaySettings
 	ProviderAccountAutoTestStatus provider.AutoTestStatus `json:"providerAccountAutoTestStatus,omitempty"`
+}
+
+type apiKeyResponse struct {
+	admin.APIKey
+	CurrentConcurrentRequests      int  `json:"currentConcurrentRequests"`
+	EffectiveMaxConcurrentRequests int  `json:"effectiveMaxConcurrentRequests"`
+	ConcurrencyBlocked             bool `json:"concurrencyBlocked"`
 }
 
 type providerAccountResponse struct {
@@ -105,6 +116,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
 	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
+	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -220,7 +232,18 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string][]admin.APIKey{"keys": keys})
+		settings, err := admins.GetGatewaySettings(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		concurrency := map[int64]int{}
+		if apiKeyConcurrencySource != nil {
+			concurrency = apiKeyConcurrencySource.APIKeyConcurrencySnapshot()
+		}
+		writeJSON(w, http.StatusOK, map[string][]apiKeyResponse{
+			"keys": apiKeyResponses(keys, settings, concurrency),
+		})
 	}))
 
 	mux.HandleFunc("POST /api/admin/keys", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -723,6 +746,21 @@ func writeProviderAccountError(w http.ResponseWriter, err error) {
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "internal_error")
+}
+
+func apiKeyResponses(keys []admin.APIKey, settings admin.GatewaySettings, concurrency map[int64]int) []apiKeyResponse {
+	responses := make([]apiKeyResponse, 0, len(keys))
+	effectiveMaxConcurrentRequests := settings.MaxConcurrentRequestsPerKey
+	for _, key := range keys {
+		currentConcurrentRequests := concurrency[key.ID]
+		responses = append(responses, apiKeyResponse{
+			APIKey:                         key,
+			CurrentConcurrentRequests:      currentConcurrentRequests,
+			EffectiveMaxConcurrentRequests: effectiveMaxConcurrentRequests,
+			ConcurrencyBlocked:             effectiveMaxConcurrentRequests > 0 && currentConcurrentRequests >= effectiveMaxConcurrentRequests,
+		})
+	}
+	return responses
 }
 
 func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, admins AdminService, providers ProviderService, concurrencySource AccountConcurrencySnapshotProvider) {
