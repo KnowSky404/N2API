@@ -204,6 +204,7 @@ func main() {
 		MaxRequestsPerMinutePerKey:      cfg.GatewayRequestsPerMinutePerKey,
 		MaxTokensPerMinutePerKey:        cfg.GatewayTokensPerMinutePerKey,
 		SettingsProvider:                adminService,
+		BudgetProvider:                  adminService,
 		Logger:                          store.NewGatewayRepository(pool),
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,

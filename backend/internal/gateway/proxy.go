@@ -94,6 +94,10 @@ type GatewaySettingsProvider interface {
 	GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error)
 }
 
+type BudgetProvider interface {
+	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
+}
+
 type UsageCostEstimate struct {
 	Matched      bool
 	CostMicrousd int64
@@ -139,6 +143,7 @@ type Config struct {
 	ModelProvider                   ModelProvider
 	UsagePricer                     UsagePricer
 	SettingsProvider                GatewaySettingsProvider
+	BudgetProvider                  BudgetProvider
 }
 
 type Proxy struct {
@@ -157,6 +162,7 @@ type Proxy struct {
 	logger          RequestLogger
 	models          ModelProvider
 	usagePricer     UsagePricer
+	budgets         BudgetProvider
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -200,6 +206,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		logger:          cfg.Logger,
 		models:          cfg.ModelProvider,
 		usagePricer:     cfg.UsagePricer,
+		budgets:         cfg.BudgetProvider,
 	}
 }
 
@@ -275,6 +282,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errorCode = "api_key_request_rate_limited"
 		setRetryAfterHeader(recorder.Header(), retryAfter)
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key request rate limit exceeded")
+		return
+	}
+	if exceeded, err := p.apiKeyBudgetExceeded(r.Context(), key, startedAt); err != nil {
+		errorCode = "internal_error"
+		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not check api key budget")
+		return
+	} else if exceeded {
+		errorCode = "api_key_budget_exceeded"
+		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
 		return
 	}
 
@@ -494,6 +510,20 @@ func (p *Proxy) allowAPIKeyTokens(keyID int64, tokensPerMinute, defaultTokensPer
 		return 0, true
 	}
 	return p.tokenLimiter.Allow(keyID, effectiveAPIKeyLimit(tokensPerMinute, defaultTokensPerMinute))
+}
+
+func (p *Proxy) apiKeyBudgetExceeded(ctx context.Context, key admin.APIKey, now time.Time) (bool, error) {
+	if p.budgets == nil {
+		return false, nil
+	}
+	if key.RequestBudget24h <= 0 && key.TokenBudget24h <= 0 && key.RequestBudget30d <= 0 && key.TokenBudget30d <= 0 {
+		return false, nil
+	}
+	usage, err := p.budgets.GetAPIKeyBudgetUsage(ctx, key, now)
+	if err != nil {
+		return false, err
+	}
+	return usage.RequestBudgetExceeded || usage.TokenBudgetExceeded, nil
 }
 
 func effectiveAPIKeyLimit(keyLimit, defaultLimit int) int {
