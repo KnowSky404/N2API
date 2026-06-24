@@ -196,6 +196,25 @@ func TestGatewayDocumentationMentionsProviderAccountActiveConcurrency(t *testing
 	}
 }
 
+func TestGatewayDocumentationMentionsRoutingPreviewConcurrency(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Routing preview",
+			"active concurrency",
+			"Concurrency full",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in routing preview concurrency documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

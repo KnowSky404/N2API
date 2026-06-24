@@ -101,7 +101,7 @@ Lower priority numbers are selected first. Within the same priority and health c
 
 Client API keys default to all routable models. For narrower access, set a key to selected models on the API Keys page. A selected model must still have at least one enabled healthy provider account before the gateway can route requests to it. `/v1/models` is also filtered by the authenticated API key: `all` keys see the full routable list, while `selected` keys see the intersection of their selected models and currently routable models.
 
-Routing diagnostics can preview scheduler fallback without sending traffic. In Selection preview, set **Excluded account IDs** to a comma-separated list such as `7, 8` to simulate those provider accounts being unavailable; excluded accounts remain visible as blocked candidates with the reason `account excluded`.
+Routing diagnostics can preview scheduler fallback without sending traffic. In Selection preview, set **Excluded account IDs** to a comma-separated list such as `7, 8` to simulate those provider accounts being unavailable; excluded accounts remain visible as blocked candidates with the reason `account excluded`. Routing preview also shows each candidate's active concurrency and effective account cap; candidates at a positive cap are marked **Concurrency full**.
 
 ## Gateway Runtime Limits
 
