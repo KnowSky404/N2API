@@ -566,7 +566,20 @@
     {#each requestLogs.items as log}
       <tr class="bg-white">
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(log.createdAt)}</td>
-        <td class="px-4 py-3 text-[#3c3c3c]">{log.clientKey || 'Unknown'}</td>
+        <td class="px-4 py-3 text-[#3c3c3c]">
+          {#if log.clientKeyId}
+            <a
+              class="block max-w-[180px] truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]"
+              href={`/api-keys?clientKeyId=${log.clientKeyId}`}
+              title="View API key"
+              aria-label="View API key"
+            >
+              {log.clientKey || `Key ${log.clientKeyId}`}
+            </a>
+          {:else}
+            {log.clientKey || 'Unknown'}
+          {/if}
+        </td>
         <td class="px-4 py-3">
           {#if log.providerAccountId}
             <div class="max-w-[220px]">

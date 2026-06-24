@@ -258,6 +258,8 @@ test('request logs page filters by provider account', () => {
   assert.match(requestLogsPage, /providerAccounts/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.providerAccountId\}/);
   assert.match(requestLogsPage, /All provider accounts/);
+  assert.match(requestLogsPage, /href=\{`\/api-keys\?clientKeyId=\$\{log\.clientKeyId\}`\}/);
+  assert.match(requestLogsPage, /View API key/);
   assert.match(requestLogsPage, /href=\{`\/providers\?providerAccountId=\$\{log\.providerAccountId\}`\}/);
   assert.match(requestLogsPage, /View provider account/);
   assert.match(requestLogsPage, /routingPools/);
@@ -280,6 +282,13 @@ test('providers page initializes account search from provider account URL param'
   assert.match(providersPage, /providerAccountId = params\.get\('providerAccountId'\)/);
   assert.match(providersPage, /accountSearch = `id:\$\{providerAccountId\}`/);
   assert.match(providersPage, /String\(account\.id\) === idQuery/);
+});
+
+test('api keys page initializes key search from client key URL param', () => {
+  assert.match(apiKeysPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(apiKeysPage, /clientKeyId = params\.get\('clientKeyId'\)/);
+  assert.match(apiKeysPage, /keySearch = `id:\$\{clientKeyId\}`/);
+  assert.match(apiKeysPage, /String\(key\.id\) === idQuery/);
 });
 
 test('request logs page initializes filters from URL params', () => {

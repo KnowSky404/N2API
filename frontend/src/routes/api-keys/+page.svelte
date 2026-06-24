@@ -37,6 +37,7 @@
   let keySearch = $state('');
   let keyStatusFilter = $state('all');
   let modelRoutingRequested = $state(false);
+  let apiKeyURLFiltersInitialized = $state(false);
   const filteredAPIKeys = $derived(
     apiKeys.items.filter((key) => {
       if (keyStatusFilter === 'active' && (key.revokedAt || key.disabledAt)) return false;
@@ -45,14 +46,32 @@
 
       const query = keySearch.trim().toLowerCase();
       if (!query) return true;
+      if (/^id:[1-9]\d*$/.test(query)) {
+        const idQuery = query.slice(3);
+        return String(key.id) === idQuery;
+      }
       return apiKeySearchText(key).includes(query);
     })
   );
 
+  function applyAPIKeyURLFilters() {
+    const params = new URLSearchParams(window.location.search);
+    const clientKeyId = params.get('clientKeyId') ?? '';
+    if (/^[1-9]\d*$/.test(clientKeyId)) {
+      keySearch = `id:${clientKeyId}`;
+    }
+  }
+
   $effect(() => {
     if (!session.authenticated) {
       modelRoutingRequested = false;
+      apiKeyURLFiltersInitialized = false;
+      keySearch = '';
       return;
+    }
+    if (!apiKeyURLFiltersInitialized) {
+      apiKeyURLFiltersInitialized = true;
+      applyAPIKeyURLFilters();
     }
     if (!modelRoutingRequested) {
       modelRoutingRequested = true;
