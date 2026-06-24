@@ -112,6 +112,7 @@ func TestGatewayDocumentationMentionsAPIKeyRateWindowVisibility(t *testing.T) {
 		for _, want := range []string{
 			"Requests window",
 			"Tokens window",
+			"remaining capacity",
 			"process-local fixed one-minute",
 		} {
 			if !strings.Contains(text, want) {
