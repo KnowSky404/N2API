@@ -293,7 +293,9 @@ test('providers page initializes account search from provider account URL param'
 });
 
 test('api keys page initializes key search from client key URL param', () => {
-  assert.match(apiKeysPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(apiKeysPage, /from '\$app\/state'/);
+  assert.match(apiKeysPage, /page\.url\.search/);
+  assert.match(apiKeysPage, /appliedAPIKeySearch/);
   assert.match(apiKeysPage, /clientKeyId = params\.get\('clientKeyId'\)/);
   assert.match(apiKeysPage, /keySearch = `id:\$\{clientKeyId\}`/);
   assert.match(apiKeysPage, /String\(key\.id\) === idQuery/);

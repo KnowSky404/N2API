@@ -1,4 +1,5 @@
 <script>
+  import { page } from '$app/state';
   import {
     apiKeys,
     apiKeyModelWarnings,
@@ -37,7 +38,7 @@
   let keySearch = $state('');
   let keyStatusFilter = $state('all');
   let modelRoutingRequested = $state(false);
-  let apiKeyURLFiltersInitialized = $state(false);
+  let appliedAPIKeySearch = $state('');
   const filteredAPIKeys = $derived(
     apiKeys.items.filter((key) => {
       if (keyStatusFilter === 'active' && (key.revokedAt || key.disabledAt)) return false;
@@ -54,9 +55,11 @@
     })
   );
 
-  function applyAPIKeyURLFilters() {
-    const params = new URLSearchParams(window.location.search);
+  /** @param {string} search */
+  function applyAPIKeyURLFilters(search) {
+    const params = new URLSearchParams(search);
     const clientKeyId = params.get('clientKeyId') ?? '';
+    keySearch = '';
     if (/^[1-9]\d*$/.test(clientKeyId)) {
       keySearch = `id:${clientKeyId}`;
     }
@@ -65,13 +68,13 @@
   $effect(() => {
     if (!session.authenticated) {
       modelRoutingRequested = false;
-      apiKeyURLFiltersInitialized = false;
+      appliedAPIKeySearch = '';
       keySearch = '';
       return;
     }
-    if (!apiKeyURLFiltersInitialized) {
-      apiKeyURLFiltersInitialized = true;
-      applyAPIKeyURLFilters();
+    if (appliedAPIKeySearch !== page.url.search) {
+      appliedAPIKeySearch = page.url.search;
+      applyAPIKeyURLFilters(page.url.search);
     }
     if (!modelRoutingRequested) {
       modelRoutingRequested = true;
