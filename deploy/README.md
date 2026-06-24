@@ -55,6 +55,8 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 
 Gateway management refreshes provider accounts, model routing, and API keys before reporting readiness, so the counts and prerequisite warnings are valid even when `/gateway` is opened directly.
 
+Gateway management also includes **Scheduling health**, which summarizes enabled, schedulable, and blocked provider accounts; **Blocked reasons** groups disabled, expired, rate-limited, and circuit-open exits so account-pool pressure is visible without opening the full Provider accounts table.
+
 The deployment template includes optional in-process gateway guards:
 
 - `N2API_GATEWAY_MAX_CONCURRENT_REQUESTS` limits total active gateway requests.

@@ -448,6 +448,25 @@ func TestGatewayDocumentationMentionsProviderAccountBulkStatusActions(t *testing
 	}
 }
 
+func TestGatewayDocumentationMentionsSchedulingHealthSummary(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Scheduling health",
+			"blocked provider accounts",
+			"Blocked reasons",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in gateway scheduling health documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md", "../../../.env.example"} {
 		content, err := os.ReadFile(path)
