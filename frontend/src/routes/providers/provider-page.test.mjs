@@ -31,6 +31,7 @@ const {
   shouldApplyAccountTestResultsResponse,
   toggleProviderAccountSelection,
   updateAPIKeyLimits,
+  updateAPIKeyBudgets,
   clearProviderAccountSelection,
   validateProviderAccountPauseDuration
 } = await import('../../lib/admin-state.svelte.js');
@@ -556,6 +557,30 @@ test('api key state can save per-key gateway limits', async () => {
   assert.equal(apiKeys.items[0].tokensPerMinute, 40000);
 });
 
+test('api key state can save per-key budgets', async () => {
+  session.authenticated = true;
+  apiKeys.error = '';
+  apiKeys.items = [{ id: 7, name: 'codex laptop', requestBudget24h: 0, tokenBudget24h: 0, requestBudget30d: 0, tokenBudget30d: 0 }];
+  let request = null;
+  globalThis.fetch = async (path, options) => {
+    request = { path, options };
+    return new Response(
+      JSON.stringify({
+        key: { id: 7, name: 'codex laptop', requestBudget24h: 10, tokenBudget24h: 1000, requestBudget30d: 300, tokenBudget30d: 30000 }
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  await updateAPIKeyBudgets(7, '10', '1000', '300', '30000');
+
+  assert.equal(request.path, '/api/admin/keys/7/budgets');
+  assert.equal(request.options.method, 'PUT');
+  assert.deepEqual(JSON.parse(request.options.body), { requestBudget24h: 10, tokenBudget24h: 1000, requestBudget30d: 300, tokenBudget30d: 30000 });
+  assert.equal(apiKeys.items[0].requestBudget24h, 10);
+  assert.equal(apiKeys.items[0].tokenBudget30d, 30000);
+});
+
 test('api keys page edits per-key gateway limits', () => {
   assert.match(apiKeysSource, /href=\{`\/request-logs\?clientKeyId=\$\{key\.id\}`\}/);
   assert.match(apiKeysSource, /View request logs/);
@@ -565,6 +590,12 @@ test('api keys page edits per-key gateway limits', () => {
   assert.match(apiKeysSource, /requestsPerMinute/);
   assert.match(apiKeysSource, /tokensPerMinute/);
   assert.match(apiKeysSource, /updateAPIKeyLimits/);
+  assert.match(apiKeysSource, /updateAPIKeyBudgets/);
+  assert.match(apiKeysSource, /Key budgets/);
+  assert.match(apiKeysSource, /Requests 24h/);
+  assert.match(apiKeysSource, /Tokens 30d/);
+  assert.match(apiKeysSource, /requestsRemaining24h/);
+  assert.match(apiKeysSource, /tokenBudgetExceeded/);
   assert.match(apiKeysSource, /\/min/);
 });
 

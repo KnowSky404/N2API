@@ -22,6 +22,7 @@
     saveModelSettings,
     session,
     setAPIKeyDisabled,
+    updateAPIKeyBudgets,
     updateAPIKeyLimits,
     updateAPIKeyName,
     updateAPIKeyModelPolicy,
@@ -73,7 +74,9 @@
       key.revokedAt ? 'revoked' : key.disabledAt ? 'disabled' : 'active',
       key.concurrencyBlocked ? 'concurrency full' : '',
       key.requestRateLimited ? 'request limit full' : '',
-      key.tokenRateLimited ? 'token limit full' : ''
+      key.tokenRateLimited ? 'token limit full' : '',
+      key.requestBudgetExceeded ? 'request budget full' : '',
+      key.tokenBudgetExceeded ? 'token budget full' : ''
     ]
       .filter(Boolean)
       .join(' ')
@@ -102,6 +105,16 @@
   function keyRateWindowLimitLabel(value) {
     const limit = Number(value ?? 0);
     return limit > 0 ? String(limit) : 'unlimited';
+  }
+
+  /**
+   * @param {number | null | undefined} used
+   * @param {number | null | undefined} limit
+   */
+  function keyBudgetUsageLabel(used, limit) {
+    const current = Number(used ?? 0);
+    const cap = Number(limit ?? 0);
+    return cap > 0 ? `${current} / ${cap}` : `${current} / unlimited`;
   }
 </script>
 
@@ -537,6 +550,122 @@ All routable models
               disabled={Boolean(key.revokedAt)}
             >
               Save limits
+            </button>
+          </form>
+          <form
+            class="mt-4 grid gap-2 border-t border-[#ededed] pt-4"
+            onsubmit={(event) => {
+              event.preventDefault();
+              updateAPIKeyBudgets(
+                key.id,
+                key.requestBudget24h ?? 0,
+                key.tokenBudget24h ?? 0,
+                key.requestBudget30d ?? 0,
+                key.tokenBudget30d ?? 0
+              );
+            }}
+          >
+            <h4 class="text-xs font-semibold text-[#0d0d0d]">Key budgets</h4>
+            <div class="grid gap-2 sm:grid-cols-2">
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-request-budget-24h-${key.id}`}>
+                Requests 24h
+                <input
+                  id={`api-key-request-budget-24h-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.requestBudget24h ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.requestBudget24h = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-token-budget-24h-${key.id}`}>
+                Tokens 24h
+                <input
+                  id={`api-key-token-budget-24h-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.tokenBudget24h ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.tokenBudget24h = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-request-budget-30d-${key.id}`}>
+                Requests 30d
+                <input
+                  id={`api-key-request-budget-30d-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.requestBudget30d ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.requestBudget30d = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-token-budget-30d-${key.id}`}>
+                Tokens 30d
+                <input
+                  id={`api-key-token-budget-30d-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.tokenBudget30d ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.tokenBudget30d = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
+            </div>
+            <div>
+              <p class="text-xs text-[#6e6e6e]">
+                Requests 24h {keyBudgetUsageLabel(key.requestsUsed24h, key.requestBudget24h)}
+                {#if key.requestsRemaining24h !== null && key.requestsRemaining24h !== undefined}
+                  <span>({key.requestsRemaining24h} remaining)</span>
+                {/if}
+              </p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                Tokens 24h {formatTokens(key.tokensUsed24h || 0)} / {key.tokenBudget24h > 0 ? formatTokens(key.tokenBudget24h) : 'unlimited'}
+                {#if key.tokensRemaining24h !== null && key.tokensRemaining24h !== undefined}
+                  <span>({formatTokens(key.tokensRemaining24h)} remaining)</span>
+                {/if}
+              </p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                Requests 30d {keyBudgetUsageLabel(key.requestsUsed30d, key.requestBudget30d)}
+                {#if key.requestsRemaining30d !== null && key.requestsRemaining30d !== undefined}
+                  <span>({key.requestsRemaining30d} remaining)</span>
+                {/if}
+              </p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                Tokens 30d {formatTokens(key.tokensUsed30d || 0)} / {key.tokenBudget30d > 0 ? formatTokens(key.tokenBudget30d) : 'unlimited'}
+                {#if key.tokensRemaining30d !== null && key.tokensRemaining30d !== undefined}
+                  <span>({formatTokens(key.tokensRemaining30d)} remaining)</span>
+                {/if}
+              </p>
+              {#if key.requestBudgetExceeded}
+                <p class="mt-1 text-xs font-medium text-amber-700">Request budget full</p>
+              {/if}
+              {#if key.tokenBudgetExceeded}
+                <p class="mt-1 text-xs font-medium text-amber-700">Token budget full</p>
+              {/if}
+            </div>
+            <button
+              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="submit"
+              disabled={Boolean(key.revokedAt)}
+            >
+              Save budgets
             </button>
           </form>
         </td>

@@ -14,6 +14,10 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string | null} disabledAt
  * @property {number} requestsPerMinute
  * @property {number} tokensPerMinute
+ * @property {number} requestBudget24h
+ * @property {number} tokenBudget24h
+ * @property {number} requestBudget30d
+ * @property {number} tokenBudget30d
  * @property {number} currentConcurrentRequests
  * @property {number} effectiveMaxConcurrentRequests
  * @property {boolean} concurrencyBlocked
@@ -25,6 +29,16 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} effectiveTokensPerMinute
  * @property {number} tokenRateRemaining
  * @property {boolean} tokenRateLimited
+ * @property {number} requestsUsed24h
+ * @property {number} tokensUsed24h
+ * @property {number} requestsUsed30d
+ * @property {number} tokensUsed30d
+ * @property {number | null} requestsRemaining24h
+ * @property {number | null} tokensRemaining24h
+ * @property {number | null} requestsRemaining30d
+ * @property {number | null} tokensRemaining30d
+ * @property {boolean} requestBudgetExceeded
+ * @property {boolean} tokenBudgetExceeded
  */
 
 /**
@@ -2114,6 +2128,42 @@ export async function updateAPIKeyLimits(keyId, requestsPerMinute, tokensPerMinu
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update key limits';
+  }
+}
+
+/**
+ * @param {number} keyId
+ * @param {string | number} requestBudget24h
+ * @param {string | number} tokenBudget24h
+ * @param {string | number} requestBudget30d
+ * @param {string | number} tokenBudget30d
+ */
+export async function updateAPIKeyBudgets(keyId, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  const payload = {
+    requestBudget24h: Number(requestBudget24h),
+    tokenBudget24h: Number(tokenBudget24h),
+    requestBudget30d: Number(requestBudget30d),
+    tokenBudget30d: Number(tokenBudget30d)
+  };
+  if (Object.values(payload).some((value) => !Number.isInteger(value) || value < 0)) {
+    apiKeys.error = 'API key budgets must be non-negative whole numbers';
+    return;
+  }
+
+  apiKeys.error = '';
+  try {
+    const response = await requestJSON(`/api/admin/keys/${keyId}/budgets`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? { ...key, ...response.key } : key));
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.error = error instanceof Error ? error.message : 'Failed to update key budgets';
   }
 }
 
