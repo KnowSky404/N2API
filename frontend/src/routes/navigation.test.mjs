@@ -58,6 +58,10 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /poolAccountRows\(pool\)/);
   assert.match(poolsPage, /poolHasAccount\(pool,\s*left\.id\)/);
   assert.match(poolsPage, /poolAccountPriority\(pool,\s*left\.id\)\s*-\s*poolAccountPriority\(pool,\s*right\.id\)/);
+  assert.match(poolsPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(poolsPage, /routingPoolId = params\.get\('routingPoolId'\)/);
+  assert.match(poolsPage, /selectedRoutingPoolId = routingPoolId/);
+  assert.match(poolsPage, /visibleRoutingPools/);
   assert.match(adminState, /loadRoutingPools/);
   assert.match(adminState, /createRoutingPool/);
   assert.doesNotMatch(adminState, /const fallbackPoolId = 0/);
@@ -159,6 +163,8 @@ test('request logs page shows provider account attribution', () => {
   assert.match(requestLogsPage, /routing_pool_chain/);
   assert.match(requestLogsPage, /log\.routingPoolName/);
   assert.match(requestLogsPage, /log\.routingPoolId/);
+  assert.match(requestLogsPage, /href=\{`\/routing-pools\?routingPoolId=\$\{log\.routingPoolId\}`\}/);
+  assert.match(requestLogsPage, /View routing pool/);
   assert.match(requestLogsPage, /Global pool/);
 });
 

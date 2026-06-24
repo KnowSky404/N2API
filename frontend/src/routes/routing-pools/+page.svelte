@@ -15,11 +15,32 @@
   } from '$lib/admin-state.svelte.js';
 
   let requested = $state(false);
+  let routingPoolURLFiltersInitialized = $state(false);
+  let selectedRoutingPoolId = $state('all');
+  const visibleRoutingPools = $derived(
+    selectedRoutingPoolId === 'all'
+      ? routingPools.items
+      : routingPools.items.filter((pool) => String(pool.id) === selectedRoutingPoolId)
+  );
+
+  function applyRoutingPoolURLFilters() {
+    const params = new URLSearchParams(window.location.search);
+    const routingPoolId = params.get('routingPoolId') ?? '';
+    if (/^[1-9]\d*$/.test(routingPoolId)) {
+      selectedRoutingPoolId = routingPoolId;
+    }
+  }
 
   $effect(() => {
     if (!session.authenticated) {
       requested = false;
+      routingPoolURLFiltersInitialized = false;
+      selectedRoutingPoolId = 'all';
       return;
+    }
+    if (!routingPoolURLFiltersInitialized) {
+      routingPoolURLFiltersInitialized = true;
+      applyRoutingPoolURLFilters();
     }
     if (!requested) {
       requested = true;
@@ -171,16 +192,27 @@
       <div>
         <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Routing pools</h2>
         <p class="mt-1 text-sm text-[#6e6e6e]">
-          Signed in as {session.username}. {routingPools.items.length} configured pools.
+          Signed in as {session.username}. {visibleRoutingPools.length} of {routingPools.items.length} configured pools shown.
         </p>
       </div>
-      <button
-        class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={routingPools.loading}
-        onclick={() => loadRoutingPools()}
-      >
-        {routingPools.loading ? 'Refreshing' : 'Refresh'}
-      </button>
+      <div class="flex flex-wrap items-center gap-2">
+        {#if selectedRoutingPoolId !== 'all'}
+          <button
+            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            type="button"
+            onclick={() => (selectedRoutingPoolId = 'all')}
+          >
+            Show all pools
+          </button>
+        {/if}
+        <button
+          class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={routingPools.loading}
+          onclick={() => loadRoutingPools()}
+        >
+          {routingPools.loading ? 'Refreshing' : 'Refresh'}
+        </button>
+      </div>
     </div>
 
     {#if routingPools.error}
@@ -232,9 +264,13 @@
       <p class="mt-6 rounded-lg border border-dashed border-[#d9d9d9] bg-[#fafafa] p-6 text-sm text-[#6e6e6e]">
         No routing pools configured.
       </p>
+    {:else if visibleRoutingPools.length === 0}
+      <p class="mt-6 rounded-lg border border-dashed border-[#d9d9d9] bg-[#fafafa] p-6 text-sm text-[#6e6e6e]">
+        No routing pool matches this link.
+      </p>
     {:else}
       <div class="mt-6 grid gap-4">
-        {#each routingPools.items as pool (pool.id)}
+        {#each visibleRoutingPools as pool (pool.id)}
           <article id={`routing-pool-${pool.id}`} class="scroll-mt-6 rounded-lg border border-[#ededed] bg-white p-4">
             <div class="grid gap-3 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)_auto]">
               <label class="text-sm font-medium text-[#3c3c3c]">

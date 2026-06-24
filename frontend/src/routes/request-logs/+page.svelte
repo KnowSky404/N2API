@@ -589,7 +589,14 @@
         <td class="px-4 py-3 text-[#3c3c3c]">
           {#if log.routingPoolId}
             <div class="max-w-[180px]">
-              <p class="truncate font-medium text-[#0d0d0d]">{log.routingPoolName || `Pool ${log.routingPoolId}`}</p>
+              <a
+                class="block truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]"
+                href={`/routing-pools?routingPoolId=${log.routingPoolId}`}
+                title="View routing pool"
+                aria-label="View routing pool"
+              >
+                {log.routingPoolName || `Pool ${log.routingPoolId}`}
+              </a>
               <p class="mt-1 text-xs text-[#6e6e6e]">ID {log.routingPoolId}</p>
               {#if log.routingPoolFallbackDepth > 0}
                 <p class="mt-1 text-xs text-[#6e6e6e]">Fallback depth {log.routingPoolFallbackDepth}</p>
