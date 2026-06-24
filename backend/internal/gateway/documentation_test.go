@@ -139,6 +139,24 @@ func TestGatewayDocumentationMentionsAPIKeyListFiltering(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsAPIKeyRename(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"API key names can be renamed",
+			"without rotating or revealing the secret",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in API key rename documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
