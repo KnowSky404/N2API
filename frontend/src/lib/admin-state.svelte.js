@@ -94,6 +94,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} name
  * @property {string} description
  * @property {boolean} enabled
+ * @property {number | null} fallbackPoolId
+ * @property {string} fallbackPoolName
  * @property {number[]} accountIds
  * @property {RoutingPoolAccount[]} accounts
  * @property {string} createdAt
@@ -1989,13 +1991,15 @@ export async function createRoutingPool() {
 
   routingPools.saving = true;
   routingPools.error = '';
+  const fallbackPoolId = 0;
   try {
     const payload = await requestJSON('/api/admin/routing-pools', {
       method: 'POST',
       body: JSON.stringify({
         name,
         description: routingPools.newPoolDescription,
-        enabled: true
+        enabled: true,
+        fallbackPoolId: fallbackPoolId > 0 ? fallbackPoolId : null
       })
     });
     if (!isCurrentAuthenticated(version)) return;
@@ -2018,13 +2022,20 @@ export async function updateRoutingPool(pool) {
 
   routingPools.saving = true;
   routingPools.error = '';
+  const fallbackPoolId = Number(pool.fallbackPoolId ?? 0);
+  if (!Number.isInteger(fallbackPoolId) || fallbackPoolId < 0 || fallbackPoolId === Number(pool.id)) {
+    routingPools.error = 'Fallback pool selection is invalid';
+    routingPools.saving = false;
+    return;
+  }
   try {
     const payload = await requestJSON(`/api/admin/routing-pools/${pool.id}`, {
       method: 'PATCH',
       body: JSON.stringify({
         name: pool.name,
         description: pool.description,
-        enabled: Boolean(pool.enabled)
+        enabled: Boolean(pool.enabled),
+        fallbackPoolId: fallbackPoolId > 0 ? fallbackPoolId : null
       })
     });
     if (!isCurrentAuthenticated(version)) return;

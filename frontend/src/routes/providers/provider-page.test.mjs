@@ -40,6 +40,7 @@ const {
 const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const modelsSource = readFileSync('src/routes/models/+page.svelte', 'utf8');
 const apiKeysSource = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
+const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
 test('parseAccountModelsText trims blanks and dedupes by first occurrence', () => {
   assert.deepEqual(parseAccountModelsText('  gpt-5\n\n gpt-5-mini \ngpt-5\n codex-mini \n'), [
@@ -695,4 +696,10 @@ test('api key state can save routing pool binding', async () => {
   assert.equal(request.options.method, 'PUT');
   assert.deepEqual(JSON.parse(request.options.body), { routingPoolId: 3 });
   assert.equal(apiKeys.items[0].routingPoolId, 3);
+});
+
+test('routing pool state sends fallback configuration', () => {
+  assert.match(adminStateSource, /fallbackPoolId/);
+  assert.match(adminStateSource, /fallbackPoolName/);
+  assert.match(adminStateSource, /fallbackPoolId: fallbackPoolId > 0 \? fallbackPoolId : null/);
 });

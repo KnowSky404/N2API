@@ -89,6 +89,12 @@
       .toLowerCase();
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function routingPoolFallbackNameForKey(key) {
+    const pool = routingPools.items.find((item) => item.id === key.routingPoolId);
+    return pool?.fallbackPoolName ?? '';
+  }
+
   /**
    * @param {number | null | undefined} value
    * @param {number | null | undefined} defaultValue
@@ -497,6 +503,9 @@ All routable models
             </label>
             <p class="mt-1 text-xs text-[#6e6e6e]">
               {key.routingPoolName || 'Global pool'}
+              {#if routingPoolFallbackNameForKey(key)}
+                <span>· Fallback {routingPoolFallbackNameForKey(key)}</span>
+              {/if}
             </p>
           </div>
         </td>

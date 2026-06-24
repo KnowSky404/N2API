@@ -65,6 +65,8 @@ type fakeAdminService struct {
 	tokenBudget30d     int
 	budgetsErr         error
 	routingPools       []admin.RoutingPool
+	createFallbackID   *int64
+	updateFallbackID   *int64
 	routingPoolKeyID   int64
 	routingPoolID      *int64
 	budgetUsage        map[int64]admin.APIKeyBudgetUsage
@@ -157,6 +159,7 @@ func newFakeAdminService() *fakeAdminService {
 		budgetUsage: map[int64]admin.APIKeyBudgetUsage{},
 		routingPools: []admin.RoutingPool{
 			{ID: 3, Name: "primary", Description: "daily", Enabled: true},
+			{ID: 4, Name: "secondary", Description: "fallback", Enabled: true},
 		},
 		keys: []admin.APIKey{
 			{ID: 7, Name: "codex laptop", Prefix: "n2api_abc", CreatedAt: time.Unix(1000, 0).UTC()},
@@ -319,21 +322,24 @@ func (s *fakeAdminService) ListRoutingPools(_ context.Context) ([]admin.RoutingP
 	return append([]admin.RoutingPool(nil), s.routingPools...), nil
 }
 
-func (s *fakeAdminService) CreateRoutingPool(_ context.Context, name, description string, enabled bool, _ *int64) (admin.RoutingPool, error) {
+func (s *fakeAdminService) CreateRoutingPool(_ context.Context, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error) {
 	if strings.TrimSpace(name) == "" {
 		return admin.RoutingPool{}, admin.ErrInvalidInput
 	}
-	pool := admin.RoutingPool{ID: int64(len(s.routingPools) + 10), Name: strings.TrimSpace(name), Description: strings.TrimSpace(description), Enabled: enabled}
+	s.createFallbackID = fallbackPoolID
+	pool := admin.RoutingPool{ID: int64(len(s.routingPools) + 10), Name: strings.TrimSpace(name), Description: strings.TrimSpace(description), Enabled: enabled, FallbackPoolID: fallbackPoolID}
 	s.routingPools = append(s.routingPools, pool)
 	return pool, nil
 }
 
-func (s *fakeAdminService) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool, _ *int64) (admin.RoutingPool, error) {
+func (s *fakeAdminService) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error) {
+	s.updateFallbackID = fallbackPoolID
 	for i, pool := range s.routingPools {
 		if pool.ID == id {
 			pool.Name = strings.TrimSpace(name)
 			pool.Description = strings.TrimSpace(description)
 			pool.Enabled = enabled
+			pool.FallbackPoolID = fallbackPoolID
 			s.routingPools[i] = pool
 			return pool, nil
 		}
@@ -1647,7 +1653,7 @@ func TestUpdateAPIKeyBudgetsEndpointMapsErrors(t *testing.T) {
 func TestRoutingPoolsEndpoints(t *testing.T) {
 	admins := newFakeAdminService()
 	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/routing-pools", strings.NewReader(`{"name":"primary plus","description":"daily","enabled":true}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/routing-pools", strings.NewReader(`{"name":"primary plus","description":"daily","enabled":true,"fallbackPoolId":4}`))
 	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -1665,6 +1671,9 @@ func TestRoutingPoolsEndpoints(t *testing.T) {
 	if body.Pool.Name != "primary plus" || !body.Pool.Enabled {
 		t.Fatalf("pool = %+v, want primary plus enabled", body.Pool)
 	}
+	if admins.createFallbackID == nil || *admins.createFallbackID != 4 || body.Pool.FallbackPoolID == nil || *body.Pool.FallbackPoolID != 4 {
+		t.Fatalf("fallback pool = service:%v body:%v, want 4", admins.createFallbackID, body.Pool.FallbackPoolID)
+	}
 
 	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/routing-pools", nil)
 	listReq.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
@@ -1679,8 +1688,36 @@ func TestRoutingPoolsEndpoints(t *testing.T) {
 	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listBody); err != nil {
 		t.Fatalf("decode list body: %v", err)
 	}
-	if len(listBody.Pools) != 2 {
-		t.Fatalf("pools = %+v, want initial plus created pool", listBody.Pools)
+	if len(listBody.Pools) != 3 {
+		t.Fatalf("pools = %+v, want initial pools plus created pool", listBody.Pools)
+	}
+}
+
+func TestRoutingPoolUpdateEndpointClearsFallback(t *testing.T) {
+	admins := newFakeAdminService()
+	poolID := int64(4)
+	admins.routingPools[0].FallbackPoolID = &poolID
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/routing-pools/3", strings.NewReader(`{"name":"primary","description":"daily","enabled":true,"fallbackPoolId":null}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if admins.updateFallbackID != nil {
+		t.Fatalf("update fallback id = %v, want nil", admins.updateFallbackID)
+	}
+	var body struct {
+		Pool admin.RoutingPool `json:"pool"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Pool.FallbackPoolID != nil {
+		t.Fatalf("pool fallback id = %v, want nil", body.Pool.FallbackPoolID)
 	}
 }
 

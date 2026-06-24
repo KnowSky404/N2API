@@ -85,6 +85,16 @@
       .sort((a, b) => a.priority - b.priority || a.accountId - b.accountId);
     void replaceRoutingPoolAccounts(pool.id, accounts);
   }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function fallbackWarning(pool) {
+    const fallbackID = Number(pool.fallbackPoolId ?? 0);
+    if (fallbackID <= 0) return '';
+    const target = routingPools.items.find((candidate) => candidate.id === fallbackID);
+    if (!target) return 'Fallback pool is missing.';
+    if (!target.enabled) return 'Fallback pool is disabled.';
+    return '';
+  }
 </script>
 
 <svelte:head>
@@ -189,6 +199,21 @@
               <label class="text-sm font-medium text-[#3c3c3c]">
                 Description
                 <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={pool.description} />
+              </label>
+              <label class="text-sm font-medium text-[#3c3c3c]">
+                Fallback pool
+                <select
+                  class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  bind:value={pool.fallbackPoolId}
+                >
+                  <option value={0}>No fallback</option>
+                  {#each routingPools.items as candidate}
+                    <option value={candidate.id} disabled={pool.id === candidate.id}>{candidate.name}</option>
+                  {/each}
+                </select>
+                {#if fallbackWarning(pool)}
+                  <span class="mt-2 block rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">{fallbackWarning(pool)}</span>
+                {/if}
               </label>
               <div class="flex items-end gap-2">
                 <label class="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#3c3c3c]">

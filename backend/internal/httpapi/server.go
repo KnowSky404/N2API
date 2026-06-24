@@ -523,15 +523,16 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("POST /api/admin/routing-pools", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		var req struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Enabled     bool   `json:"enabled"`
+			Name           string `json:"name"`
+			Description    string `json:"description"`
+			Enabled        bool   `json:"enabled"`
+			FallbackPoolID *int64 `json:"fallbackPoolId"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		pool, err := admins.CreateRoutingPool(r.Context(), req.Name, req.Description, req.Enabled, nil)
+		pool, err := admins.CreateRoutingPool(r.Context(), req.Name, req.Description, req.Enabled, req.FallbackPoolID)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")
@@ -550,15 +551,16 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		var req struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Enabled     bool   `json:"enabled"`
+			Name           string `json:"name"`
+			Description    string `json:"description"`
+			Enabled        bool   `json:"enabled"`
+			FallbackPoolID *int64 `json:"fallbackPoolId"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		pool, err := admins.UpdateRoutingPool(r.Context(), id, req.Name, req.Description, req.Enabled, nil)
+		pool, err := admins.UpdateRoutingPool(r.Context(), id, req.Name, req.Description, req.Enabled, req.FallbackPoolID)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")
