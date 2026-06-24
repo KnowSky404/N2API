@@ -23,7 +23,9 @@ const {
   pruneAccountTestResultStates,
   pruneSelectedProviderAccounts,
   providerAccountPauseForm,
+  routingPools,
   selectedProviderAccountIds,
+  deleteRoutingPool,
   removeAccountModel,
   session,
   setAccountModelEnabled,
@@ -719,6 +721,44 @@ test('api key state can save routing pool binding', async () => {
   assert.equal(request.options.method, 'PUT');
   assert.deepEqual(JSON.parse(request.options.body), { routingPoolId: 3 });
   assert.equal(apiKeys.items[0].routingPoolId, 3);
+});
+
+test('routing pool state refreshes fallback references after deleting a pool', async () => {
+  session.authenticated = true;
+  routingPools.items = [
+    { id: 1, name: 'primary', fallbackPoolId: 2, fallbackPoolName: 'secondary' },
+    { id: 2, name: 'secondary', fallbackPoolId: null, fallbackPoolName: '' }
+  ];
+  const requests = [];
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({ path, options });
+    if (path === '/api/admin/routing-pools/2' && options.method === 'DELETE') {
+      return new Response(null, { status: 204 });
+    }
+    if (path === '/api/admin/routing-pools') {
+      return new Response(
+        JSON.stringify({
+          pools: [{ id: 1, name: 'primary', fallbackPoolId: null, fallbackPoolName: '' }]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (path === '/api/admin/keys') {
+      return new Response(JSON.stringify({ keys: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    throw new Error(`unexpected request ${path}`);
+  };
+
+  await deleteRoutingPool(2);
+
+  assert.deepEqual(
+    requests.map((request) => request.path),
+    ['/api/admin/routing-pools/2', '/api/admin/routing-pools', '/api/admin/keys']
+  );
+  assert.deepEqual(routingPools.items, [{ id: 1, name: 'primary', fallbackPoolId: null, fallbackPoolName: '' }]);
 });
 
 test('routing pool state sends fallback configuration', () => {

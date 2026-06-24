@@ -2867,6 +2867,30 @@ func TestProxyLogsPreciseAPIKeyTokenBudgetReason(t *testing.T) {
 	assertLastLoggedError(t, logger, "api_key_token_budget_exceeded")
 }
 
+func TestProxyFailsClosedWhenAPIKeyBudgetUsageCannotBeChecked(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	budgets := &fakeBudgetProvider{err: errors.New("budget store unavailable")}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", RequestBudget24h: 1}}, tokens, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		Logger:          logger,
+		BudgetProvider:  budgets,
+	}, http.DefaultClient)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "internal_error") {
+		t.Fatalf("status/body = %d/%s, want 500 internal_error", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 0 {
+		t.Fatalf("account calls = %d, want 0 when budget usage cannot be checked", tokens.calls)
+	}
+	assertLastLoggedError(t, logger, "internal_error")
+}
+
 func TestProxyLogsPreciseGatewayConcurrencyLimitReason(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{

@@ -2109,6 +2109,8 @@ export async function deleteRoutingPool(poolId) {
     await requestJSON(`/api/admin/routing-pools/${poolId}`, { method: 'DELETE' });
     if (!isCurrentAuthenticated(version)) return;
     routingPools.items = routingPools.items.filter((pool) => pool.id !== poolId);
+    await loadRoutingPools();
+    if (!isCurrentAuthenticated(version)) return;
     await loadKeys();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
