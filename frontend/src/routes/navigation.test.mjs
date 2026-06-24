@@ -90,6 +90,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
     '24h usage',
     'Top models',
     'Top provider accounts',
+    'Top routing pool chains',
     'Top client keys',
     'Top sessions'
   ]) {
@@ -113,6 +114,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'model'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'routing_pool'\)/);
+  assert.match(gatewayPage, /loadUsageSummary\('24h', 'routing_pool_chain'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'session'\)/);
   assert.match(gatewayPage, /gatewayLimitLabel/);
@@ -148,6 +150,7 @@ test('request logs page shows provider account attribution', () => {
   assert.match(requestLogsPage, /log\.providerAccountType/);
   assert.match(requestLogsPage, /log\.providerAccountId/);
   assert.match(requestLogsPage, /Routing pool/);
+  assert.match(requestLogsPage, /routing_pool_chain/);
   assert.match(requestLogsPage, /log\.routingPoolName/);
   assert.match(requestLogsPage, /log\.routingPoolId/);
   assert.match(requestLogsPage, /Global pool/);

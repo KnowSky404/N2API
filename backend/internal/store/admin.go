@@ -922,6 +922,8 @@ func usageSummaryGroupSQL(groupBy string) (groupExpr, labelExpr, joinSQL string,
 		return providerExpr + " || '/' || COALESCE(l.provider_account_id::text, 'unassigned')", providerExpr + " || ' / ' || " + accountLabelExpr, "LEFT JOIN provider_accounts a ON a.id = l.provider_account_id", true
 	case "routing_pool":
 		return "COALESCE(l.routing_pool_id::text, 'global')", "COALESCE(NULLIF(l.routing_pool_name, ''), 'Global pool')", "", true
+	case "routing_pool_chain":
+		return "COALESCE(NULLIF(l.routing_pool_fallback_chain, ''), 'none')", "COALESCE(NULLIF(l.routing_pool_fallback_chain, ''), 'No fallback chain')", "", true
 	case "model":
 		return "COALESCE(NULLIF(l.model, ''), 'unknown')", "COALESCE(NULLIF(l.model, ''), 'Unknown model')", "", true
 	case "session":

@@ -19,7 +19,7 @@ func TestAdminRepositoryImplementsInterface(t *testing.T) {
 }
 
 func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
-	for _, groupBy := range []string{"client_key", "provider_account", "routing_pool", "model", "session"} {
+	for _, groupBy := range []string{"client_key", "provider_account", "routing_pool", "routing_pool_chain", "model", "session"} {
 		t.Run(groupBy, func(t *testing.T) {
 			groupExpr, labelExpr, _, ok := usageSummaryGroupSQL(groupBy)
 			if !ok {
@@ -46,6 +46,22 @@ func TestUsageSummaryRoutingPoolGroupUsesLoggedSnapshot(t *testing.T) {
 	}
 	if joinSQL != "" {
 		t.Fatalf("routing pool group join SQL = %q, want no join", joinSQL)
+	}
+}
+
+func TestUsageSummaryRoutingPoolChainGroupUsesLoggedFallbackChain(t *testing.T) {
+	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL("routing_pool_chain")
+	if !ok {
+		t.Fatal("usageSummaryGroupSQL(routing_pool_chain) ok = false, want true")
+	}
+	if !strings.Contains(groupExpr, "l.routing_pool_fallback_chain") || !strings.Contains(labelExpr, "l.routing_pool_fallback_chain") {
+		t.Fatalf("routing pool chain group expressions = %q / %q, want logged fallback chain", groupExpr, labelExpr)
+	}
+	if !strings.Contains(labelExpr, "No fallback chain") {
+		t.Fatalf("routing pool chain label expression = %q, want no-chain fallback label", labelExpr)
+	}
+	if joinSQL != "" {
+		t.Fatalf("routing pool chain group join SQL = %q, want no join", joinSQL)
 	}
 }
 
