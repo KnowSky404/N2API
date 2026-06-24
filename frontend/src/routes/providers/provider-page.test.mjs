@@ -22,6 +22,7 @@ const {
   pruneAccountModelStates,
   pruneAccountTestResultStates,
   pruneSelectedProviderAccounts,
+  providerAccounts,
   providerAccountPauseForm,
   routingPools,
   selectedProviderAccountIds,
@@ -35,6 +36,7 @@ const {
   updateAPIKeyRoutingPool,
   updateAPIKeyLimits,
   updateAPIKeyBudgets,
+  addSelectedProviderAccountsToRoutingPool,
   clearProviderAccountSelection,
   validateProviderAccountPauseDuration
 } = await import('../../lib/admin-state.svelte.js');
@@ -249,11 +251,80 @@ test('provider account state can bulk replace selected account models', () => {
   assert.match(adminStateSource, /loadModelRouting/);
 });
 
+test('provider account state can add selected accounts to a routing pool', async () => {
+  session.authenticated = true;
+  clearProviderAccountSelection();
+  providerAccounts.error = '';
+  routingPools.error = '';
+  routingPools.items = [
+    { id: 3, name: 'primary', accounts: [{ accountId: 7, priority: 5 }], accountIds: [7] }
+  ];
+  toggleProviderAccountSelection(7, true);
+  toggleProviderAccountSelection(8, true);
+  const requests = [];
+  globalThis.fetch = async (path, options) => {
+    requests.push({ path, options });
+    if (path === '/api/admin/routing-pools') {
+      return new Response(
+        JSON.stringify({
+          pools: [
+            {
+              id: 3,
+              name: 'primary',
+              accounts: [
+                { accountId: 7, priority: 5 },
+                { accountId: 8, priority: 0 }
+              ],
+              accountIds: [7, 8]
+            }
+          ]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        pool: {
+          id: 3,
+          name: 'primary',
+          accounts: [
+            { accountId: 7, priority: 5 },
+            { accountId: 8, priority: 0 }
+          ],
+          accountIds: [7, 8]
+        }
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  await addSelectedProviderAccountsToRoutingPool('3');
+
+  const membershipRequest = requests.find((request) => request.path === '/api/admin/routing-pools/3/accounts');
+  assert.ok(membershipRequest);
+  assert.equal(membershipRequest.options.method, 'PUT');
+  assert.deepEqual(JSON.parse(membershipRequest.options.body), {
+    accounts: [
+      { accountId: 7, priority: 5 },
+      { accountId: 8, priority: 0 }
+    ]
+  });
+  assert.deepEqual(Object.keys(selectedProviderAccountIds), []);
+  assert.deepEqual(routingPools.items[0].accountIds, [7, 8]);
+});
+
 test('provider account page exposes bulk model replacement controls', () => {
   assert.match(source, /providerAccountBulkModelsForm/);
   assert.match(source, /bulkReplaceSelectedProviderAccountModels/);
   assert.match(source, /Bulk models/);
   assert.match(source, /Apply models/);
+});
+
+test('provider account page exposes bulk routing pool assignment controls', () => {
+  assert.match(source, /bulkRoutingPoolId/);
+  assert.match(source, /addSelectedProviderAccountsToRoutingPool/);
+  assert.match(source, /Bulk routing pool/);
+  assert.match(source, /Apply pool/);
 });
 
 test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {

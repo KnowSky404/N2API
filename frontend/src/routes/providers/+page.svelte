@@ -2,6 +2,7 @@
   import {
     accountLabel,
     accountTypeLabel,
+    addSelectedProviderAccountsToRoutingPool,
     bulkReplaceSelectedProviderAccountModels,
     bulkUpdateSelectedProviderAccountScheduling,
     bulkUpdateSelectedProviderAccounts,
@@ -62,6 +63,7 @@
 
   let accountSearch = $state('');
   let accountSort = $state({ key: 'priority', direction: 'asc' });
+  let bulkRoutingPoolId = $state('0');
   let providerUsageRequested = $state(false);
   let routingPoolsRequested = $state(false);
 
@@ -759,6 +761,27 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         onclick={bulkUpdateSelectedProviderAccountScheduling}
       >
         Apply scheduling
+      </button>
+      <label class="grid min-w-44 gap-1 text-xs font-medium text-[#3c3c3c]">
+        Bulk routing pool
+        <select
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+          bind:value={bulkRoutingPoolId}
+          disabled={providerAccounts.saving || routingPools.loading}
+        >
+          <option value="0">Select pool</option>
+          {#each routingPools.items as pool}
+            <option value={String(pool.id)}>{pool.name}</option>
+          {/each}
+        </select>
+      </label>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving || bulkRoutingPoolId === '0'}
+        onclick={() => addSelectedProviderAccountsToRoutingPool(bulkRoutingPoolId)}
+      >
+        Apply pool
       </button>
       <label class="grid min-w-48 flex-1 gap-1 text-xs font-medium text-[#3c3c3c]">
         Bulk models
