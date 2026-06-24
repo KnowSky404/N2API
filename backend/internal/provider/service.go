@@ -307,11 +307,16 @@ type SelectedAccount struct {
 }
 
 type SelectionPreview struct {
-	Model                string               `json:"model"`
-	SessionID            string               `json:"sessionId"`
-	SelectedAccountID    int64                `json:"selectedAccountId"`
-	StickyBoundAccountID int64                `json:"stickyBoundAccountId,omitempty"`
-	Candidates           []SelectionCandidate `json:"candidates"`
+	Model                    string               `json:"model"`
+	SessionID                string               `json:"sessionId"`
+	SelectedAccountID        int64                `json:"selectedAccountId"`
+	StickyBoundAccountID     int64                `json:"stickyBoundAccountId,omitempty"`
+	RoutingPoolID            int64                `json:"routingPoolId,omitempty"`
+	RoutingPoolName          string               `json:"routingPoolName,omitempty"`
+	RoutingPoolFallbackDepth int                  `json:"routingPoolFallbackDepth,omitempty"`
+	RoutingPoolFallbackChain string               `json:"routingPoolFallbackChain,omitempty"`
+	RoutingPoolError         string               `json:"routingPoolError,omitempty"`
+	Candidates               []SelectionCandidate `json:"candidates"`
 }
 
 type SelectionCandidate struct {
@@ -1417,47 +1422,104 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 	if !s.Configured() {
 		return SelectionPreview{}, ErrNotConfigured
 	}
+	pools, chainLabel, err := s.routingPoolChain(ctx, routingPoolID)
+	if err != nil {
+		return SelectionPreview{RoutingPoolError: routingPoolDiagnosticError(err)}, err
+	}
 	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
 	now := time.Now()
-	accounts, _, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, routingPoolID, model, excludedAccountIDs)
-	if err != nil {
-		return SelectionPreview{}, err
-	}
-	stickyBoundAccountID := int64(0)
-	if sessionID != "" {
-		accounts, stickyBoundAccountID, err = s.stickySessionCandidatesInRoutingPool(ctx, routingPoolID, accounts, model, sessionID)
+	var finalErr error = ErrAccountsUnavailable
+	blockedChainCandidates := []SelectionCandidate{}
+	hasEnabled := false
+	for depth, pool := range pools {
+		if !pool.Enabled {
+			if depth == 0 {
+				return SelectionPreview{
+					Model:                    model,
+					SessionID:                sessionID,
+					RoutingPoolID:            pool.ID,
+					RoutingPoolName:          pool.Name,
+					RoutingPoolFallbackDepth: depth,
+					RoutingPoolFallbackChain: chainLabel,
+					RoutingPoolError:         RoutingPoolErrorDisabled,
+				}, ErrAccountsDisabled
+			}
+			continue
+		}
+		hasEnabled = true
+		accounts, poolHasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, pool.ID, model, excludedAccountIDs)
 		if err != nil {
-			return SelectionPreview{}, err
-		}
-	}
-	if len(accounts) == 0 {
-		blocked := s.unschedulableSelectionCandidatesInRoutingPool(ctx, routingPoolID, model, nil, excludedAccountIDs, now)
-		if len(blocked) > 0 {
 			return SelectionPreview{
-				Model:      model,
-				SessionID:  sessionID,
-				Candidates: blocked,
-			}, nil
+				Model:                    model,
+				SessionID:                sessionID,
+				RoutingPoolID:            pool.ID,
+				RoutingPoolName:          pool.Name,
+				RoutingPoolFallbackDepth: depth,
+				RoutingPoolFallbackChain: chainLabel,
+				RoutingPoolError:         err.Error(),
+			}, err
 		}
-		return SelectionPreview{}, notFoundErr
-	}
+		if poolHasEnabled {
+			hasEnabled = true
+		}
+		finalErr = moreSpecificSelectionError(finalErr, notFoundErr)
+		blocked := s.unschedulableSelectionCandidatesInRoutingPool(ctx, pool.ID, model, accounts, excludedAccountIDs, now)
+		if len(accounts) == 0 {
+			blockedChainCandidates = append(blockedChainCandidates, blocked...)
+			if errors.Is(notFoundErr, ErrRoutingPoolEmpty) && depth == 0 {
+				return SelectionPreview{
+					Model:                    model,
+					SessionID:                sessionID,
+					RoutingPoolID:            pool.ID,
+					RoutingPoolName:          pool.Name,
+					RoutingPoolFallbackDepth: depth,
+					RoutingPoolFallbackChain: chainLabel,
+					RoutingPoolError:         RoutingPoolErrorEmpty,
+					Candidates:               blockedChainCandidates,
+				}, ErrRoutingPoolEmpty
+			}
+			continue
+		}
 
-	preview := SelectionPreview{
-		Model:                model,
-		SessionID:            sessionID,
-		SelectedAccountID:    accounts[0].ID,
-		StickyBoundAccountID: stickyBoundAccountID,
-		Candidates:           make([]SelectionCandidate, 0, len(accounts)),
+		stickyBoundAccountID := int64(0)
+		if sessionID != "" {
+			accounts, stickyBoundAccountID, err = s.stickySessionCandidatesInRoutingPool(ctx, pool.ID, accounts, model, sessionID)
+			if err != nil {
+				return SelectionPreview{}, err
+			}
+		}
+		preview := SelectionPreview{
+			Model:                    model,
+			SessionID:                sessionID,
+			SelectedAccountID:        accounts[0].ID,
+			StickyBoundAccountID:     stickyBoundAccountID,
+			RoutingPoolID:            pool.ID,
+			RoutingPoolName:          pool.Name,
+			RoutingPoolFallbackDepth: depth,
+			RoutingPoolFallbackChain: chainLabel,
+			Candidates:               make([]SelectionCandidate, 0, len(accounts)+len(blocked)+len(blockedChainCandidates)),
+		}
+		for index, account := range accounts {
+			candidate := selectionCandidate(account, index+1, index == 0, true, "")
+			candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
+			candidate.ScheduleReason = scheduleReason(candidate.Selected, candidate.StickyBound)
+			preview.Candidates = append(preview.Candidates, candidate)
+		}
+		preview.Candidates = append(preview.Candidates, blockedChainCandidates...)
+		preview.Candidates = append(preview.Candidates, blocked...)
+		return preview, nil
 	}
-	for index, account := range accounts {
-		candidate := selectionCandidate(account, index+1, index == 0, true, "")
-		candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
-		candidate.ScheduleReason = scheduleReason(candidate.Selected, candidate.StickyBound)
-		preview.Candidates = append(preview.Candidates, candidate)
+	if !hasEnabled {
+		finalErr = ErrAccountsDisabled
 	}
-	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidatesInRoutingPool(ctx, routingPoolID, model, accounts, excludedAccountIDs, now)...)
-	return preview, nil
+	return SelectionPreview{
+		Model:                    model,
+		SessionID:                sessionID,
+		RoutingPoolFallbackChain: chainLabel,
+		RoutingPoolError:         RoutingPoolErrorExhausted,
+		Candidates:               blockedChainCandidates,
+	}, finalErr
 }
 
 func (s *Service) unschedulableSelectionCandidates(ctx context.Context, model string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {

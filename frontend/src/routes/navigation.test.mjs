@@ -311,6 +311,9 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(adminState, /excludedAccountIds: ''/);
   assert.match(adminState, /routingPoolId: '0'/);
   assert.match(adminState, /params\.set\('routingPoolId'/);
+  assert.match(adminState, /routingPoolFallbackChain/);
+  assert.match(modelsPage, /routingPoolFallbackChain/);
+  assert.match(modelsPage, /Routing pool chain/);
   assert.match(adminState, /params\.set\('excludedAccountIds'/);
 });
 

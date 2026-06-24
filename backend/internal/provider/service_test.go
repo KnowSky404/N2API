@@ -2305,6 +2305,36 @@ func TestPreviewAccountSelectionInRoutingPoolScopesCandidatesAndStickyBinding(t 
 	}
 }
 
+func TestPreviewAccountSelectionInRoutingPoolFollowsFallbackChain(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 10, true, 1, "primary-token"),
+		testAccount(t, 20, true, 1, "secondary-token"),
+	}
+	repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10, Priority: 0}}
+	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
+	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4.1", Enabled: true}}
+	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	preview, err := service.PreviewAccountSelectionInRoutingPool(context.Background(), 1, "gpt-5", "")
+	if err != nil {
+		t.Fatalf("PreviewAccountSelectionInRoutingPool returned error: %v", err)
+	}
+
+	if preview.SelectedAccountID != 20 {
+		t.Fatalf("selected account = %d, want fallback pool account 20", preview.SelectedAccountID)
+	}
+	if preview.RoutingPoolID != 2 || preview.RoutingPoolName != "secondary" || preview.RoutingPoolFallbackDepth != 1 || preview.RoutingPoolFallbackChain != "primary -> secondary" {
+		t.Fatalf("routing pool metadata = id:%d name:%q depth:%d chain:%q, want secondary fallback chain", preview.RoutingPoolID, preview.RoutingPoolName, preview.RoutingPoolFallbackDepth, preview.RoutingPoolFallbackChain)
+	}
+	if len(preview.Candidates) != 2 || preview.Candidates[0].ID != 20 || !preview.Candidates[0].Selected || preview.Candidates[1].ID != 10 || preview.Candidates[1].UnschedulableReason != "model not configured" {
+		t.Fatalf("candidates = %+v, want selected fallback account then blocked primary account", preview.Candidates)
+	}
+}
+
 func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{

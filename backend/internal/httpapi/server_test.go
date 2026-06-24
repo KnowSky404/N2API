@@ -4321,9 +4321,13 @@ func TestModelRoutingPreviewSupportsRoutingPoolScope(t *testing.T) {
 	admins := newFakeAdminService()
 	providers := newFakeProviderService()
 	providers.selectionPreview = provider.SelectionPreview{
-		Model:             "gpt-5",
-		SessionID:         "workspace-123",
-		SelectedAccountID: 8,
+		Model:                    "gpt-5",
+		SessionID:                "workspace-123",
+		SelectedAccountID:        8,
+		RoutingPoolID:            2,
+		RoutingPoolName:          "secondary",
+		RoutingPoolFallbackDepth: 1,
+		RoutingPoolFallbackChain: "primary -> secondary",
 		Candidates: []provider.SelectionCandidate{
 			{ID: 8, DisplayName: "Pool account", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true},
 		},
@@ -4340,6 +4344,13 @@ func TestModelRoutingPreviewSupportsRoutingPoolScope(t *testing.T) {
 	}
 	if providers.previewRoutingPoolID != 7 || providers.previewModel != "gpt-5" || providers.previewSessionID != "workspace-123" || !reflect.DeepEqual(providers.previewExcludedIDs, []int64{9}) {
 		t.Fatalf("preview call = pool:%d model:%q session:%q excluded:%+v, want pool 7 gpt-5 workspace-123 [9]", providers.previewRoutingPoolID, providers.previewModel, providers.previewSessionID, providers.previewExcludedIDs)
+	}
+	var body provider.SelectionPreview
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.RoutingPoolID != 2 || body.RoutingPoolName != "secondary" || body.RoutingPoolFallbackDepth != 1 || body.RoutingPoolFallbackChain != "primary -> secondary" {
+		t.Fatalf("routing pool metadata = %+v, want fallback pool metadata", body)
 	}
 }
 

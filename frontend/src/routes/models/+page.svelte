@@ -290,7 +290,15 @@
                 {#if modelRoutingPreview.excludedAccountIds.trim()}
                   excluding {modelRoutingPreview.excludedAccountIds}
                 {/if}
+                {#if modelRoutingPreview.result.routingPoolId}
+                  in routing pool {modelRoutingPreview.result.routingPoolName || modelRoutingPreview.result.routingPoolId}
+                {/if}
               </p>
+              {#if modelRoutingPreview.result.routingPoolFallbackChain}
+                <p class="mt-1 text-xs text-[#6e6e6e]">
+                  Routing pool chain {modelRoutingPreview.result.routingPoolFallbackChain}
+                </p>
+              {/if}
             </div>
             <span class="rounded-md border border-[#d8ece5] bg-[#e8f5f0] px-2.5 py-1 text-xs font-medium text-[#0a7a5e]">
               Model {modelRoutingPreview.result.model}

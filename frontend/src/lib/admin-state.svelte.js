@@ -296,6 +296,11 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} sessionId
  * @property {number} selectedAccountId
  * @property {number} stickyBoundAccountId
+ * @property {number} routingPoolId
+ * @property {string} routingPoolName
+ * @property {number} routingPoolFallbackDepth
+ * @property {string} routingPoolFallbackChain
+ * @property {string} routingPoolError
  * @property {SelectionPreviewCandidate[]} candidates
  */
 
