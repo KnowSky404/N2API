@@ -26,6 +26,7 @@ type gatewayAccountProvider struct {
 var _ gateway.AccountProvider = gatewayAccountProvider{}
 var _ gateway.StickyAccountProvider = gatewayAccountProvider{}
 var _ gateway.RoutingPoolAccountProvider = gatewayAccountProvider{}
+var _ gateway.RoutingPoolChainAccountProvider = gatewayAccountProvider{}
 var _ gateway.AccountUsageRecorder = gatewayAccountProvider{}
 
 func (p gatewayAccountProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
@@ -48,19 +49,34 @@ func (p gatewayAccountProvider) SelectAccountForModelAndSessionInRoutingPool(ctx
 	return selectedGatewayAccount(selected, err)
 }
 
+func (p gatewayAccountProvider) SelectAccountForModelInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
+	selected, err := p.service.SelectAccountForModelInRoutingPoolChain(ctx, routingPoolID, model, excludedAccountIDs...)
+	return selectedGatewayAccount(selected, err)
+}
+
+func (p gatewayAccountProvider) SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
+	selected, err := p.service.SelectAccountForModelAndSessionInRoutingPoolChain(ctx, routingPoolID, model, sessionID, excludedAccountIDs...)
+	return selectedGatewayAccount(selected, err)
+}
+
 func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gateway.SelectedAccount, error) {
 	if err != nil {
 		return gateway.SelectedAccount{}, err
 	}
 	return gateway.SelectedAccount{
-		AccountID:             selected.AccountID,
-		Provider:              selected.Provider,
-		AccountType:           selected.AccountType,
-		DisplayName:           selected.DisplayName,
-		AuthorizationToken:    selected.AuthorizationToken,
-		BaseURL:               selected.BaseURL,
-		ChatGPTAccountID:      selected.ChatGPTAccountID,
-		MaxConcurrentRequests: selected.MaxConcurrentRequests,
+		AccountID:                selected.AccountID,
+		Provider:                 selected.Provider,
+		AccountType:              selected.AccountType,
+		DisplayName:              selected.DisplayName,
+		AuthorizationToken:       selected.AuthorizationToken,
+		BaseURL:                  selected.BaseURL,
+		ChatGPTAccountID:         selected.ChatGPTAccountID,
+		MaxConcurrentRequests:    selected.MaxConcurrentRequests,
+		RoutingPoolID:            selected.RoutingPoolID,
+		RoutingPoolName:          selected.RoutingPoolName,
+		RoutingPoolFallbackDepth: selected.RoutingPoolFallbackDepth,
+		RoutingPoolFallbackChain: selected.RoutingPoolFallbackChain,
+		RoutingPoolError:         selected.RoutingPoolError,
 	}, nil
 }
 
@@ -76,6 +92,8 @@ type gatewayModelProvider struct {
 	admins    *admin.Service
 	providers *provider.Service
 }
+
+var _ gateway.RoutingPoolModelProvider = gatewayModelProvider{}
 
 func (p gatewayModelProvider) DefaultModel(ctx context.Context) (string, error) {
 	settings, err := p.admins.GetModelSettings(ctx)
@@ -105,6 +123,25 @@ func (p gatewayModelProvider) ListExposedModels(ctx context.Context) ([]gateway.
 		return nil, err
 	}
 	models, err := p.providers.ListExposedModels(ctx, settings.AllowedModels)
+	if err != nil {
+		return nil, err
+	}
+	exposed := make([]gateway.ExposedModel, 0, len(models))
+	for _, model := range models {
+		exposed = append(exposed, gateway.ExposedModel{
+			ID:      model.ID,
+			OwnedBy: model.OwnedBy,
+		})
+	}
+	return exposed, nil
+}
+
+func (p gatewayModelProvider) ListExposedModelsForRoutingPoolChain(ctx context.Context, routingPoolID int64) ([]gateway.ExposedModel, error) {
+	settings, err := p.admins.GetModelSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models, err := p.providers.ListExposedModelsForRoutingPoolChain(ctx, routingPoolID, settings.AllowedModels)
 	if err != nil {
 		return nil, err
 	}

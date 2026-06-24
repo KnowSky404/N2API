@@ -1125,6 +1125,57 @@ func (r *ProviderRepository) ListExposedModels(ctx context.Context, providerName
 	return exposed, nil
 }
 
+func (r *ProviderRepository) ListExposedModelsForRoutingPools(ctx context.Context, providerName string, poolIDs []int64, allowedModels []string) ([]provider.ExposedModel, error) {
+	allowed := normalizeAllowedModels(allowedModels)
+	if len(allowed) == 0 || len(poolIDs) == 0 {
+		return []provider.ExposedModel{}, nil
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT DISTINCT m.model
+		FROM provider_account_models m
+		JOIN provider_accounts a ON a.id = m.account_id
+			AND a.provider = m.provider
+		JOIN routing_pool_accounts rpa ON rpa.account_id = a.id
+		WHERE m.provider = $1
+			AND rpa.pool_id = ANY($2)
+			AND m.enabled = true
+			AND m.model = ANY($3)
+			AND a.enabled = true
+			AND (
+				a.status IN ('', 'active')
+				OR (a.status = 'rate_limited' AND a.rate_limited_until IS NOT NULL AND a.rate_limited_until <= now())
+				OR (a.status = 'circuit_open' AND a.circuit_open_until IS NOT NULL AND a.circuit_open_until <= now())
+			)
+			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= now())
+			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= now())
+	`, providerName, poolIDs, allowed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	available := map[string]bool{}
+	for rows.Next() {
+		var model string
+		if err := rows.Scan(&model); err != nil {
+			return nil, err
+		}
+		available[model] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	exposed := []provider.ExposedModel{}
+	for _, model := range allowed {
+		if available[model] {
+			exposed = append(exposed, provider.ExposedModel{ID: model, OwnedBy: "openai"})
+		}
+	}
+	return exposed, nil
+}
+
 func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, providerName string, model string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {

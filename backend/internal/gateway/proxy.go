@@ -32,16 +32,19 @@ type APIKeyAuthenticator interface {
 }
 
 type SelectedAccount struct {
-	AccountID             int64
-	Provider              string
-	AccountType           string
-	DisplayName           string
-	AuthorizationToken    string
-	BaseURL               string
-	ChatGPTAccountID      string
-	MaxConcurrentRequests int
-	RoutingPoolID         int64
-	RoutingPoolName       string
+	AccountID                int64
+	Provider                 string
+	AccountType              string
+	DisplayName              string
+	AuthorizationToken       string
+	BaseURL                  string
+	ChatGPTAccountID         string
+	MaxConcurrentRequests    int
+	RoutingPoolID            int64
+	RoutingPoolName          string
+	RoutingPoolFallbackDepth int
+	RoutingPoolFallbackChain string
+	RoutingPoolError         string
 }
 
 type AccountProvider interface {
@@ -55,6 +58,11 @@ type StickyAccountProvider interface {
 type RoutingPoolAccountProvider interface {
 	SelectAccountForModelInRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
 	SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
+type RoutingPoolChainAccountProvider interface {
+	SelectAccountForModelInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
+	SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
 type AccountFailureReporter interface {
@@ -89,6 +97,10 @@ type ModelProvider interface {
 	ListExposedModels(ctx context.Context) ([]ExposedModel, error)
 }
 
+type RoutingPoolModelProvider interface {
+	ListExposedModelsForRoutingPoolChain(ctx context.Context, routingPoolID int64) ([]ExposedModel, error)
+}
+
 type RequestLogger interface {
 	CreateRequestLog(ctx context.Context, entry RequestLog) error
 }
@@ -112,32 +124,35 @@ type UsageCostEstimate struct {
 }
 
 type RequestLog struct {
-	RequestID             string
-	ClientKeyID           int64
-	Provider              string
-	ProviderAccountID     int64
-	ProviderAccountType   string
-	ProviderAccountName   string
-	RoutingPoolID         int64
-	RoutingPoolName       string
-	Model                 string
-	SessionID             string
-	Route                 string
-	Method                string
-	StatusCode            int
-	Latency               time.Duration
-	Error                 string
-	InputTokens           int
-	OutputTokens          int
-	TotalTokens           int
-	CachedInputTokens     int
-	ReasoningTokens       int
-	UsageSource           string
-	EstimatedCostMicrousd int64
-	PricingSnapshot       map[string]any
-	GatewayAttemptCount   int
-	GatewayFallbackCount  int
-	CreatedAt             time.Time
+	RequestID                string
+	ClientKeyID              int64
+	Provider                 string
+	ProviderAccountID        int64
+	ProviderAccountType      string
+	ProviderAccountName      string
+	RoutingPoolID            int64
+	RoutingPoolName          string
+	RoutingPoolFallbackDepth int
+	RoutingPoolFallbackChain string
+	RoutingPoolError         string
+	Model                    string
+	SessionID                string
+	Route                    string
+	Method                   string
+	StatusCode               int
+	Latency                  time.Duration
+	Error                    string
+	InputTokens              int
+	OutputTokens             int
+	TotalTokens              int
+	CachedInputTokens        int
+	ReasoningTokens          int
+	UsageSource              string
+	EstimatedCostMicrousd    int64
+	PricingSnapshot          map[string]any
+	GatewayAttemptCount      int
+	GatewayFallbackCount     int
+	CreatedAt                time.Time
 }
 
 type Config struct {
@@ -249,6 +264,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	errorCode := ""
 	var loggedAccount SelectedAccount
 	loggedRoutingPoolID, loggedRoutingPoolName := apiKeyRoutingPool(key)
+	loggedRoutingPoolFallbackDepth := 0
+	loggedRoutingPoolFallbackChain := ""
+	loggedRoutingPoolError := ""
 	requestModel := ""
 	requestSessionID := ""
 	observedUsage := Usage{Source: "missing"}
@@ -261,32 +279,35 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.recordAPIKeyUsage(key.ID, observedUsage.TotalTokens, effectiveAPIKeyLimit(key.TokensPerMinute, settings.TokensPerMinutePerKey))
 		costEstimate := p.estimateUsageCost(r.Context(), observedUsage)
 		p.logRequest(r.Context(), RequestLog{
-			RequestID:             newRequestID(),
-			ClientKeyID:           key.ID,
-			Provider:              selectedProviderName(loggedAccount),
-			ProviderAccountID:     loggedAccount.AccountID,
-			ProviderAccountType:   loggedAccount.AccountType,
-			ProviderAccountName:   loggedAccount.DisplayName,
-			RoutingPoolID:         loggedRoutingPoolID,
-			RoutingPoolName:       loggedRoutingPoolName,
-			Model:                 requestModel,
-			SessionID:             requestSessionID,
-			Route:                 r.URL.Path,
-			Method:                r.Method,
-			StatusCode:            recorder.statusCode(),
-			Latency:               time.Since(startedAt),
-			Error:                 errorCode,
-			InputTokens:           observedUsage.InputTokens,
-			OutputTokens:          observedUsage.OutputTokens,
-			TotalTokens:           observedUsage.TotalTokens,
-			CachedInputTokens:     observedUsage.CachedInputTokens,
-			ReasoningTokens:       observedUsage.ReasoningTokens,
-			UsageSource:           observedUsage.Source,
-			EstimatedCostMicrousd: costEstimate.CostMicrousd,
-			PricingSnapshot:       costEstimate.Snapshot,
-			GatewayAttemptCount:   gatewayAttemptCount,
-			GatewayFallbackCount:  gatewayFallbackCount,
-			CreatedAt:             startedAt,
+			RequestID:                newRequestID(),
+			ClientKeyID:              key.ID,
+			Provider:                 selectedProviderName(loggedAccount),
+			ProviderAccountID:        loggedAccount.AccountID,
+			ProviderAccountType:      loggedAccount.AccountType,
+			ProviderAccountName:      loggedAccount.DisplayName,
+			RoutingPoolID:            loggedRoutingPoolID,
+			RoutingPoolName:          loggedRoutingPoolName,
+			RoutingPoolFallbackDepth: loggedRoutingPoolFallbackDepth,
+			RoutingPoolFallbackChain: loggedRoutingPoolFallbackChain,
+			RoutingPoolError:         loggedRoutingPoolError,
+			Model:                    requestModel,
+			SessionID:                requestSessionID,
+			Route:                    r.URL.Path,
+			Method:                   r.Method,
+			StatusCode:               recorder.statusCode(),
+			Latency:                  time.Since(startedAt),
+			Error:                    errorCode,
+			InputTokens:              observedUsage.InputTokens,
+			OutputTokens:             observedUsage.OutputTokens,
+			TotalTokens:              observedUsage.TotalTokens,
+			CachedInputTokens:        observedUsage.CachedInputTokens,
+			ReasoningTokens:          observedUsage.ReasoningTokens,
+			UsageSource:              observedUsage.Source,
+			EstimatedCostMicrousd:    costEstimate.CostMicrousd,
+			PricingSnapshot:          costEstimate.Snapshot,
+			GatewayAttemptCount:      gatewayAttemptCount,
+			GatewayFallbackCount:     gatewayFallbackCount,
+			CreatedAt:                startedAt,
 		})
 	}()
 
@@ -423,6 +444,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(selected.RoutingPoolName) != "" {
 			loggedRoutingPoolName = strings.TrimSpace(selected.RoutingPoolName)
 		}
+		loggedRoutingPoolFallbackDepth = selected.RoutingPoolFallbackDepth
+		loggedRoutingPoolFallbackChain = strings.TrimSpace(selected.RoutingPoolFallbackChain)
+		loggedRoutingPoolError = strings.TrimSpace(selected.RoutingPoolError)
 
 		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 		if err != nil {
@@ -591,6 +615,12 @@ func (p *Proxy) gatewaySettings(ctx context.Context) admin.GatewaySettings {
 
 func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if key.RoutingPoolID != nil && *key.RoutingPoolID > 0 {
+		if chainProvider, ok := p.accounts.(RoutingPoolChainAccountProvider); ok {
+			if strings.TrimSpace(sessionID) != "" {
+				return chainProvider.SelectAccountForModelAndSessionInRoutingPoolChain(ctx, *key.RoutingPoolID, model, sessionID, excludedAccountIDs...)
+			}
+			return chainProvider.SelectAccountForModelInRoutingPoolChain(ctx, *key.RoutingPoolID, model, excludedAccountIDs...)
+		}
 		poolProvider, ok := p.accounts.(RoutingPoolAccountProvider)
 		if !ok {
 			return SelectedAccount{}, provider.ErrAccountsUnavailable
@@ -982,7 +1012,15 @@ func (p *Proxy) writeLocalModels(ctx context.Context, w http.ResponseWriter, key
 	models := []ExposedModel{}
 	if p.models != nil {
 		var err error
-		models, err = p.models.ListExposedModels(ctx)
+		if key.RoutingPoolID != nil && *key.RoutingPoolID > 0 {
+			if poolModels, ok := p.models.(RoutingPoolModelProvider); ok {
+				models, err = poolModels.ListExposedModelsForRoutingPoolChain(ctx, *key.RoutingPoolID)
+			} else {
+				models, err = p.models.ListExposedModels(ctx)
+			}
+		} else {
+			models, err = p.models.ListExposedModels(ctx)
+		}
 		if err != nil {
 			return err
 		}
@@ -1391,6 +1429,8 @@ func providerErrorCode(err error) string {
 		return "provider_not_configured"
 	case errors.Is(err, provider.ErrAccountsDisabled):
 		return "provider_accounts_disabled"
+	case errors.Is(err, provider.ErrRoutingPoolCycle):
+		return "routing_pool_cycle"
 	case errors.Is(err, provider.ErrRoutingPoolNotFound):
 		return "routing_pool_unavailable"
 	case errors.Is(err, provider.ErrAccountsUnavailable):
@@ -1410,6 +1450,8 @@ func providerErrorMessage(code string) string {
 		return "provider account is not configured"
 	case "provider_accounts_disabled":
 		return "provider accounts are disabled"
+	case "routing_pool_cycle":
+		return "routing pool fallback chain contains a cycle"
 	case "routing_pool_unavailable":
 		return "routing pool is unavailable"
 	case "provider_accounts_unavailable":

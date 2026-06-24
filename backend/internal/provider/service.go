@@ -378,6 +378,7 @@ type Repository interface {
 	ListAccountModels(ctx context.Context, provider string, accountID int64) ([]AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
+	ListExposedModelsForRoutingPools(ctx context.Context, provider string, poolIDs []int64, allowedModels []string) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error)
 	ListAccountsForRoutingPool(ctx context.Context, provider string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
@@ -946,6 +947,27 @@ func (s *Service) ReplaceAccountModels(ctx context.Context, accountID int64, mod
 
 func (s *Service) ListExposedModels(ctx context.Context, allowedModels []string) ([]ExposedModel, error) {
 	return s.repo.ListExposedModels(ctx, s.cfg.Provider, allowedModels)
+}
+
+func (s *Service) ListExposedModelsForRoutingPoolChain(ctx context.Context, primaryPoolID int64, allowedModels []string) ([]ExposedModel, error) {
+	if primaryPoolID <= 0 {
+		return s.ListExposedModels(ctx, allowedModels)
+	}
+	pools, _, err := s.routingPoolChain(ctx, primaryPoolID)
+	if err != nil {
+		return nil, err
+	}
+	poolIDs := make([]int64, 0, len(pools))
+	for depth, pool := range pools {
+		if !pool.Enabled {
+			if depth == 0 {
+				return []ExposedModel{}, nil
+			}
+			continue
+		}
+		poolIDs = append(poolIDs, pool.ID)
+	}
+	return s.repo.ListExposedModelsForRoutingPools(ctx, s.cfg.Provider, poolIDs, allowedModels)
 }
 
 func (s *Service) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {

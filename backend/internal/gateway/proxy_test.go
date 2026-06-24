@@ -43,15 +43,16 @@ func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey s
 }
 
 type fakeSelectedAccountProvider struct {
-	accounts   []SelectedAccount
-	errs       []error
-	calls      int
-	models     []string
-	sessions   []string
-	poolIDs    []int64
-	exclusions [][]int64
-	failures   []reportedAccountFailure
-	used       []int64
+	accounts     []SelectedAccount
+	errs         []error
+	calls        int
+	models       []string
+	sessions     []string
+	poolIDs      []int64
+	chainPoolIDs []int64
+	exclusions   [][]int64
+	failures     []reportedAccountFailure
+	used         []int64
 }
 
 type reportedAccountFailure struct {
@@ -91,6 +92,17 @@ func (p *fakeSelectedAccountProvider) SelectAccountForModelAndSessionInRoutingPo
 	return p.SelectAccountForModel(ctx, model, excludedAccountIDs...)
 }
 
+func (p *fakeSelectedAccountProvider) SelectAccountForModelInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	p.chainPoolIDs = append(p.chainPoolIDs, routingPoolID)
+	return p.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+func (p *fakeSelectedAccountProvider) SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	p.chainPoolIDs = append(p.chainPoolIDs, routingPoolID)
+	p.sessions = append(p.sessions, sessionID)
+	return p.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
 func (p *fakeSelectedAccountProvider) RecordAccountFailure(_ context.Context, accountID int64, statusCode int, retryAfter, message string) error {
 	p.failures = append(p.failures, reportedAccountFailure{
 		accountID:  accountID,
@@ -107,9 +119,11 @@ func (p *fakeSelectedAccountProvider) RecordAccountUsed(_ context.Context, accou
 }
 
 type fakeModelProvider struct {
-	defaultModel  string
-	allowedModels []string
-	exposedModels []ExposedModel
+	defaultModel       string
+	allowedModels      []string
+	exposedModels      []ExposedModel
+	chainExposedModels []ExposedModel
+	chainPoolIDs       []int64
 }
 
 func (p fakeModelProvider) DefaultModel(context.Context) (string, error) {
@@ -127,6 +141,11 @@ func (p fakeModelProvider) IsModelAllowed(_ context.Context, model string) (bool
 
 func (p fakeModelProvider) ListExposedModels(context.Context) ([]ExposedModel, error) {
 	return append([]ExposedModel(nil), p.exposedModels...), nil
+}
+
+func (p *fakeModelProvider) ListExposedModelsForRoutingPoolChain(_ context.Context, routingPoolID int64) ([]ExposedModel, error) {
+	p.chainPoolIDs = append(p.chainPoolIDs, routingPoolID)
+	return append([]ExposedModel(nil), p.chainExposedModels...), nil
 }
 
 type fakeRequestLogger struct {
@@ -258,6 +277,35 @@ func TestProxyModelsReturnsLocalAggregateList(t *testing.T) {
 	}
 	if got := body.Data[0]; got.ID != "gpt-5" || got.Object != "model" || got.Created != 0 || got.OwnedBy != "openai" {
 		t.Fatalf("model = %+v, want local gpt-5 model", got)
+	}
+}
+
+func TestProxyModelsForPoolBoundKeyUseRoutingPoolChain(t *testing.T) {
+	poolID := int64(1)
+	models := &fakeModelProvider{
+		exposedModels:      []ExposedModel{{ID: "global-only", OwnedBy: "openai"}},
+		chainExposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}},
+	}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, RoutingPoolID: &poolID}}, &fakeSelectedAccountProvider{}, Config{
+		ModelProvider: models,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Equal(models.chainPoolIDs, []int64{1}) {
+		t.Fatalf("model chain pool calls = %+v, want pool 1", models.chainPoolIDs)
+	}
+	if !strings.Contains(recorder.Body.String(), `"id":"gpt-5"`) {
+		t.Fatalf("models body = %q, want fallback chain model gpt-5", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "global-only") {
+		t.Fatalf("models body = %q, should not include global-only model", recorder.Body.String())
 	}
 }
 
@@ -2182,14 +2230,66 @@ func TestProxyRoutesPoolBoundAPIKeyThroughRoutingPool(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
 	}
-	if !slices.Equal(accounts.poolIDs, []int64{7}) {
-		t.Fatalf("routing pool calls = %+v, want pool 7", accounts.poolIDs)
+	if !slices.Equal(accounts.chainPoolIDs, []int64{7}) {
+		t.Fatalf("routing pool chain calls = %+v, want pool 7", accounts.chainPoolIDs)
 	}
 	if len(logger.entries) != 1 {
 		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
 	}
 	if logger.entries[0].RoutingPoolID != 7 || logger.entries[0].RoutingPoolName != "primary" {
 		t.Fatalf("logged pool = %d/%q, want 7/primary", logger.entries[0].RoutingPoolID, logger.entries[0].RoutingPoolName)
+	}
+}
+
+func TestProxyRoutesPoolBoundKeyThroughFallbackPool(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	poolID := int64(1)
+	accounts := &fakeSelectedAccountProvider{
+		accounts: []SelectedAccount{{
+			AccountID:                20,
+			AccountType:              provider.AccountTypeAPIUpstream,
+			DisplayName:              "Fallback Account",
+			AuthorizationToken:       "fallback-token",
+			RoutingPoolID:            2,
+			RoutingPoolName:          "secondary",
+			RoutingPoolFallbackDepth: 1,
+			RoutingPoolFallbackChain: "primary -> secondary",
+		}},
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Authorization"); got != "Bearer fallback-token" {
+			t.Fatalf("Authorization = %q, want fallback token", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "pool key", RoutingPoolID: &poolID, RoutingPoolName: "primary"}},
+		accounts,
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Equal(accounts.chainPoolIDs, []int64{1}) {
+		t.Fatalf("routing pool chain calls = %+v, want primary pool 1", accounts.chainPoolIDs)
+	}
+	if len(logger.entries) != 1 || logger.entries[0].RoutingPoolID != 2 || logger.entries[0].RoutingPoolFallbackDepth != 1 {
+		t.Fatalf("log entry = %+v, want fallback pool diagnostics", logger.entries)
+	}
+	if logger.entries[0].RoutingPoolFallbackChain != "primary -> secondary" {
+		t.Fatalf("fallback chain = %q, want primary -> secondary", logger.entries[0].RoutingPoolFallbackChain)
 	}
 }
 

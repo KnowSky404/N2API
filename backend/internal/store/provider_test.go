@@ -246,6 +246,50 @@ func TestProviderRepositoryRoutingPoolSelectionAndBinding(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryListExposedModelsForRoutingPools(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	global := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "global-account",
+		DisplayName:           "Global Account",
+		EncryptedAccessToken:  "global-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              1,
+		Status:                provider.AccountStatusActive,
+	})
+	pooled := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "pooled-account",
+		DisplayName:           "Pooled Account",
+		EncryptedAccessToken:  "pool-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              1,
+		Status:                provider.AccountStatusActive,
+	})
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", global.ID, []provider.AccountModelInput{{Model: "global-only", Enabled: true}}); err != nil {
+		t.Fatalf("ReplaceAccountModels global returned error: %v", err)
+	}
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", pooled.ID, []provider.AccountModelInput{{Model: "gpt-5", Enabled: true}}); err != nil {
+		t.Fatalf("ReplaceAccountModels pooled returned error: %v", err)
+	}
+	poolID := insertProviderRoutingPool(t, repo.pool, "primary", pooled.ID)
+
+	models, err := repo.ListExposedModelsForRoutingPools(ctx, "openai", []int64{poolID}, []string{"gpt-5", "global-only"})
+	if err != nil {
+		t.Fatalf("ListExposedModelsForRoutingPools returned error: %v", err)
+	}
+	if got := providerExposedModelIDs(models); !reflect.DeepEqual(got, []string{"gpt-5"}) {
+		t.Fatalf("models = %+v, want only pooled gpt-5", got)
+	}
+}
+
 func TestProviderRepositoryUpdatesAPIUpstreamCredential(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
@@ -1036,6 +1080,14 @@ func accountIDs(accounts []provider.Account) []int64 {
 	ids := make([]int64, 0, len(accounts))
 	for _, account := range accounts {
 		ids = append(ids, account.ID)
+	}
+	return ids
+}
+
+func providerExposedModelIDs(models []provider.ExposedModel) []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
 	}
 	return ids
 }

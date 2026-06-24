@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -1724,6 +1725,31 @@ func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
 	}
 }
 
+func TestListExposedModelsForRoutingPoolChainIncludesFallbackModels(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 10, true, 1, "primary-token"),
+		testAccount(t, 20, true, 1, "secondary-token"),
+		testAccount(t, 30, true, 1, "global-token"),
+	}
+	repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10, Priority: 0}}
+	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
+	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
+	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	repo.accountModels[30] = []AccountModel{{AccountID: 30, Provider: "openai", Model: "global-only", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	models, err := service.ListExposedModelsForRoutingPoolChain(context.Background(), 1, []string{"gpt-4", "gpt-5", "global-only"})
+	if err != nil {
+		t.Fatalf("ListExposedModelsForRoutingPoolChain returned error: %v", err)
+	}
+	if got := exposedModelIDs(models); !reflect.DeepEqual(got, []string{"gpt-4", "gpt-5"}) {
+		t.Fatalf("models = %+v, want primary and fallback models only", got)
+	}
+}
+
 func TestSelectAccountForModelAndSessionInRoutingPoolDoesNotCrossScope(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
@@ -2807,6 +2833,40 @@ func (r *memoryRepo) ListExposedModels(ctx context.Context, providerName string,
 	return exposed, nil
 }
 
+func (r *memoryRepo) ListExposedModelsForRoutingPools(ctx context.Context, providerName string, poolIDs []int64, allowedModels []string) ([]ExposedModel, error) {
+	poolAccounts := map[int64]bool{}
+	for _, poolID := range poolIDs {
+		for _, poolAccount := range r.routingPoolAccounts[poolID] {
+			poolAccounts[poolAccount.AccountID] = true
+		}
+	}
+
+	available := map[string]bool{}
+	now := time.Now()
+	for _, account := range r.accounts {
+		if !poolAccounts[account.ID] || account.Provider != providerName || !accountSchedulable(account, now) {
+			continue
+		}
+		for _, accountModel := range r.accountModels[account.ID] {
+			if accountModel.Provider == providerName && accountModel.Enabled {
+				available[accountModel.Model] = true
+			}
+		}
+	}
+
+	seen := map[string]bool{}
+	exposed := []ExposedModel{}
+	for _, allowed := range allowedModels {
+		model := strings.TrimSpace(allowed)
+		if model == "" || seen[model] || !available[model] {
+			continue
+		}
+		seen[model] = true
+		exposed = append(exposed, ExposedModel{ID: model, OwnedBy: "openai"})
+	}
+	return exposed, nil
+}
+
 func (r *memoryRepo) ListEligibleAccountsForModel(ctx context.Context, providerName string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -3128,6 +3188,14 @@ func modelNamesAndEnabled(models []AccountModel) []string {
 	values := make([]string, 0, len(models))
 	for _, model := range models {
 		values = append(values, model.Model+":"+strconv.FormatBool(model.Enabled))
+	}
+	return values
+}
+
+func exposedModelIDs(models []ExposedModel) []string {
+	values := make([]string, 0, len(models))
+	for _, model := range models {
+		values = append(values, model.ID)
 	}
 	return values
 }
