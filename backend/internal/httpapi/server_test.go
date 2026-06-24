@@ -105,7 +105,8 @@ type fakeProviderService struct {
 }
 
 type fakeGatewayHandler struct {
-	called bool
+	called             bool
+	accountConcurrency map[int64]int
 }
 
 func (h *fakeGatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +114,10 @@ func (h *fakeGatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+}
+
+func (h *fakeGatewayHandler) AccountConcurrencySnapshot() map[int64]int {
+	return h.accountConcurrency
 }
 
 func newFakeAdminService() *fakeAdminService {
@@ -1477,6 +1482,46 @@ func TestAdminCanListUnifiedProviderAccounts(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"id":7`) {
 		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestAdminProviderAccountsIncludeConcurrencyState(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.gatewaySettings.MaxConcurrentRequestsPerAccount = 5
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Busy", Enabled: true, Priority: 10, MaxConcurrentRequests: 3},
+		{ID: 8, Provider: "openai", DisplayName: "Inherited", Enabled: true, Priority: 10},
+	}
+	gateway := &fakeGatewayHandler{accountConcurrency: map[int64]int{7: 2, 8: 1}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers, gateway)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/provider-accounts", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Accounts []struct {
+			provider.Account
+			CurrentConcurrentRequests      int `json:"currentConcurrentRequests"`
+			EffectiveMaxConcurrentRequests int `json:"effectiveMaxConcurrentRequests"`
+		} `json:"accounts"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Accounts) != 2 {
+		t.Fatalf("accounts = %+v, want two accounts", body.Accounts)
+	}
+	if body.Accounts[0].CurrentConcurrentRequests != 2 || body.Accounts[0].EffectiveMaxConcurrentRequests != 3 {
+		t.Fatalf("first concurrency fields = %+v, want current 2 effective 3", body.Accounts[0])
+	}
+	if body.Accounts[1].CurrentConcurrentRequests != 1 || body.Accounts[1].EffectiveMaxConcurrentRequests != 5 {
+		t.Fatalf("second concurrency fields = %+v, want current 1 effective 5", body.Accounts[1])
 	}
 }
 

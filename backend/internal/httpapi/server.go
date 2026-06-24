@@ -73,15 +73,26 @@ type ProviderAccountAutoTestStatusSource interface {
 	ProviderAccountAutoTestStatus() provider.AutoTestStatus
 }
 
+type AccountConcurrencySnapshotProvider interface {
+	AccountConcurrencySnapshot() map[int64]int
+}
+
 type gatewaySettingsResponse struct {
 	admin.GatewaySettings
 	ProviderAccountAutoTestStatus provider.AutoTestStatus `json:"providerAccountAutoTestStatus,omitempty"`
+}
+
+type providerAccountResponse struct {
+	provider.Account
+	CurrentConcurrentRequests      int `json:"currentConcurrentRequests"`
+	EffectiveMaxConcurrentRequests int `json:"effectiveMaxConcurrentRequests"`
 }
 
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
 	mux := http.NewServeMux()
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
 	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
+	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -451,7 +462,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/provider-accounts", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleListProviderAccounts(w, r, providers)
+		handleListProviderAccounts(w, r, admins, providers, accountConcurrencySource)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/api-upstream", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -593,7 +604,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/providers/openai/accounts", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleListProviderAccounts(w, r, providers)
+		handleListProviderAccounts(w, r, admins, providers, accountConcurrencySource)
 	}))
 
 	mux.HandleFunc("PATCH /api/admin/providers/openai/accounts/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -702,7 +713,7 @@ func writeProviderAccountError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "internal_error")
 }
 
-func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, admins AdminService, providers ProviderService, concurrencySource AccountConcurrencySnapshotProvider) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -712,7 +723,38 @@ func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, provider
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
+	settings := admin.GatewaySettings{}
+	if admins != nil {
+		var err error
+		settings, err = admins.GetGatewaySettings(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+	}
+	concurrency := map[int64]int{}
+	if concurrencySource != nil {
+		concurrency = concurrencySource.AccountConcurrencySnapshot()
+	}
+	writeJSON(w, http.StatusOK, map[string][]providerAccountResponse{
+		"accounts": providerAccountResponses(accounts, settings, concurrency),
+	})
+}
+
+func providerAccountResponses(accounts []provider.Account, settings admin.GatewaySettings, concurrency map[int64]int) []providerAccountResponse {
+	responses := make([]providerAccountResponse, 0, len(accounts))
+	for _, account := range accounts {
+		effectiveMaxConcurrentRequests := account.MaxConcurrentRequests
+		if effectiveMaxConcurrentRequests <= 0 {
+			effectiveMaxConcurrentRequests = settings.MaxConcurrentRequestsPerAccount
+		}
+		responses = append(responses, providerAccountResponse{
+			Account:                        account,
+			CurrentConcurrentRequests:      concurrency[account.ID],
+			EffectiveMaxConcurrentRequests: effectiveMaxConcurrentRequests,
+		})
+	}
+	return responses
 }
 
 func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, providers ProviderService) {
