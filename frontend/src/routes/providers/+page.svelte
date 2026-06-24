@@ -105,7 +105,7 @@
       account.baseUrl,
       account.provider,
       accountTypeLabel(account),
-      accountRoutingPoolNames(account.id).join(' '),
+      accountRoutingPools(account.id).map((pool) => pool.name).join(' '),
       statusLabel(account.status),
       account.statusReason,
       account.lastError
@@ -185,7 +185,7 @@
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountHoverDetail(account) {
-    const pools = accountRoutingPoolNames(account.id);
+    const pools = accountRoutingPools(account.id).map((pool) => pool.name);
     return [
       accountLabel(account),
       accountSecondaryLabel(account),
@@ -197,14 +197,13 @@
   }
 
   /** @param {number} accountId */
-  function accountRoutingPoolNames(accountId) {
+  function accountRoutingPools(accountId) {
     return routingPools.items
       .filter((pool) => {
         if ((pool.accountIds ?? []).includes(accountId)) return true;
         return (pool.accounts ?? []).some((account) => account.accountId === accountId);
       })
-      .map((pool) => pool.name)
-      .filter(Boolean);
+      .filter((pool) => pool.name);
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -858,7 +857,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       {@const modelState = getAccountModelsState(account.id)}
       {@const historyState = getAccountTestResultsState(account.id)}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
-      {@const routingPoolNames = accountRoutingPoolNames(account.id)}
+      {@const accountPools = accountRoutingPools(account.id)}
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle">
           <label class="inline-flex items-center">
@@ -890,13 +889,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           <p class="mt-1 max-w-[18rem] truncate font-mono text-[13px] text-[#6e6e6e]">
             {accountProviderDetail(account)}
           </p>
-          {#if routingPoolNames.length > 0}
+          {#if accountPools.length > 0}
             <div class="mt-2 flex max-w-[18rem] flex-wrap gap-1" aria-label={`Routing pools for ${accountLabel(account)}`}>
               <span class="mr-1 text-xs font-medium text-[#6e6e6e]">Routing pools</span>
-              {#each routingPoolNames as poolName}
-                <span class="inline-flex max-w-full truncate rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#3c3c3c]" title={poolName}>
-                  {poolName}
-                </span>
+              {#each accountPools as pool}
+                <a
+                  class="inline-flex max-w-full truncate rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#3c3c3c] hover:bg-[#e8f5f0] hover:text-[#0a7a5e]"
+                  href={`/routing-pools#routing-pool-${pool.id}`}
+                  title={`Open routing pool ${pool.name}`}
+                >
+                  {pool.name}
+                </a>
               {/each}
             </div>
           {/if}

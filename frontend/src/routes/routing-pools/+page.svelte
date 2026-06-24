@@ -190,7 +190,7 @@
     {:else}
       <div class="mt-6 grid gap-4">
         {#each routingPools.items as pool (pool.id)}
-          <article class="rounded-lg border border-[#ededed] bg-white p-4">
+          <article id={`routing-pool-${pool.id}`} class="scroll-mt-6 rounded-lg border border-[#ededed] bg-white p-4">
             <div class="grid gap-3 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)_auto]">
               <label class="text-sm font-medium text-[#3c3c3c]">
                 Name

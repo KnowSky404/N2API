@@ -42,6 +42,7 @@ const {
 const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const modelsSource = readFileSync('src/routes/models/+page.svelte', 'utf8');
 const apiKeysSource = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
+const routingPoolsSource = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
 const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
 test('parseAccountModelsText trims blanks and dedupes by first occurrence', () => {
@@ -527,8 +528,10 @@ test('provider account rows expose manual model controls and routing warning', (
 test('provider account rows show routing pool memberships', () => {
   assert.match(source, /loadRoutingPools/);
   assert.match(source, /routingPools/);
-  assert.match(source, /accountRoutingPoolNames\(account\.id\)/);
+  assert.match(source, /accountRoutingPools\(account\.id\)/);
   assert.match(source, /Routing pools/);
+  assert.match(source, /href=\{`\/routing-pools#routing-pool-\$\{pool\.id\}`\}/);
+  assert.match(routingPoolsSource, /id=\{`routing-pool-\$\{pool\.id\}`\}/);
 });
 
 test('providers page is account-oriented and supports api upstream accounts', () => {
