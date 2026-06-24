@@ -38,6 +38,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} priority
  * @property {number} loadFactor
  * @property {number} maxConcurrentRequests
+ * @property {number} currentConcurrentRequests
+ * @property {number} effectiveMaxConcurrentRequests
  * @property {string} status
  * @property {string} statusReason
  * @property {string | null} circuitOpenUntil

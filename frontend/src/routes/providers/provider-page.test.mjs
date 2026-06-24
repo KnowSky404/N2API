@@ -188,6 +188,8 @@ test('provider account state can bulk update selected scheduling fields', () => 
   assert.match(adminStateSource, /priority/);
   assert.match(adminStateSource, /loadFactor/);
   assert.match(adminStateSource, /maxConcurrentRequests/);
+  assert.match(adminStateSource, /currentConcurrentRequests/);
+  assert.match(adminStateSource, /effectiveMaxConcurrentRequests/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-update/);
 });
 
@@ -388,6 +390,10 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /role="switch"/);
   assert.match(source, /Load factor/);
   assert.match(source, /Max concurrency/);
+  assert.match(source, /concurrencyLimitLabel/);
+  assert.match(source, /Active/);
+  assert.match(source, /account\.currentConcurrentRequests/);
+  assert.match(source, /account\.effectiveMaxConcurrentRequests/);
   assert.match(source, /updateProviderAccountLoadFactor/);
   assert.match(source, /updateProviderAccountMaxConcurrentRequests/);
   assert.match(source, /provider-account-max-concurrency/);

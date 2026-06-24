@@ -156,6 +156,12 @@
     return accountSort.direction === 'asc' ? ' Asc' : ' Desc';
   }
 
+  /** @param {number | null | undefined} value */
+  function concurrencyLimitLabel(value) {
+    const limit = Number(value ?? 0);
+    return limit > 0 ? String(limit) : 'unlimited';
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountSecondaryLabel(account) {
     const label = account.displayName?.trim();
@@ -986,6 +992,9 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             disabled={providerAccounts.saving}
             onchange={(event) => updateProviderAccountMaxConcurrentRequests(account, event)}
           />
+          <p class="mt-1 whitespace-nowrap text-xs text-[#6e6e6e]">
+            Active {account.currentConcurrentRequests || 0} / {concurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}
+          </p>
         </td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
