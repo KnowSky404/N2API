@@ -331,6 +331,16 @@ test('api keys page filters key list locally', () => {
   assert.match(apiKeysPage, /No API keys match your filters\./);
 });
 
+test('api keys page renames keys without rotating secrets', () => {
+  assert.match(apiKeysPage, /updateAPIKeyName/);
+  assert.match(apiKeysPage, /Save name/);
+  assert.match(apiKeysPage, /bind:value=\{key\.name\}/);
+  assert.match(apiKeysPage, /updateAPIKeyName\(key\.id, key\.name\)/);
+  assert.match(adminState, /export async function updateAPIKeyName/);
+  assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}/);
+  assert.match(adminState, /method: 'PATCH'/);
+});
+
 test('dashboard shows gateway scheduling capacity', () => {
   for (const label of ['Provider accounts', 'Schedulable accounts', 'Unschedulable accounts', 'Routable models', 'Active API keys']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);

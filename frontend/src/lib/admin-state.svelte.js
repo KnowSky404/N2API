@@ -2034,6 +2034,34 @@ export async function updateAPIKeyModelPolicy(keyId, modelPolicy, modelsText) {
 
 /**
  * @param {number} keyId
+ * @param {string} name
+ */
+export async function updateAPIKeyName(keyId, name) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  const nextName = String(name ?? '').trim();
+  if (!nextName) {
+    apiKeys.error = 'API key name cannot be empty';
+    return;
+  }
+
+  apiKeys.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/keys/${keyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: nextName })
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.error = error instanceof Error ? error.message : 'Failed to update API key name';
+  }
+}
+
+/**
+ * @param {number} keyId
  * @param {string | number} requestsPerMinute
  * @param {string | number} tokensPerMinute
  */

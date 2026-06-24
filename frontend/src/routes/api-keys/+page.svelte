@@ -22,6 +22,7 @@
     saveModelSettings,
     session,
     updateAPIKeyLimits,
+    updateAPIKeyName,
     updateAPIKeyModelPolicy,
     usage,
   } from '$lib/admin-state.svelte.js';
@@ -383,7 +384,30 @@ All routable models
   {:else}
     {#each filteredAPIKeys as key}
       <tr class="bg-white">
-        <td class="px-4 py-3 font-medium text-[#0d0d0d]">{key.name}</td>
+        <td class="px-4 py-3">
+          <form
+            class="grid gap-2"
+            onsubmit={(event) => {
+              event.preventDefault();
+              updateAPIKeyName(key.id, key.name);
+            }}
+          >
+            <label class="sr-only" for={`api-key-name-${key.id}`}>Name for {key.name}</label>
+            <input
+              id={`api-key-name-${key.id}`}
+              class="w-full min-w-40 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              bind:value={key.name}
+              disabled={Boolean(key.revokedAt)}
+            />
+            <button
+              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="submit"
+              disabled={Boolean(key.revokedAt)}
+            >
+              Save name
+            </button>
+          </form>
+        </td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</td>
         <td class="px-4 py-3">
           <form
