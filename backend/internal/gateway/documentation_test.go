@@ -563,7 +563,9 @@ func TestGatewayDocumentationMentionsProviderAccountBulkRoutingPoolMembership(t 
 		for _, want := range []string{
 			"Apply pool",
 			"Remove pool",
+			"Pool priority",
 			"add or remove selected provider accounts",
+			"new pool members",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in provider account bulk routing pool documentation", path, want)

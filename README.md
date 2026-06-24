@@ -77,7 +77,7 @@ Configure model capability on each provider account row. The API Keys page contr
 
 Selected provider accounts can also receive the same model capability list. Enter one model per line in **Bulk models**, then use **Apply models** to replace the selected accounts' manual model lists together; this controls which models the scheduler can route to those accounts.
 
-Use the Provider accounts page to add or remove selected provider accounts from a routing pool without opening the pool editor. Choose **Bulk routing pool**, then use **Apply pool** to add the selected accounts to that pool or **Remove pool** to remove them while leaving the pool's other members unchanged.
+Use the Provider accounts page to add or remove selected provider accounts from a routing pool without opening the pool editor. Choose **Bulk routing pool**, set **Pool priority** for new pool members, then use **Apply pool** to add the selected accounts to that pool or **Remove pool** to remove them while leaving the pool's other members unchanged.
 
 API upstream credentials can be updated after account creation. Use the provider account row to rotate the encrypted upstream API key or base URL; saving new credentials clears local failure status so a previously rate-limited, expired, or circuit-open API upstream can be scheduled again with the new settings.
 
