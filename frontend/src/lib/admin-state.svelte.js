@@ -324,14 +324,15 @@ export const provider = $state({
 });
 /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
-/** @type {{ loading: boolean, saving: boolean, error: string, items: RoutingPool[], newPoolName: string, newPoolDescription: string }} */
+/** @type {{ loading: boolean, saving: boolean, error: string, items: RoutingPool[], newPoolName: string, newPoolDescription: string, newPoolFallbackPoolId: string }} */
 export const routingPools = $state({
   loading: false,
   saving: false,
   error: '',
   items: [],
   newPoolName: '',
-  newPoolDescription: ''
+  newPoolDescription: '',
+  newPoolFallbackPoolId: '0'
 });
 export const providerConnectForm = $state({ name: '', priority: 100, enabled: true });
 export const providerAccountPauseForm = $state({ durationSeconds: 300 });
@@ -2174,7 +2175,12 @@ export async function createRoutingPool() {
 
   routingPools.saving = true;
   routingPools.error = '';
-  const fallbackPoolId = 0;
+  const fallbackPoolId = Number(routingPools.newPoolFallbackPoolId || 0);
+  if (!Number.isInteger(fallbackPoolId) || fallbackPoolId < 0) {
+    routingPools.error = 'Fallback pool selection is invalid';
+    routingPools.saving = false;
+    return;
+  }
   try {
     const payload = await requestJSON('/api/admin/routing-pools', {
       method: 'POST',
@@ -2189,6 +2195,7 @@ export async function createRoutingPool() {
     routingPools.items = [...routingPools.items, payload.pool];
     routingPools.newPoolName = '';
     routingPools.newPoolDescription = '';
+    routingPools.newPoolFallbackPoolId = '0';
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     routingPools.error = error instanceof Error ? error.message : 'Failed to create routing pool';

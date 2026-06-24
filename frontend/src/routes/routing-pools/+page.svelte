@@ -189,7 +189,7 @@
       </p>
     {/if}
 
-    <form class="mt-6 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)_auto]" onsubmit={submitCreatePool}>
+    <form class="mt-6 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)_minmax(180px,240px)_auto]" onsubmit={submitCreatePool}>
       <label class="text-sm font-medium text-[#3c3c3c]">
         Pool name
         <input
@@ -206,6 +206,18 @@
           bind:value={routingPools.newPoolDescription}
           placeholder="Daily gateway pool"
         />
+      </label>
+      <label class="text-sm font-medium text-[#3c3c3c]">
+        Fallback pool
+        <select
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={routingPools.newPoolFallbackPoolId}
+        >
+          <option value="0">Create with no fallback</option>
+          {#each routingPools.items as candidate}
+            <option value={String(candidate.id)}>{candidate.name}</option>
+          {/each}
+        </select>
       </label>
       <div class="flex items-end">
         <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving}>

@@ -53,11 +53,14 @@ test('routing pools page manages account pools', () => {
   }
   assert.match(poolsPage, /pool\.fallbackPoolId/);
   assert.match(poolsPage, /pool\.id === candidate\.id/);
+  assert.match(poolsPage, /routingPools\.newPoolFallbackPoolId/);
+  assert.match(poolsPage, /Create with no fallback/);
   assert.match(poolsPage, /poolAccountRows\(pool\)/);
   assert.match(poolsPage, /poolHasAccount\(pool,\s*left\.id\)/);
   assert.match(poolsPage, /poolAccountPriority\(pool,\s*left\.id\)\s*-\s*poolAccountPriority\(pool,\s*right\.id\)/);
   assert.match(adminState, /loadRoutingPools/);
   assert.match(adminState, /createRoutingPool/);
+  assert.doesNotMatch(adminState, /const fallbackPoolId = 0/);
   assert.match(adminState, /replaceRoutingPoolAccounts/);
 });
 
