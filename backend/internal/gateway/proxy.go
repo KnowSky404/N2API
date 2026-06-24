@@ -284,12 +284,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key request rate limit exceeded")
 		return
 	}
-	if exceeded, err := p.apiKeyBudgetExceeded(r.Context(), key, startedAt); err != nil {
+	if budgetErrorCode, err := p.apiKeyBudgetErrorCode(r.Context(), key, startedAt); err != nil {
 		errorCode = "internal_error"
 		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not check api key budget")
 		return
-	} else if exceeded {
-		errorCode = "api_key_budget_exceeded"
+	} else if budgetErrorCode != "" {
+		errorCode = budgetErrorCode
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
 		return
 	}
@@ -512,18 +512,24 @@ func (p *Proxy) allowAPIKeyTokens(keyID int64, tokensPerMinute, defaultTokensPer
 	return p.tokenLimiter.Allow(keyID, effectiveAPIKeyLimit(tokensPerMinute, defaultTokensPerMinute))
 }
 
-func (p *Proxy) apiKeyBudgetExceeded(ctx context.Context, key admin.APIKey, now time.Time) (bool, error) {
+func (p *Proxy) apiKeyBudgetErrorCode(ctx context.Context, key admin.APIKey, now time.Time) (string, error) {
 	if p.budgets == nil {
-		return false, nil
+		return "", nil
 	}
 	if key.RequestBudget24h <= 0 && key.TokenBudget24h <= 0 && key.RequestBudget30d <= 0 && key.TokenBudget30d <= 0 {
-		return false, nil
+		return "", nil
 	}
 	usage, err := p.budgets.GetAPIKeyBudgetUsage(ctx, key, now)
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return usage.RequestBudgetExceeded || usage.TokenBudgetExceeded, nil
+	if usage.RequestBudgetExceeded {
+		return "api_key_request_budget_exceeded", nil
+	}
+	if usage.TokenBudgetExceeded {
+		return "api_key_token_budget_exceeded", nil
+	}
+	return "", nil
 }
 
 func effectiveAPIKeyLimit(keyLimit, defaultLimit int) int {

@@ -176,6 +176,27 @@ func TestGatewayDocumentationMentionsAPIKeyDisable(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsAPIKeyBudgets(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"API key budgets",
+			"request and token budgets over rolling 24h and 30d windows",
+			"`0` disables a budget field",
+			"`api_key_request_budget_exceeded`",
+			"`api_key_token_budget_exceeded`",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in API key budget documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
