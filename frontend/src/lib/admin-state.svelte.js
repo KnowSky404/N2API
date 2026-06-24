@@ -221,6 +221,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} id
  * @property {string} displayName
  * @property {string} accountType
+ * @property {number[]} routingPoolIds
  * @property {boolean} enabled
  * @property {number} priority
  * @property {number} loadFactor
@@ -701,9 +702,16 @@ export function gatewayLimitLabel(value) {
  */
 export function apiKeyModelWarnings(key, routingModels) {
   if (key.revokedAt || key.modelPolicy !== 'selected') return [];
+  const routingPoolID = Number(key.routingPoolId ?? 0);
   const routable = new Set(
     routingModels
-      .filter((model) => Number(model.enabledCount ?? 0) > 0)
+      .filter((model) => {
+        if (routingPoolID <= 0) return Number(model.enabledCount ?? 0) > 0;
+        return (model.accounts ?? []).some((account) => {
+          if (!account.schedulable) return false;
+          return (account.routingPoolIds ?? []).some((poolID) => Number(poolID) === routingPoolID);
+        });
+      })
       .map((model) => String(model.model ?? '').trim())
       .filter(Boolean)
   );

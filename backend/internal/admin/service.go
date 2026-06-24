@@ -233,6 +233,7 @@ type ModelRoutingAccount struct {
 	ID                  int64      `json:"id"`
 	DisplayName         string     `json:"displayName"`
 	AccountType         string     `json:"accountType"`
+	RoutingPoolIDs      []int64    `json:"routingPoolIds,omitempty"`
 	Enabled             bool       `json:"enabled"`
 	Priority            int        `json:"priority"`
 	LoadFactor          int        `json:"loadFactor"`

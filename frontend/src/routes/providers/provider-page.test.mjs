@@ -270,6 +270,30 @@ test('apiKeyModelWarnings reports selected models without schedulable accounts',
   assert.deepEqual(warnings, ['gpt-5-mini', 'codex-mini']);
 });
 
+test('apiKeyModelWarnings respects routing pool scoped schedulability', () => {
+  const warnings = apiKeyModelWarnings(
+    {
+      modelPolicy: 'selected',
+      routingPoolId: 3,
+      allowedModels: ['gpt-5', 'gpt-5-mini']
+    },
+    [
+      {
+        model: 'gpt-5',
+        enabledCount: 1,
+        accounts: [{ id: 7, schedulable: true, routingPoolIds: [4] }]
+      },
+      {
+        model: 'gpt-5-mini',
+        enabledCount: 1,
+        accounts: [{ id: 8, schedulable: true, routingPoolIds: [3] }]
+      }
+    ]
+  );
+
+  assert.deepEqual(warnings, ['gpt-5']);
+});
+
 test('apiKeyModelWarnings ignores all-model policy and revoked keys', () => {
   const routing = [{ model: 'gpt-5', enabledCount: 0 }];
 

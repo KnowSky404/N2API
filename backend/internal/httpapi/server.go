@@ -1911,6 +1911,11 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 	if err != nil {
 		return admin.ModelRoutingStatus{}, err
 	}
+	routingPools, err := admins.ListRoutingPools(ctx)
+	if err != nil {
+		return admin.ModelRoutingStatus{}, err
+	}
+	accountRoutingPoolIDs := routingPoolIDsByAccount(routingPools)
 	exposed, err := providers.ListExposedModels(ctx, settings.AllowedModels)
 	if err != nil {
 		return admin.ModelRoutingStatus{}, err
@@ -1964,6 +1969,7 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 				ID:                  account.ID,
 				DisplayName:         account.DisplayName,
 				AccountType:         account.AccountType,
+				RoutingPoolIDs:      append([]int64(nil), accountRoutingPoolIDs[account.ID]...),
 				Enabled:             account.Enabled,
 				Priority:            account.Priority,
 				LoadFactor:          normalizedProviderAccountLoadFactor(account.LoadFactor),
@@ -2036,6 +2042,21 @@ func modelRoutingUnschedulableReason(account provider.Account, modelEnabled bool
 		return "circuit open"
 	}
 	return ""
+}
+
+func routingPoolIDsByAccount(pools []admin.RoutingPool) map[int64][]int64 {
+	index := make(map[int64][]int64)
+	for _, pool := range pools {
+		for _, accountID := range pool.AccountIDs {
+			index[accountID] = append(index[accountID], pool.ID)
+		}
+	}
+	for accountID := range index {
+		sort.Slice(index[accountID], func(i, j int) bool {
+			return index[accountID][i] < index[accountID][j]
+		})
+	}
+	return index
 }
 
 func sortModelRoutingAccounts(accounts []admin.ModelRoutingAccount, sourceAccounts []provider.Account) {

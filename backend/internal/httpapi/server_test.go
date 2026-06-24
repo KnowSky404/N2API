@@ -4086,6 +4086,8 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 		{ID: 7, Provider: "openai", Enabled: true},
 		{ID: 8, Provider: "openai", Enabled: false},
 	}
+	admins.routingPools[0].Accounts = []admin.RoutingPoolAccount{{AccountID: 7, Priority: 0}}
+	admins.routingPools[0].AccountIDs = []int64{7}
 	providers.accountModels[7] = []provider.AccountModel{
 		{ID: 11, AccountID: 7, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
 		{ID: 12, AccountID: 7, Provider: "openai", Model: "gpt-5-mini", Enabled: false, Source: provider.AccountModelSourceManual},
@@ -4120,6 +4122,9 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 	}
 	if body.Models[0].Model != "gpt-5" || !body.Models[0].Allowed || body.Models[0].ConfiguredCount != 2 || body.Models[0].EnabledCount != 1 {
 		t.Fatalf("first model = %+v", body.Models[0])
+	}
+	if len(body.Models[0].Accounts) == 0 || !reflect.DeepEqual(body.Models[0].Accounts[0].RoutingPoolIDs, []int64{3}) {
+		t.Fatalf("first model account routing pools = %+v, want [3]", body.Models[0].Accounts)
 	}
 	if body.Models[2].Model != "codex-mini" || !body.Models[2].Allowed || body.Models[2].ConfiguredCount != 0 || body.Models[2].EnabledCount != 0 {
 		t.Fatalf("third model = %+v", body.Models[2])
