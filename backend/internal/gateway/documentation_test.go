@@ -467,6 +467,26 @@ func TestGatewayDocumentationMentionsSchedulingHealthSummary(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsRequestLogModelSessionDrilldown(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Model filter",
+			"Session filter",
+			"Top models",
+			"Top sessions",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in request log model/session drill-down documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md", "../../../.env.example"} {
 		content, err := os.ReadFile(path)
