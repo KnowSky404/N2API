@@ -64,6 +64,9 @@ type fakeAdminService struct {
 	requestBudget30d   int
 	tokenBudget30d     int
 	budgetsErr         error
+	routingPools       []admin.RoutingPool
+	routingPoolKeyID   int64
+	routingPoolID      *int64
 	budgetUsage        map[int64]admin.APIKeyBudgetUsage
 	usageSummary       admin.UsageSummary
 	usageRange         string
@@ -152,6 +155,9 @@ func (h *fakeGatewayHandler) APIKeyTokenRateSnapshot() map[int64]int {
 func newFakeAdminService() *fakeAdminService {
 	return &fakeAdminService{
 		budgetUsage: map[int64]admin.APIKeyBudgetUsage{},
+		routingPools: []admin.RoutingPool{
+			{ID: 3, Name: "primary", Description: "daily", Enabled: true},
+		},
 		keys: []admin.APIKey{
 			{ID: 7, Name: "codex laptop", Prefix: "n2api_abc", CreatedAt: time.Unix(1000, 0).UTC()},
 		},
@@ -302,6 +308,78 @@ func (s *fakeAdminService) UpdateAPIKeyBudgets(_ context.Context, id int64, requ
 			key.TokenBudget24h = tokenBudget24h
 			key.RequestBudget30d = requestBudget30d
 			key.TokenBudget30d = tokenBudget30d
+			s.keys[i] = key
+			return key, nil
+		}
+	}
+	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) ListRoutingPools(_ context.Context) ([]admin.RoutingPool, error) {
+	return append([]admin.RoutingPool(nil), s.routingPools...), nil
+}
+
+func (s *fakeAdminService) CreateRoutingPool(_ context.Context, name, description string, enabled bool) (admin.RoutingPool, error) {
+	if strings.TrimSpace(name) == "" {
+		return admin.RoutingPool{}, admin.ErrInvalidInput
+	}
+	pool := admin.RoutingPool{ID: int64(len(s.routingPools) + 10), Name: strings.TrimSpace(name), Description: strings.TrimSpace(description), Enabled: enabled}
+	s.routingPools = append(s.routingPools, pool)
+	return pool, nil
+}
+
+func (s *fakeAdminService) UpdateRoutingPool(_ context.Context, id int64, name, description string, enabled bool) (admin.RoutingPool, error) {
+	for i, pool := range s.routingPools {
+		if pool.ID == id {
+			pool.Name = strings.TrimSpace(name)
+			pool.Description = strings.TrimSpace(description)
+			pool.Enabled = enabled
+			s.routingPools[i] = pool
+			return pool, nil
+		}
+	}
+	return admin.RoutingPool{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) DeleteRoutingPool(_ context.Context, id int64) error {
+	for i, pool := range s.routingPools {
+		if pool.ID == id {
+			s.routingPools = append(s.routingPools[:i], s.routingPools[i+1:]...)
+			return nil
+		}
+	}
+	return admin.ErrNotFound
+}
+
+func (s *fakeAdminService) ReplaceRoutingPoolAccounts(_ context.Context, id int64, accounts []admin.RoutingPoolAccount) (admin.RoutingPool, error) {
+	for i, pool := range s.routingPools {
+		if pool.ID == id {
+			pool.Accounts = append([]admin.RoutingPoolAccount(nil), accounts...)
+			pool.AccountIDs = make([]int64, 0, len(accounts))
+			for _, account := range accounts {
+				pool.AccountIDs = append(pool.AccountIDs, account.AccountID)
+			}
+			s.routingPools[i] = pool
+			return pool, nil
+		}
+	}
+	return admin.RoutingPool{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) UpdateAPIKeyRoutingPool(_ context.Context, id int64, routingPoolID *int64) (admin.APIKey, error) {
+	s.routingPoolKeyID = id
+	s.routingPoolID = routingPoolID
+	for i, key := range s.keys {
+		if key.ID == id {
+			key.RoutingPoolID = routingPoolID
+			key.RoutingPoolName = ""
+			if routingPoolID != nil {
+				for _, pool := range s.routingPools {
+					if pool.ID == *routingPoolID {
+						key.RoutingPoolName = pool.Name
+					}
+				}
+			}
 			s.keys[i] = key
 			return key, nil
 		}
@@ -1563,6 +1641,72 @@ func TestUpdateAPIKeyBudgetsEndpointMapsErrors(t *testing.T) {
 				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tc.wantStatus)
 			}
 		})
+	}
+}
+
+func TestRoutingPoolsEndpoints(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/routing-pools", strings.NewReader(`{"name":"primary plus","description":"daily","enabled":true}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Pool admin.RoutingPool `json:"pool"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Pool.Name != "primary plus" || !body.Pool.Enabled {
+		t.Fatalf("pool = %+v, want primary plus enabled", body.Pool)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/routing-pools", nil)
+	listReq.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	listRecorder := httptest.NewRecorder()
+	server.ServeHTTP(listRecorder, listReq)
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", listRecorder.Code, listRecorder.Body.String())
+	}
+	var listBody struct {
+		Pools []admin.RoutingPool `json:"pools"`
+	}
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode list body: %v", err)
+	}
+	if len(listBody.Pools) != 2 {
+		t.Fatalf("pools = %+v, want initial plus created pool", listBody.Pools)
+	}
+}
+
+func TestUpdateAPIKeyRoutingPoolEndpoint(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/routing-pool", strings.NewReader(`{"routingPoolId":3}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if admins.routingPoolKeyID != 7 || admins.routingPoolID == nil || *admins.routingPoolID != 3 {
+		t.Fatalf("recorded key pool = id:%d pool:%v, want 7/3", admins.routingPoolKeyID, admins.routingPoolID)
+	}
+	var body struct {
+		Key admin.APIKey `json:"key"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Key.RoutingPoolID == nil || *body.Key.RoutingPoolID != 3 || body.Key.RoutingPoolName != "primary" {
+		t.Fatalf("key = %+v, want primary routing pool", body.Key)
 	}
 }
 
