@@ -65,6 +65,12 @@
     const limit = Number(value ?? 0);
     return limit > 0 ? String(limit) : 'unlimited';
   }
+
+  /** @param {number | null | undefined} value */
+  function keyRateWindowLimitLabel(value) {
+    const limit = Number(value ?? 0);
+    return limit > 0 ? String(limit) : 'unlimited';
+  }
 </script>
 
 <svelte:head>
@@ -421,8 +427,20 @@ All routable models
               <p class="text-xs text-[#6e6e6e]">
                 Active {key.currentConcurrentRequests || 0} / {keyConcurrencyLimitLabel(key.effectiveMaxConcurrentRequests)}
               </p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                Requests window {key.currentRequestsThisMinute || 0} / {keyRateWindowLimitLabel(key.effectiveRequestsPerMinute)}
+              </p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                Tokens window {formatTokens(key.currentTokensThisMinute || 0)} / {keyRateWindowLimitLabel(key.effectiveTokensPerMinute)}
+              </p>
               {#if key.concurrencyBlocked}
                 <p class="mt-1 text-xs font-medium text-amber-700">Concurrency full</p>
+              {/if}
+              {#if key.requestRateLimited}
+                <p class="mt-1 text-xs font-medium text-amber-700">Request limit full</p>
+              {/if}
+              {#if key.tokenRateLimited}
+                <p class="mt-1 text-xs font-medium text-amber-700">Token limit full</p>
               {/if}
             </div>
             <button

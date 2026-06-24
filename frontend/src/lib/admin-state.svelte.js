@@ -16,6 +16,14 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} currentConcurrentRequests
  * @property {number} effectiveMaxConcurrentRequests
  * @property {boolean} concurrencyBlocked
+ * @property {number} currentRequestsThisMinute
+ * @property {number} effectiveRequestsPerMinute
+ * @property {number} requestRateRemaining
+ * @property {boolean} requestRateLimited
+ * @property {number} currentTokensThisMinute
+ * @property {number} effectiveTokensPerMinute
+ * @property {number} tokenRateRemaining
+ * @property {boolean} tokenRateLimited
  */
 
 /**

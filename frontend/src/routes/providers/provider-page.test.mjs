@@ -525,6 +525,8 @@ test('api keys page surfaces gateway runtime limits', () => {
   assert.match(apiKeysSource, /Per key concurrency/);
   assert.match(apiKeysSource, /Requests per minute/);
   assert.match(apiKeysSource, /Tokens per minute/);
+  assert.match(apiKeysSource, /Requests window/);
+  assert.match(apiKeysSource, /Tokens window/);
   assert.match(apiKeysSource, /loadGatewaySettings/);
 });
 
