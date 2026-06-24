@@ -52,6 +52,12 @@
   const usage24hRoutingPools = $derived(usage.summaries['24h:routing_pool'] ?? null);
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   const usage24hSessions = $derived(usage.summaries['24h:session'] ?? null);
+
+  /** @param {string | number | null | undefined} id */
+  function routingPoolUsageHref(id) {
+    const value = String(id ?? '');
+    return /^[1-9]\d*$/.test(value) ? `/request-logs?routingPoolId=${encodeURIComponent(value)}` : '';
+  }
 </script>
 
 <svelte:head>
@@ -245,8 +251,13 @@
         {:else}
           <div class="divide-y divide-[#ededed]">
             {#each usage24hRoutingPools.rows.slice(0, 5) as row}
+              {@const href = routingPoolUsageHref(row.id)}
               <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-                <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {#if href}
+                  <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={href}>{row.label || row.id}</a>
+                {:else}
+                  <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
+                {/if}
                 <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">
                   {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
                 </span>
