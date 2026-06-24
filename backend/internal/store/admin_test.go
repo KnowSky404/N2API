@@ -206,6 +206,14 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 		t.Fatalf("keys = %+v, want selected policy with models", keys)
 	}
 
+	renamed, err := repo.UpdateAPIKeyName(ctx, created.ID, "renamed codex laptop")
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyName returned error: %v", err)
+	}
+	if renamed.Name != "renamed codex laptop" || renamed.ModelPolicy != admin.APIKeyModelPolicySelected || !slices.Equal(renamed.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+		t.Fatalf("renamed key = %+v, want renamed selected-policy key", renamed)
+	}
+
 	found, err := repo.FindAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt)
 	if err != nil {
 		t.Fatalf("FindAPIKeyByHash returned error: %v", err)
@@ -238,6 +246,9 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	}
 	if _, err := repo.UpdateAPIKeyModelPolicy(ctx, created.ID, admin.APIKeyModelPolicySelected, []string{"gpt-5"}); !errors.Is(err, admin.ErrNotFound) {
 		t.Fatalf("UpdateAPIKeyModelPolicy revoked error = %v, want ErrNotFound", err)
+	}
+	if _, err := repo.UpdateAPIKeyName(ctx, created.ID, "revoked rename"); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("UpdateAPIKeyName revoked error = %v, want ErrNotFound", err)
 	}
 }
 

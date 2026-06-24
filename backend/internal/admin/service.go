@@ -216,6 +216,7 @@ type Repository interface {
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
+	UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
@@ -361,6 +362,14 @@ func (s *Service) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
 
 func (s *Service) RevokeAPIKey(ctx context.Context, id int64) (APIKey, error) {
 	return s.repo.RevokeAPIKey(ctx, id)
+}
+
+func (s *Service) UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return APIKey{}, ErrInvalidInput
+	}
+	return s.repo.UpdateAPIKeyName(ctx, id, name)
 }
 
 func (s *Service) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error) {

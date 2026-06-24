@@ -254,6 +254,41 @@ func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ t
 	return found, nil
 }
 
+func (r *AdminRepository) UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error) {
+	var updated admin.APIKey
+	err := r.pool.QueryRow(ctx, `
+		UPDATE client_api_keys
+		SET name = $2
+		WHERE id = $1
+			AND revoked_at IS NULL
+		RETURNING id, name, prefix, created_at, last_used_at, revoked_at, model_policy, requests_per_minute, tokens_per_minute
+	`, id, name).Scan(
+		&updated.ID,
+		&updated.Name,
+		&updated.Prefix,
+		&updated.CreatedAt,
+		&updated.LastUsedAt,
+		&updated.RevokedAt,
+		&updated.ModelPolicy,
+		&updated.RequestsPerMinute,
+		&updated.TokensPerMinute,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKey{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if updated.ModelPolicy == admin.APIKeyModelPolicySelected {
+		models, err := r.ListAPIKeyModels(ctx, updated.ID)
+		if err != nil {
+			return admin.APIKey{}, err
+		}
+		updated.AllowedModels = models
+	}
+	return updated, nil
+}
+
 func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error) {
 	models = normalizeAPIKeyModels(models)
 	tx, err := r.pool.Begin(ctx)

@@ -172,6 +172,40 @@ func TestCreateAPIKeyRejectsInvalidName(t *testing.T) {
 	}
 }
 
+func TestUpdateAPIKeyNameTrimsAndPersistsName(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	updated, err := service.UpdateAPIKeyName(context.Background(), result.Key.ID, " renamed workstation ")
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyName returned error: %v", err)
+	}
+	if updated.Name != "renamed workstation" {
+		t.Fatalf("Name = %q, want trimmed rename", updated.Name)
+	}
+
+	keys, err := service.ListAPIKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ListAPIKeys returned error: %v", err)
+	}
+	if len(keys) != 1 || keys[0].Name != "renamed workstation" {
+		t.Fatalf("keys = %+v, want renamed key", keys)
+	}
+}
+
+func TestUpdateAPIKeyNameRejectsInvalidName(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	if _, err := service.UpdateAPIKeyName(context.Background(), 7, " \t "); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateAPIKeyName error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestListAPIKeysReturnsRepositoryKeys(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -900,6 +934,16 @@ func (r *memoryRepo) RevokeAPIKey(_ context.Context, id int64) (APIKey, error) {
 	}
 	now := time.Now()
 	key.RevokedAt = &now
+	r.keys[id] = key
+	return key.APIKey, nil
+}
+
+func (r *memoryRepo) UpdateAPIKeyName(_ context.Context, id int64, name string) (APIKey, error) {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt != nil {
+		return APIKey{}, ErrNotFound
+	}
+	key.Name = name
 	r.keys[id] = key
 	return key.APIKey, nil
 }
