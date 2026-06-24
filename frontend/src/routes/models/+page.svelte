@@ -35,6 +35,12 @@
     return value ? value.replaceAll('_', ' ') : 'active';
   }
 
+  /** @param {number | null | undefined} value */
+  function previewConcurrencyLimitLabel(value) {
+    const limit = Number(value ?? 0);
+    return limit > 0 ? String(limit) : 'unlimited';
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').ModelRoutingAccount} account */
   function routingAccountHoverDetail(account) {
     const lastError = account.lastError
@@ -293,6 +299,7 @@
                 <span>{accountTypeLabel(account.accountType)}</span>
                 <span>Priority {account.priority}</span>
                 <span>Load {account.loadFactor || 1}</span>
+                <span>Active {account.currentConcurrentRequests || 0} / {previewConcurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}</span>
                 <span>Used {formatDate(account.lastUsedAt)}</span>
                 {#if account.lastTestAt}
                   <span>Test {account.lastTestStatus || 'checked'} {formatDate(account.lastTestAt)}</span>
@@ -305,6 +312,9 @@
                 {/if}
                 {#if account.stickyBound}
                   <span class="font-medium text-[#0a7a5e]">Sticky bound</span>
+                {/if}
+                {#if account.concurrencyBlocked}
+                  <span class="font-medium text-amber-800">Concurrency full</span>
                 {/if}
                 {#if account.schedulable === false && account.unschedulableReason}
                   <span class="font-medium text-amber-800">{account.unschedulableReason}</span>

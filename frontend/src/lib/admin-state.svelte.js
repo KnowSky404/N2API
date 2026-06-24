@@ -229,6 +229,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} stickyBound
  * @property {boolean} schedulable
  * @property {string} unschedulableReason
+ * @property {number} currentConcurrentRequests
+ * @property {number} effectiveMaxConcurrentRequests
+ * @property {boolean} concurrencyBlocked
  */
 
 /**

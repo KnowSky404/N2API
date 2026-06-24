@@ -170,9 +170,15 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /Sticky bound/);
   assert.match(modelsPage, /account\.stickyBound/);
   assert.match(adminState, /stickyBoundAccountId/);
+  assert.match(adminState, /currentConcurrentRequests/);
+  assert.match(adminState, /effectiveMaxConcurrentRequests/);
+  assert.match(adminState, /concurrencyBlocked/);
   assert.match(modelsPage, /Excluded account IDs/);
   assert.match(modelsPage, /bind:value=\{modelRoutingPreview\.excludedAccountIds\}/);
   assert.match(modelsPage, /excluding \{modelRoutingPreview\.excludedAccountIds\}/);
+  assert.match(modelsPage, /previewConcurrencyLimitLabel/);
+  assert.match(modelsPage, /Active/);
+  assert.match(modelsPage, /Concurrency full/);
   assert.match(adminState, /excludedAccountIds: ''/);
   assert.match(adminState, /params\.set\('excludedAccountIds'/);
 });
