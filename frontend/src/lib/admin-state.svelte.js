@@ -1603,7 +1603,12 @@ export async function addSelectedProviderAccountsToRoutingPool(poolId, priorityV
     providerAccounts.error = 'Routing pool not found';
     return;
   }
-  const priority = Math.max(0, Number(priorityValue || 0));
+  const priorityText = String(priorityValue ?? '').trim();
+  const priority = priorityText === '' ? 0 : Number(priorityText);
+  if (priorityText !== '' && (!/^\d+$/.test(priorityText) || !Number.isInteger(priority) || priority < 0)) {
+    providerAccounts.error = 'Pool priority must be a non-negative whole number';
+    return;
+  }
 
   const accounts = [...(pool.accounts ?? [])];
   const existing = new Set(accounts.map((account) => Number(account.accountId)));

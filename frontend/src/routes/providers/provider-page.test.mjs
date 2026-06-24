@@ -314,6 +314,31 @@ test('provider account state can add selected accounts to a routing pool', async
   assert.deepEqual(routingPools.items[0].accountIds, [7, 8]);
 });
 
+test('provider account state rejects invalid routing pool bulk priority', async () => {
+  session.authenticated = true;
+  clearProviderAccountSelection();
+  providerAccounts.error = '';
+  routingPools.error = '';
+  routingPools.items = [
+    { id: 3, name: 'primary', accounts: [{ accountId: 7, priority: 5 }], accountIds: [7] }
+  ];
+  toggleProviderAccountSelection(8, true);
+  const requests = [];
+  globalThis.fetch = async (path, options) => {
+    requests.push({ path, options });
+    return new Response(JSON.stringify({ pool: routingPools.items[0] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  await addSelectedProviderAccountsToRoutingPool('3', 'bad-priority');
+
+  assert.deepEqual(requests, []);
+  assert.equal(providerAccounts.error, 'Pool priority must be a non-negative whole number');
+  assert.deepEqual(Object.keys(selectedProviderAccountIds), ['8']);
+});
+
 test('provider account state can remove selected accounts from a routing pool', async () => {
   session.authenticated = true;
   clearProviderAccountSelection();
