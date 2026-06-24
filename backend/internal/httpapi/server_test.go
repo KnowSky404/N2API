@@ -108,6 +108,8 @@ type fakeGatewayHandler struct {
 	called             bool
 	accountConcurrency map[int64]int
 	apiKeyConcurrency  map[int64]int
+	apiKeyRequestRate  map[int64]int
+	apiKeyTokenRate    map[int64]int
 }
 
 func (h *fakeGatewayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +125,14 @@ func (h *fakeGatewayHandler) AccountConcurrencySnapshot() map[int64]int {
 
 func (h *fakeGatewayHandler) APIKeyConcurrencySnapshot() map[int64]int {
 	return h.apiKeyConcurrency
+}
+
+func (h *fakeGatewayHandler) APIKeyRequestRateSnapshot() map[int64]int {
+	return h.apiKeyRequestRate
+}
+
+func (h *fakeGatewayHandler) APIKeyTokenRateSnapshot() map[int64]int {
+	return h.apiKeyTokenRate
 }
 
 func newFakeAdminService() *fakeAdminService {
@@ -928,6 +938,54 @@ func TestListAPIKeysIncludesConcurrencyState(t *testing.T) {
 	}
 	if body.Keys[0].CurrentConcurrentRequests != 2 || body.Keys[0].EffectiveMaxConcurrentRequests != 2 || !body.Keys[0].ConcurrencyBlocked {
 		t.Fatalf("key concurrency = %+v, want current 2 effective 2 blocked", body.Keys[0])
+	}
+}
+
+func TestListAPIKeysIncludesRateWindowState(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.keys[0].RequestsPerMinute = 0
+	admins.keys[0].TokensPerMinute = 90
+	admins.gatewaySettings.RequestsPerMinutePerKey = 12
+	admins.gatewaySettings.TokensPerMinutePerKey = 200
+	gateway := &fakeGatewayHandler{
+		apiKeyRequestRate: map[int64]int{7: 12},
+		apiKeyTokenRate:   map[int64]int{7: 42},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService(), gateway)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/keys", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Keys []struct {
+			admin.APIKey
+			CurrentRequestsThisMinute  int  `json:"currentRequestsThisMinute"`
+			EffectiveRequestsPerMinute int  `json:"effectiveRequestsPerMinute"`
+			RequestRateRemaining       int  `json:"requestRateRemaining"`
+			RequestRateLimited         bool `json:"requestRateLimited"`
+			CurrentTokensThisMinute    int  `json:"currentTokensThisMinute"`
+			EffectiveTokensPerMinute   int  `json:"effectiveTokensPerMinute"`
+			TokenRateRemaining         int  `json:"tokenRateRemaining"`
+			TokenRateLimited           bool `json:"tokenRateLimited"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Keys) != 1 {
+		t.Fatalf("keys = %+v, want one key", body.Keys)
+	}
+	key := body.Keys[0]
+	if key.CurrentRequestsThisMinute != 12 || key.EffectiveRequestsPerMinute != 12 || key.RequestRateRemaining != 0 || !key.RequestRateLimited {
+		t.Fatalf("request window = %+v, want current 12 effective 12 remaining 0 limited", key)
+	}
+	if key.CurrentTokensThisMinute != 42 || key.EffectiveTokensPerMinute != 90 || key.TokenRateRemaining != 48 || key.TokenRateLimited {
+		t.Fatalf("token window = %+v, want current 42 effective 90 remaining 48 not limited", key)
 	}
 }
 

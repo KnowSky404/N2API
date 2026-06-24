@@ -81,6 +81,11 @@ type APIKeyConcurrencySnapshotProvider interface {
 	APIKeyConcurrencySnapshot() map[int64]int
 }
 
+type APIKeyRateSnapshotProvider interface {
+	APIKeyRequestRateSnapshot() map[int64]int
+	APIKeyTokenRateSnapshot() map[int64]int
+}
+
 type gatewaySettingsResponse struct {
 	admin.GatewaySettings
 	ProviderAccountAutoTestStatus provider.AutoTestStatus `json:"providerAccountAutoTestStatus,omitempty"`
@@ -91,6 +96,14 @@ type apiKeyResponse struct {
 	CurrentConcurrentRequests      int  `json:"currentConcurrentRequests"`
 	EffectiveMaxConcurrentRequests int  `json:"effectiveMaxConcurrentRequests"`
 	ConcurrencyBlocked             bool `json:"concurrencyBlocked"`
+	CurrentRequestsThisMinute      int  `json:"currentRequestsThisMinute"`
+	EffectiveRequestsPerMinute     int  `json:"effectiveRequestsPerMinute"`
+	RequestRateRemaining           int  `json:"requestRateRemaining"`
+	RequestRateLimited             bool `json:"requestRateLimited"`
+	CurrentTokensThisMinute        int  `json:"currentTokensThisMinute"`
+	EffectiveTokensPerMinute       int  `json:"effectiveTokensPerMinute"`
+	TokenRateRemaining             int  `json:"tokenRateRemaining"`
+	TokenRateLimited               bool `json:"tokenRateLimited"`
 }
 
 type providerAccountResponse struct {
@@ -117,6 +130,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
+	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -241,8 +255,14 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		if apiKeyConcurrencySource != nil {
 			concurrency = apiKeyConcurrencySource.APIKeyConcurrencySnapshot()
 		}
+		requestRate := map[int64]int{}
+		tokenRate := map[int64]int{}
+		if apiKeyRateSource != nil {
+			requestRate = apiKeyRateSource.APIKeyRequestRateSnapshot()
+			tokenRate = apiKeyRateSource.APIKeyTokenRateSnapshot()
+		}
 		writeJSON(w, http.StatusOK, map[string][]apiKeyResponse{
-			"keys": apiKeyResponses(keys, settings, concurrency),
+			"keys": apiKeyResponses(keys, settings, concurrency, requestRate, tokenRate),
 		})
 	}))
 
@@ -748,19 +768,51 @@ func writeProviderAccountError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "internal_error")
 }
 
-func apiKeyResponses(keys []admin.APIKey, settings admin.GatewaySettings, concurrency map[int64]int) []apiKeyResponse {
+func apiKeyResponses(keys []admin.APIKey, settings admin.GatewaySettings, concurrency, requestRate, tokenRate map[int64]int) []apiKeyResponse {
 	responses := make([]apiKeyResponse, 0, len(keys))
 	effectiveMaxConcurrentRequests := settings.MaxConcurrentRequestsPerKey
 	for _, key := range keys {
 		currentConcurrentRequests := concurrency[key.ID]
+		currentRequestsThisMinute := requestRate[key.ID]
+		effectiveRequestsPerMinute := effectiveAPIKeyRateLimit(key.RequestsPerMinute, settings.RequestsPerMinutePerKey)
+		requestRateRemaining, requestRateLimited := rateWindowState(currentRequestsThisMinute, effectiveRequestsPerMinute)
+		currentTokensThisMinute := tokenRate[key.ID]
+		effectiveTokensPerMinute := effectiveAPIKeyRateLimit(key.TokensPerMinute, settings.TokensPerMinutePerKey)
+		tokenRateRemaining, tokenRateLimited := rateWindowState(currentTokensThisMinute, effectiveTokensPerMinute)
 		responses = append(responses, apiKeyResponse{
 			APIKey:                         key,
 			CurrentConcurrentRequests:      currentConcurrentRequests,
 			EffectiveMaxConcurrentRequests: effectiveMaxConcurrentRequests,
 			ConcurrencyBlocked:             effectiveMaxConcurrentRequests > 0 && currentConcurrentRequests >= effectiveMaxConcurrentRequests,
+			CurrentRequestsThisMinute:      currentRequestsThisMinute,
+			EffectiveRequestsPerMinute:     effectiveRequestsPerMinute,
+			RequestRateRemaining:           requestRateRemaining,
+			RequestRateLimited:             requestRateLimited,
+			CurrentTokensThisMinute:        currentTokensThisMinute,
+			EffectiveTokensPerMinute:       effectiveTokensPerMinute,
+			TokenRateRemaining:             tokenRateRemaining,
+			TokenRateLimited:               tokenRateLimited,
 		})
 	}
 	return responses
+}
+
+func effectiveAPIKeyRateLimit(override, fallback int) int {
+	if override > 0 {
+		return override
+	}
+	return fallback
+}
+
+func rateWindowState(current, limit int) (int, bool) {
+	if limit <= 0 {
+		return 0, false
+	}
+	remaining := limit - current
+	if remaining < 0 {
+		remaining = 0
+	}
+	return remaining, current >= limit
 }
 
 func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, admins AdminService, providers ProviderService, concurrencySource AccountConcurrencySnapshotProvider) {
