@@ -672,6 +672,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			ClientKeyID:       clientKeyID,
 			Model:             r.URL.Query().Get("model"),
 			SessionID:         r.URL.Query().Get("sessionId"),
+			RoutingPoolError:  r.URL.Query().Get("routingPoolError"),
 		}
 		logs, err := admins.ListRequestLogs(r.Context(), filter)
 		if err != nil {

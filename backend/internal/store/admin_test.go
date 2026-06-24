@@ -87,9 +87,10 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		ClientKeyID:       12,
 		Model:             "gpt-5",
 		SessionID:         "workspace-123",
+		RoutingPoolError:  "routing_pool_unavailable",
 	})
-	if len(args) != 6 || args[0] != int64(7) || args[1] != int64(9) || args[2] != int64(12) || args[3] != "gpt-5" || args[4] != "workspace-123" || args[5] != "codex" {
-		t.Fatalf("args = %+v, want provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, and codex args", args)
+	if len(args) != 7 || args[0] != int64(7) || args[1] != int64(9) || args[2] != int64(12) || args[3] != "gpt-5" || args[4] != "workspace-123" || args[5] != "routing_pool_unavailable" || args[6] != "codex" {
+		t.Fatalf("args = %+v, want provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, routing_pool_unavailable, and codex args", args)
 	}
 	for _, want := range []string{
 		"ILIKE '%' || $",
@@ -99,7 +100,9 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		"l.client_key_id = $",
 		"l.model = $",
 		"l.session_id = $",
+		"l.routing_pool_error = $",
 		"l.request_id",
+		"l.routing_pool_error",
 		"l.error",
 		"l.status_code::text",
 	} {

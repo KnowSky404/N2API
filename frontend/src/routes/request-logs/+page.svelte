@@ -63,6 +63,19 @@
     if (['all', 'success', 'client_error', 'server_error'].includes(statusClass)) {
       requestLogs.statusClass = statusClass;
     }
+
+    const routingPoolError = params.get('routingPoolError') ?? '';
+    if (
+      [
+        'all',
+        'routing_pool_disabled',
+        'routing_pool_unavailable',
+        'routing_pool_cycle',
+        'routing_pool_exhausted'
+      ].includes(routingPoolError)
+    ) {
+      requestLogs.routingPoolError = routingPoolError;
+    }
   }
 
   $effect(() => {
@@ -130,6 +143,13 @@
     { value: 'success', label: 'Success' },
     { value: 'client_error', label: 'Client errors' },
     { value: 'server_error', label: 'Server errors' }
+  ];
+  const routingPoolErrorFilters = [
+    { value: 'all', label: 'All routing errors' },
+    { value: 'routing_pool_disabled', label: 'Routing pool disabled' },
+    { value: 'routing_pool_unavailable', label: 'Routing pool unavailable' },
+    { value: 'routing_pool_cycle', label: 'Routing pool cycle' },
+    { value: 'routing_pool_exhausted', label: 'Routing pool exhausted' }
   ];
 
   /** @param {string} range */
@@ -428,6 +448,17 @@
         >
           {#each requestLogStatusClasses as statusClass}
             <option value={statusClass.value}>{statusClass.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Routing error
+        <select
+          class="mt-2 max-w-[240px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.routingPoolError}
+        >
+          {#each routingPoolErrorFilters as routingPoolError}
+            <option value={routingPoolError.value}>{routingPoolError.label}</option>
           {/each}
         </select>
       </label>

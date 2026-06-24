@@ -208,10 +208,13 @@ test('request logs page shows gateway fallback diagnostics', () => {
   assert.match(requestLogsPage, /log\.routingPoolFallbackDepth/);
   assert.match(requestLogsPage, /log\.routingPoolFallbackChain/);
   assert.match(requestLogsPage, /log\.routingPoolError/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolError\}/);
   assert.match(requestLogsPage, /Fallback chain/);
   assert.match(adminState, /gatewayAttemptCount/);
   assert.match(adminState, /gatewayFallbackCount/);
   assert.match(adminState, /routingPoolFallbackDepth/);
+  assert.match(adminState, /routingPoolError: 'all'/);
+  assert.match(adminState, /params\.set\('routingPoolError'/);
 });
 
 test('request logs page filters by search and status class', () => {
