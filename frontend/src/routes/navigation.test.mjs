@@ -167,6 +167,9 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /account\.schedulable/);
   assert.match(modelsPage, /account\.unschedulableReason/);
   assert.match(modelsPage, /No schedulable account/);
+  assert.match(modelsPage, /Sticky bound/);
+  assert.match(modelsPage, /account\.stickyBound/);
+  assert.match(adminState, /stickyBoundAccountId/);
   assert.match(modelsPage, /Excluded account IDs/);
   assert.match(modelsPage, /bind:value=\{modelRoutingPreview\.excludedAccountIds\}/);
   assert.match(modelsPage, /excluding \{modelRoutingPreview\.excludedAccountIds\}/);

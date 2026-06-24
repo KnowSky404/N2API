@@ -279,10 +279,11 @@ type SelectedAccount struct {
 }
 
 type SelectionPreview struct {
-	Model             string               `json:"model"`
-	SessionID         string               `json:"sessionId"`
-	SelectedAccountID int64                `json:"selectedAccountId"`
-	Candidates        []SelectionCandidate `json:"candidates"`
+	Model                string               `json:"model"`
+	SessionID            string               `json:"sessionId"`
+	SelectedAccountID    int64                `json:"selectedAccountId"`
+	StickyBoundAccountID int64                `json:"stickyBoundAccountId,omitempty"`
+	Candidates           []SelectionCandidate `json:"candidates"`
 }
 
 type SelectionCandidate struct {
@@ -298,6 +299,7 @@ type SelectionCandidate struct {
 	LastTestError       string     `json:"lastTestError"`
 	ScheduleRank        int        `json:"scheduleRank"`
 	Selected            bool       `json:"selected"`
+	StickyBound         bool       `json:"stickyBound"`
 	Schedulable         bool       `json:"schedulable"`
 	UnschedulableReason string     `json:"unschedulableReason"`
 }
@@ -1246,8 +1248,12 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 	if err != nil {
 		return SelectionPreview{}, err
 	}
+	stickyBoundAccountID := int64(0)
 	if sessionID != "" {
-		accounts = stickySessionHashCandidates(accounts, sessionID)
+		accounts, stickyBoundAccountID, err = s.stickySessionCandidates(ctx, accounts, model, sessionID)
+		if err != nil {
+			return SelectionPreview{}, err
+		}
 	}
 	if len(accounts) == 0 {
 		blocked := s.unschedulableSelectionCandidates(ctx, model, nil, excludedAccountIDs, now)
@@ -1262,13 +1268,16 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 	}
 
 	preview := SelectionPreview{
-		Model:             model,
-		SessionID:         sessionID,
-		SelectedAccountID: accounts[0].ID,
-		Candidates:        make([]SelectionCandidate, 0, len(accounts)),
+		Model:                model,
+		SessionID:            sessionID,
+		SelectedAccountID:    accounts[0].ID,
+		StickyBoundAccountID: stickyBoundAccountID,
+		Candidates:           make([]SelectionCandidate, 0, len(accounts)),
 	}
 	for index, account := range accounts {
-		preview.Candidates = append(preview.Candidates, selectionCandidate(account, index+1, index == 0, true, ""))
+		candidate := selectionCandidate(account, index+1, index == 0, true, "")
+		candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
+		preview.Candidates = append(preview.Candidates, candidate)
 	}
 	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidates(ctx, model, accounts, excludedAccountIDs, now)...)
 	return preview, nil

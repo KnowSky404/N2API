@@ -224,6 +224,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} lastTestError
  * @property {number} scheduleRank
  * @property {boolean} selected
+ * @property {boolean} stickyBound
  * @property {boolean} schedulable
  * @property {string} unschedulableReason
  */
@@ -233,6 +234,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} model
  * @property {string} sessionId
  * @property {number} selectedAccountId
+ * @property {number} stickyBoundAccountId
  * @property {SelectionPreviewCandidate[]} candidates
  */
 

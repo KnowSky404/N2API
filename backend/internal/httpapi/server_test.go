@@ -3503,11 +3503,12 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	admins := newFakeAdminService()
 	providers := newFakeProviderService()
 	providers.selectionPreview = provider.SelectionPreview{
-		Model:             "gpt-5",
-		SessionID:         "workspace-123",
-		SelectedAccountID: 8,
+		Model:                "gpt-5",
+		SessionID:            "workspace-123",
+		SelectedAccountID:    8,
+		StickyBoundAccountID: 8,
 		Candidates: []provider.SelectionCandidate{
-			{ID: 8, DisplayName: "Sticky", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true},
+			{ID: 8, DisplayName: "Sticky", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true, StickyBound: true},
 			{ID: 7, DisplayName: "Fallback", AccountType: provider.AccountTypeCodexOAuth, Priority: 1, ScheduleRank: 2},
 		},
 	}
@@ -3530,6 +3531,9 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 	if body.SelectedAccountID != 8 || len(body.Candidates) != 2 || !body.Candidates[0].Selected {
 		t.Fatalf("preview = %+v, want selected sticky candidate", body)
+	}
+	if body.StickyBoundAccountID != 8 || !body.Candidates[0].StickyBound {
+		t.Fatalf("preview sticky binding = %+v, want sticky bound account 8", body)
 	}
 }
 

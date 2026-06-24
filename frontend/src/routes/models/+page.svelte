@@ -303,6 +303,9 @@
                 {#if account.selected}
                   <span class="font-medium text-[#0a7a5e]">Selected</span>
                 {/if}
+                {#if account.stickyBound}
+                  <span class="font-medium text-[#0a7a5e]">Sticky bound</span>
+                {/if}
                 {#if account.schedulable === false && account.unschedulableReason}
                   <span class="font-medium text-amber-800">{account.unschedulableReason}</span>
                 {/if}
