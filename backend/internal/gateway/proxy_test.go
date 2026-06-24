@@ -68,6 +68,9 @@ func (p *fakeSelectedAccountProvider) SelectAccountForModel(ctx context.Context,
 	p.models = append(p.models, model)
 	p.exclusions = append(p.exclusions, append([]int64(nil), excludedAccountIDs...))
 	if i < len(p.errs) && p.errs[i] != nil {
+		if i < len(p.accounts) {
+			return p.accounts[i], p.errs[i]
+		}
 		return SelectedAccount{}, p.errs[i]
 	}
 	if i < len(p.accounts) {
@@ -2319,6 +2322,47 @@ func TestProxyReturnsRoutingPoolUnavailableForMissingPool(t *testing.T) {
 	}
 	if len(logger.entries) != 1 || logger.entries[0].RoutingPoolID != 7 || logger.entries[0].Error != "routing_pool_unavailable" {
 		t.Fatalf("logged entry = %+v, want pool attribution and routing_pool_unavailable", logger.entries)
+	}
+}
+
+func TestProxyLogsRoutingPoolExhaustedDiagnosticsOnSelectionError(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	poolID := int64(1)
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "pool key", RoutingPoolID: &poolID, RoutingPoolName: "primary"}},
+		&fakeSelectedAccountProvider{
+			accounts: []SelectedAccount{{
+				RoutingPoolID:            1,
+				RoutingPoolName:          "primary",
+				RoutingPoolFallbackChain: "primary -> secondary",
+				RoutingPoolError:         provider.RoutingPoolErrorExhausted,
+			}},
+			errs: []error{provider.ErrModelUnavailable},
+		},
+		Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger},
+		&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			t.Fatal("upstream should not be called when the routing pool chain is exhausted")
+			return nil, nil
+		})},
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "model_unavailable") {
+		t.Fatalf("body = %s, want model_unavailable", recorder.Body.String())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.RoutingPoolID != 1 || entry.RoutingPoolFallbackChain != "primary -> secondary" || entry.RoutingPoolError != provider.RoutingPoolErrorExhausted {
+		t.Fatalf("routing pool diagnostics = %+v, want exhausted chain", entry)
 	}
 }
 

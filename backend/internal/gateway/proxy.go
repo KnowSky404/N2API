@@ -395,6 +395,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		selected, err := p.selectAccountForKey(r.Context(), key, model, sessionID, failedAccountIDs...)
 		if err != nil {
+			loggedRoutingPoolID, loggedRoutingPoolName, loggedRoutingPoolFallbackDepth, loggedRoutingPoolFallbackChain, loggedRoutingPoolError = selectedRoutingPoolLogFields(
+				selected,
+				loggedRoutingPoolID,
+				loggedRoutingPoolName,
+			)
 			if lastRetryableResp != nil {
 				_ = lastRetryableResp.Body.Close()
 				lastRetryableResp = nil
@@ -438,15 +443,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		loggedAccount = selected
-		if selected.RoutingPoolID > 0 {
-			loggedRoutingPoolID = selected.RoutingPoolID
-		}
-		if strings.TrimSpace(selected.RoutingPoolName) != "" {
-			loggedRoutingPoolName = strings.TrimSpace(selected.RoutingPoolName)
-		}
-		loggedRoutingPoolFallbackDepth = selected.RoutingPoolFallbackDepth
-		loggedRoutingPoolFallbackChain = strings.TrimSpace(selected.RoutingPoolFallbackChain)
-		loggedRoutingPoolError = strings.TrimSpace(selected.RoutingPoolError)
+		loggedRoutingPoolID, loggedRoutingPoolName, loggedRoutingPoolFallbackDepth, loggedRoutingPoolFallbackChain, loggedRoutingPoolError = selectedRoutingPoolLogFields(
+			selected,
+			loggedRoutingPoolID,
+			loggedRoutingPoolName,
+		)
 
 		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 		if err != nil {
@@ -647,6 +648,22 @@ func apiKeyRoutingPool(key admin.APIKey) (int64, string) {
 		return 0, ""
 	}
 	return *key.RoutingPoolID, strings.TrimSpace(key.RoutingPoolName)
+}
+
+func selectedRoutingPoolLogFields(selected SelectedAccount, fallbackID int64, fallbackName string) (int64, string, int, string, string) {
+	routingPoolID := fallbackID
+	routingPoolName := strings.TrimSpace(fallbackName)
+	if selected.RoutingPoolID > 0 {
+		routingPoolID = selected.RoutingPoolID
+	}
+	if strings.TrimSpace(selected.RoutingPoolName) != "" {
+		routingPoolName = strings.TrimSpace(selected.RoutingPoolName)
+	}
+	return routingPoolID,
+		routingPoolName,
+		selected.RoutingPoolFallbackDepth,
+		strings.TrimSpace(selected.RoutingPoolFallbackChain),
+		strings.TrimSpace(selected.RoutingPoolError)
 }
 
 func (p *Proxy) recordAccountUsed(ctx context.Context, accountID int64) error {

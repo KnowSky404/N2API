@@ -1725,6 +1725,32 @@ func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
 	}
 }
 
+func TestSelectAccountForModelInRoutingPoolChainMarksExhaustedDiagnostics(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 10, true, 1, "primary-token"),
+		testAccount(t, 20, true, 1, "secondary-token"),
+	}
+	repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10, Priority: 0}}
+	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
+	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
+	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-4", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if !errors.Is(err, ErrModelUnavailable) {
+		t.Fatalf("error = %v, want ErrModelUnavailable", err)
+	}
+	if selected.RoutingPoolError != "routing_pool_exhausted" {
+		t.Fatalf("routing pool error = %q, want routing_pool_exhausted", selected.RoutingPoolError)
+	}
+	if selected.RoutingPoolFallbackChain != "primary -> secondary" {
+		t.Fatalf("chain = %q, want primary -> secondary", selected.RoutingPoolFallbackChain)
+	}
+}
+
 func TestListExposedModelsForRoutingPoolChainIncludesFallbackModels(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}

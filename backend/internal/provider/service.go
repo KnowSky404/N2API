@@ -45,6 +45,10 @@ const (
 )
 
 const (
+	RoutingPoolErrorExhausted = "routing_pool_exhausted"
+)
+
+const (
 	CredentialTypeOAuthToken = "oauth_token"
 	CredentialTypeAPIKey     = "api_key"
 )
@@ -1607,7 +1611,7 @@ func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryP
 	if !hasEnabled {
 		finalErr = ErrAccountsDisabled
 	}
-	return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: finalErr.Error()}, finalErr
+	return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, finalErr
 }
 
 func (s *Service) routingPoolChain(ctx context.Context, primaryPoolID int64) ([]RoutingPool, string, error) {
