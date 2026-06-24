@@ -3582,6 +3582,55 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 }
 
+func TestModelRoutingPreviewIncludesConcurrencyState(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.gatewaySettings.MaxConcurrentRequestsPerAccount = 5
+	providers := newFakeProviderService()
+	providers.selectionPreview = provider.SelectionPreview{
+		Model:             "gpt-5",
+		SelectedAccountID: 7,
+		Candidates: []provider.SelectionCandidate{
+			{ID: 7, DisplayName: "Busy", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true},
+			{ID: 8, DisplayName: "Inherited", AccountType: provider.AccountTypeCodexOAuth, Priority: 2, ScheduleRank: 2},
+		},
+	}
+	providers.accounts = []provider.Account{
+		{ID: 7, Provider: "openai", DisplayName: "Busy", MaxConcurrentRequests: 2},
+		{ID: 8, Provider: "openai", DisplayName: "Inherited"},
+	}
+	gateway := &fakeGatewayHandler{accountConcurrency: map[int64]int{7: 2, 8: 1}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers, gateway)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?model=gpt-5", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Candidates []struct {
+			ID                             int64 `json:"id"`
+			CurrentConcurrentRequests      int   `json:"currentConcurrentRequests"`
+			EffectiveMaxConcurrentRequests int   `json:"effectiveMaxConcurrentRequests"`
+			ConcurrencyBlocked             bool  `json:"concurrencyBlocked"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Candidates) != 2 {
+		t.Fatalf("candidates = %+v, want two", body.Candidates)
+	}
+	if body.Candidates[0].CurrentConcurrentRequests != 2 || body.Candidates[0].EffectiveMaxConcurrentRequests != 2 || !body.Candidates[0].ConcurrencyBlocked {
+		t.Fatalf("first candidate concurrency = %+v, want current 2 effective 2 blocked", body.Candidates[0])
+	}
+	if body.Candidates[1].CurrentConcurrentRequests != 1 || body.Candidates[1].EffectiveMaxConcurrentRequests != 5 || body.Candidates[1].ConcurrencyBlocked {
+		t.Fatalf("second candidate concurrency = %+v, want current 1 effective 5 not blocked", body.Candidates[1])
+	}
+}
+
 func TestModelRoutingPreviewPassesExcludedAccountIDs(t *testing.T) {
 	admins := newFakeAdminService()
 	providers := newFakeProviderService()

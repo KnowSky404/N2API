@@ -88,6 +88,18 @@ type providerAccountResponse struct {
 	EffectiveMaxConcurrentRequests int `json:"effectiveMaxConcurrentRequests"`
 }
 
+type selectionPreviewResponse struct {
+	provider.SelectionPreview
+	Candidates []selectionCandidateResponse `json:"candidates"`
+}
+
+type selectionCandidateResponse struct {
+	provider.SelectionCandidate
+	CurrentConcurrentRequests      int  `json:"currentConcurrentRequests"`
+	EffectiveMaxConcurrentRequests int  `json:"effectiveMaxConcurrentRequests"`
+	ConcurrencyBlocked             bool `json:"concurrencyBlocked"`
+}
+
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
 	mux := http.NewServeMux()
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
@@ -458,7 +470,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/model-routing/preview", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleModelRoutingPreview(w, r, providers)
+		handleModelRoutingPreview(w, r, admins, providers, accountConcurrencySource)
 	}))
 
 	mux.HandleFunc("GET /api/admin/provider-accounts", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -744,10 +756,7 @@ func handleListProviderAccounts(w http.ResponseWriter, r *http.Request, admins A
 func providerAccountResponses(accounts []provider.Account, settings admin.GatewaySettings, concurrency map[int64]int) []providerAccountResponse {
 	responses := make([]providerAccountResponse, 0, len(accounts))
 	for _, account := range accounts {
-		effectiveMaxConcurrentRequests := account.MaxConcurrentRequests
-		if effectiveMaxConcurrentRequests <= 0 {
-			effectiveMaxConcurrentRequests = settings.MaxConcurrentRequestsPerAccount
-		}
+		effectiveMaxConcurrentRequests := effectiveAccountMaxConcurrentRequests(account.MaxConcurrentRequests, settings)
 		responses = append(responses, providerAccountResponse{
 			Account:                        account,
 			CurrentConcurrentRequests:      concurrency[account.ID],
@@ -757,7 +766,14 @@ func providerAccountResponses(accounts []provider.Account, settings admin.Gatewa
 	return responses
 }
 
-func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func effectiveAccountMaxConcurrentRequests(accountMax int, settings admin.GatewaySettings) int {
+	if accountMax > 0 {
+		return accountMax
+	}
+	return settings.MaxConcurrentRequestsPerAccount
+}
+
+func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, admins AdminService, providers ProviderService, concurrencySource AccountConcurrencySnapshotProvider) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -789,7 +805,50 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, providers
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	writeJSON(w, http.StatusOK, preview)
+	settings := admin.GatewaySettings{}
+	if admins != nil {
+		var err error
+		settings, err = admins.GetGatewaySettings(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+	}
+	accounts, err := providers.ListAccounts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	concurrency := map[int64]int{}
+	if concurrencySource != nil {
+		concurrency = concurrencySource.AccountConcurrencySnapshot()
+	}
+	writeJSON(w, http.StatusOK, selectionPreviewWithConcurrency(preview, accounts, settings, concurrency))
+}
+
+func selectionPreviewWithConcurrency(preview provider.SelectionPreview, accounts []provider.Account, settings admin.GatewaySettings, concurrency map[int64]int) selectionPreviewResponse {
+	accountsByID := make(map[int64]provider.Account, len(accounts))
+	for _, account := range accounts {
+		accountsByID[account.ID] = account
+	}
+	response := selectionPreviewResponse{
+		SelectionPreview: preview,
+		Candidates:       make([]selectionCandidateResponse, 0, len(preview.Candidates)),
+	}
+	for _, candidate := range preview.Candidates {
+		effectiveMaxConcurrentRequests := settings.MaxConcurrentRequestsPerAccount
+		if account, ok := accountsByID[candidate.ID]; ok {
+			effectiveMaxConcurrentRequests = effectiveAccountMaxConcurrentRequests(account.MaxConcurrentRequests, settings)
+		}
+		currentConcurrentRequests := concurrency[candidate.ID]
+		response.Candidates = append(response.Candidates, selectionCandidateResponse{
+			SelectionCandidate:             candidate,
+			CurrentConcurrentRequests:      currentConcurrentRequests,
+			EffectiveMaxConcurrentRequests: effectiveMaxConcurrentRequests,
+			ConcurrencyBlocked:             effectiveMaxConcurrentRequests > 0 && currentConcurrentRequests >= effectiveMaxConcurrentRequests,
+		})
+	}
+	return response
 }
 
 func parseExcludedAccountIDs(raw string) ([]int64, error) {
