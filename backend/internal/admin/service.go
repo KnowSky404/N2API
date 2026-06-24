@@ -68,6 +68,20 @@ type APIKey struct {
 	TokenBudget30d    int        `json:"tokenBudget30d"`
 }
 
+type APIKeyBudgetUsage struct {
+	KeyID                 int64  `json:"-"`
+	RequestsUsed24h       int64  `json:"requestsUsed24h"`
+	TokensUsed24h         int64  `json:"tokensUsed24h"`
+	RequestsUsed30d       int64  `json:"requestsUsed30d"`
+	TokensUsed30d         int64  `json:"tokensUsed30d"`
+	RequestsRemaining24h  *int64 `json:"requestsRemaining24h"`
+	TokensRemaining24h    *int64 `json:"tokensRemaining24h"`
+	RequestsRemaining30d  *int64 `json:"requestsRemaining30d"`
+	TokensRemaining30d    *int64 `json:"tokensRemaining30d"`
+	RequestBudgetExceeded bool   `json:"requestBudgetExceeded"`
+	TokenBudgetExceeded   bool   `json:"tokenBudgetExceeded"`
+}
+
 type RequestLog struct {
 	ID                    int64     `json:"id"`
 	RequestID             string    `json:"requestId"`
@@ -226,6 +240,7 @@ type Repository interface {
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error)
+	GetAPIKeyBudgetUsage(ctx context.Context, keyID int64, now time.Time) (APIKeyBudgetUsage, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error)
@@ -414,6 +429,42 @@ func (s *Service) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudg
 		return APIKey{}, ErrInvalidInput
 	}
 	return s.repo.UpdateAPIKeyBudgets(ctx, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d)
+}
+
+func (s *Service) GetAPIKeyBudgetUsage(ctx context.Context, key APIKey, now time.Time) (APIKeyBudgetUsage, error) {
+	usage, err := s.repo.GetAPIKeyBudgetUsage(ctx, key.ID, now)
+	if err != nil {
+		return APIKeyBudgetUsage{}, err
+	}
+	applyBudgetRemaining(&usage, key)
+	return usage, nil
+}
+
+func applyBudgetRemaining(usage *APIKeyBudgetUsage, key APIKey) {
+	usage.KeyID = key.ID
+	usage.RequestsRemaining24h = remainingBudget(key.RequestBudget24h, usage.RequestsUsed24h)
+	usage.TokensRemaining24h = remainingBudget(key.TokenBudget24h, usage.TokensUsed24h)
+	usage.RequestsRemaining30d = remainingBudget(key.RequestBudget30d, usage.RequestsUsed30d)
+	usage.TokensRemaining30d = remainingBudget(key.TokenBudget30d, usage.TokensUsed30d)
+	usage.RequestBudgetExceeded = budgetExceeded(key.RequestBudget24h, usage.RequestsUsed24h) ||
+		budgetExceeded(key.RequestBudget30d, usage.RequestsUsed30d)
+	usage.TokenBudgetExceeded = budgetExceeded(key.TokenBudget24h, usage.TokensUsed24h) ||
+		budgetExceeded(key.TokenBudget30d, usage.TokensUsed30d)
+}
+
+func remainingBudget(limit int, used int64) *int64 {
+	if limit <= 0 {
+		return nil
+	}
+	remaining := int64(limit) - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return &remaining
+}
+
+func budgetExceeded(limit int, used int64) bool {
+	return limit > 0 && used >= int64(limit)
 }
 
 func (s *Service) APIKeyAllowsModel(key APIKey, model string) bool {

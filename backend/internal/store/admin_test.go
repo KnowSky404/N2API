@@ -5,8 +5,10 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -294,6 +296,34 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	}
 }
 
+func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	now := time.Unix(20_000, 0).UTC()
+
+	key, err := repo.CreateAPIKey(ctx, "budgeted", "hash-budgeted", "n2api_")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	other, err := repo.CreateAPIKey(ctx, "other", "hash-other", "n2api_")
+	if err != nil {
+		t.Fatalf("CreateAPIKey other returned error: %v", err)
+	}
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 40)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-23*time.Hour), 200, 60)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-25*time.Hour), 200, 90)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-31*24*time.Hour), 200, 900)
+	insertRequestLog(t, repo.pool, other.ID, now.Add(-time.Hour), 200, 700)
+
+	usage, err := repo.GetAPIKeyBudgetUsage(ctx, key.ID, now)
+	if err != nil {
+		t.Fatalf("GetAPIKeyBudgetUsage returned error: %v", err)
+	}
+	if usage.KeyID != key.ID || usage.RequestsUsed24h != 2 || usage.TokensUsed24h != 100 || usage.RequestsUsed30d != 3 || usage.TokensUsed30d != 190 {
+		t.Fatalf("usage = %+v, want key usage across 24h and 30d windows", usage)
+	}
+}
+
 func newTestAdminRepository(t *testing.T) *AdminRepository {
 	t.Helper()
 
@@ -311,4 +341,18 @@ func newTestAdminRepository(t *testing.T) *AdminRepository {
 		t.Fatalf("test database cleanup failed: %v", err)
 	}
 	return NewAdminRepository(pool)
+}
+
+func insertRequestLog(t *testing.T, pool *pgxpool.Pool, keyID int64, createdAt time.Time, statusCode, totalTokens int) {
+	t.Helper()
+
+	requestID := "req_budget_" + strconv.FormatInt(createdAt.UnixNano(), 10)
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO request_logs (
+			request_id, client_key_id, provider, route, method, status_code, latency_ms, total_tokens, created_at
+		)
+		VALUES ($1, $2, 'openai', '/v1/responses', 'POST', $3, 12, $4, $5)
+	`, requestID, keyID, statusCode, totalTokens, createdAt); err != nil {
+		t.Fatalf("insert request log failed: %v", err)
+	}
 }

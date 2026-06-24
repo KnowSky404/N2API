@@ -210,6 +210,53 @@ func TestUpdateAPIKeyBudgetsValidatesNonNegativeValues(t *testing.T) {
 	}
 }
 
+func TestAPIKeyBudgetUsageComputesRemainingAndExceeded(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{})
+	key := APIKey{
+		ID:               42,
+		RequestBudget24h: 3,
+		TokenBudget24h:   80,
+		RequestBudget30d: 10,
+		TokenBudget30d:   100,
+	}
+	repo.budgetUsage[key.ID] = APIKeyBudgetUsage{
+		KeyID:           key.ID,
+		RequestsUsed24h: 3,
+		TokensUsed24h:   70,
+		RequestsUsed30d: 8,
+		TokensUsed30d:   120,
+	}
+
+	usage, err := service.GetAPIKeyBudgetUsage(context.Background(), key, time.Unix(5000, 0).UTC())
+	if err != nil {
+		t.Fatalf("GetAPIKeyBudgetUsage returned error: %v", err)
+	}
+	if usage.RequestsRemaining24h == nil || *usage.RequestsRemaining24h != 0 {
+		t.Fatalf("RequestsRemaining24h = %v, want 0", usage.RequestsRemaining24h)
+	}
+	if usage.TokensRemaining24h == nil || *usage.TokensRemaining24h != 10 {
+		t.Fatalf("TokensRemaining24h = %v, want 10", usage.TokensRemaining24h)
+	}
+	if usage.RequestsRemaining30d == nil || *usage.RequestsRemaining30d != 2 {
+		t.Fatalf("RequestsRemaining30d = %v, want 2", usage.RequestsRemaining30d)
+	}
+	if usage.TokensRemaining30d == nil || *usage.TokensRemaining30d != 0 {
+		t.Fatalf("TokensRemaining30d = %v, want 0", usage.TokensRemaining30d)
+	}
+	if !usage.RequestBudgetExceeded || !usage.TokenBudgetExceeded {
+		t.Fatalf("budget exceeded flags = request:%v token:%v, want both true", usage.RequestBudgetExceeded, usage.TokenBudgetExceeded)
+	}
+
+	uncapped, err := service.GetAPIKeyBudgetUsage(context.Background(), APIKey{ID: 43}, time.Unix(5000, 0).UTC())
+	if err != nil {
+		t.Fatalf("GetAPIKeyBudgetUsage uncapped returned error: %v", err)
+	}
+	if uncapped.RequestsRemaining24h != nil || uncapped.TokensRemaining30d != nil || uncapped.RequestBudgetExceeded || uncapped.TokenBudgetExceeded {
+		t.Fatalf("uncapped usage = %+v, want nil remaining and no exceeded flags", uncapped)
+	}
+}
+
 func TestAuthenticateAPIKeyMapsTouchNotFoundToUnauthorized(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -884,6 +931,7 @@ type memoryRepo struct {
 	touchErr         error
 	logs             []RequestLog
 	lastLogFilter    RequestLogFilter
+	budgetUsage      map[int64]APIKeyBudgetUsage
 	usageSummary     UsageSummary
 	lastUsageSince   time.Time
 	lastUsageGroupBy string
@@ -908,6 +956,7 @@ func newMemoryRepo() *memoryRepo {
 		nextAdminID:  1,
 		sessions:     map[string]memorySession{},
 		keys:         map[int64]memoryAPIKey{},
+		budgetUsage:  map[int64]APIKeyBudgetUsage{},
 		nextAPIKeyID: 1,
 	}
 }
@@ -1057,6 +1106,12 @@ func (r *memoryRepo) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBud
 	key.TokenBudget30d = tokenBudget30d
 	r.keys[id] = key
 	return key.APIKey, nil
+}
+
+func (r *memoryRepo) GetAPIKeyBudgetUsage(_ context.Context, keyID int64, _ time.Time) (APIKeyBudgetUsage, error) {
+	usage := r.budgetUsage[keyID]
+	usage.KeyID = keyID
+	return usage, nil
 }
 
 func (r *memoryRepo) ListAPIKeyModels(_ context.Context, id int64) ([]string, error) {

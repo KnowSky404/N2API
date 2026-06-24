@@ -384,6 +384,28 @@ func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, req
 	return updated, nil
 }
 
+func (r *AdminRepository) GetAPIKeyBudgetUsage(ctx context.Context, keyID int64, now time.Time) (admin.APIKeyBudgetUsage, error) {
+	usage := admin.APIKeyBudgetUsage{KeyID: keyID}
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(COUNT(*) FILTER (WHERE created_at >= $2), 0),
+			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $2), 0),
+			COALESCE(COUNT(*) FILTER (WHERE created_at >= $3), 0),
+			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $3), 0)
+		FROM request_logs
+		WHERE client_key_id = $1
+	`, keyID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(
+		&usage.RequestsUsed24h,
+		&usage.TokensUsed24h,
+		&usage.RequestsUsed30d,
+		&usage.TokensUsed30d,
+	)
+	if err != nil {
+		return admin.APIKeyBudgetUsage{}, err
+	}
+	return usage, nil
+}
+
 func normalizeAPIKeyModels(models []string) []string {
 	seen := map[string]struct{}{}
 	normalized := make([]string, 0, len(models))

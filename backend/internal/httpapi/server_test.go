@@ -58,6 +58,7 @@ type fakeAdminService struct {
 	requestsPerMinute  int
 	tokensPerMinute    int
 	limitsErr          error
+	budgetUsage        map[int64]admin.APIKeyBudgetUsage
 	usageSummary       admin.UsageSummary
 	usageRange         string
 	usageGroupBy       string
@@ -144,6 +145,7 @@ func (h *fakeGatewayHandler) APIKeyTokenRateSnapshot() map[int64]int {
 
 func newFakeAdminService() *fakeAdminService {
 	return &fakeAdminService{
+		budgetUsage: map[int64]admin.APIKeyBudgetUsage{},
 		keys: []admin.APIKey{
 			{ID: 7, Name: "codex laptop", Prefix: "n2api_abc", CreatedAt: time.Unix(1000, 0).UTC()},
 		},
@@ -277,6 +279,12 @@ func (s *fakeAdminService) UpdateAPIKeyLimits(_ context.Context, id int64, reque
 		}
 	}
 	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) GetAPIKeyBudgetUsage(_ context.Context, key admin.APIKey, _ time.Time) (admin.APIKeyBudgetUsage, error) {
+	usage := s.budgetUsage[key.ID]
+	usage.KeyID = key.ID
+	return usage, nil
 }
 
 func (s *fakeAdminService) ListRequestLogs(_ context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error) {
@@ -1035,6 +1043,62 @@ func TestListAPIKeysIncludesRateWindowState(t *testing.T) {
 	}
 	if key.CurrentTokensThisMinute != 42 || key.EffectiveTokensPerMinute != 90 || key.TokenRateRemaining != 48 || key.TokenRateLimited {
 		t.Fatalf("token window = %+v, want current 42 effective 90 remaining 48 not limited", key)
+	}
+}
+
+func TestListAPIKeysIncludesBudgetUsageState(t *testing.T) {
+	admins := newFakeAdminService()
+	remainingRequests24h := int64(3)
+	remainingTokens30d := int64(0)
+	admins.keys[0].RequestBudget24h = 10
+	admins.keys[0].TokenBudget30d = 100
+	admins.budgetUsage[7] = admin.APIKeyBudgetUsage{
+		KeyID:                 7,
+		RequestsUsed24h:       7,
+		TokensUsed24h:         42,
+		RequestsUsed30d:       12,
+		TokensUsed30d:         120,
+		RequestsRemaining24h:  &remainingRequests24h,
+		TokensRemaining30d:    &remainingTokens30d,
+		RequestBudgetExceeded: false,
+		TokenBudgetExceeded:   true,
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/keys", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Keys []struct {
+			admin.APIKey
+			RequestsUsed24h       int64  `json:"requestsUsed24h"`
+			TokensUsed30d         int64  `json:"tokensUsed30d"`
+			RequestsRemaining24h  *int64 `json:"requestsRemaining24h"`
+			TokensRemaining30d    *int64 `json:"tokensRemaining30d"`
+			RequestBudgetExceeded bool   `json:"requestBudgetExceeded"`
+			TokenBudgetExceeded   bool   `json:"tokenBudgetExceeded"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Keys) != 1 {
+		t.Fatalf("keys = %+v, want one key", body.Keys)
+	}
+	key := body.Keys[0]
+	if key.RequestBudget24h != 10 || key.TokenBudget30d != 100 || key.RequestsUsed24h != 7 || key.TokensUsed30d != 120 {
+		t.Fatalf("budget fields = %+v, want configured budgets and usage", key)
+	}
+	if key.RequestsRemaining24h == nil || *key.RequestsRemaining24h != 3 || key.TokensRemaining30d == nil || *key.TokensRemaining30d != 0 {
+		t.Fatalf("budget remaining = %+v, want request 3 and token 0", key)
+	}
+	if key.RequestBudgetExceeded || !key.TokenBudgetExceeded {
+		t.Fatalf("budget exceeded flags = request:%v token:%v, want request false token true", key.RequestBudgetExceeded, key.TokenBudgetExceeded)
 	}
 }
 

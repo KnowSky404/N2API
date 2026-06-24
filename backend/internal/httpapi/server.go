@@ -38,6 +38,7 @@ type AdminService interface {
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
+	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (admin.UsagePricing, error)
@@ -95,6 +96,7 @@ type gatewaySettingsResponse struct {
 
 type apiKeyResponse struct {
 	admin.APIKey
+	admin.APIKeyBudgetUsage
 	CurrentConcurrentRequests      int  `json:"currentConcurrentRequests"`
 	EffectiveMaxConcurrentRequests int  `json:"effectiveMaxConcurrentRequests"`
 	ConcurrencyBlocked             bool `json:"concurrencyBlocked"`
@@ -263,8 +265,18 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			requestRate = apiKeyRateSource.APIKeyRequestRateSnapshot()
 			tokenRate = apiKeyRateSource.APIKeyTokenRateSnapshot()
 		}
+		budgetUsage := map[int64]admin.APIKeyBudgetUsage{}
+		now := time.Now()
+		for _, key := range keys {
+			usage, err := admins.GetAPIKeyBudgetUsage(r.Context(), key, now)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal_error")
+				return
+			}
+			budgetUsage[key.ID] = usage
+		}
 		writeJSON(w, http.StatusOK, map[string][]apiKeyResponse{
-			"keys": apiKeyResponses(keys, settings, concurrency, requestRate, tokenRate),
+			"keys": apiKeyResponses(keys, budgetUsage, settings, concurrency, requestRate, tokenRate),
 		})
 	}))
 
@@ -857,7 +869,7 @@ func writeProviderAccountError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "internal_error")
 }
 
-func apiKeyResponses(keys []admin.APIKey, settings admin.GatewaySettings, concurrency, requestRate, tokenRate map[int64]int) []apiKeyResponse {
+func apiKeyResponses(keys []admin.APIKey, budgetUsage map[int64]admin.APIKeyBudgetUsage, settings admin.GatewaySettings, concurrency, requestRate, tokenRate map[int64]int) []apiKeyResponse {
 	responses := make([]apiKeyResponse, 0, len(keys))
 	effectiveMaxConcurrentRequests := settings.MaxConcurrentRequestsPerKey
 	for _, key := range keys {
@@ -870,6 +882,7 @@ func apiKeyResponses(keys []admin.APIKey, settings admin.GatewaySettings, concur
 		tokenRateRemaining, tokenRateLimited := rateWindowState(currentTokensThisMinute, effectiveTokensPerMinute)
 		responses = append(responses, apiKeyResponse{
 			APIKey:                         key,
+			APIKeyBudgetUsage:              budgetUsage[key.ID],
 			CurrentConcurrentRequests:      currentConcurrentRequests,
 			EffectiveMaxConcurrentRequests: effectiveMaxConcurrentRequests,
 			ConcurrencyBlocked:             effectiveMaxConcurrentRequests > 0 && currentConcurrentRequests >= effectiveMaxConcurrentRequests,
