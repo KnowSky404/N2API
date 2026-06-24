@@ -45,6 +45,25 @@ func TestGatewayDocumentationMentionsStickySessionProxyHeaderRequirement(t *test
 	}
 }
 
+func TestGatewayDocumentationMentionsPersistentStickySessionBindings(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"persisted by provider, model, and `session_id`",
+			"bound account",
+			"rebind",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in persistent sticky session documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsAPIKeyLimitInheritance(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
