@@ -19,11 +19,36 @@
   } from '$lib/admin-state.svelte.js';
 
   let providerAccountsRequested = $state(false);
+  let requestLogsInitialized = $state(false);
+
+  function applyRequestLogURLFilters() {
+    const params = new URLSearchParams(window.location.search);
+    const providerAccountId = params.get('providerAccountId') ?? '';
+    if (/^[1-9]\d*$/.test(providerAccountId)) {
+      requestLogs.providerAccountId = providerAccountId;
+    }
+
+    const query = params.get('q');
+    if (query !== null) {
+      requestLogs.query = query;
+    }
+
+    const statusClass = params.get('statusClass') ?? '';
+    if (['all', 'success', 'client_error', 'server_error'].includes(statusClass)) {
+      requestLogs.statusClass = statusClass;
+    }
+  }
 
   $effect(() => {
     if (!session.authenticated) {
       providerAccountsRequested = false;
+      requestLogsInitialized = false;
       return;
+    }
+    if (!requestLogsInitialized) {
+      requestLogsInitialized = true;
+      applyRequestLogURLFilters();
+      void loadRequestLogs();
     }
     if (!providerAccountsRequested && providerAccounts.items.length === 0) {
       providerAccountsRequested = true;

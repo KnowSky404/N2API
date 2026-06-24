@@ -398,6 +398,8 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /updateProviderAccountMaxConcurrentRequests/);
   assert.match(source, /provider-account-max-concurrency/);
   assert.match(source, /testProviderAccount/);
+  assert.match(source, /href=\{`\/request-logs\?providerAccountId=\$\{account\.id\}`\}/);
+  assert.match(source, /View request logs/);
   assert.match(source, /sr-only">Test account/);
   assert.match(source, /pauseProviderAccount/);
   assert.match(source, /sr-only">Pause scheduling/);

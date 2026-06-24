@@ -200,6 +200,14 @@ test('request logs page filters by provider account', () => {
   assert.match(requestLogsPage, /loadProviderAccounts\(\)/);
 });
 
+test('request logs page initializes filters from URL params', () => {
+  assert.match(requestLogsPage, /URLSearchParams\(window\.location\.search\)/);
+  assert.match(requestLogsPage, /requestLogs\.providerAccountId = providerAccountId/);
+  assert.match(requestLogsPage, /requestLogs\.query = query/);
+  assert.match(requestLogsPage, /requestLogs\.statusClass = statusClass/);
+  assert.match(requestLogsPage, /void loadRequestLogs\(\)/);
+});
+
 test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /N2API Routing Diagnostics/);
   assert.match(modelsPage, /Routing diagnostics/);
