@@ -209,7 +209,13 @@
         if ((pool.accountIds ?? []).includes(accountId)) return true;
         return (pool.accounts ?? []).some((account) => account.accountId === accountId);
       })
-      .filter((pool) => pool.name);
+      .filter((pool) => pool.name)
+      .sort(
+        (left, right) =>
+          accountRoutingPoolPriority(left, accountId) - accountRoutingPoolPriority(right, accountId) ||
+          String(left.name).localeCompare(String(right.name), undefined, { numeric: true, sensitivity: 'base' }) ||
+          Number(left.id ?? 0) - Number(right.id ?? 0)
+      );
   }
 
   /**

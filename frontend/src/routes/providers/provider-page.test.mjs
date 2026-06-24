@@ -693,6 +693,8 @@ test('provider account rows show routing pool memberships', () => {
   assert.match(source, /routingPools/);
   assert.match(source, /accountRoutingPools\(account\.id\)/);
   assert.match(source, /accountRoutingPoolPriority\(pool,\s*account\.id\)/);
+  assert.match(source, /\.sort\(\(left,\s*right\)/);
+  assert.match(source, /accountRoutingPoolPriority\(left,\s*accountId\)\s*-\s*accountRoutingPoolPriority\(right,\s*accountId\)/);
   assert.match(source, /Routing pools/);
   assert.match(source, /p\{accountRoutingPoolPriority\(pool,\s*account\.id\)\}/);
   assert.match(source, /href=\{`\/routing-pools#routing-pool-\$\{pool\.id\}`\}/);
