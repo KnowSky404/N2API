@@ -1830,6 +1830,50 @@ func TestPreviewAccountSelectionUsesStickySessionWithoutMarkingAccountUsed(t *te
 	}
 }
 
+func TestPreviewAccountSelectionIncludesScheduleReasons(t *testing.T) {
+	older := time.Now().Add(-time.Hour)
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "first-token"),
+		testAccount(t, 2, true, 1, "bound-token"),
+		testAccount(t, 3, true, 2, "next-token"),
+	}
+	for i := range repo.accounts {
+		repo.accounts[i].LastUsedAt = &older
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")] = SessionBinding{
+		ID:        1,
+		Provider:  "openai",
+		Model:     "gpt-5",
+		SessionID: "workspace-123",
+		AccountID: 2,
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "workspace-123")
+	if err != nil {
+		t.Fatalf("PreviewAccountSelection returned error: %v", err)
+	}
+
+	want := map[int64]string{
+		2: "sticky session binding",
+		1: "ordered by priority, load factor, and least-recently-used order",
+		3: "ordered by priority, load factor, and least-recently-used order",
+	}
+	for _, candidate := range preview.Candidates {
+		if candidate.ScheduleReason != want[candidate.ID] {
+			t.Fatalf("candidate %d ScheduleReason = %q, want %q", candidate.ID, candidate.ScheduleReason, want[candidate.ID])
+		}
+		delete(want, candidate.ID)
+	}
+	if len(want) > 0 {
+		t.Fatalf("missing candidates: %+v", want)
+	}
+}
+
 func TestPreviewAccountSelectionReportsStoredStickyBindingWithoutMutation(t *testing.T) {
 	older := time.Now().Add(-time.Hour)
 	repo := newMemoryRepo()

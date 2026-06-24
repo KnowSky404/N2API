@@ -298,6 +298,7 @@ type SelectionCandidate struct {
 	LastTestStatus      string     `json:"lastTestStatus"`
 	LastTestError       string     `json:"lastTestError"`
 	ScheduleRank        int        `json:"scheduleRank"`
+	ScheduleReason      string     `json:"scheduleReason"`
 	Selected            bool       `json:"selected"`
 	StickyBound         bool       `json:"stickyBound"`
 	Schedulable         bool       `json:"schedulable"`
@@ -1277,6 +1278,7 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 	for index, account := range accounts {
 		candidate := selectionCandidate(account, index+1, index == 0, true, "")
 		candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
+		candidate.ScheduleReason = scheduleReason(candidate.Selected, candidate.StickyBound)
 		preview.Candidates = append(preview.Candidates, candidate)
 	}
 	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidates(ctx, model, accounts, excludedAccountIDs, now)...)
@@ -1364,6 +1366,16 @@ func selectionCandidate(account Account, scheduleRank int, selected bool, schedu
 		Schedulable:         schedulable,
 		UnschedulableReason: reason,
 	}
+}
+
+func scheduleReason(selected, stickyBound bool) string {
+	if stickyBound {
+		return "sticky session binding"
+	}
+	if selected {
+		return "selected by priority, load factor, and least-recently-used order"
+	}
+	return "ordered by priority, load factor, and least-recently-used order"
 }
 
 func (s *Service) stickySessionCandidates(ctx context.Context, accounts []Account, model, sessionID string) ([]Account, int64, error) {
