@@ -417,6 +417,21 @@ test('api keys page shows per-key usage distribution', () => {
   assert.match(apiKeysPage, /tokenRateRemaining/);
 });
 
+test('api keys page shows budget exceeded diagnostics', () => {
+  for (const label of ['Key budgets', 'Request budget exceeded', 'Token budget exceeded']) {
+    assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
+  }
+
+  assert.match(apiKeysPage, /request budget exceeded/);
+  assert.match(apiKeysPage, /token budget exceeded/);
+  assert.match(apiKeysPage, /key\.requestBudgetExceeded/);
+  assert.match(apiKeysPage, /key\.tokenBudgetExceeded/);
+  assert.doesNotMatch(apiKeysPage, /request budget full/);
+  assert.doesNotMatch(apiKeysPage, /token budget full/);
+  assert.match(adminState, /export async function updateAPIKeyBudgets/);
+  assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}\/budgets/);
+});
+
 test('api keys page filters key list locally', () => {
   for (const label of ['Search keys', 'Status filter', 'All keys', 'Active keys', 'Disabled keys', 'Revoked keys']) {
     assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);

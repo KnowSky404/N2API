@@ -103,8 +103,8 @@
       key.concurrencyBlocked ? 'concurrency full' : '',
       key.requestRateLimited ? 'request limit full' : '',
       key.tokenRateLimited ? 'token limit full' : '',
-      key.requestBudgetExceeded ? 'request budget full' : '',
-      key.tokenBudgetExceeded ? 'token budget full' : ''
+      key.requestBudgetExceeded ? 'request budget exceeded' : '',
+      key.tokenBudgetExceeded ? 'token budget exceeded' : ''
     ]
       .filter(Boolean)
       .join(' ')
@@ -722,10 +722,10 @@ All routable models
                 {/if}
               </p>
               {#if key.requestBudgetExceeded}
-                <p class="mt-1 text-xs font-medium text-amber-700">Request budget full</p>
+                <p class="mt-1 text-xs font-medium text-amber-700">Request budget exceeded</p>
               {/if}
               {#if key.tokenBudgetExceeded}
-                <p class="mt-1 text-xs font-medium text-amber-700">Token budget full</p>
+                <p class="mt-1 text-xs font-medium text-amber-700">Token budget exceeded</p>
               {/if}
             </div>
             <button
