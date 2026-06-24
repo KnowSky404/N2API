@@ -157,6 +157,25 @@ func TestGatewayDocumentationMentionsAPIKeyRename(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMentionsAPIKeyDisable(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"API keys can be temporarily disabled and re-enabled",
+			"disabled keys cannot authenticate gateway requests",
+			"remain visible for configuration and logs",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in API key disable documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

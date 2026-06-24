@@ -105,6 +105,8 @@ The API Keys page supports local search and status filtering by name, prefix, mo
 
 API key names can be renamed from the API Keys page without rotating or revealing the secret, so labels can be kept in sync with devices, agents, or usage purpose.
 
+API keys can be temporarily disabled and re-enabled without revoking or rotating the secret; disabled keys cannot authenticate gateway requests but remain visible for configuration and logs.
+
 Routing diagnostics can preview scheduler fallback without sending traffic. In Selection preview, set **Excluded account IDs** to a comma-separated list such as `7, 8` to simulate those provider accounts being unavailable; excluded accounts remain visible as blocked candidates with the reason `account excluded`. Routing preview also shows each candidate's active concurrency and effective account cap; candidates at a positive cap are marked **Concurrency full**. Each schedulable preview candidate includes a **Schedule reason** as diagnostic text, such as sticky session binding or priority/load/least-recently-used order; this explains the current rank and does not change scheduler behavior.
 
 ## Gateway Runtime Limits
