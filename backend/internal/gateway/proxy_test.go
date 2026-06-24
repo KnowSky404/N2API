@@ -1093,6 +1093,58 @@ func TestProxyRejectsWhenAPIKeyRequestRateLimitIsExceeded(t *testing.T) {
 	}
 }
 
+func TestAPIKeyRateLimiterSnapshotReportsActiveWindowOnly(t *testing.T) {
+	now := time.Date(2026, 6, 24, 10, 15, 12, 0, time.UTC)
+	limiter := newAPIKeyRateLimiter(10, func() time.Time { return now })
+	if _, ok := limiter.Allow(42, 0); !ok {
+		t.Fatal("first request rejected")
+	}
+	if _, ok := limiter.Allow(42, 0); !ok {
+		t.Fatal("second request rejected")
+	}
+	limiter.keys[7] = apiKeyRateWindow{
+		start: now.Add(-time.Minute).Truncate(time.Minute),
+		count: 9,
+	}
+
+	snapshot := limiter.Snapshot()
+
+	if snapshot[42] != 2 {
+		t.Fatalf("snapshot[42] = %d, want 2", snapshot[42])
+	}
+	if _, ok := snapshot[7]; ok {
+		t.Fatalf("snapshot includes stale key 7: %+v", snapshot)
+	}
+	snapshot[42] = 99
+	if got := limiter.Snapshot()[42]; got != 2 {
+		t.Fatalf("mutated snapshot changed limiter count to %d, want 2", got)
+	}
+}
+
+func TestAPIKeyTokenLimiterSnapshotReportsActiveWindowOnly(t *testing.T) {
+	now := time.Date(2026, 6, 24, 10, 15, 12, 0, time.UTC)
+	limiter := newAPIKeyTokenLimiter(100, func() time.Time { return now })
+	limiter.Record(42, 12, 0)
+	limiter.Record(42, 8, 0)
+	limiter.keys[7] = apiKeyTokenWindow{
+		start:  now.Add(-time.Minute).Truncate(time.Minute),
+		tokens: 90,
+	}
+
+	snapshot := limiter.Snapshot()
+
+	if snapshot[42] != 20 {
+		t.Fatalf("snapshot[42] = %d, want 20", snapshot[42])
+	}
+	if _, ok := snapshot[7]; ok {
+		t.Fatalf("snapshot includes stale key 7: %+v", snapshot)
+	}
+	snapshot[42] = 99
+	if got := limiter.Snapshot()[42]; got != 20 {
+		t.Fatalf("mutated snapshot changed limiter count to %d, want 20", got)
+	}
+}
+
 func TestProxyUsesAPIKeyRequestRateLimitOverride(t *testing.T) {
 	var transportCalls int32
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{

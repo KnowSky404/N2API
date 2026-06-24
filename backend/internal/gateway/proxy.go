@@ -66,6 +66,11 @@ type APIKeyConcurrencySnapshotProvider interface {
 	APIKeyConcurrencySnapshot() map[int64]int
 }
 
+type APIKeyRateSnapshotProvider interface {
+	APIKeyRequestRateSnapshot() map[int64]int
+	APIKeyTokenRateSnapshot() map[int64]int
+}
+
 type ExposedModel struct {
 	ID      string
 	OwnedBy string
@@ -439,6 +444,20 @@ func (p *Proxy) APIKeyConcurrencySnapshot() map[int64]int {
 	return p.keyLimiter.Snapshot()
 }
 
+func (p *Proxy) APIKeyRequestRateSnapshot() map[int64]int {
+	if p.rateLimiter == nil {
+		return map[int64]int{}
+	}
+	return p.rateLimiter.Snapshot()
+}
+
+func (p *Proxy) APIKeyTokenRateSnapshot() map[int64]int {
+	if p.tokenLimiter == nil {
+		return map[int64]int{}
+	}
+	return p.tokenLimiter.Snapshot()
+}
+
 func (p *Proxy) tryAcquireAPIKeySlot(keyID int64, limit int) (func(), bool) {
 	if p.keyLimiter == nil || keyID <= 0 {
 		return func() {}, true
@@ -689,6 +708,23 @@ func (l *apiKeyRateLimiter) effectiveLimit(limit int) int {
 	return l.defaultLimit
 }
 
+func (l *apiKeyRateLimiter) Snapshot() map[int64]int {
+	if l == nil {
+		return map[int64]int{}
+	}
+	now := l.now()
+	windowStart := now.Truncate(time.Minute)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	snapshot := make(map[int64]int, len(l.keys))
+	for keyID, window := range l.keys {
+		if window.start.Equal(windowStart) && window.count > 0 {
+			snapshot[keyID] = window.count
+		}
+	}
+	return snapshot
+}
+
 type apiKeyTokenLimiter struct {
 	defaultLimit int
 	now          func() time.Time
@@ -753,6 +789,23 @@ func (l *apiKeyTokenLimiter) effectiveLimit(limit int) int {
 		return limit
 	}
 	return l.defaultLimit
+}
+
+func (l *apiKeyTokenLimiter) Snapshot() map[int64]int {
+	if l == nil {
+		return map[int64]int{}
+	}
+	now := l.now()
+	windowStart := now.Truncate(time.Minute)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	snapshot := make(map[int64]int, len(l.keys))
+	for keyID, window := range l.keys {
+		if window.start.Equal(windowStart) && window.tokens > 0 {
+			snapshot[keyID] = window.tokens
+		}
+	}
+	return snapshot
 }
 
 func secondsUntilNextMinute(now time.Time) int {
