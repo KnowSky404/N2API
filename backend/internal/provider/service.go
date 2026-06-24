@@ -46,6 +46,7 @@ const (
 
 const (
 	RoutingPoolErrorExhausted = "routing_pool_exhausted"
+	RoutingPoolErrorCycle     = "routing_pool_cycle"
 )
 
 const (
@@ -1545,7 +1546,7 @@ func (s *Service) stickySessionCandidatesInRoutingPool(ctx context.Context, rout
 func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	pools, chainLabel, err := s.routingPoolChain(ctx, primaryPoolID)
 	if err != nil {
-		return SelectedAccount{RoutingPoolError: err.Error()}, err
+		return SelectedAccount{RoutingPoolError: routingPoolDiagnosticError(err)}, err
 	}
 
 	model = strings.TrimSpace(model)
@@ -1658,6 +1659,15 @@ func moreSpecificSelectionError(current, next error) error {
 		return next
 	}
 	return current
+}
+
+func routingPoolDiagnosticError(err error) string {
+	switch {
+	case errors.Is(err, ErrRoutingPoolCycle):
+		return RoutingPoolErrorCycle
+	default:
+		return strings.TrimSpace(err.Error())
+	}
 }
 
 func stickySessionHashCandidates(accounts []Account, sessionID string) []Account {

@@ -1720,8 +1720,12 @@ func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
 	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true, FallbackPoolID: ptrInt64(1)}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	if _, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5"); !errors.Is(err, ErrRoutingPoolCycle) {
+	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if !errors.Is(err, ErrRoutingPoolCycle) {
 		t.Fatalf("cycle error = %v, want ErrRoutingPoolCycle", err)
+	}
+	if selected.RoutingPoolError != RoutingPoolErrorCycle {
+		t.Fatalf("routing pool error = %q, want %s", selected.RoutingPoolError, RoutingPoolErrorCycle)
 	}
 }
 
