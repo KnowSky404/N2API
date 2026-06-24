@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -417,7 +418,11 @@ func (r *AdminRepository) TouchAPIKey(ctx context.Context, id int64, usedAt time
 	return nil
 }
 
-func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]admin.RequestLog, error) {
+func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error) {
+	whereSQL, args := requestLogFilterSQL(filter)
+	args = append(args, filter.Limit)
+	limitParam := len(args)
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 			l.id,
@@ -448,9 +453,10 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 		FROM request_logs l
 		LEFT JOIN client_api_keys k ON k.id = l.client_key_id
 		LEFT JOIN provider_accounts a ON a.id = l.provider_account_id
+		`+whereSQL+`
 		ORDER BY l.created_at DESC, l.id DESC
-		LIMIT $1
-	`, limit)
+		LIMIT $`+strconv.Itoa(limitParam)+`
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -494,6 +500,46 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, limit int) ([]adm
 		return nil, err
 	}
 	return logs, nil
+}
+
+func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
+	var conditions []string
+	var args []any
+
+	switch filter.StatusClass {
+	case admin.RequestLogStatusSuccess:
+		conditions = append(conditions, "l.status_code >= 200 AND l.status_code < 400")
+	case admin.RequestLogStatusClientError:
+		conditions = append(conditions, "l.status_code >= 400 AND l.status_code < 500")
+	case admin.RequestLogStatusServerError:
+		conditions = append(conditions, "l.status_code >= 500")
+	}
+
+	if filter.Query != "" {
+		args = append(args, filter.Query)
+		param := "$" + strconv.Itoa(len(args))
+		conditions = append(conditions, `(
+			l.request_id ILIKE '%' || `+param+` || '%'
+			OR COALESCE(k.name, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(k.prefix, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.provider, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.provider_account_type, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.provider_account_name, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(a.display_name, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(a.name, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.model, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.session_id, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.route, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.method, '') ILIKE '%' || `+param+` || '%'
+			OR COALESCE(l.error, '') ILIKE '%' || `+param+` || '%'
+			OR l.status_code::text ILIKE '%' || `+param+` || '%'
+		)`)
+	}
+
+	if len(conditions) == 0 {
+		return "", nil
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
 }
 
 func (r *AdminRepository) GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (admin.UsageSummary, error) {

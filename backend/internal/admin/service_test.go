@@ -337,12 +337,21 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		{ID: 1, RequestID: "req_1", Route: "/v1/models", StatusCode: 503},
 	}
 
-	logs, err := service.ListRequestLogs(context.Background(), 0)
+	logs, err := service.ListRequestLogs(context.Background(), RequestLogFilter{
+		Query:       "  gpt-5  ",
+		StatusClass: "server_error",
+	})
 	if err != nil {
 		t.Fatalf("ListRequestLogs returned error: %v", err)
 	}
-	if repo.lastLogLimit != 50 {
-		t.Fatalf("repository limit = %d, want default 50", repo.lastLogLimit)
+	if repo.lastLogFilter.Limit != 50 {
+		t.Fatalf("repository limit = %d, want default 50", repo.lastLogFilter.Limit)
+	}
+	if repo.lastLogFilter.Query != "gpt-5" {
+		t.Fatalf("repository query = %q, want gpt-5", repo.lastLogFilter.Query)
+	}
+	if repo.lastLogFilter.StatusClass != RequestLogStatusServerError {
+		t.Fatalf("repository status class = %q, want %q", repo.lastLogFilter.StatusClass, RequestLogStatusServerError)
 	}
 	if len(logs) != 2 || logs[0].RequestID != "req_2" {
 		t.Fatalf("logs = %+v", logs)
@@ -366,11 +375,21 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		t.Fatal("PricingMatched = false, want true")
 	}
 
-	if _, err := service.ListRequestLogs(context.Background(), 500); err != nil {
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Limit: 500}); err != nil {
 		t.Fatalf("ListRequestLogs returned error: %v", err)
 	}
-	if repo.lastLogLimit != 200 {
-		t.Fatalf("repository limit = %d, want max 200", repo.lastLogLimit)
+	if repo.lastLogFilter.Limit != 200 {
+		t.Fatalf("repository limit = %d, want max 200", repo.lastLogFilter.Limit)
+	}
+	if repo.lastLogFilter.StatusClass != RequestLogStatusAll {
+		t.Fatalf("repository status class = %q, want all", repo.lastLogFilter.StatusClass)
+	}
+
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{StatusClass: "bad"}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs invalid status error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Query: strings.Repeat("x", 201)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long query error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -744,7 +763,7 @@ type memoryRepo struct {
 	nextAPIKeyID     int64
 	touchErr         error
 	logs             []RequestLog
-	lastLogLimit     int
+	lastLogFilter    RequestLogFilter
 	usageSummary     UsageSummary
 	lastUsageSince   time.Time
 	lastUsageGroupBy string
@@ -912,8 +931,9 @@ func (r *memoryRepo) TouchAPIKey(_ context.Context, id int64, usedAt time.Time) 
 	return nil
 }
 
-func (r *memoryRepo) ListRequestLogs(_ context.Context, limit int) ([]RequestLog, error) {
-	r.lastLogLimit = limit
+func (r *memoryRepo) ListRequestLogs(_ context.Context, filter RequestLogFilter) ([]RequestLog, error) {
+	r.lastLogFilter = filter
+	limit := filter.Limit
 	if limit > len(r.logs) {
 		limit = len(r.logs)
 	}

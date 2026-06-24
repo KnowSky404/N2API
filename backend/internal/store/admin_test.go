@@ -76,6 +76,37 @@ func TestListRequestLogsSelectsGatewayFallbackDiagnostics(t *testing.T) {
 	}
 }
 
+func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
+	whereSQL, args := requestLogFilterSQL(admin.RequestLogFilter{
+		Query:       "codex",
+		StatusClass: admin.RequestLogStatusServerError,
+	})
+	if len(args) != 1 || args[0] != "codex" {
+		t.Fatalf("args = %+v, want single codex arg", args)
+	}
+	for _, want := range []string{
+		"ILIKE '%' || $",
+		"l.status_code >= 500",
+		"l.request_id",
+		"l.error",
+		"l.status_code::text",
+	} {
+		if !strings.Contains(whereSQL, want) {
+			t.Fatalf("requestLogFilterSQL missing %q in %s", want, whereSQL)
+		}
+	}
+
+	whereSQL, _ = requestLogFilterSQL(admin.RequestLogFilter{StatusClass: admin.RequestLogStatusClientError})
+	if !strings.Contains(whereSQL, "l.status_code >= 400 AND l.status_code < 500") {
+		t.Fatalf("client error filter SQL = %s", whereSQL)
+	}
+
+	whereSQL, _ = requestLogFilterSQL(admin.RequestLogFilter{StatusClass: admin.RequestLogStatusSuccess})
+	if !strings.Contains(whereSQL, "l.status_code >= 200 AND l.status_code < 400") {
+		t.Fatalf("success filter SQL = %s", whereSQL)
+	}
+}
+
 func TestUsageSummaryProviderAccountGroupPrefersLoggedNameSnapshot(t *testing.T) {
 	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL("provider_account")
 	if !ok {

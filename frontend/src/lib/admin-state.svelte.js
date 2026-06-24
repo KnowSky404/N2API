@@ -309,10 +309,12 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
+  query: '',
+  statusClass: 'all',
   items: []
 });
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
@@ -785,6 +787,8 @@ function clearRequestLogs() {
   replaceState(requestLogs, {
     loading: false,
     error: '',
+    query: '',
+    statusClass: 'all',
     items: []
   });
 }
@@ -2177,7 +2181,15 @@ export async function loadRequestLogs() {
   requestLogs.error = '';
 
   try {
-    const payload = await requestJSON('/api/admin/request-logs?limit=50');
+    const params = new URLSearchParams({ limit: '50' });
+    const query = requestLogs.query.trim();
+    if (query) {
+      params.set('q', query);
+    }
+    if (requestLogs.statusClass && requestLogs.statusClass !== 'all') {
+      params.set('statusClass', requestLogs.statusClass);
+    }
+    const payload = await requestJSON(`/api/admin/request-logs?${params.toString()}`);
     if (!isCurrentAuthenticated(version)) return;
     requestLogs.items = payload.logs ?? [];
   } catch (error) {

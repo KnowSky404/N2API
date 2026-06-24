@@ -181,6 +181,16 @@ test('request logs page shows gateway fallback diagnostics', () => {
   assert.match(adminState, /gatewayFallbackCount/);
 });
 
+test('request logs page filters by search and status class', () => {
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.query\}/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.statusClass\}/);
+  assert.match(requestLogsPage, /statusClass/);
+  assert.match(adminState, /params\.set\('q'/);
+  assert.match(adminState, /params\.set\('statusClass'/);
+  assert.match(adminState, /requestLogs\.query/);
+  assert.match(adminState, /requestLogs\.statusClass/);
+});
+
 test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /N2API Routing Diagnostics/);
   assert.match(modelsPage, /Routing diagnostics/);

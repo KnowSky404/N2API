@@ -11,15 +11,20 @@ import (
 )
 
 const (
-	defaultSessionTTL         = 7 * 24 * time.Hour
-	sessionTokenName          = "admin_session"
-	apiKeyTokenName           = "n2api"
-	defaultModel              = "gpt-4.1"
-	defaultUsagePricingModel  = "gpt-5"
-	maxModels                 = 100
-	maxModelNameLen           = 128
-	APIKeyModelPolicyAll      = "all"
-	APIKeyModelPolicySelected = "selected"
+	defaultSessionTTL           = 7 * 24 * time.Hour
+	sessionTokenName            = "admin_session"
+	apiKeyTokenName             = "n2api"
+	defaultModel                = "gpt-4.1"
+	defaultUsagePricingModel    = "gpt-5"
+	maxModels                   = 100
+	maxModelNameLen             = 128
+	maxRequestLogQueryLen       = 200
+	APIKeyModelPolicyAll        = "all"
+	APIKeyModelPolicySelected   = "selected"
+	RequestLogStatusAll         = "all"
+	RequestLogStatusSuccess     = "success"
+	RequestLogStatusClientError = "client_error"
+	RequestLogStatusServerError = "server_error"
 )
 
 var (
@@ -84,6 +89,12 @@ type RequestLog struct {
 	GatewayAttemptCount   int       `json:"gatewayAttemptCount"`
 	GatewayFallbackCount  int       `json:"gatewayFallbackCount"`
 	CreatedAt             time.Time `json:"createdAt"`
+}
+
+type RequestLogFilter struct {
+	Limit       int
+	Query       string
+	StatusClass string
 }
 
 type UsageSummary struct {
@@ -205,7 +216,7 @@ type Repository interface {
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
-	ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error)
+	ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error)
 	GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (UsagePricing, error)
 	SaveUsagePricing(ctx context.Context, pricing UsagePricing) (UsagePricing, error)
@@ -417,14 +428,27 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (APIKey
 	return key, nil
 }
 
-func (s *Service) ListRequestLogs(ctx context.Context, limit int) ([]RequestLog, error) {
-	if limit <= 0 {
-		limit = 50
+func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error) {
+	if filter.Limit <= 0 {
+		filter.Limit = 50
 	}
-	if limit > 200 {
-		limit = 200
+	if filter.Limit > 200 {
+		filter.Limit = 200
 	}
-	return s.repo.ListRequestLogs(ctx, limit)
+	filter.Query = strings.TrimSpace(filter.Query)
+	if len(filter.Query) > maxRequestLogQueryLen {
+		return nil, ErrInvalidInput
+	}
+	filter.StatusClass = strings.TrimSpace(filter.StatusClass)
+	if filter.StatusClass == "" {
+		filter.StatusClass = RequestLogStatusAll
+	}
+	switch filter.StatusClass {
+	case RequestLogStatusAll, RequestLogStatusSuccess, RequestLogStatusClientError, RequestLogStatusServerError:
+	default:
+		return nil, ErrInvalidInput
+	}
+	return s.repo.ListRequestLogs(ctx, filter)
 }
 
 func (s *Service) GetUsageSummary(ctx context.Context, rangeName, groupBy string) (UsageSummary, error) {

@@ -48,6 +48,12 @@
     { value: 'provider_account', label: 'Provider account' },
     { value: 'session', label: 'Session' }
   ];
+  const requestLogStatusClasses = [
+    { value: 'all', label: 'All statuses' },
+    { value: 'success', label: 'Success' },
+    { value: 'client_error', label: 'Client errors' },
+    { value: 'server_error', label: 'Server errors' }
+  ];
 
   /** @param {string} range */
   function summaryForRange(range) {
@@ -312,14 +318,35 @@
   Recent OpenAI-compatible gateway requests.
 </p>
     </div>
-    <button
-class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-type="button"
-disabled={requestLogs.loading}
-onclick={loadRequestLogs}
-    >
-{requestLogs.loading ? 'Refreshing' : 'Refresh'}
-    </button>
+    <div class="flex flex-wrap items-end gap-3">
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Search
+        <input
+          class="mt-2 w-64 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.query}
+          placeholder="key, account, model, route, error"
+        />
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Status
+        <select
+          class="mt-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.statusClass}
+        >
+          {#each requestLogStatusClasses as statusClass}
+            <option value={statusClass.value}>{statusClass.label}</option>
+          {/each}
+        </select>
+      </label>
+      <button
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={requestLogs.loading}
+        onclick={loadRequestLogs}
+      >
+        {requestLogs.loading ? 'Refreshing' : 'Refresh'}
+      </button>
+    </div>
   </div>
 
   {#if requestLogs.error}

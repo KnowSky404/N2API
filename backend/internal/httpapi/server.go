@@ -36,7 +36,7 @@ type AdminService interface {
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
-	ListRequestLogs(ctx context.Context, limit int) ([]admin.RequestLog, error)
+	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (admin.UsagePricing, error)
 	UpdateUsagePricing(ctx context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error)
@@ -382,8 +382,17 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			limit = parsed
 		}
-		logs, err := admins.ListRequestLogs(r.Context(), limit)
+		filter := admin.RequestLogFilter{
+			Limit:       limit,
+			Query:       r.URL.Query().Get("q"),
+			StatusClass: r.URL.Query().Get("statusClass"),
+		}
+		logs, err := admins.ListRequestLogs(r.Context(), filter)
 		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}

@@ -40,6 +40,7 @@ func (s fakeAutoTestStatusSource) ProviderAccountAutoTestStatus() provider.AutoT
 type fakeAdminService struct {
 	keys               []admin.APIKey
 	logs               []admin.RequestLog
+	requestLogFilter   admin.RequestLogFilter
 	errorOnEmptyLogout bool
 	logoutTokens       []string
 	modelSettings      admin.ModelSettings
@@ -235,7 +236,12 @@ func (s *fakeAdminService) UpdateAPIKeyLimits(_ context.Context, id int64, reque
 	return admin.APIKey{}, admin.ErrNotFound
 }
 
-func (s *fakeAdminService) ListRequestLogs(_ context.Context, limit int) ([]admin.RequestLog, error) {
+func (s *fakeAdminService) ListRequestLogs(_ context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error) {
+	s.requestLogFilter = filter
+	if filter.StatusClass == "bad" {
+		return nil, admin.ErrInvalidInput
+	}
+	limit := filter.Limit
 	if limit > len(s.logs) {
 		limit = len(s.logs)
 	}
@@ -2980,7 +2986,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 		t.Fatalf("status = %d, want 401", recorder.Code)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20", nil)
+	admins := newFakeAdminService()
+	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -2998,8 +3006,24 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	if len(body.Logs) != 1 || body.Logs[0].RequestID != "req_3" {
 		t.Fatalf("logs = %+v", body.Logs)
 	}
+	if admins.requestLogFilter.Limit != 20 || admins.requestLogFilter.Query != "codex" || admins.requestLogFilter.StatusClass != admin.RequestLogStatusServerError {
+		t.Fatalf("request log filter = %+v, want limit 20 query codex status server_error", admins.requestLogFilter)
+	}
 	if body.Logs[0].GatewayAttemptCount != 2 || body.Logs[0].GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", body.Logs[0].GatewayAttemptCount, body.Logs[0].GatewayFallbackCount)
+	}
+}
+
+func TestListRequestLogsRejectsInvalidFilter(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?statusClass=bad", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
 	}
 }
 
