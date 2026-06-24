@@ -1,8 +1,11 @@
 <script>
   import {
+    apiKeys,
     createRoutingPool,
     deleteRoutingPool,
     formatDate,
+    getSchedulableProviderAccounts,
+    loadKeys,
     loadProviderAccounts,
     loadRoutingPools,
     login,
@@ -46,6 +49,7 @@
       requested = true;
       void loadRoutingPools();
       void loadProviderAccounts();
+      void loadKeys();
     }
   });
 
@@ -138,6 +142,17 @@
       .filter((account) => account.accountId > 0)
       .sort((a, b) => a.priority - b.priority || a.accountId - b.accountId);
     void replaceRoutingPoolAccounts(pool.id, accounts);
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function boundAPIKeyCount(pool) {
+    return apiKeys.items.filter((key) => Number(key.routingPoolId ?? 0) === pool.id && !key.revokedAt).length;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function schedulablePoolMemberCount(pool) {
+    const accountIDs = new Set((pool.accounts ?? []).map((account) => Number(account.accountId)));
+    return getSchedulableProviderAccounts(providerAccounts.items).filter((account) => accountIDs.has(account.id)).length;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
@@ -319,6 +334,21 @@
                 Save membership
               </button>
             </div>
+
+            <dl class="mt-4 grid gap-3 sm:grid-cols-3">
+              <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+                <dt class="text-xs font-medium uppercase text-[#6e6e6e]">Pool members</dt>
+                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{(pool.accounts ?? []).length}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+                <dt class="text-xs font-medium uppercase text-[#6e6e6e]">Schedulable members</dt>
+                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulablePoolMemberCount(pool)}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+                <dt class="text-xs font-medium uppercase text-[#6e6e6e]">Bound API keys</dt>
+                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{apiKeys.loading ? 'Loading' : boundAPIKeyCount(pool)}</dd>
+              </div>
+            </dl>
 
             {#if providerAccounts.loading}
               <p class="mt-4 text-sm text-[#6e6e6e]">Loading provider accounts...</p>
