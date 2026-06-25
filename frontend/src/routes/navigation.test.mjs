@@ -57,6 +57,9 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /schedulablePoolMemberCount\(pool\)/);
   assert.match(poolsPage, /pool\.fallbackPoolId/);
   assert.match(poolsPage, /pool\.id === candidate\.id/);
+  assert.match(poolsPage, /fallbackPoolHref\(pool\)/);
+  assert.match(poolsPage, /href=\{fallbackPoolHref\(pool\)\}/);
+  assert.match(poolsPage, /routingPoolId=\$\{encodeURIComponent/);
   assert.match(poolsPage, /routingPools\.newPoolFallbackPoolId/);
   assert.match(poolsPage, /Create with no fallback/);
   assert.match(poolsPage, /poolAccountRows\(pool\)/);

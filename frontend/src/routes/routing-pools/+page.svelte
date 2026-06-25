@@ -167,6 +167,13 @@
     if (!target.enabled) return 'Fallback pool is disabled.';
     return '';
   }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function fallbackPoolHref(pool) {
+    const fallbackID = Number(pool.fallbackPoolId ?? 0);
+    if (fallbackID <= 0) return '';
+    return `/routing-pools?routingPoolId=${encodeURIComponent(String(fallbackID))}`;
+  }
 </script>
 
 <svelte:head>
@@ -310,6 +317,14 @@
                     <option value={candidate.id} disabled={pool.id === candidate.id}>{candidate.name}</option>
                   {/each}
                 </select>
+                {#if fallbackPoolHref(pool)}
+                  <a
+                    class="mt-2 inline-flex text-xs font-medium text-[#0a7a5e] underline-offset-2 hover:underline"
+                    href={fallbackPoolHref(pool)}
+                  >
+                    Open fallback pool
+                  </a>
+                {/if}
                 {#if fallbackWarning(pool)}
                   <span class="mt-2 block rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">{fallbackWarning(pool)}</span>
                 {/if}
