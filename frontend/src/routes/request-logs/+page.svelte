@@ -171,6 +171,28 @@
     return usage.summaries[`${range}:${usage.groupBy}`] ?? null;
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
+  function usageRowHref(row) {
+    const id = String(row?.id ?? '');
+    if (!id || id === 'unknown' || id === 'none') return '';
+    if (usage.groupBy === 'model') return `/request-logs?model=${encodeURIComponent(id)}`;
+    if (usage.groupBy === 'client_key' && /^[1-9]\d*$/.test(id)) {
+      return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
+    }
+    if (usage.groupBy === 'provider_account') {
+      const accountId = id.split('/').pop() ?? '';
+      return /^[1-9]\d*$/.test(accountId) ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
+    }
+    if (usage.groupBy === 'routing_pool' && /^[1-9]\d*$/.test(id)) {
+      return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
+    }
+    if (usage.groupBy === 'routing_pool_chain') {
+      return `/request-logs?routingPoolChain=${encodeURIComponent(id)}`;
+    }
+    if (usage.groupBy === 'session') return `/request-logs?sessionId=${encodeURIComponent(id)}`;
+    return '';
+  }
+
   /** @param {Event & { currentTarget: HTMLSelectElement }} event */
   function changeUsageGroup(event) {
     loadUsageSummary(usage.range, event.currentTarget.value);
@@ -329,7 +351,15 @@
         {:else}
           {#each usage.current.rows as row}
             <tr>
-              <td class="px-4 py-3 font-medium text-[#0d0d0d]">{row.label || row.id}</td>
+              <td class="px-4 py-3 font-medium text-[#0d0d0d]">
+                {#if usageRowHref(row)}
+                  <a class="max-w-[260px] truncate underline-offset-2 hover:underline" href={usageRowHref(row)}>
+                    {row.label || row.id}
+                  </a>
+                {:else}
+                  {row.label || row.id}
+                {/if}
+              </td>
               <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
               <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.inputTokens)}</td>
               <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.outputTokens)}</td>

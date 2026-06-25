@@ -206,6 +206,14 @@ test('request logs page includes usage accounting UI', () => {
   for (const label of ['Usage summary', 'Estimated cost', 'Input tokens', 'Output tokens', 'Pricing', 'Session']) {
     assert.match(requestLogsPage, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
   }
+  assert.match(requestLogsPage, /function usageRowHref/);
+  assert.match(requestLogsPage, /usage\.groupBy === 'model'/);
+  assert.match(requestLogsPage, /usage\.groupBy === 'client_key'/);
+  assert.match(requestLogsPage, /usage\.groupBy === 'provider_account'/);
+  assert.match(requestLogsPage, /usage\.groupBy === 'routing_pool'/);
+  assert.match(requestLogsPage, /usage\.groupBy === 'routing_pool_chain'/);
+  assert.match(requestLogsPage, /usage\.groupBy === 'session'/);
+  assert.match(requestLogsPage, /href=\{usageRowHref\(row\)\}/);
 });
 
 test('request logs page formats gateway error codes for scanning', () => {
