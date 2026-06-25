@@ -234,6 +234,8 @@ test('request logs page shows gateway fallback diagnostics', () => {
   assert.match(requestLogsPage, /log\.gatewayFallbackCount/);
   assert.match(requestLogsPage, /log\.routingPoolFallbackDepth/);
   assert.match(requestLogsPage, /log\.routingPoolFallbackChain/);
+  assert.match(requestLogsPage, /href=\{`\/request-logs\?routingPoolChain=\$\{encodeURIComponent\(log\.routingPoolFallbackChain\)\}`\}/);
+  assert.match(requestLogsPage, /View fallback chain logs/);
   assert.match(requestLogsPage, /log\.routingPoolError/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolError\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolChain\}/);

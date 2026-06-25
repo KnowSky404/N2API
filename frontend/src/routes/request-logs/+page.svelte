@@ -621,9 +621,14 @@
                 <p class="mt-1 text-xs text-[#6e6e6e]">Fallback depth {log.routingPoolFallbackDepth}</p>
               {/if}
               {#if log.routingPoolFallbackChain}
-                <p class="mt-1 max-w-[180px] truncate text-xs text-[#6e6e6e]" title={log.routingPoolFallbackChain}>
+                <a
+                  class="mt-1 block max-w-[180px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]"
+                  href={`/request-logs?routingPoolChain=${encodeURIComponent(log.routingPoolFallbackChain)}`}
+                  title={log.routingPoolFallbackChain}
+                  aria-label="View fallback chain logs"
+                >
                   Fallback chain {log.routingPoolFallbackChain}
-                </p>
+                </a>
               {/if}
             </div>
           {:else}
