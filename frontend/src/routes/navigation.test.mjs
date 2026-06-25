@@ -402,6 +402,9 @@ test('providers page shows provider account usage distribution', () => {
     assert.match(providersPage, new RegExp(label.replace(' ', '\\s+')), `providers page should include ${label}`);
   }
 
+  assert.match(providersPage, /providerUsageHref/);
+  assert.match(providersPage, /providerAccountId=\$\{encodeURIComponent/);
+  assert.match(providersPage, /href=\{providerUsageHref\(row\)\}/);
   assert.match(providersPage, /loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(providersPage, /usage24hProviderAccounts/);
   assert.match(providersPage, /formatTokens/);
@@ -415,6 +418,9 @@ test('api keys page shows per-key usage distribution', () => {
 
   assert.match(apiKeysPage, /loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(apiKeysPage, /usage24hClientKeys/);
+  assert.match(apiKeysPage, /clientKeyUsageHref/);
+  assert.match(apiKeysPage, /clientKeyId=\$\{encodeURIComponent/);
+  assert.match(apiKeysPage, /href=\{clientKeyUsageHref\(row\)\}/);
   assert.match(apiKeysPage, /formatTokens/);
   assert.match(apiKeysPage, /formatCostMicrousd/);
   assert.match(apiKeysPage, /keyConcurrencyLimitLabel/);

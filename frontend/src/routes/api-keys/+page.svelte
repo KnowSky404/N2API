@@ -72,6 +72,13 @@
     }
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
+  function clientKeyUsageHref(row) {
+    const id = String(row.id ?? '').split('/').pop() ?? '';
+    if (!/^[1-9]\d*$/.test(id)) return '';
+    return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
+  }
+
   $effect(() => {
     if (!session.authenticated) {
       modelRoutingRequested = false;
@@ -347,7 +354,15 @@ All routable models
           <tbody class="divide-y divide-[#ededed]">
             {#each usage24hClientKeys.rows.slice(0, 8) as row}
               <tr>
-                <td class="px-4 py-3 font-medium text-[#0d0d0d]">{row.label || row.id}</td>
+                <td class="px-4 py-3 font-medium text-[#0d0d0d]">
+                  {#if clientKeyUsageHref(row)}
+                    <a class="inline-block max-w-[260px] truncate underline-offset-2 hover:underline" href={clientKeyUsageHref(row)}>
+                      {row.label || row.id}
+                    </a>
+                  {:else}
+                    {row.label || row.id}
+                  {/if}
+                </td>
                 <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
                 <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
                 <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>

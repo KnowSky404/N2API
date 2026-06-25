@@ -100,6 +100,13 @@
     }
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
+  function providerUsageHref(row) {
+    const id = String(row.id ?? '').split('/').pop() ?? '';
+    if (!/^[1-9]\d*$/.test(id)) return '';
+    return `/request-logs?providerAccountId=${encodeURIComponent(id)}`;
+  }
+
   $effect(() => {
     if (!session.authenticated) {
       providerUsageRequested = false;
@@ -459,7 +466,15 @@ class={[
           <tbody class="divide-y divide-[#ededed]">
             {#each usage24hProviderAccounts.rows.slice(0, 8) as row}
               <tr>
-                <td class="px-4 py-3 font-medium text-[#0d0d0d]">{row.label || row.id}</td>
+                <td class="px-4 py-3 font-medium text-[#0d0d0d]">
+                  {#if providerUsageHref(row)}
+                    <a class="inline-block max-w-[260px] truncate underline-offset-2 hover:underline" href={providerUsageHref(row)}>
+                      {row.label || row.id}
+                    </a>
+                  {:else}
+                    {row.label || row.id}
+                  {/if}
+                </td>
                 <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
                 <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
                 <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
