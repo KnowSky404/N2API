@@ -395,6 +395,7 @@ test('providers page summarizes account scheduling capacity', () => {
   assert.match(providersPage, /getUnschedulableProviderAccountSummary/);
   assert.match(providersPage, /schedulableProviderAccounts\.length/);
   assert.match(providersPage, /unschedulableProviderAccountSummary/);
+  assert.match(providersPage, /href=\{`\/routing-pools\?routingPoolId=\$\{pool\.id\}`\}/);
 });
 
 test('providers page shows provider account usage distribution', () => {

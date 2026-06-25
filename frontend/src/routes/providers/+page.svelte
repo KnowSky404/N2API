@@ -991,7 +991,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
               {#each accountPools as pool}
                 <a
                   class="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#3c3c3c] hover:bg-[#e8f5f0] hover:text-[#0a7a5e]"
-                  href={`/routing-pools#routing-pool-${pool.id}`}
+                  href={`/routing-pools?routingPoolId=${pool.id}`}
                   title={`Open routing pool ${pool.name}. Pool priority ${accountRoutingPoolPriority(pool, account.id)}`}
                 >
                   <span class="truncate">{pool.name}</span>
