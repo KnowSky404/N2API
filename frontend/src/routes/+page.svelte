@@ -88,6 +88,20 @@
     }
     return '';
   }
+
+  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  function dashboardLogHref(log) {
+    const params = new URLSearchParams();
+    if (log.clientKeyId) params.set('clientKeyId', String(log.clientKeyId));
+    if (log.providerAccountId) params.set('providerAccountId', String(log.providerAccountId));
+    if (log.routingPoolId) params.set('routingPoolId', String(log.routingPoolId));
+    if (log.model) params.set('model', log.model);
+    if (log.sessionId) params.set('sessionId', log.sessionId);
+
+    const query = params.toString();
+    if (!query) return '/request-logs';
+    return `/request-logs?${query}`;
+  }
 </script>
 
 <svelte:head>
@@ -392,7 +406,9 @@
   <div class="divide-y divide-[#ededed]">
     {#each requestLogs.items.slice(0, 5) as log}
 <div class="grid gap-1 bg-white p-4 text-sm sm:grid-cols-[1fr_auto]">
-  <span class="font-mono text-[13px] text-[#0d0d0d]">{log.route}</span>
+  <a class="font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline" href={dashboardLogHref(log)}>
+    {log.route}
+  </a>
   <span class="tabular-nums text-[#6e6e6e]">{log.statusCode} · {log.latencyMs}ms</span>
 </div>
     {/each}

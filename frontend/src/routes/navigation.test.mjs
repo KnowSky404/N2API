@@ -566,6 +566,16 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(dashboardPage, /formatCostMicrousd/);
 });
 
+test('dashboard recent activity links to filtered request logs', () => {
+  assert.match(dashboardPage, /function dashboardLogHref/);
+  assert.match(dashboardPage, /clientKeyId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /providerAccountId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /routingPoolId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /model=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /sessionId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /href=\{dashboardLogHref\(log\)\}/);
+});
+
 test('admin state derives schedulable gateway capacity', () => {
   assert.match(adminState, /export function getSchedulableProviderAccounts/);
   assert.match(adminState, /export function getUnschedulableProviderAccountSummary/);
