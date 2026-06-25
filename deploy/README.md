@@ -82,7 +82,7 @@ Request Logs also include gateway fallback diagnostics: attempts count selected 
 
 Routing pool fallback is explicit. The routing pool fallback chain can point to one fallback pool at each step, forming a simple chain such as `primary -> secondary`. A pool-bound key never falls back to the global provider account pool; it tries only its configured pool and that explicit chain. A disabled primary pool fails closed with `routing_pool_disabled`, an empty primary pool fails closed with `routing_pool_empty`, cycles fail closed with `routing_pool_cycle`, and exhausted chains are logged as `routing_pool_exhausted`.
 
-Request Logs support exact **Provider account**, **Routing pool**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management and Dashboard, 24h usage rows for **Top provider accounts**, **Top routing pools**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, routing-pool, API-key, model, and sticky-session filters when the row identifies a concrete entity.
+Request Logs support exact **Provider account**, **Routing pool**, **API key**, **Model filter**, and **Session filter** fields. On Gateway management and Dashboard, 24h usage rows for **Top provider accounts**, **Top routing pools**, **Top routing pool chains**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, routing-pool, routing-pool-chain, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 
 API upstream accounts require HTTPS by default so upstream API keys are not sent over plaintext HTTP. Set `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP upstreams that you control.
 
