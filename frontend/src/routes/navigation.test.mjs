@@ -221,8 +221,12 @@ test('request logs page includes usage accounting UI', () => {
 
 test('request logs page formats gateway error codes for scanning', () => {
   assert.match(requestLogsPage, /function errorLabel/);
+  assert.match(requestLogsPage, /function errorHref/);
   assert.match(requestLogsPage, /errorLabel\(log\.error\)/);
   assert.match(requestLogsPage, /title=\{log\.error/);
+  assert.match(requestLogsPage, /href=\{errorHref\(log\)\}/);
+  assert.match(requestLogsPage, /error=\$\{encodeURIComponent/);
+  assert.match(requestLogsPage, /View same error logs/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.errorCode\}/);
   assert.match(requestLogsPage, /Error code filter/);
   assert.match(adminState, /errorCode: ''/);

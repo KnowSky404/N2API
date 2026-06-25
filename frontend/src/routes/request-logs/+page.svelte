@@ -147,6 +147,12 @@
       .join(' ');
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  function errorHref(log) {
+    if (!log.error) return '';
+    return `/request-logs?error=${encodeURIComponent(log.error)}`;
+  }
+
   const usageRanges = ['24h', '7d', '30d'];
   const usageGroups = [
     { value: 'model', label: 'Model' },
@@ -723,7 +729,18 @@
           {log.latencyMs}ms
         </td>
         <td class="px-4 py-3 text-[#3c3c3c]">
-          <span title={log.error || ''}>{errorLabel(log.error)}</span>
+          {#if errorHref(log)}
+            <a
+              class="underline-offset-2 hover:underline"
+              href={errorHref(log)}
+              title={log.error || ''}
+              aria-label="View same error logs"
+            >
+              {errorLabel(log.error)}
+            </a>
+          {:else}
+            <span title={log.error || ''}>{errorLabel(log.error)}</span>
+          {/if}
         </td>
       </tr>
     {/each}
