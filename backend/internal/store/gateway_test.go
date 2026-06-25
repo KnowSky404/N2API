@@ -30,3 +30,14 @@ func TestCreateRequestLogSQLIncludesProviderAccountAttribution(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateRequestLogNullsMissingProviderAccountID(t *testing.T) {
+	sourceBytes, err := os.ReadFile("gateway.go")
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	source := string(sourceBytes)
+	if !strings.Contains(source, "nullInt64(entry.ProviderAccountID)") {
+		t.Fatal("CreateRequestLog must store ProviderAccountID 0 as NULL so local gateway rejections can be logged without violating the provider account foreign key")
+	}
+}

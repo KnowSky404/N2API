@@ -37,7 +37,7 @@ func (r *GatewayRepository) CreateRequestLog(ctx context.Context, entry gateway.
 	_, err = r.pool.Exec(ctx, createRequestLogSQL(),
 		entry.RequestID,
 		entry.ClientKeyID,
-		entry.ProviderAccountID,
+		nullInt64(entry.ProviderAccountID),
 		entry.ProviderAccountType,
 		entry.ProviderAccountName,
 		nullInt64(entry.RoutingPoolID),
