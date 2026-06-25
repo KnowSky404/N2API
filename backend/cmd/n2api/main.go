@@ -60,10 +60,7 @@ func (p gatewayAccountProvider) SelectAccountForModelAndSessionInRoutingPoolChai
 }
 
 func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gateway.SelectedAccount, error) {
-	if err != nil {
-		return gateway.SelectedAccount{}, err
-	}
-	return gateway.SelectedAccount{
+	mapped := gateway.SelectedAccount{
 		AccountID:                selected.AccountID,
 		Provider:                 selected.Provider,
 		AccountType:              selected.AccountType,
@@ -77,7 +74,11 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 		RoutingPoolFallbackDepth: selected.RoutingPoolFallbackDepth,
 		RoutingPoolFallbackChain: selected.RoutingPoolFallbackChain,
 		RoutingPoolError:         selected.RoutingPoolError,
-	}, nil
+	}
+	if err != nil {
+		return mapped, err
+	}
+	return mapped, nil
 }
 
 func (p gatewayAccountProvider) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {

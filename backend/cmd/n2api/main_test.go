@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
+	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
 
 func TestGatewayAccountProviderReportsAccountFailures(t *testing.T) {
@@ -27,6 +29,27 @@ func TestGatewayAccountProviderMapsDisplayNameForRequestLogs(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("gatewayAccountProvider mapping missing %q", want)
 		}
+	}
+}
+
+func TestSelectedGatewayAccountPreservesDiagnosticsOnSelectionError(t *testing.T) {
+	selected, err := selectedGatewayAccount(provider.SelectedAccount{
+		RoutingPoolID:            7,
+		RoutingPoolName:          "primary",
+		RoutingPoolFallbackDepth: 1,
+		RoutingPoolFallbackChain: "primary -> secondary",
+		RoutingPoolError:         provider.RoutingPoolErrorExhausted,
+	}, provider.ErrModelUnavailable)
+
+	if !errors.Is(err, provider.ErrModelUnavailable) {
+		t.Fatalf("error = %v, want ErrModelUnavailable", err)
+	}
+	if selected.RoutingPoolID != 7 ||
+		selected.RoutingPoolName != "primary" ||
+		selected.RoutingPoolFallbackDepth != 1 ||
+		selected.RoutingPoolFallbackChain != "primary -> secondary" ||
+		selected.RoutingPoolError != provider.RoutingPoolErrorExhausted {
+		t.Fatalf("selected diagnostics = %+v, want provider routing pool diagnostics preserved", selected)
 	}
 }
 
