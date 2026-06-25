@@ -26,6 +26,26 @@ func TestGatewayModelDocumentationMentionsAPIKeyPolicyFiltering(t *testing.T) {
 	}
 }
 
+func TestGatewayModelDocumentationMentionsRoutingPoolFiltering(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"For a pool-bound API key",
+			"/v1/models",
+			"routing pool fallback chain",
+			"global provider account pool",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in /v1/models routing pool documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsStickySessionProxyHeaderRequirement(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
