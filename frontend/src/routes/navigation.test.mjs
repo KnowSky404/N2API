@@ -509,7 +509,7 @@ test('dashboard shows gateway runtime scheduling limits', () => {
 });
 
 test('dashboard shows 24h gateway usage snapshot', () => {
-  for (const label of ['24h usage', 'Top models', 'Top provider accounts', 'Top client keys', 'Top sessions', 'Requests', 'Tokens', 'Estimated cost']) {
+  for (const label of ['24h usage', 'Top models', 'Top provider accounts', 'Top routing pools', 'Top routing pool chains', 'Top client keys', 'Top sessions', 'Requests', 'Tokens', 'Estimated cost']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
   }
 
@@ -517,6 +517,7 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(dashboardPage, /usage24h\.rows/);
   assert.match(dashboardPage, /usage24hProviderAccounts\.rows/);
   assert.match(dashboardPage, /usage24hRoutingPools\.rows/);
+  assert.match(dashboardPage, /usage24hRoutingPoolChains\.rows/);
   assert.match(dashboardPage, /usage24hClientKeys\.rows/);
   assert.match(dashboardPage, /usage24hSessions\.rows/);
   assert.match(dashboardPage, /dashboardUsageHref/);
@@ -524,10 +525,12 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(dashboardPage, /request-logs\?model=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?providerAccountId=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?routingPoolId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /request-logs\?routingPoolChain=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?clientKeyId=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?sessionId=\$\{encodeURIComponent/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'routing_pool'\)/);
+  assert.match(adminState, /await loadUsageSummary\('24h', 'routing_pool_chain'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'session'\)/);
   assert.match(dashboardPage, /formatTokens/);
