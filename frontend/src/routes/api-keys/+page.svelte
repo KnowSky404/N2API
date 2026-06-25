@@ -131,6 +131,21 @@
     return pool?.fallbackPoolName ?? '';
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function apiKeyRoutingPoolHref(key) {
+    const id = Number(key.routingPoolId ?? 0);
+    if (id <= 0) return '';
+    return `/routing-pools?routingPoolId=${encodeURIComponent(String(id))}`;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function apiKeyRoutingPoolFallbackHref(key) {
+    const pool = routingPools.items.find((item) => item.id === key.routingPoolId);
+    const fallbackPoolId = Number(pool?.fallbackPoolId ?? 0);
+    if (fallbackPoolId <= 0) return '';
+    return `/routing-pools?routingPoolId=${encodeURIComponent(String(fallbackPoolId))}`;
+  }
+
   /**
    * @param {number | null | undefined} value
    * @param {number | null | undefined} defaultValue
@@ -551,9 +566,22 @@ All routable models
               </select>
             </label>
             <p class="mt-1 text-xs text-[#6e6e6e]">
-              {key.routingPoolName || 'Global pool'}
+              {#if apiKeyRoutingPoolHref(key)}
+                <a class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={apiKeyRoutingPoolHref(key)}>
+                  {key.routingPoolName || `Pool ${key.routingPoolId}`}
+                </a>
+              {:else}
+                Global pool
+              {/if}
               {#if routingPoolFallbackNameForKey(key)}
-                <span>· Fallback {routingPoolFallbackNameForKey(key)}</span>
+                <span>· Fallback </span>
+                {#if apiKeyRoutingPoolFallbackHref(key)}
+                  <a class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={apiKeyRoutingPoolFallbackHref(key)}>
+                    {routingPoolFallbackNameForKey(key)}
+                  </a>
+                {:else}
+                  <span>{routingPoolFallbackNameForKey(key)}</span>
+                {/if}
               {/if}
             </p>
           </div>
