@@ -68,6 +68,12 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /routingPoolId = params\.get\('routingPoolId'\)/);
   assert.match(poolsPage, /selectedRoutingPoolId = routingPoolId/);
   assert.match(poolsPage, /visibleRoutingPools/);
+  assert.match(poolsPage, /href=\{`\/request-logs\?routingPoolId=\$\{pool\.id\}`\}/);
+  assert.match(poolsPage, /href=\{`\/api-keys\?routingPoolId=\$\{pool\.id\}`\}/);
+  assert.match(poolsPage, /href=\{`\/providers\?providerAccountId=\$\{account\.id\}`\}/);
+  assert.match(poolsPage, /View request logs/);
+  assert.match(poolsPage, /View API keys/);
+  assert.match(poolsPage, /View provider account/);
   assert.match(adminState, /loadRoutingPools/);
   assert.match(adminState, /createRoutingPool/);
   assert.doesNotMatch(adminState, /const fallbackPoolId = 0/);
@@ -298,8 +304,11 @@ test('api keys page initializes key search from client key URL param', () => {
   assert.match(apiKeysPage, /page\.url\.search/);
   assert.match(apiKeysPage, /appliedAPIKeySearch/);
   assert.match(apiKeysPage, /clientKeyId = params\.get\('clientKeyId'\)/);
+  assert.match(apiKeysPage, /routingPoolId = params\.get\('routingPoolId'\)/);
   assert.match(apiKeysPage, /keySearch = `id:\$\{clientKeyId\}`/);
+  assert.match(apiKeysPage, /keySearch = `pool:\$\{routingPoolId\}`/);
   assert.match(apiKeysPage, /String\(key\.id\) === idQuery/);
+  assert.match(apiKeysPage, /String\(key\.routingPoolId/);
 });
 
 test('request logs page initializes filters from URL params', () => {

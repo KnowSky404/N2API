@@ -51,6 +51,10 @@
         const idQuery = query.slice(3);
         return String(key.id) === idQuery;
       }
+      if (/^pool:[1-9]\d*$/.test(query)) {
+        const poolQuery = query.slice(5);
+        return String(key.routingPoolId ?? 0) === poolQuery;
+      }
       return apiKeySearchText(key).includes(query);
     })
   );
@@ -59,9 +63,12 @@
   function applyAPIKeyURLFilters(search) {
     const params = new URLSearchParams(search);
     const clientKeyId = params.get('clientKeyId') ?? '';
+    const routingPoolId = params.get('routingPoolId') ?? '';
     keySearch = '';
     if (/^[1-9]\d*$/.test(clientKeyId)) {
       keySearch = `id:${clientKeyId}`;
+    } else if (/^[1-9]\d*$/.test(routingPoolId)) {
+      keySearch = `pool:${routingPoolId}`;
     }
   }
 

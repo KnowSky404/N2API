@@ -333,9 +333,27 @@
                 <h3 class="text-base font-semibold text-[#0d0d0d]">Pool accounts</h3>
                 <p class="mt-1 text-sm text-[#6e6e6e]">Created {formatDate(pool.createdAt)}. Pool priority overrides account priority inside this pool.</p>
               </div>
-              <button class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
-                Save membership
-              </button>
+              <div class="flex flex-wrap gap-2">
+                <a
+                  class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                  href={`/request-logs?routingPoolId=${pool.id}`}
+                  title="View request logs"
+                  aria-label="View request logs"
+                >
+                  Logs
+                </a>
+                <a
+                  class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                  href={`/api-keys?routingPoolId=${pool.id}`}
+                  title="View API keys"
+                  aria-label="View API keys"
+                >
+                  API keys
+                </a>
+                <button class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
+                  Save membership
+                </button>
+              </div>
             </div>
 
             <dl class="mt-4 grid gap-3 sm:grid-cols-3">
@@ -367,6 +385,7 @@
                       <th class="px-3 py-2 font-medium">Type</th>
                       <th class="px-3 py-2 font-medium">Status</th>
                       <th class="px-3 py-2 font-medium">Pool priority</th>
+                      <th class="px-3 py-2 text-right font-medium">Action</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-[#f3f3f3]">
@@ -394,6 +413,16 @@
                             disabled={!poolHasAccount(pool, account.id)}
                             onchange={(event) => setPoolAccountPriority(pool, account.id, event.currentTarget.value)}
                           />
+                        </td>
+                        <td class="px-3 py-2 text-right">
+                          <a
+                            class="inline-flex rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                            href={`/providers?providerAccountId=${account.id}`}
+                            title="View provider account"
+                            aria-label="View provider account"
+                          >
+                            Provider
+                          </a>
                         </td>
                       </tr>
                     {/each}
