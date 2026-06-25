@@ -64,6 +64,11 @@
       requestLogs.sessionId = sessionId;
     }
 
+    const error = params.get('error') ?? '';
+    if (error.length > 0 && error.length <= 100) {
+      requestLogs.errorCode = error;
+    }
+
     const statusClass = params.get('statusClass') ?? '';
     if (['all', 'success', 'client_error', 'server_error'].includes(statusClass)) {
       requestLogs.statusClass = statusClass;
@@ -482,6 +487,14 @@
           class="mt-2 w-52 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.sessionId}
           placeholder="workspace-123"
+        />
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Error code filter
+        <input
+          class="mt-2 w-56 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.errorCode}
+          placeholder="api_key_token_rate_limited"
         />
       </label>
       <label class="block text-sm font-medium text-[#3c3c3c]">

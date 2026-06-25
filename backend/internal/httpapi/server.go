@@ -673,6 +673,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			ClientKeyID:       clientKeyID,
 			Model:             r.URL.Query().Get("model"),
 			SessionID:         r.URL.Query().Get("sessionId"),
+			Error:             r.URL.Query().Get("error"),
 			RoutingPoolError:  r.URL.Query().Get("routingPoolError"),
 			RoutingPoolChain:  r.URL.Query().Get("routingPoolChain"),
 		}

@@ -3612,7 +3612,7 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 
 	admins := newFakeAdminService()
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&routingPoolError=routing_pool_unavailable&routingPoolChain=primary+-%3E+secondary", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=api_key_token_rate_limited&routingPoolError=routing_pool_unavailable&routingPoolChain=primary+-%3E+secondary", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -3644,6 +3644,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if admins.requestLogFilter.Model != "gpt-5" || admins.requestLogFilter.SessionID != "workspace-123" {
 		t.Fatalf("request log model/session = %q/%q, want gpt-5/workspace-123", admins.requestLogFilter.Model, admins.requestLogFilter.SessionID)
+	}
+	if admins.requestLogFilter.Error != "api_key_token_rate_limited" {
+		t.Fatalf("request log error = %q, want api_key_token_rate_limited", admins.requestLogFilter.Error)
 	}
 	if admins.requestLogFilter.RoutingPoolError != "routing_pool_unavailable" {
 		t.Fatalf("request log routing pool error = %q, want routing_pool_unavailable", admins.requestLogFilter.RoutingPoolError)

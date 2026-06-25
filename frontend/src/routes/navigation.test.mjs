@@ -223,6 +223,11 @@ test('request logs page formats gateway error codes for scanning', () => {
   assert.match(requestLogsPage, /function errorLabel/);
   assert.match(requestLogsPage, /errorLabel\(log\.error\)/);
   assert.match(requestLogsPage, /title=\{log\.error/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.errorCode\}/);
+  assert.match(requestLogsPage, /Error code filter/);
+  assert.match(adminState, /errorCode: ''/);
+  assert.match(adminState, /requestLogs\.errorCode/);
+  assert.match(adminState, /params\.set\('error'/);
   for (const code of [
     'api_key_request_rate_limited',
     'api_key_token_rate_limited',
@@ -341,6 +346,7 @@ test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /requestLogs\.clientKeyId = clientKeyId/);
   assert.match(requestLogsPage, /requestLogs\.model = model/);
   assert.match(requestLogsPage, /requestLogs\.sessionId = sessionId/);
+  assert.match(requestLogsPage, /requestLogs\.errorCode = error/);
   assert.match(requestLogsPage, /requestLogs\.routingPoolChain = routingPoolChain/);
   assert.match(requestLogsPage, /requestLogs\.query = query/);
   assert.match(requestLogsPage, /requestLogs\.statusClass = statusClass/);

@@ -557,6 +557,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		ClientKeyID:       12,
 		Model:             " gpt-5 ",
 		SessionID:         " workspace-123 ",
+		Error:             " api_key_token_rate_limited ",
 		RoutingPoolError:  " routing_pool_unavailable ",
 		RoutingPoolChain:  " primary -> secondary ",
 	})
@@ -580,6 +581,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if repo.lastLogFilter.Model != "gpt-5" || repo.lastLogFilter.SessionID != "workspace-123" {
 		t.Fatalf("repository model/session = %q/%q, want gpt-5/workspace-123", repo.lastLogFilter.Model, repo.lastLogFilter.SessionID)
+	}
+	if repo.lastLogFilter.Error != "api_key_token_rate_limited" {
+		t.Fatalf("repository error = %q, want api_key_token_rate_limited", repo.lastLogFilter.Error)
 	}
 	if repo.lastLogFilter.RoutingPoolError != "routing_pool_unavailable" {
 		t.Fatalf("repository routing pool error = %q, want routing_pool_unavailable", repo.lastLogFilter.RoutingPoolError)
@@ -639,6 +643,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{SessionID: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long session error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Error: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long error code error = %v, want ErrInvalidInput", err)
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{RoutingPoolError: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long routing pool error = %v, want ErrInvalidInput", err)
