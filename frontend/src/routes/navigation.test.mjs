@@ -425,6 +425,8 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /modelRoutingPreview\.sessionId = sessionId/);
   assert.match(modelsPage, /modelRoutingPreview\.routingPoolId = routingPoolId/);
   assert.match(modelsPage, /modelRoutingPreview\.excludedAccountIds = excludedAccountIds/);
+  assert.match(modelsPage, /clientKeyId = params\.get\('clientKeyId'\)/);
+  assert.match(modelsPage, /modelDiagnosticClientKeyId = clientKeyId/);
   assert.match(modelsPage, /providerAccountId = params\.get\('providerAccountId'\)/);
   assert.match(modelsPage, /modelProviderAccountId = providerAccountId/);
   for (const label of ['Search models', 'Status filter', 'All models', 'Routable models', 'Blocked models', 'Hidden models', 'Allowed models']) {
@@ -434,6 +436,10 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /modelStatusFilter/);
   assert.match(modelsPage, /visibleModelRoutingRows/);
   assert.match(modelsPage, /modelProviderAccountId/);
+  assert.match(modelsPage, /selectedDiagnosticAPIKey/);
+  assert.match(modelsPage, /loadKeys\(\)/);
+  assert.match(modelsPage, /href=\{diagnosticAPIKeyHref\(selectedDiagnosticAPIKey\)\}/);
+  assert.match(modelsPage, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
   assert.match(modelsPage, /modelMatchesStatusFilter\(model,\s*modelStatusFilter\)/);
   assert.match(modelsPage, /modelSearchText\(model\)\.includes\(query\)/);
   assert.match(modelsPage, /visibleModelAccounts\(model\)/);

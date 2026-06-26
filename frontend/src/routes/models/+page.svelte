@@ -1,7 +1,9 @@
 <script>
   import { page } from '$app/state';
   import {
+    apiKeys,
     formatDate,
+    loadKeys,
     loadModelRouting,
     loadModelRoutingPreview,
     loadRoutingPools,
@@ -18,6 +20,7 @@
   let modelSearch = $state('');
   let modelStatusFilter = $state('all');
   let modelProviderAccountId = $state('');
+  let modelDiagnosticClientKeyId = $state('');
 
   /** @param {string} search */
   function applyModelRoutingURLFilters(search) {
@@ -26,6 +29,12 @@
     modelProviderAccountId = '';
     if (/^[1-9]\d*$/.test(providerAccountId)) {
       modelProviderAccountId = providerAccountId;
+    }
+
+    const clientKeyId = params.get('clientKeyId') ?? '';
+    modelDiagnosticClientKeyId = '';
+    if (/^[1-9]\d*$/.test(clientKeyId)) {
+      modelDiagnosticClientKeyId = clientKeyId;
     }
 
     const model = params.get('model') ?? '';
@@ -66,6 +75,7 @@
       modelRoutingRequested = false;
       appliedModelRoutingSearch = '';
       modelProviderAccountId = '';
+      modelDiagnosticClientKeyId = '';
       return;
     }
     if (appliedModelRoutingSearch !== page.url.search) {
@@ -76,6 +86,7 @@
       modelRoutingRequested = true;
       void loadModelRouting();
       void loadRoutingPools();
+      void loadKeys();
     }
   });
 
@@ -109,6 +120,13 @@
     const id = Number(result.routingPoolId ?? 0);
     if (id <= 0) return '';
     return `/routing-pools?routingPoolId=${encodeURIComponent(String(id))}`;
+  }
+
+  /** @param {{ id?: number | null }} key */
+  function diagnosticAPIKeyHref(key) {
+    const id = Number(key.id ?? 0);
+    if (id <= 0) return '';
+    return `/api-keys?clientKeyId=${encodeURIComponent(String(key.id))}`;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ModelRoutingAccount} account */
@@ -151,6 +169,11 @@
     modelRoutingPreview.result?.candidates.find((account) => account.selected) ??
       modelRoutingPreview.result?.candidates.find((account) => account.id === modelRoutingPreview.result?.selectedAccountId) ??
       null
+  );
+  const selectedDiagnosticAPIKey = $derived(
+    modelDiagnosticClientKeyId
+      ? apiKeys.items.find((key) => String(key.id) === modelDiagnosticClientKeyId) ?? null
+      : null
   );
   const visibleModelRoutingRows = $derived(
     modelRouting.models.filter((model) => {
@@ -278,6 +301,22 @@
           <p class="mt-2 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
             Gateway default model and API key model access are managed from API Keys. Per-account manual models are managed from Provider accounts. This page shows scheduler-visible routing candidates and block reasons.
           </p>
+          {#if modelDiagnosticClientKeyId}
+            <p class="mt-3 text-sm text-[#6e6e6e]">
+              API key scope
+              {#if selectedDiagnosticAPIKey}
+                <a
+                  class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                  href={diagnosticAPIKeyHref(selectedDiagnosticAPIKey)}
+                  aria-label="View API key"
+                >
+                  {selectedDiagnosticAPIKey.name || `Key ${selectedDiagnosticAPIKey.id}`}
+                </a>
+              {:else}
+                Key {modelDiagnosticClientKeyId}
+              {/if}
+            </p>
+          {/if}
         </div>
         <div class="flex flex-wrap gap-2">
           <a
