@@ -326,6 +326,8 @@ test('providers page initializes account search from provider account URL param'
   assert.match(providersPage, /appliedProviderAccountSearch/);
   assert.match(providersPage, /providerAccountId = params\.get\('providerAccountId'\)/);
   assert.match(providersPage, /accountSearch = `id:\$\{providerAccountId\}`/);
+  assert.match(providersPage, /status = params\.get\('status'\)/);
+  assert.match(providersPage, /accountStatusFilter = status/);
   assert.match(providersPage, /String\(account\.id\) === idQuery/);
 });
 
@@ -562,6 +564,8 @@ test('dashboard shows gateway scheduling capacity', () => {
   assert.match(dashboardPage, /getUnschedulableProviderAccountSummary/);
   assert.match(dashboardPage, /getRoutableModelCount/);
   assert.match(dashboardPage, /modelRouting/);
+  assert.match(dashboardPage, /href="\/providers\?status=active"/);
+  assert.match(dashboardPage, /href="\/providers\?status=blocked"/);
 });
 
 test('dashboard shows gateway runtime scheduling limits', () => {

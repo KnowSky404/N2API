@@ -171,11 +171,15 @@
 </div>
 <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
   <p class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</p>
-  <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableAccounts.length}</p>
+  <a class="mt-2 block text-base font-semibold text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers?status=active">
+    {providerAccounts.loading ? 'Loading' : schedulableAccounts.length}
+  </a>
 </div>
 <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
   <p class="text-sm font-medium text-[#6e6e6e]">Unschedulable accounts</p>
-  <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : providerAccounts.items.length - schedulableAccounts.length}</p>
+  <a class="mt-2 block text-base font-semibold text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers?status=blocked">
+    {providerAccounts.loading ? 'Loading' : providerAccounts.items.length - schedulableAccounts.length}
+  </a>
   {#if !providerAccounts.loading && unschedulableAccountSummary.length > 0}
     <p class="mt-2 text-xs text-[#6e6e6e]">
       {unschedulableAccountSummary.map((item) => `${item.reasonLabel}: ${item.count}`).join(' · ')}

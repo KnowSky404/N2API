@@ -96,9 +96,14 @@
   function applyProviderAccountURLFilters(search) {
     const params = new URLSearchParams(search);
     const providerAccountId = params.get('providerAccountId') ?? '';
+    const status = params.get('status') ?? '';
     accountSearch = '';
+    accountStatusFilter = 'all';
     if (/^[1-9]\d*$/.test(providerAccountId)) {
       accountSearch = `id:${providerAccountId}`;
+    }
+    if (['all', 'active', 'disabled', 'blocked', 'rate_limited', 'circuit_open', 'expired', 'api_upstream', 'codex_oauth'].includes(status)) {
+      accountStatusFilter = status;
     }
   }
 
