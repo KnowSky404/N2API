@@ -366,6 +366,7 @@ test('api keys page links routing pool assignments to pool details', () => {
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackChainLabel/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackChainLogsHref/);
   assert.match(apiKeysPage, /routingPoolId=\$\{encodeURIComponent/);
+  assert.match(apiKeysPage, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
   assert.match(apiKeysPage, /routingPoolChain=\$\{encodeURIComponent\(chain\)\}/);
   assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolHref\(key\)\}/);
   assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolFallbackHref\(key\)\}/);

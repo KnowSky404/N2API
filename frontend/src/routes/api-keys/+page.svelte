@@ -186,7 +186,7 @@
     const fallbackPoolId = Number(pool?.fallbackPoolId ?? 0);
     if (fallbackPoolId <= 0) return '';
     const chain = apiKeyRoutingPoolFallbackChainLabel(key);
-    return `/request-logs?routingPoolChain=${encodeURIComponent(chain)}`;
+    return `/request-logs?clientKeyId=${encodeURIComponent(String(key.id))}&routingPoolChain=${encodeURIComponent(chain)}`;
   }
 
   /**
