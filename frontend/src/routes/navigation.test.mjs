@@ -476,6 +476,9 @@ test('providers page summarizes account scheduling capacity', () => {
     assert.match(providersPage, new RegExp(label.replace(' ', '\\s+')), `providers page should include ${label}`);
   }
 
+  assert.match(providersPage, /function modelRoutingHref\(model,\s*account\)/);
+  assert.match(providersPage, /providerAccountId=\$\{encodeURIComponent\(String\(account\.id\)\)\}/);
+  assert.match(providersPage, /href=\{modelRoutingHref\(configuredModel\.model,\s*account\)\}/);
   assert.match(providersPage, /getSchedulableProviderAccounts/);
   assert.match(providersPage, /getUnschedulableProviderAccountSummary/);
   assert.match(providersPage, /schedulableProviderAccounts\.length/);

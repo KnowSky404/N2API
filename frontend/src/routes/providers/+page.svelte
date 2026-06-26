@@ -114,10 +114,14 @@
     return `/request-logs?providerAccountId=${encodeURIComponent(id)}`;
   }
 
-  /** @param {string | null | undefined} model */
-  function modelRoutingHref(model) {
+  /**
+   * @param {string | null | undefined} model
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   */
+  function modelRoutingHref(model, account) {
     const value = String(model ?? '').trim();
-    return value ? `/models?model=${encodeURIComponent(value)}` : '';
+    if (!value) return '';
+    return `/models?model=${encodeURIComponent(value)}&providerAccountId=${encodeURIComponent(String(account.id))}`;
   }
 
   $effect(() => {
@@ -1246,7 +1250,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
                       />
                       <a
                         class="truncate font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline"
-                        href={modelRoutingHref(configuredModel.model)}
+                        href={modelRoutingHref(configuredModel.model, account)}
                       >
                         {configuredModel.model}
                       </a>
