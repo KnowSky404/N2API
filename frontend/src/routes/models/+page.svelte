@@ -1,4 +1,5 @@
 <script>
+  import { page } from '$app/state';
   import {
     formatDate,
     loadModelRouting,
@@ -13,13 +14,55 @@
   } from '$lib/admin-state.svelte.js';
 
   let modelRoutingRequested = $state(false);
+  let appliedModelRoutingSearch = $state('');
   let modelSearch = $state('');
   let modelStatusFilter = $state('all');
+
+  /** @param {string} search */
+  function applyModelRoutingURLFilters(search) {
+    const params = new URLSearchParams(search);
+    const model = params.get('model') ?? '';
+    if (model.length > 0 && model.length <= 100) {
+      modelSearch = model;
+    }
+
+    const status = params.get('status') ?? '';
+    if (['all', 'routable', 'blocked', 'hidden', 'allowed'].includes(status)) {
+      modelStatusFilter = status;
+    }
+
+    const previewModel = params.get('previewModel') ?? '';
+    if (previewModel.length > 0 && previewModel.length <= 100) {
+      modelRoutingPreview.model = previewModel;
+    } else if (model.length > 0 && model.length <= 100) {
+      modelRoutingPreview.model = model;
+    }
+
+    const sessionId = params.get('sessionId') ?? '';
+    if (sessionId.length > 0 && sessionId.length <= 100) {
+      modelRoutingPreview.sessionId = sessionId;
+    }
+
+    const routingPoolId = params.get('routingPoolId') ?? '';
+    if (/^[1-9]\d*$/.test(routingPoolId)) {
+      modelRoutingPreview.routingPoolId = routingPoolId;
+    }
+
+    const excludedAccountIds = params.get('excludedAccountIds') ?? '';
+    if (excludedAccountIds.length > 0 && excludedAccountIds.length <= 200) {
+      modelRoutingPreview.excludedAccountIds = excludedAccountIds;
+    }
+  }
 
   $effect(() => {
     if (!session.authenticated) {
       modelRoutingRequested = false;
+      appliedModelRoutingSearch = '';
       return;
+    }
+    if (appliedModelRoutingSearch !== page.url.search) {
+      appliedModelRoutingSearch = page.url.search;
+      applyModelRoutingURLFilters(page.url.search);
     }
     if (!modelRoutingRequested) {
       modelRoutingRequested = true;
