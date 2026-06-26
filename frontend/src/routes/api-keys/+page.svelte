@@ -83,10 +83,16 @@
     return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
   }
 
-  /** @param {string | null | undefined} model */
-  function modelRoutingHref(model) {
+  /**
+   * @param {string | null | undefined} model
+   * @param {import('$lib/admin-state.svelte.js').APIKey} key
+   */
+  function modelRoutingHref(model, key) {
     const value = String(model ?? '').trim();
-    return value ? `/models?model=${encodeURIComponent(value)}&status=blocked` : '';
+    if (!value) return '';
+    const routingPoolId = Number(key.routingPoolId ?? 0);
+    const poolQuery = routingPoolId > 0 ? `&routingPoolId=${encodeURIComponent(String(key.routingPoolId))}` : '';
+    return `/models?model=${encodeURIComponent(value)}&status=blocked${poolQuery}`;
   }
 
   $effect(() => {
@@ -584,7 +590,7 @@ All routable models
                 No schedulable account:
                 {#each unroutableModelsForKey(key) as model, index}
                   {#if index > 0}, {/if}
-                  <a class="font-medium underline-offset-2 hover:underline" href={modelRoutingHref(model)}>
+                  <a class="font-medium underline-offset-2 hover:underline" href={modelRoutingHref(model, key)}>
                     {model}
                   </a>
                 {/each}
