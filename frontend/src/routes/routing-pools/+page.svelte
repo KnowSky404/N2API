@@ -21,10 +21,16 @@
   let requested = $state(false);
   let appliedRoutingPoolSearch = $state('');
   let selectedRoutingPoolId = $state('all');
+  let routingPoolSearch = $state('');
+  let routingPoolStatusFilter = $state('all');
   const visibleRoutingPools = $derived(
-    selectedRoutingPoolId === 'all'
-      ? routingPools.items
-      : routingPools.items.filter((pool) => String(pool.id) === selectedRoutingPoolId)
+    routingPools.items.filter((pool) => {
+      if (selectedRoutingPoolId !== 'all' && String(pool.id) !== selectedRoutingPoolId) return false;
+      if (!poolMatchesStatusFilter(pool, routingPoolStatusFilter)) return false;
+      const query = routingPoolSearch.trim().toLowerCase();
+      if (!query) return true;
+      return poolSearchText(pool).includes(query);
+    })
   );
 
   /** @param {string} search */
@@ -150,6 +156,33 @@
   /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
   function boundAPIKeyCount(pool) {
     return apiKeys.items.filter((key) => Number(key.routingPoolId ?? 0) === pool.id && !key.revokedAt).length;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function poolSearchText(pool) {
+    return [
+      pool.name,
+      pool.description,
+      pool.fallbackPoolName,
+      pool.enabled ? 'enabled' : 'disabled',
+      (pool.accounts ?? []).map((account) => String(account.accountId)).join(' ')
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
+   * @param {string} filter
+   */
+  function poolMatchesStatusFilter(pool, filter) {
+    if (filter === 'enabled') return pool.enabled;
+    if (filter === 'disabled') return !pool.enabled;
+    if (filter === 'fallback') return Number(pool.fallbackPoolId ?? 0) > 0;
+    if (filter === 'bound_keys') return boundAPIKeyCount(pool) > 0;
+    if (filter === 'empty') return (pool.accounts ?? []).length === 0;
+    return true;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
@@ -282,6 +315,32 @@
         </button>
       </div>
     </form>
+
+    <div class="mt-5 grid gap-3 md:grid-cols-[minmax(240px,1fr)_220px]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Search pools
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          type="search"
+          placeholder="Search pools"
+          bind:value={routingPoolSearch}
+        />
+      </label>
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Status filter
+        <select
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={routingPoolStatusFilter}
+        >
+          <option value="all">All pools</option>
+          <option value="enabled">Enabled pools</option>
+          <option value="disabled">Disabled pools</option>
+          <option value="fallback">Pools with fallback</option>
+          <option value="bound_keys">Bound key pools</option>
+          <option value="empty">Empty pools</option>
+        </select>
+      </label>
+    </div>
 
     {#if routingPools.loading}
       <p class="mt-6 text-sm text-[#6e6e6e]">Loading routing pools...</p>

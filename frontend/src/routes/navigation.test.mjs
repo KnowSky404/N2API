@@ -48,7 +48,7 @@ test('routing pools page manages account pools', () => {
   const poolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
 
   assert.match(layout, /href:\s*'\/routing-pools'/);
-  for (const label of ['Routing pools', 'Create pool', 'Pool accounts', 'Save membership', 'Enabled', 'Fallback pool', 'No fallback', 'Pool priority', 'Bound API keys', 'Schedulable members']) {
+  for (const label of ['Routing pools', 'Create pool', 'Pool accounts', 'Save membership', 'Enabled', 'Fallback pool', 'No fallback', 'Pool priority', 'Bound API keys', 'Schedulable members', 'Search pools', 'Status filter', 'All pools', 'Enabled pools', 'Disabled pools', 'Pools with fallback', 'Bound key pools', 'Empty pools']) {
     assert.match(poolsPage, new RegExp(label.replace(' ', '\\s+')), `routing pools page should include ${label}`);
   }
   assert.match(poolsPage, /apiKeys/);
@@ -71,6 +71,10 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /routingPoolId = params\.get\('routingPoolId'\)/);
   assert.match(poolsPage, /selectedRoutingPoolId = routingPoolId/);
   assert.match(poolsPage, /visibleRoutingPools/);
+  assert.match(poolsPage, /routingPoolSearch/);
+  assert.match(poolsPage, /routingPoolStatusFilter/);
+  assert.match(poolsPage, /poolMatchesStatusFilter\(pool,\s*routingPoolStatusFilter\)/);
+  assert.match(poolsPage, /poolSearchText\(pool\)\.includes\(query\)/);
   assert.match(poolsPage, /href=\{`\/request-logs\?routingPoolId=\$\{pool\.id\}`\}/);
   assert.match(poolsPage, /href=\{`\/api-keys\?routingPoolId=\$\{pool\.id\}`\}/);
   assert.match(poolsPage, /href=\{`\/providers\?providerAccountId=\$\{account\.id\}`\}/);
