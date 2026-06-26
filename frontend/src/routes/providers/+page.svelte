@@ -64,6 +64,7 @@
   } from '$lib/admin-state.svelte.js';
 
   let accountSearch = $state('');
+  let accountStatusFilter = $state('all');
   let accountSort = $state({ key: 'priority', direction: 'asc' });
   let bulkRoutingPoolId = $state('0');
   let bulkRoutingPoolPriority = $state('0');
@@ -79,6 +80,7 @@
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
       providerAccounts.items.filter((account) => {
+        if (!accountMatchesStatusFilter(account, accountStatusFilter)) return false;
         const query = accountSearch.trim().toLowerCase();
         if (!query) return true;
         if (/^id:[1-9]\d*$/.test(query)) {
@@ -145,6 +147,22 @@
       .filter(Boolean)
       .join(' ')
       .toLowerCase();
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {string} filter
+   */
+  function accountMatchesStatusFilter(account, filter) {
+    if (filter === 'active') return account.enabled && account.status === 'active';
+    if (filter === 'disabled') return !account.enabled;
+    if (filter === 'blocked') return !account.enabled || account.status !== 'active';
+    if (filter === 'rate_limited') return account.status === 'rate_limited';
+    if (filter === 'circuit_open') return account.status === 'circuit_open';
+    if (filter === 'expired') return account.status === 'expired';
+    if (filter === 'api_upstream') return account.accountType === 'api_upstream';
+    if (filter === 'codex_oauth') return isCodexOAuthAccount(account);
+    return true;
   }
 
   /**
@@ -702,7 +720,8 @@ disabled={apiUpstreamForm.submitting}
   {/if}
 
   <div class="mt-6 flex flex-wrap items-end justify-between gap-3">
-    <label class="grid min-w-[240px] flex-1 gap-1 text-sm font-medium text-[#3c3c3c]">
+    <div class="grid flex-1 gap-3 sm:grid-cols-[minmax(240px,1fr)_220px]">
+      <label class="grid min-w-[240px] gap-1 text-sm font-medium text-[#3c3c3c]">
 Search
 <input
   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -710,7 +729,25 @@ Search
   placeholder="Search accounts"
   bind:value={accountSearch}
 />
-    </label>
+      </label>
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+Status filter
+<select
+  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  bind:value={accountStatusFilter}
+>
+  <option value="all">All accounts</option>
+  <option value="active">Active accounts</option>
+  <option value="disabled">Disabled accounts</option>
+  <option value="blocked">Blocked accounts</option>
+  <option value="rate_limited">Rate limited accounts</option>
+  <option value="circuit_open">Circuit open accounts</option>
+  <option value="expired">Expired accounts</option>
+  <option value="api_upstream">API upstream accounts</option>
+  <option value="codex_oauth">Codex OAuth accounts</option>
+</select>
+      </label>
+    </div>
     <div class="flex flex-wrap items-center justify-end gap-2 pb-1">
       <p class="mr-2 text-sm text-[#6e6e6e]">
 Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
