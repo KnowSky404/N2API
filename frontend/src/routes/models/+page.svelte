@@ -384,7 +384,7 @@
     </section>
 
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
-      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+      <div class="grid gap-4 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
         <div>
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Selection preview</h3>
           <p class="mt-1 text-sm leading-6 text-[#6e6e6e]">
@@ -570,7 +570,7 @@
         </div>
       {/if}
 
-      <div class="mt-5 grid gap-3 md:grid-cols-[minmax(240px,1fr)_220px]">
+      <div class="mt-5 grid gap-3 grid-cols-1 sm:grid-cols-[minmax(240px,1fr)_220px]">
         <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
           Search models
           <input

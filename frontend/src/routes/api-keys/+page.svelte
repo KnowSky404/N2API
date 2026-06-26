@@ -466,12 +466,12 @@ All routable models
     </p>
   {/if}
 
-  <div class="mt-6 flex flex-wrap items-end justify-between gap-3">
-    <div class="flex flex-wrap items-end gap-3">
+  <div class="mt-6 grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end sm:justify-between sm:gap-3">
+    <div class="grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end sm:gap-3">
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Search keys
         <input
-          class="mt-2 w-64 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           type="search"
           bind:value={keySearch}
           placeholder="name, prefix, model, status"

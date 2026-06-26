@@ -37,6 +37,7 @@
 
 <main class="min-h-screen bg-[#fafafa] text-[#0d0d0d]">
   <div class="flex min-h-screen">
+    <!-- Desktop sidebar -->
     <aside
       class="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-[#ededed] bg-white px-3 py-4 lg:flex"
     >
@@ -95,28 +96,34 @@
       </div>
     </aside>
 
+    <!-- Main content area -->
     <section class="min-w-0 flex-1">
+      <!-- Mobile header bar -->
       <header
-        class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-[#ededed] bg-white/95 px-4 py-3 backdrop-blur lg:hidden"
+        class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[#ededed] bg-white/95 px-4 py-3 backdrop-blur lg:hidden"
       >
-        <div>
+        <div class="min-w-0 flex-1">
           <p class="text-sm font-medium text-[#6e6e6e]">Personal AI Gateway</p>
           <h1 class="text-xl font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
         </div>
-        {#if session.authenticated}
-          <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
-            type="button"
-            onclick={logout}
-          >
-            Sign out
-          </button>
-        {/if}
-        <nav class="flex w-full gap-2 overflow-x-auto pb-1">
+        <div class="flex shrink-0 items-center gap-2">
+          {#if session.authenticated}
+            <span class="hidden sm:inline max-w-[120px] truncate text-xs text-[#6e6e6e]">{session.username || 'admin'}</span>
+            <button
+              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+              type="button"
+              onclick={logout}
+            >
+              Sign out
+            </button>
+          {/if}
+        </div>
+        <!-- Mobile nav scroll -->
+        <nav class="flex w-full gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none">
           {#each navItems as item}
             <a
               class={[
-                'shrink-0 rounded-lg px-3 py-2 text-sm font-medium',
+                'shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium',
                 isActive(item.href) ? 'bg-[#0d0d0d] text-white' : 'bg-[#f5f5f5] text-[#3c3c3c]'
               ]}
               href={item.href}
@@ -127,7 +134,8 @@
         </nav>
       </header>
 
-      <div class="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6">
+      <!-- Page content container -->
+      <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
         {@render children()}
       </div>
     </section>

@@ -475,11 +475,11 @@
   Recent OpenAI-compatible gateway requests.
 </p>
     </div>
-    <div class="flex flex-wrap items-end gap-3">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Search
         <input
-          class="mt-2 w-64 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.query}
           placeholder="key, account, model, route, error"
         />
@@ -487,7 +487,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Model filter
         <input
-          class="mt-2 w-44 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.model}
           placeholder="gpt-5"
         />
@@ -495,7 +495,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Session filter
         <input
-          class="mt-2 w-52 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.sessionId}
           placeholder="workspace-123"
         />
@@ -503,7 +503,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Error code filter
         <input
-          class="mt-2 w-56 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.errorCode}
           placeholder="api_key_token_rate_limited"
         />
@@ -522,7 +522,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Routing error
         <select
-          class="mt-2 max-w-[240px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.routingPoolError}
         >
           {#each routingPoolErrorFilters as routingPoolError}
@@ -533,7 +533,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Fallback chain
         <input
-          class="mt-2 w-56 max-w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.routingPoolChain}
           placeholder="primary -> secondary"
         />
@@ -541,7 +541,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Provider account
         <select
-          class="mt-2 max-w-[260px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.providerAccountId}
         >
           <option value="all">All provider accounts</option>
@@ -553,7 +553,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Routing pool
         <select
-          class="mt-2 max-w-[240px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.routingPoolId}
         >
           <option value="all">All routing pools</option>
@@ -565,7 +565,7 @@
       <label class="block text-sm font-medium text-[#3c3c3c]">
         API key
         <select
-          class="mt-2 max-w-[240px] rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.clientKeyId}
         >
           <option value="all">All API keys</option>

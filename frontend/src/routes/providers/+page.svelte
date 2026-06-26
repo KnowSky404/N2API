@@ -439,7 +439,7 @@ class={[
 
   <section class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
     <h3 class="text-base font-semibold text-[#0d0d0d]">Scheduling capacity</h3>
-    <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_16rem]">
+    <div class="mt-3 grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_16rem]">
       <article class="rounded-md border border-[#ededed] bg-white p-3">
         <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Schedulable</p>
         <p class="mt-2 text-lg font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableProviderAccounts.length}</p>
@@ -544,7 +544,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   </div>
 
   <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(220px,1fr)_140px_minmax(170px,auto)_auto]"
+    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_140px_minmax(170px,auto)_auto]"
     onsubmit={(event) => {
 event.preventDefault();
 connectProvider();
@@ -587,7 +587,7 @@ type="submit"
   </form>
 
   <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_120px_120px_auto]"
+    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_120px_120px_auto]"
     onsubmit={(event) => {
       event.preventDefault();
       createAPIUpstreamAccount();
@@ -695,7 +695,7 @@ disabled={apiUpstreamForm.submitting}
   {providerOAuth.authorizationUrl}
 </code>
 <form
-  class="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+  class="mt-4 grid gap-3 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]"
   onsubmit={(event) => {
     event.preventDefault();
     completeProviderCallback();

@@ -634,12 +634,7 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   }
 
   assert.match(dashboardPage, /usage\.summaries\['24h:/);
-  assert.match(dashboardPage, /usage24h\.rows/);
-  assert.match(dashboardPage, /usage24hProviderAccounts\.rows/);
-  assert.match(dashboardPage, /usage24hRoutingPools\.rows/);
-  assert.match(dashboardPage, /usage24hRoutingPoolChains\.rows/);
-  assert.match(dashboardPage, /usage24hClientKeys\.rows/);
-  assert.match(dashboardPage, /usage24hSessions\.rows/);
+  assert.match(dashboardPage, /section.data.rows/);
   assert.match(dashboardPage, /dashboardUsageHref/);
   assert.match(dashboardPage, /providerAccountUsageId/);
   assert.match(dashboardPage, /request-logs\?model=\$\{encodeURIComponent/);

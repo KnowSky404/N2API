@@ -316,7 +316,7 @@
       </p>
     {/if}
 
-    <form class="mt-6 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)_minmax(180px,240px)_auto]" onsubmit={submitCreatePool}>
+    <form class="mt-6 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)_minmax(180px,240px)_auto]" onsubmit={submitCreatePool}>
       <label class="text-sm font-medium text-[#3c3c3c]">
         Pool name
         <input
@@ -353,7 +353,7 @@
       </div>
     </form>
 
-    <div class="mt-5 grid gap-3 md:grid-cols-[minmax(240px,1fr)_220px]">
+    <div class="mt-5 grid gap-3 grid-cols-1 sm:grid-cols-[minmax(240px,1fr)_220px]">
       <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Search pools
         <input
@@ -393,7 +393,7 @@
       <div class="mt-6 grid gap-4">
         {#each visibleRoutingPools as pool (pool.id)}
           <article id={`routing-pool-${pool.id}`} class="scroll-mt-6 rounded-lg border border-[#ededed] bg-white p-4">
-            <div class="grid gap-3 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)_auto]">
+            <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)_auto]">
               <label class="text-sm font-medium text-[#3c3c3c]">
                 Name
                 <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={pool.name} />
