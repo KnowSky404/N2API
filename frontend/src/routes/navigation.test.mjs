@@ -363,10 +363,15 @@ test('api keys page initializes key search from client key URL param', () => {
 test('api keys page links routing pool assignments to pool details', () => {
   assert.match(apiKeysPage, /function apiKeyRoutingPoolHref/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackHref/);
+  assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackChainLabel/);
+  assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackChainLogsHref/);
   assert.match(apiKeysPage, /routingPoolId=\$\{encodeURIComponent/);
+  assert.match(apiKeysPage, /routingPoolChain=\$\{encodeURIComponent\(chain\)\}/);
   assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolHref\(key\)\}/);
   assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolFallbackHref\(key\)\}/);
+  assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolFallbackChainLogsHref\(key\)\}/);
   assert.match(apiKeysPage, /routingPoolFallbackNameForKey\(key\)/);
+  assert.match(apiKeysPage, /View fallback chain logs/);
 });
 
 test('request logs page initializes filters from URL params', () => {

@@ -156,6 +156,39 @@
     return `/routing-pools?routingPoolId=${encodeURIComponent(String(fallbackPoolId))}`;
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function apiKeyRoutingPoolFallbackChainLabel(key) {
+    const names = [];
+    const seen = new Set();
+    let current = routingPools.items.find((item) => item.id === key.routingPoolId);
+    while (current) {
+      if (seen.has(current.id)) {
+        names.push('cycle');
+        break;
+      }
+      seen.add(current.id);
+      names.push(current.name || `Pool ${current.id}`);
+      const fallbackID = Number(current.fallbackPoolId ?? 0);
+      if (fallbackID <= 0) break;
+      const next = routingPools.items.find((candidate) => candidate.id === fallbackID);
+      if (!next) {
+        names.push('missing fallback');
+        break;
+      }
+      current = next;
+    }
+    return names.join(' -> ');
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function apiKeyRoutingPoolFallbackChainLogsHref(key) {
+    const pool = routingPools.items.find((item) => item.id === key.routingPoolId);
+    const fallbackPoolId = Number(pool?.fallbackPoolId ?? 0);
+    if (fallbackPoolId <= 0) return '';
+    const chain = apiKeyRoutingPoolFallbackChainLabel(key);
+    return `/request-logs?routingPoolChain=${encodeURIComponent(chain)}`;
+  }
+
   /**
    * @param {number | null | undefined} value
    * @param {number | null | undefined} defaultValue
@@ -597,6 +630,17 @@ All routable models
                   </a>
                 {:else}
                   <span>{routingPoolFallbackNameForKey(key)}</span>
+                {/if}
+                {#if apiKeyRoutingPoolFallbackChainLogsHref(key)}
+                  <span>· </span>
+                  <a
+                    class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                    href={apiKeyRoutingPoolFallbackChainLogsHref(key)}
+                    title="View fallback chain logs"
+                    aria-label="View fallback chain logs"
+                  >
+                    Chain logs
+                  </a>
                 {/if}
               {/if}
             </p>
