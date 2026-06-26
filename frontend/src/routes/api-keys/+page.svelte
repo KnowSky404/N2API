@@ -79,6 +79,12 @@
     return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
   }
 
+  /** @param {string | null | undefined} model */
+  function modelRoutingHref(model) {
+    const value = String(model ?? '').trim();
+    return value ? `/models?model=${encodeURIComponent(value)}&status=blocked` : '';
+  }
+
   $effect(() => {
     if (!session.authenticated) {
       modelRoutingRequested = false;
@@ -538,7 +544,13 @@ All routable models
             {/if}
             {#if unroutableModelsForKey(key).length}
               <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">
-                No schedulable account: {unroutableModelsForKey(key).join(', ')}
+                No schedulable account:
+                {#each unroutableModelsForKey(key) as model, index}
+                  {#if index > 0}, {/if}
+                  <a class="font-medium underline-offset-2 hover:underline" href={modelRoutingHref(model)}>
+                    {model}
+                  </a>
+                {/each}
               </p>
             {/if}
             <button

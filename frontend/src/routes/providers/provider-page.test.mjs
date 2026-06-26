@@ -692,6 +692,9 @@ test('provider account rows expose manual model controls and routing warning', (
   assert.match(source, /setAccountModelEnabled/);
   assert.match(source, /removeAccountModel/);
   assert.match(source, /cannot receive model-routed POST traffic/);
+  assert.match(source, /function modelRoutingHref/);
+  assert.match(source, /href=\{modelRoutingHref\(configuredModel\.model\)\}/);
+  assert.match(source, /model=\$\{encodeURIComponent/);
 });
 
 test('provider account rows show routing pool memberships', () => {
@@ -772,6 +775,9 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.match(apiKeysSource, /loadModelRouting/);
   assert.match(apiKeysSource, /apiKeyModelWarnings/);
   assert.match(apiKeysSource, /No schedulable account/);
+  assert.match(apiKeysSource, /function modelRoutingHref/);
+  assert.match(apiKeysSource, /href=\{modelRoutingHref\(model\)\}/);
+  assert.match(apiKeysSource, /model=\$\{encodeURIComponent/);
 });
 
 test('api keys page surfaces gateway runtime limits', () => {

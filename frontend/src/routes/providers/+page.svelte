@@ -109,6 +109,12 @@
     return `/request-logs?providerAccountId=${encodeURIComponent(id)}`;
   }
 
+  /** @param {string | null | undefined} model */
+  function modelRoutingHref(model) {
+    const value = String(model ?? '').trim();
+    return value ? `/models?model=${encodeURIComponent(value)}` : '';
+  }
+
   $effect(() => {
     if (!session.authenticated) {
       providerUsageRequested = false;
@@ -1233,7 +1239,12 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
                           modelState.saved = false;
                         }}
                       />
-                      <span class="truncate font-mono text-[13px] text-[#0d0d0d]">{configuredModel.model}</span>
+                      <a
+                        class="truncate font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline"
+                        href={modelRoutingHref(configuredModel.model)}
+                      >
+                        {configuredModel.model}
+                      </a>
                     </label>
                     <span class="w-12 text-xs text-[#6e6e6e]">{configuredModel.enabled ? 'On' : 'Off'}</span>
                     <button
