@@ -17,10 +17,17 @@
   let appliedModelRoutingSearch = $state('');
   let modelSearch = $state('');
   let modelStatusFilter = $state('all');
+  let modelProviderAccountId = $state('');
 
   /** @param {string} search */
   function applyModelRoutingURLFilters(search) {
     const params = new URLSearchParams(search);
+    const providerAccountId = params.get('providerAccountId') ?? '';
+    modelProviderAccountId = '';
+    if (/^[1-9]\d*$/.test(providerAccountId)) {
+      modelProviderAccountId = providerAccountId;
+    }
+
     const model = params.get('model') ?? '';
     if (model.length > 0 && model.length <= 100) {
       modelSearch = model;
@@ -58,6 +65,7 @@
     if (!session.authenticated) {
       modelRoutingRequested = false;
       appliedModelRoutingSearch = '';
+      modelProviderAccountId = '';
       return;
     }
     if (appliedModelRoutingSearch !== page.url.search) {
@@ -147,11 +155,18 @@
   const visibleModelRoutingRows = $derived(
     modelRouting.models.filter((model) => {
       if (!modelMatchesStatusFilter(model, modelStatusFilter)) return false;
+      if (modelProviderAccountId && !modelHasVisibleProviderAccount(model)) return false;
       const query = modelSearch.trim().toLowerCase();
       if (!query) return true;
       return modelSearchText(model).includes(query);
     })
   );
+
+  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
+  function modelHasVisibleProviderAccount(model) {
+    if (!modelProviderAccountId) return true;
+    return (model.accounts ?? []).some((account) => String(account.id) === modelProviderAccountId);
+  }
 
   /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
   function modelSearchText(model) {
@@ -190,8 +205,12 @@
   /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
   function visibleModelAccounts(model) {
     const query = modelSearch.trim().toLowerCase();
-    if (!query) return model.accounts ?? [];
-    return (model.accounts ?? []).filter((account) =>
+    const accounts = (model.accounts ?? []).filter((account) => {
+      if (!modelProviderAccountId) return true;
+      return String(account.id) === modelProviderAccountId;
+    });
+    if (!query) return accounts;
+    return accounts.filter((account) =>
       [
         account.displayName,
         `account ${account.id}`,

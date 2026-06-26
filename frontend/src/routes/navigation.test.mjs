@@ -423,15 +423,20 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /modelRoutingPreview\.sessionId = sessionId/);
   assert.match(modelsPage, /modelRoutingPreview\.routingPoolId = routingPoolId/);
   assert.match(modelsPage, /modelRoutingPreview\.excludedAccountIds = excludedAccountIds/);
+  assert.match(modelsPage, /providerAccountId = params\.get\('providerAccountId'\)/);
+  assert.match(modelsPage, /modelProviderAccountId = providerAccountId/);
   for (const label of ['Search models', 'Status filter', 'All models', 'Routable models', 'Blocked models', 'Hidden models', 'Allowed models']) {
     assert.match(modelsPage, new RegExp(label.replace(' ', '\\s+')), `models page should include ${label}`);
   }
   assert.match(modelsPage, /modelSearch/);
   assert.match(modelsPage, /modelStatusFilter/);
   assert.match(modelsPage, /visibleModelRoutingRows/);
+  assert.match(modelsPage, /modelProviderAccountId/);
   assert.match(modelsPage, /modelMatchesStatusFilter\(model,\s*modelStatusFilter\)/);
   assert.match(modelsPage, /modelSearchText\(model\)\.includes\(query\)/);
   assert.match(modelsPage, /visibleModelAccounts\(model\)/);
+  assert.match(modelsPage, /modelHasVisibleProviderAccount\(model\)/);
+  assert.match(modelsPage, /String\(account\.id\) === modelProviderAccountId/);
   assert.match(modelsPage, /Schedule rank/);
   assert.match(modelsPage, /Schedule reason/);
   assert.match(modelsPage, /account\.scheduleRank/);
