@@ -92,7 +92,7 @@
     if (!value) return '';
     const routingPoolId = Number(key.routingPoolId ?? 0);
     const poolQuery = routingPoolId > 0 ? `&routingPoolId=${encodeURIComponent(String(key.routingPoolId))}` : '';
-    return `/models?model=${encodeURIComponent(value)}&status=blocked${poolQuery}`;
+    return `/models?model=${encodeURIComponent(value)}&status=blocked&clientKeyId=${encodeURIComponent(String(key.id))}${poolQuery}`;
   }
 
   $effect(() => {
@@ -173,7 +173,7 @@
         break;
       }
       seen.add(current.id);
-      names.push(current.name || `Pool ${current.id}`);
+      names.push(current.name || `pool ${current.id}`);
       const fallbackID = Number(current.fallbackPoolId ?? 0);
       if (fallbackID <= 0) break;
       const next = routingPools.items.find((candidate) => candidate.id === fallbackID);

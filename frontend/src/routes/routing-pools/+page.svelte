@@ -219,7 +219,7 @@
         break;
       }
       seen.add(current.id);
-      names.push(current.name || `Pool ${current.id}`);
+      names.push(current.name || `pool ${current.id}`);
       const fallbackID = Number(current.fallbackPoolId ?? 0);
       if (fallbackID <= 0) break;
       const next = routingPools.items.find((candidate) => candidate.id === fallbackID);

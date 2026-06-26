@@ -778,8 +778,11 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.match(apiKeysSource, /No schedulable account/);
   assert.match(apiKeysSource, /function modelRoutingHref/);
   assert.match(apiKeysSource, /href=\{modelRoutingHref\(model,\s*key\)\}/);
-  assert.match(apiKeysSource, /model=\$\{encodeURIComponent/);
-  assert.match(apiKeysSource, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
+  const modelRoutingHrefSource = apiKeysSource.match(
+    /function modelRoutingHref\(model,\s*key\) \{[\s\S]*?\n  \}/
+  )?.[0] ?? '';
+  assert.match(modelRoutingHrefSource, /model=\$\{encodeURIComponent/);
+  assert.match(modelRoutingHrefSource, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
 });
 
 test('api keys page surfaces gateway runtime limits', () => {

@@ -81,6 +81,7 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /href=\{routingPoolDiagnosticsHref\(pool\)\}/);
   assert.match(poolsPage, /\/models\?routingPoolId=\$\{encodeURIComponent/);
   assert.match(poolsPage, /function routingPoolFallbackChainLabel/);
+  assert.match(poolsPage, /current\.name \|\| `pool \$\{current\.id\}`/);
   assert.match(poolsPage, /function routingPoolFallbackChainLogsHref/);
   assert.match(poolsPage, /routingPoolChain=\$\{encodeURIComponent\(chain\)\}/);
   assert.match(poolsPage, /href=\{routingPoolFallbackChainLogsHref\(pool\)\}/);
@@ -367,6 +368,7 @@ test('api keys page links routing pool assignments to pool details', () => {
   assert.match(apiKeysPage, /function apiKeyRoutingPoolHref/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackHref/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackChainLabel/);
+  assert.match(apiKeysPage, /current\.name \|\| `pool \$\{current\.id\}`/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackChainLogsHref/);
   assert.match(apiKeysPage, /routingPoolId=\$\{encodeURIComponent/);
   assert.match(apiKeysPage, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
