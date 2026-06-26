@@ -207,6 +207,11 @@
     if (fallbackID <= 0) return '';
     return `/routing-pools?routingPoolId=${encodeURIComponent(String(fallbackID))}`;
   }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function routingPoolDiagnosticsHref(pool) {
+    return `/models?routingPoolId=${encodeURIComponent(String(pool.id))}`;
+  }
 </script>
 
 <svelte:head>
@@ -423,6 +428,14 @@
                   aria-label="View API keys"
                 >
                   API keys
+                </a>
+                <a
+                  class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                  href={routingPoolDiagnosticsHref(pool)}
+                  title="View routing diagnostics"
+                  aria-label="View routing diagnostics"
+                >
+                  Diagnostics
                 </a>
                 <button class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
                   Save membership

@@ -77,9 +77,13 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /poolSearchText\(pool\)\.includes\(query\)/);
   assert.match(poolsPage, /href=\{`\/request-logs\?routingPoolId=\$\{pool\.id\}`\}/);
   assert.match(poolsPage, /href=\{`\/api-keys\?routingPoolId=\$\{pool\.id\}`\}/);
+  assert.match(poolsPage, /function routingPoolDiagnosticsHref/);
+  assert.match(poolsPage, /href=\{routingPoolDiagnosticsHref\(pool\)\}/);
+  assert.match(poolsPage, /\/models\?routingPoolId=\$\{encodeURIComponent/);
   assert.match(poolsPage, /href=\{`\/providers\?providerAccountId=\$\{account\.id\}`\}/);
   assert.match(poolsPage, /View request logs/);
   assert.match(poolsPage, /View API keys/);
+  assert.match(poolsPage, /View routing diagnostics/);
   assert.match(poolsPage, /View provider account/);
   assert.match(adminState, /loadRoutingPools/);
   assert.match(adminState, /createRoutingPool/);
