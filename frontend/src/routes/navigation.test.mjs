@@ -133,6 +133,8 @@ test('gateway page manages runtime limits and usage visibility', () => {
   for (const href of ['/providers', '/api-keys', '/request-logs', '/models']) {
     assert.match(gatewayPage, new RegExp(`href="${href}"`), `gateway page should link to ${href}`);
   }
+  assert.match(gatewayPage, /href="\/providers\?status=active"/);
+  assert.match(gatewayPage, /href="\/providers\?status=blocked"/);
 
   assert.match(gatewayPage, /loadGatewaySettings/);
   assert.match(gatewayPage, /loadProviderAccounts/);

@@ -209,7 +209,14 @@
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</dt>
-          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableAccounts.length}</dd>
+          <dd class="mt-2">
+            <a
+              class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]"
+              href="/providers?status=active"
+            >
+              {providerAccounts.loading ? 'Loading' : schedulableAccounts.length}
+            </a>
+          </dd>
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Routable models</dt>
@@ -245,11 +252,25 @@
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</dt>
-          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableAccounts.length}</dd>
+          <dd class="mt-2">
+            <a
+              class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]"
+              href="/providers?status=active"
+            >
+              {providerAccounts.loading ? 'Loading' : schedulableAccounts.length}
+            </a>
+          </dd>
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Blocked accounts</dt>
-          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : unschedulableAccountCount}</dd>
+          <dd class="mt-2">
+            <a
+              class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]"
+              href="/providers?status=blocked"
+            >
+              {providerAccounts.loading ? 'Loading' : unschedulableAccountCount}
+            </a>
+          </dd>
         </div>
       </dl>
       <div class="mt-4 rounded-md border border-[#ededed] bg-[#fafafa] p-3">
