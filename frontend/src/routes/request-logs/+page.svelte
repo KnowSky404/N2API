@@ -92,6 +92,11 @@
     if (routingPoolChain.length > 0 && routingPoolChain.length <= 200) {
       requestLogs.routingPoolChain = routingPoolChain;
     }
+
+    const gatewayFallbacks = params.get('gatewayFallbacks') ?? '';
+    if (gatewayFallbacks === '1' || gatewayFallbacks === 'true') {
+      requestLogs.gatewayFallbacks = true;
+    }
   }
 
   $effect(() => {
@@ -568,6 +573,14 @@
             <option value={String(key.id)}>{key.name} ({key.prefix})</option>
           {/each}
         </select>
+      </label>
+      <label class="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#3c3c3c]">
+        <input
+          class="h-4 w-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+          type="checkbox"
+          bind:checked={requestLogs.gatewayFallbacks}
+        />
+        Only fallback requests
       </label>
       <button
         class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"

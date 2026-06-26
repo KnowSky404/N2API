@@ -560,6 +560,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		Error:             " api_key_token_rate_limited ",
 		RoutingPoolError:  " routing_pool_unavailable ",
 		RoutingPoolChain:  " primary -> secondary ",
+		GatewayFallbacks:  true,
 	})
 	if err != nil {
 		t.Fatalf("ListRequestLogs returned error: %v", err)
@@ -590,6 +591,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if repo.lastLogFilter.RoutingPoolChain != "primary -> secondary" {
 		t.Fatalf("repository routing pool chain = %q, want primary -> secondary", repo.lastLogFilter.RoutingPoolChain)
+	}
+	if !repo.lastLogFilter.GatewayFallbacks {
+		t.Fatal("repository gateway fallback filter = false, want true")
 	}
 	if len(logs) != 2 || logs[0].RequestID != "req_2" {
 		t.Fatalf("logs = %+v", logs)

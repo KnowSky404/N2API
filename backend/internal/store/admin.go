@@ -847,6 +847,10 @@ func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 		conditions = append(conditions, "l.routing_pool_fallback_chain = $"+strconv.Itoa(len(args)))
 	}
 
+	if filter.GatewayFallbacks {
+		conditions = append(conditions, "l.gateway_fallback_count > 0")
+	}
+
 	if filter.Query != "" {
 		args = append(args, filter.Query)
 		param := "$" + strconv.Itoa(len(args))

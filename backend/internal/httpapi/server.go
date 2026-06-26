@@ -664,6 +664,18 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			clientKeyID = parsed
 		}
+		gatewayFallbacks := false
+		if rawGatewayFallbacks := r.URL.Query().Get("gatewayFallbacks"); rawGatewayFallbacks != "" {
+			switch rawGatewayFallbacks {
+			case "1", "true":
+				gatewayFallbacks = true
+			case "0", "false":
+				gatewayFallbacks = false
+			default:
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+		}
 		filter := admin.RequestLogFilter{
 			Limit:             limit,
 			Query:             r.URL.Query().Get("q"),
@@ -676,6 +688,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			Error:             r.URL.Query().Get("error"),
 			RoutingPoolError:  r.URL.Query().Get("routingPoolError"),
 			RoutingPoolChain:  r.URL.Query().Get("routingPoolChain"),
+			GatewayFallbacks:  gatewayFallbacks,
 		}
 		logs, err := admins.ListRequestLogs(r.Context(), filter)
 		if err != nil {

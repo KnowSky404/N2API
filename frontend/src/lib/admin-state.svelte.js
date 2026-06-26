@@ -373,7 +373,7 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, routingPoolError: string, routingPoolChain: string, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
@@ -387,6 +387,7 @@ export const requestLogs = $state({
   errorCode: '',
   routingPoolError: 'all',
   routingPoolChain: '',
+  gatewayFallbacks: false,
   items: []
 });
 
@@ -402,6 +403,7 @@ export function resetRequestLogFilters() {
   requestLogs.errorCode = '';
   requestLogs.routingPoolError = 'all';
   requestLogs.routingPoolChain = '';
+  requestLogs.gatewayFallbacks = false;
 }
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
 export const usage = $state({
@@ -2757,6 +2759,9 @@ export async function loadRequestLogs() {
     const routingPoolChain = requestLogs.routingPoolChain.trim();
     if (routingPoolChain) {
       params.set('routingPoolChain', routingPoolChain);
+    }
+    if (requestLogs.gatewayFallbacks) {
+      params.set('gatewayFallbacks', '1');
     }
     const payload = await requestJSON(`/api/admin/request-logs?${params.toString()}`);
     if (!isCurrentAuthenticated(version)) return;

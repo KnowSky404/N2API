@@ -147,6 +147,7 @@ type RequestLogFilter struct {
 	Error             string
 	RoutingPoolError  string
 	RoutingPoolChain  string
+	GatewayFallbacks  bool
 }
 
 type UsageSummary struct {
