@@ -399,6 +399,10 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /href=\{providerAccountHref\(account\)\}/);
   assert.match(modelsPage, /providerAccountId=\$\{encodeURIComponent/);
   assert.match(modelsPage, /View provider account/);
+  assert.match(modelsPage, /function previewRoutingPoolHref/);
+  assert.match(modelsPage, /href=\{previewRoutingPoolHref\(modelRoutingPreview\.result\)\}/);
+  assert.match(modelsPage, /routingPoolId=\$\{encodeURIComponent/);
+  assert.match(modelsPage, /View routing pool/);
   assert.match(modelsPage, /excluding \{modelRoutingPreview\.excludedAccountIds\}/);
   assert.match(modelsPage, /previewConcurrencyLimitLabel/);
   assert.match(modelsPage, /Active/);

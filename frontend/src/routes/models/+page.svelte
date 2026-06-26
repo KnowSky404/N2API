@@ -51,6 +51,13 @@
     return `/providers?providerAccountId=${encodeURIComponent(String(id))}`;
   }
 
+  /** @param {{ routingPoolId?: number | null }} result */
+  function previewRoutingPoolHref(result) {
+    const id = Number(result.routingPoolId ?? 0);
+    if (id <= 0) return '';
+    return `/routing-pools?routingPoolId=${encodeURIComponent(String(id))}`;
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').ModelRoutingAccount} account */
   function routingAccountHoverDetail(account) {
     const lastError = account.lastError
@@ -298,7 +305,14 @@
                   excluding {modelRoutingPreview.excludedAccountIds}
                 {/if}
                 {#if modelRoutingPreview.result.routingPoolId}
-                  in routing pool {modelRoutingPreview.result.routingPoolName || modelRoutingPreview.result.routingPoolId}
+                  in routing pool
+                  <a
+                    class="underline-offset-2 hover:underline"
+                    href={previewRoutingPoolHref(modelRoutingPreview.result)}
+                    aria-label="View routing pool"
+                  >
+                    {modelRoutingPreview.result.routingPoolName || modelRoutingPreview.result.routingPoolId}
+                  </a>
                 {/if}
               </p>
               {#if modelRoutingPreview.result.routingPoolFallbackChain}
