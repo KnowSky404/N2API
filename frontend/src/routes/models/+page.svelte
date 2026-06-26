@@ -44,6 +44,13 @@
     return limit > 0 ? String(limit) : 'unlimited';
   }
 
+  /** @param {{ id?: number | null }} account */
+  function providerAccountHref(account) {
+    const id = Number(account.id ?? 0);
+    if (id <= 0) return '';
+    return `/providers?providerAccountId=${encodeURIComponent(String(id))}`;
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').ModelRoutingAccount} account */
   function routingAccountHoverDetail(account) {
     const lastError = account.lastError
@@ -319,7 +326,13 @@
                 <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">
                   {account.schedulable === false ? 'Blocked' : `Rank #${account.scheduleRank}`}
                 </span>
-                <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
+                <a
+                  class="truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                  href={providerAccountHref(account)}
+                  aria-label="View provider account"
+                >
+                  {account.displayName || `Account ${account.id}`}
+                </a>
                 <span>{accountTypeLabel(account.accountType)}</span>
                 <span>Priority {account.priority}</span>
                 <span>Load {account.loadFactor || 1}</span>
@@ -424,7 +437,13 @@
                             title={routingAccountHoverDetail(account)}
                           >
                             <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">Schedule rank #{account.scheduleRank}</span>
-                            <span class="truncate font-medium text-[#0d0d0d]">{account.displayName || `Account ${account.id}`}</span>
+                            <a
+                              class="truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                              href={providerAccountHref(account)}
+                              aria-label="View provider account"
+                            >
+                              {account.displayName || `Account ${account.id}`}
+                            </a>
                             <span class="text-[#6e6e6e]">{accountTypeLabel(account.accountType)}</span>
                             <span class="text-[#6e6e6e]">Priority {account.priority}</span>
                             <span class="text-[#6e6e6e]">Load {account.loadFactor || 1}</span>
