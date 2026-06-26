@@ -80,10 +80,15 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /function routingPoolDiagnosticsHref/);
   assert.match(poolsPage, /href=\{routingPoolDiagnosticsHref\(pool\)\}/);
   assert.match(poolsPage, /\/models\?routingPoolId=\$\{encodeURIComponent/);
+  assert.match(poolsPage, /function routingPoolFallbackChainLabel/);
+  assert.match(poolsPage, /function routingPoolFallbackChainLogsHref/);
+  assert.match(poolsPage, /routingPoolChain=\$\{encodeURIComponent\(chain\)\}/);
+  assert.match(poolsPage, /href=\{routingPoolFallbackChainLogsHref\(pool\)\}/);
   assert.match(poolsPage, /href=\{`\/providers\?providerAccountId=\$\{account\.id\}`\}/);
   assert.match(poolsPage, /View request logs/);
   assert.match(poolsPage, /View API keys/);
   assert.match(poolsPage, /View routing diagnostics/);
+  assert.match(poolsPage, /View fallback chain logs/);
   assert.match(poolsPage, /View provider account/);
   assert.match(adminState, /loadRoutingPools/);
   assert.match(adminState, /createRoutingPool/);

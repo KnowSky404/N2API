@@ -209,6 +209,38 @@
   }
 
   /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function routingPoolFallbackChainLabel(pool) {
+    const names = [];
+    const seen = new Set();
+    let current = pool;
+    while (current) {
+      if (seen.has(current.id)) {
+        names.push('cycle');
+        break;
+      }
+      seen.add(current.id);
+      names.push(current.name || `Pool ${current.id}`);
+      const fallbackID = Number(current.fallbackPoolId ?? 0);
+      if (fallbackID <= 0) break;
+      const next = routingPools.items.find((candidate) => candidate.id === fallbackID);
+      if (!next) {
+        names.push('missing fallback');
+        break;
+      }
+      current = next;
+    }
+    return names.join(' -> ');
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function routingPoolFallbackChainLogsHref(pool) {
+    const fallbackID = Number(pool.fallbackPoolId ?? 0);
+    if (fallbackID <= 0) return '';
+    const chain = routingPoolFallbackChainLabel(pool);
+    return `/request-logs?routingPoolChain=${encodeURIComponent(chain)}`;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
   function routingPoolDiagnosticsHref(pool) {
     return `/models?routingPoolId=${encodeURIComponent(String(pool.id))}`;
   }
@@ -421,6 +453,16 @@
                 >
                   Logs
                 </a>
+                {#if routingPoolFallbackChainLogsHref(pool)}
+                  <a
+                    class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                    href={routingPoolFallbackChainLogsHref(pool)}
+                    title="View fallback chain logs"
+                    aria-label="View fallback chain logs"
+                  >
+                    Chain logs
+                  </a>
+                {/if}
                 <a
                   class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
                   href={`/api-keys?routingPoolId=${pool.id}`}
