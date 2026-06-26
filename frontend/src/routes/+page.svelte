@@ -231,8 +231,18 @@
     </div>
   </article>
   <article class="rounded-lg border border-[#ededed] bg-white p-6">
-    <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">24h usage</h2>
-    <p class="mt-2 text-sm text-[#6e6e6e]">Gateway usage and estimated spend in the last day.</p>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">24h usage</h2>
+        <p class="mt-2 text-sm text-[#6e6e6e]">Gateway usage and estimated spend in the last day.</p>
+      </div>
+      <a
+        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+        href="/request-logs?gatewayFallbacks=1"
+      >
+        Fallback logs
+      </a>
+    </div>
     {#if usage.error}
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
     {:else if usage.loading && !usage24h}
