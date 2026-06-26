@@ -187,6 +187,9 @@
           <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href="/request-logs">
             Request logs
           </a>
+          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href="/request-logs?gatewayFallbacks=1">
+            Fallback logs
+          </a>
         </div>
       </div>
       <div class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
