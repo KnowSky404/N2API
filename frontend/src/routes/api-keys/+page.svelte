@@ -64,7 +64,11 @@
     const params = new URLSearchParams(search);
     const clientKeyId = params.get('clientKeyId') ?? '';
     const routingPoolId = params.get('routingPoolId') ?? '';
+    const status = params.get('status') ?? '';
     keySearch = '';
+    if (['all', 'active', 'disabled', 'revoked'].includes(status)) {
+      keyStatusFilter = status;
+    }
     if (/^[1-9]\d*$/.test(clientKeyId)) {
       keySearch = `id:${clientKeyId}`;
     } else if (/^[1-9]\d*$/.test(routingPoolId)) {

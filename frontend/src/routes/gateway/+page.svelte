@@ -205,7 +205,14 @@
       <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Provider accounts</dt>
-          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : providerAccounts.items.length}</dd>
+          <dd class="mt-2">
+            <a
+              class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]"
+              href="/providers?status=all"
+            >
+              {providerAccounts.loading ? 'Loading' : providerAccounts.items.length}
+            </a>
+          </dd>
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</dt>
@@ -220,11 +227,25 @@
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Routable models</dt>
-          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{modelRouting.loading ? 'Loading' : routableModelCount}</dd>
+          <dd class="mt-2">
+            <a
+              class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]"
+              href="/models?status=routable"
+            >
+              {modelRouting.loading ? 'Loading' : routableModelCount}
+            </a>
+          </dd>
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Active API keys</dt>
-          <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{activeKeys.length}</dd>
+          <dd class="mt-2">
+            <a
+              class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]"
+              href="/api-keys?status=active"
+            >
+              {activeKeys.length}
+            </a>
+          </dd>
         </div>
       </dl>
       {#if readinessIssues.length > 0}

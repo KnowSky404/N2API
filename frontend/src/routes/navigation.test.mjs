@@ -135,6 +135,9 @@ test('gateway page manages runtime limits and usage visibility', () => {
   }
   assert.match(gatewayPage, /href="\/providers\?status=active"/);
   assert.match(gatewayPage, /href="\/providers\?status=blocked"/);
+  assert.match(gatewayPage, /href="\/providers\?status=all"/);
+  assert.match(gatewayPage, /href="\/models\?status=routable"/);
+  assert.match(gatewayPage, /href="\/api-keys\?status=active"/);
 
   assert.match(gatewayPage, /loadGatewaySettings/);
   assert.match(gatewayPage, /loadProviderAccounts/);
@@ -339,6 +342,8 @@ test('api keys page initializes key search from client key URL param', () => {
   assert.match(apiKeysPage, /appliedAPIKeySearch/);
   assert.match(apiKeysPage, /clientKeyId = params\.get\('clientKeyId'\)/);
   assert.match(apiKeysPage, /routingPoolId = params\.get\('routingPoolId'\)/);
+  assert.match(apiKeysPage, /status = params\.get\('status'\)/);
+  assert.match(apiKeysPage, /\['all', 'active', 'disabled', 'revoked'\]\.includes\(status\)/);
   assert.match(apiKeysPage, /keySearch = `id:\$\{clientKeyId\}`/);
   assert.match(apiKeysPage, /keySearch = `pool:\$\{routingPoolId\}`/);
   assert.match(apiKeysPage, /String\(key\.id\) === idQuery/);
