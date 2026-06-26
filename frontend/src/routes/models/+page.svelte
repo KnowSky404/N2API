@@ -13,6 +13,8 @@
   } from '$lib/admin-state.svelte.js';
 
   let modelRoutingRequested = $state(false);
+  let modelSearch = $state('');
+  let modelStatusFilter = $state('all');
 
   $effect(() => {
     if (!session.authenticated) {
@@ -99,6 +101,70 @@
       modelRoutingPreview.result?.candidates.find((account) => account.id === modelRoutingPreview.result?.selectedAccountId) ??
       null
   );
+  const visibleModelRoutingRows = $derived(
+    modelRouting.models.filter((model) => {
+      if (!modelMatchesStatusFilter(model, modelStatusFilter)) return false;
+      const query = modelSearch.trim().toLowerCase();
+      if (!query) return true;
+      return modelSearchText(model).includes(query);
+    })
+  );
+
+  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
+  function modelSearchText(model) {
+    return [
+      model.model,
+      model.allowed ? 'allowed' : 'hidden',
+      Number(model.enabledCount ?? 0) > 0 ? 'routable' : 'blocked',
+      ...(model.accounts ?? []).flatMap((account) => [
+        account.displayName,
+        `account ${account.id}`,
+        accountTypeLabel(account.accountType),
+        account.scheduleReason,
+        account.unschedulableReason,
+        account.status,
+        account.statusReason,
+        account.lastError
+      ])
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model
+   * @param {string} filter
+   */
+  function modelMatchesStatusFilter(model, filter) {
+    if (filter === 'routable') return Number(model.enabledCount ?? 0) > 0;
+    if (filter === 'blocked') return Number(model.enabledCount ?? 0) === 0;
+    if (filter === 'hidden') return !model.allowed;
+    if (filter === 'allowed') return model.allowed;
+    return true;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
+  function visibleModelAccounts(model) {
+    const query = modelSearch.trim().toLowerCase();
+    if (!query) return model.accounts ?? [];
+    return (model.accounts ?? []).filter((account) =>
+      [
+        account.displayName,
+        `account ${account.id}`,
+        accountTypeLabel(account.accountType),
+        account.scheduleReason,
+        account.unschedulableReason,
+        account.status,
+        account.statusReason,
+        account.lastError
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    );
+  }
 </script>
 
 <svelte:head>
@@ -403,6 +469,31 @@
         </div>
       {/if}
 
+      <div class="mt-5 grid gap-3 md:grid-cols-[minmax(240px,1fr)_220px]">
+        <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+          Search models
+          <input
+            class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+            type="search"
+            placeholder="Search models or accounts"
+            bind:value={modelSearch}
+          />
+        </label>
+        <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+          Status filter
+          <select
+            class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+            bind:value={modelStatusFilter}
+          >
+            <option value="all">All models</option>
+            <option value="routable">Routable models</option>
+            <option value="blocked">Blocked models</option>
+            <option value="hidden">Hidden models</option>
+            <option value="allowed">Allowed models</option>
+          </select>
+        </label>
+      </div>
+
       <div class="mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
         <table class="min-w-full divide-y divide-[#ededed] text-left text-sm">
           <thead class="bg-[#fafafa] text-xs uppercase tracking-[0.08em] text-[#6e6e6e]">
@@ -422,8 +513,12 @@
               <tr>
                 <td class="px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing policy configured yet.</td>
               </tr>
+            {:else if visibleModelRoutingRows.length === 0}
+              <tr>
+                <td class="px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing rows match your filters.</td>
+              </tr>
             {:else}
-              {#each modelRouting.models as model}
+              {#each visibleModelRoutingRows as model}
                 <tr class="align-top">
                   <td class="px-4 py-4">
                     <p class="font-medium text-[#0d0d0d]">{model.model}</p>
@@ -438,9 +533,9 @@
                     {model.enabledCount} / {model.configuredCount}
                   </td>
                   <td class="px-4 py-4">
-                    {#if model.accounts?.length}
+                    {#if visibleModelAccounts(model).length}
                       <div class="flex flex-wrap gap-2">
-                        {#each model.accounts as account}
+                        {#each visibleModelAccounts(model) as account}
                           <span
                             class={[
                               'inline-flex max-w-[300px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',

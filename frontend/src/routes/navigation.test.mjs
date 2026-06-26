@@ -381,6 +381,15 @@ test('gateway usage rows link to filtered request logs', () => {
 test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /N2API Routing Diagnostics/);
   assert.match(modelsPage, /Routing diagnostics/);
+  for (const label of ['Search models', 'Status filter', 'All models', 'Routable models', 'Blocked models', 'Hidden models', 'Allowed models']) {
+    assert.match(modelsPage, new RegExp(label.replace(' ', '\\s+')), `models page should include ${label}`);
+  }
+  assert.match(modelsPage, /modelSearch/);
+  assert.match(modelsPage, /modelStatusFilter/);
+  assert.match(modelsPage, /visibleModelRoutingRows/);
+  assert.match(modelsPage, /modelMatchesStatusFilter\(model,\s*modelStatusFilter\)/);
+  assert.match(modelsPage, /modelSearchText\(model\)\.includes\(query\)/);
+  assert.match(modelsPage, /visibleModelAccounts\(model\)/);
   assert.match(modelsPage, /Schedule rank/);
   assert.match(modelsPage, /Schedule reason/);
   assert.match(modelsPage, /account\.scheduleRank/);

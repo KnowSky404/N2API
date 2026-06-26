@@ -235,8 +235,13 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} lastTestStatus
  * @property {string} lastTestError
  * @property {number} scheduleRank
+ * @property {string} scheduleReason
  * @property {boolean} schedulable
  * @property {string} unschedulableReason
+ * @property {boolean} stickyBound
+ * @property {number} currentConcurrentRequests
+ * @property {number} effectiveMaxConcurrentRequests
+ * @property {boolean} concurrencyBlocked
  */
 
 /**
