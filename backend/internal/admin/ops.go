@@ -93,3 +93,16 @@ type OpsAccountHealth struct {
 	TestMissing       int64     `json:"testMissing"`
 	RecentTestFailure int64     `json:"recentTestFailure"`
 }
+
+// OpsAccountTest is a provider account probe result with account context for ops review.
+type OpsAccountTest struct {
+	ID          int64     `json:"id"`
+	AccountID   int64     `json:"accountId"`
+	Provider    string    `json:"provider"`
+	AccountName string    `json:"accountName"`
+	AccountType string    `json:"accountType"`
+	Status      string    `json:"status"`
+	Message     string    `json:"message"`
+	CheckedAt   time.Time `json:"checkedAt"`
+	CreatedAt   time.Time `json:"createdAt"`
+}

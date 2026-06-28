@@ -84,6 +84,8 @@ API upstream credentials can be updated after account creation. Use the provider
 
 Use **Test account** when you want to probe one provider account before sending client traffic through it. The action probes one provider account with its current OAuth token or API upstream key, clears local failure status on a successful probe, and records upstream failure status for 401/403/429/5xx probe responses. The account row keeps the last test status, last test time, and last test error so manual checks remain visible after refresh. Each probe also writes provider account test history; use the Providers page **History action** to expand **Recent test history**, or fetch the same data from `GET /api/admin/provider-accounts/{id}/test-results`.
 
+The Ops Monitor page shows **Recent account tests** for the selected monitoring window so manual and automatic probe failures are visible without opening each provider account row. Fetch the same aggregate view from `GET /api/admin/ops/account-tests`.
+
 Use **Test selected** to probe selected provider accounts without probing the whole account pool. This is useful after filtering, bulk enabling, or restoring a subset of accounts; it updates the same last-test fields, health fields, and test history as **Test account**.
 
 Use **Refresh selected** to force credential refresh for selected provider accounts together. This is useful after rotating, restoring, or reauthorizing a subset of OAuth-backed exits without refreshing the whole pool.

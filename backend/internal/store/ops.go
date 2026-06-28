@@ -355,6 +355,50 @@ func (r *AdminRepository) GetOpsAccountHealth(ctx context.Context, since time.Ti
 	return health, nil
 }
 
+func (r *AdminRepository) ListOpsAccountTests(ctx context.Context, since time.Time, limit int) ([]admin.OpsAccountTest, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			t.id,
+			t.account_id,
+			t.provider,
+			COALESCE(NULLIF(a.display_name, ''), NULLIF(a.name, ''), 'unknown'),
+			COALESCE(NULLIF(a.account_type, ''), 'codex_oauth'),
+			t.status,
+			t.message,
+			t.checked_at,
+			t.created_at
+		FROM provider_account_test_results t
+		LEFT JOIN provider_accounts a ON a.id = t.account_id
+		WHERE t.checked_at >= $1
+		ORDER BY t.checked_at DESC, t.id DESC
+		LIMIT $2
+	`, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	tests := []admin.OpsAccountTest{}
+	for rows.Next() {
+		var test admin.OpsAccountTest
+		if err := rows.Scan(
+			&test.ID,
+			&test.AccountID,
+			&test.Provider,
+			&test.AccountName,
+			&test.AccountType,
+			&test.Status,
+			&test.Message,
+			&test.CheckedAt,
+			&test.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		tests = append(tests, test)
+	}
+	return tests, rows.Err()
+}
+
 func opsBucketExpr(interval string) string {
 	switch interval {
 	case "minute":

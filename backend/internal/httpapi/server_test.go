@@ -38,52 +38,55 @@ func (s fakeAutoTestStatusSource) ProviderAccountAutoTestStatus() provider.AutoT
 }
 
 type fakeAdminService struct {
-	keys               []admin.APIKey
-	logs               []admin.RequestLog
-	requestLogFilter   admin.RequestLogFilter
-	errorOnEmptyLogout bool
-	logoutTokens       []string
-	modelSettings      admin.ModelSettings
-	modelPolicyKeyID   int64
-	modelPolicy        string
-	modelPolicyModels  []string
-	modelPolicyErr     error
-	renameKeyID        int64
-	renameName         string
-	renameErr          error
-	disabledKeyID      int64
-	disabledValue      bool
-	disabledErr        error
-	limitKeyID         int64
-	requestsPerMinute  int
-	tokensPerMinute    int
-	limitsErr          error
-	budgetKeyID        int64
-	requestBudget24h   int
-	tokenBudget24h     int
-	requestBudget30d   int
-	tokenBudget30d     int
-	budgetsErr         error
-	routingPools       []admin.RoutingPool
-	createFallbackID   *int64
-	updateFallbackID   *int64
-	routingPoolKeyID   int64
-	routingPoolID      *int64
-	budgetUsage        map[int64]admin.APIKeyBudgetUsage
-	usageSummary       admin.UsageSummary
-	usageRange         string
-	usageGroupBy       string
-	usagePricing       admin.UsagePricing
-	gatewaySettings    admin.GatewaySettings
-	gatewaySettingsErr error
-	opsAccountHealth   admin.OpsAccountHealth
-	opsAccountSince    time.Time
-	fingerprintInput   admin.FingerprintProfileInput
-	fingerprintID      int64
-	fingerprintErr     error
-	errorRuleInput     admin.ErrorPassthroughRuleInput
-	errorRuleID        int64
-	errorRuleErr       error
+	keys                 []admin.APIKey
+	logs                 []admin.RequestLog
+	requestLogFilter     admin.RequestLogFilter
+	errorOnEmptyLogout   bool
+	logoutTokens         []string
+	modelSettings        admin.ModelSettings
+	modelPolicyKeyID     int64
+	modelPolicy          string
+	modelPolicyModels    []string
+	modelPolicyErr       error
+	renameKeyID          int64
+	renameName           string
+	renameErr            error
+	disabledKeyID        int64
+	disabledValue        bool
+	disabledErr          error
+	limitKeyID           int64
+	requestsPerMinute    int
+	tokensPerMinute      int
+	limitsErr            error
+	budgetKeyID          int64
+	requestBudget24h     int
+	tokenBudget24h       int
+	requestBudget30d     int
+	tokenBudget30d       int
+	budgetsErr           error
+	routingPools         []admin.RoutingPool
+	createFallbackID     *int64
+	updateFallbackID     *int64
+	routingPoolKeyID     int64
+	routingPoolID        *int64
+	budgetUsage          map[int64]admin.APIKeyBudgetUsage
+	usageSummary         admin.UsageSummary
+	usageRange           string
+	usageGroupBy         string
+	usagePricing         admin.UsagePricing
+	gatewaySettings      admin.GatewaySettings
+	gatewaySettingsErr   error
+	opsAccountHealth     admin.OpsAccountHealth
+	opsAccountSince      time.Time
+	opsAccountTests      []admin.OpsAccountTest
+	opsAccountTestsSince time.Time
+	opsAccountTestsLimit int
+	fingerprintInput     admin.FingerprintProfileInput
+	fingerprintID        int64
+	fingerprintErr       error
+	errorRuleInput       admin.ErrorPassthroughRuleInput
+	errorRuleID          int64
+	errorRuleErr         error
 }
 
 type fakeProviderService struct {
@@ -4362,6 +4365,53 @@ func TestOpsAccountHealthRequiresSessionAndReturnsHealth(t *testing.T) {
 	}
 }
 
+func TestOpsAccountTestsRequiresSessionAndReturnsRows(t *testing.T) {
+	admins := newFakeAdminService()
+	since := time.Unix(4000, 0).UTC()
+	checkedAt := time.Unix(5000, 0).UTC()
+	admins.opsAccountTests = []admin.OpsAccountTest{{
+		ID:          91,
+		AccountID:   7,
+		Provider:    "openai",
+		AccountName: "Work Codex",
+		AccountType: "codex_oauth",
+		Status:      "failed",
+		Message:     "quota exceeded",
+		CheckedAt:   checkedAt,
+		CreatedAt:   checkedAt,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/ops/account-tests", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/account-tests?since=4000&limit=20", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !admins.opsAccountTestsSince.Equal(since) || admins.opsAccountTestsLimit != 20 {
+		t.Fatalf("ops account tests args = since:%v limit:%d", admins.opsAccountTestsSince, admins.opsAccountTestsLimit)
+	}
+	var body struct {
+		Tests []admin.OpsAccountTest `json:"tests"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Tests) != 1 || body.Tests[0] != admins.opsAccountTests[0] {
+		t.Fatalf("account tests = %+v, want %+v", body.Tests, admins.opsAccountTests)
+	}
+}
+
 func TestUsagePricingRequiresSessionAndReturnsPricing(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.usagePricing = admin.UsagePricing{
@@ -5206,6 +5256,12 @@ func (s *fakeAdminService) GetOpsLatencyDistribution(_ context.Context, _ time.T
 func (s *fakeAdminService) GetOpsAccountHealth(_ context.Context, since time.Time) (admin.OpsAccountHealth, error) {
 	s.opsAccountSince = since
 	return s.opsAccountHealth, nil
+}
+
+func (s *fakeAdminService) ListOpsAccountTests(_ context.Context, since time.Time, limit int) ([]admin.OpsAccountTest, error) {
+	s.opsAccountTestsSince = since
+	s.opsAccountTestsLimit = limit
+	return s.opsAccountTests, nil
 }
 
 func (s *fakeAdminService) ListFingerprintProfiles(_ context.Context) ([]admin.FingerprintProfile, error) {

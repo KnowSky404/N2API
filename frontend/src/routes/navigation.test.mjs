@@ -754,7 +754,7 @@ test('dashboard shows ops monitoring snapshot', () => {
 });
 
 test('ops monitor links error buckets to filtered request logs', () => {
-  for (const label of ['Operations monitor', 'Top errors', 'Upstream status codes', 'Rate-limited models', 'Error accounts', 'Account health', 'Schedulable accounts', 'Scheduling blockers', 'Account tests', 'Open providers']) {
+  for (const label of ['Operations monitor', 'Top errors', 'Upstream status codes', 'Rate-limited models', 'Error accounts', 'Account health', 'Schedulable accounts', 'Scheduling blockers', 'Account tests', 'Recent account tests', 'Open providers']) {
     assert.match(opsPage, new RegExp(label.replace(' ', '\\s+')), `ops page should include ${label}`);
   }
 
@@ -762,7 +762,12 @@ test('ops monitor links error buckets to filtered request logs', () => {
   assert.match(adminState, /function loadOpsAccountHealth/);
   assert.match(adminState, /\/api\/admin\/ops\/account-health/);
   assert.match(adminState, /loadOpsAccountHealth\(since\)/);
+  assert.match(adminState, /function loadOpsAccountTests/);
+  assert.match(adminState, /\/api\/admin\/ops\/account-tests/);
+  assert.match(adminState, /loadOpsAccountTests\(since\)/);
   assert.match(opsPage, /opsMonitor\.accountHealth/);
+  assert.match(opsPage, /opsMonitor\.accountTests\.tests/);
+  assert.match(opsPage, /\/providers\?providerAccountId=/);
   assert.match(opsPage, /function opsErrorHref/);
   assert.match(opsPage, /function opsStatusCodeHref/);
   assert.match(opsPage, /function opsRateLimitedModelHref/);

@@ -60,6 +60,7 @@ type AdminService interface {
 	GetOpsErrorTrend(ctx context.Context, since time.Time, interval string) (admin.OpsErrorTrend, error)
 	GetOpsLatencyDistribution(ctx context.Context, since time.Time) (admin.OpsLatencyDistribution, error)
 	GetOpsAccountHealth(ctx context.Context, since time.Time) (admin.OpsAccountHealth, error)
+	ListOpsAccountTests(ctx context.Context, since time.Time, limit int) ([]admin.OpsAccountTest, error)
 	ListFingerprintProfiles(ctx context.Context) ([]admin.FingerprintProfile, error)
 	CreateFingerprintProfile(ctx context.Context, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
 	UpdateFingerprintProfile(ctx context.Context, id int64, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
@@ -874,6 +875,21 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, health)
+	}))
+
+	mux.HandleFunc("GET /api/admin/ops/account-tests", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		since := parseSinceParam(r)
+		limit, err := parseLimitParam(r, 20, 100)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		tests, err := admins.ListOpsAccountTests(r.Context(), since, limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]admin.OpsAccountTest{"tests": tests})
 	}))
 
 	mux.HandleFunc("GET /api/admin/fingerprint-profiles", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -2693,6 +2709,21 @@ func parseSinceParam(r *http.Request) time.Time {
 		return time.Time{}
 	}
 	return time.Unix(seconds, 0)
+}
+
+func parseLimitParam(r *http.Request, defaultLimit, maxLimit int) (int, error) {
+	limit := defaultLimit
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			return 0, fmt.Errorf("invalid limit")
+		}
+		limit = parsed
+	}
+	if maxLimit > 0 && limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit, nil
 }
 
 func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins AdminService) {

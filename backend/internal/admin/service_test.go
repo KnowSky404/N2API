@@ -927,6 +927,35 @@ func TestGetOpsAccountHealthReturnsRepositorySummary(t *testing.T) {
 	}
 }
 
+func TestListOpsAccountTestsReturnsRepositoryRows(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	since := time.Unix(5000, 0).UTC().Add(-24 * time.Hour)
+	checkedAt := time.Unix(5000, 0).UTC()
+	repo.opsAccountTests = []OpsAccountTest{{
+		ID:          91,
+		AccountID:   7,
+		Provider:    "openai",
+		AccountName: "Work Codex",
+		AccountType: "codex_oauth",
+		Status:      "failed",
+		Message:     "quota exceeded",
+		CheckedAt:   checkedAt,
+		CreatedAt:   checkedAt,
+	}}
+
+	tests, err := service.ListOpsAccountTests(context.Background(), since, 20)
+	if err != nil {
+		t.Fatalf("ListOpsAccountTests returned error: %v", err)
+	}
+	if len(tests) != 1 || tests[0] != repo.opsAccountTests[0] {
+		t.Fatalf("ops account tests = %+v, want %+v", tests, repo.opsAccountTests)
+	}
+	if !repo.lastOpsAccountTestsSince.Equal(since) || repo.lastOpsAccountTestsLimit != 20 {
+		t.Fatalf("repository args = since:%v limit:%d", repo.lastOpsAccountTestsSince, repo.lastOpsAccountTestsLimit)
+	}
+}
+
 func TestUsagePricingDefaultAndUpdate(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1173,6 +1202,9 @@ type memoryRepo struct {
 	usagePricing              UsagePricing
 	opsAccountHealth          OpsAccountHealth
 	lastOpsAccountHealthSince time.Time
+	opsAccountTests           []OpsAccountTest
+	lastOpsAccountTestsSince  time.Time
+	lastOpsAccountTestsLimit  int
 	lastFingerprintInput      FingerprintProfileInput
 	lastFingerprintUpdateID   int64
 }
@@ -1564,6 +1596,12 @@ func (r *memoryRepo) GetOpsLatencyDistribution(_ context.Context, _ time.Time) (
 func (r *memoryRepo) GetOpsAccountHealth(_ context.Context, since time.Time) (OpsAccountHealth, error) {
 	r.lastOpsAccountHealthSince = since
 	return r.opsAccountHealth, nil
+}
+
+func (r *memoryRepo) ListOpsAccountTests(_ context.Context, since time.Time, limit int) ([]OpsAccountTest, error) {
+	r.lastOpsAccountTestsSince = since
+	r.lastOpsAccountTestsLimit = limit
+	return r.opsAccountTests, nil
 }
 
 func (r *memoryRepo) ListFingerprintProfiles(_ context.Context) ([]FingerprintProfile, error) {

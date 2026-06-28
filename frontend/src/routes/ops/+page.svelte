@@ -13,7 +13,7 @@
   let range = $state('24h');
   const maxLatCount = $derived(opsMonitor.latency?.buckets?.length ? Math.max(...opsMonitor.latency.buckets.map((/** @type {{count: number}} */ b) => b.count), 1) : 0);
 
-let requested = $state(false);
+  let requested = $state(false);
 
   const rangeOptions = [
     { value: '1h', label: '1h', seconds: 3600 },
@@ -91,6 +91,13 @@ let requested = $state(false);
       params.set('providerAccountId', key);
     }
     return requestLogHrefWithSince(params);
+  }
+
+  /** @param {string | null | undefined} status */
+  function accountTestStatusClass(status) {
+    if (status === 'passed') return 'text-[#0a7a5e]';
+    if (status === 'failed') return 'text-red-700';
+    return 'text-[#6e6e6e]';
   }
 </script>
 
@@ -351,6 +358,56 @@ let requested = $state(false);
               </dl>
             </div>
           </div>
+        </section>
+      {/if}
+
+      {#if opsMonitor.accountTests}
+        <section class="rounded-lg border border-[#ededed] bg-white p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 class="text-base font-semibold text-[#0d0d0d]">Recent account tests</h3>
+              <p class="mt-1 text-sm text-[#6e6e6e]">Latest provider account test results in the selected window.</p>
+            </div>
+            <a class="text-sm font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers">Open providers</a>
+          </div>
+
+          {#if opsMonitor.accountTests.tests?.length > 0}
+            <div class="mt-4 overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-[#ededed] text-left text-xs font-medium uppercase text-[#6e6e6e]">
+                    <th class="py-2 pr-4">Checked</th>
+                    <th class="py-2 pr-4">Account</th>
+                    <th class="py-2 pr-4">Type</th>
+                    <th class="py-2 pr-4">Status</th>
+                    <th class="py-2">Message</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-[#ededed]">
+                  {#each opsMonitor.accountTests.tests as test}
+                    <tr class="hover:bg-[#fafafa]">
+                      <td class="py-2 pr-4 whitespace-nowrap font-mono text-[13px] text-[#3c3c3c]">{formatDate(test.checkedAt)}</td>
+                      <td class="py-2 pr-4">
+                        <a
+                          class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                          href={`/providers?providerAccountId=${test.accountId}`}
+                          title="Open provider account"
+                        >
+                          {test.accountName || `Account ${test.accountId}`}
+                        </a>
+                        <div class="mt-0.5 font-mono text-[12px] text-[#6e6e6e]">{test.provider}</div>
+                      </td>
+                      <td class="py-2 pr-4 font-mono text-[13px] text-[#3c3c3c]">{test.accountType}</td>
+                      <td class="py-2 pr-4 font-mono text-[13px] font-semibold {accountTestStatusClass(test.status)}">{test.status}</td>
+                      <td class="py-2 text-[#3c3c3c]">{test.message || '-'}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {:else}
+            <p class="mt-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 text-sm text-[#6e6e6e]">No account tests in this window.</p>
+          {/if}
         </section>
       {/if}
 
