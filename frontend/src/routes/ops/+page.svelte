@@ -414,19 +414,35 @@
               <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
                 <div>
                   <dt class="text-[#6e6e6e]">Disabled</dt>
-                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.disabled)}</dd>
+                  <dd class="mt-1">
+                    <a class="font-mono tabular-nums text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers?status=disabled">
+                      {formatTokens(opsMonitor.accountHealth.disabled)}
+                    </a>
+                  </dd>
                 </div>
                 <div>
                   <dt class="text-[#6e6e6e]">Rate limited</dt>
-                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.rateLimited)}</dd>
+                  <dd class="mt-1">
+                    <a class="font-mono tabular-nums text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers?status=rate_limited">
+                      {formatTokens(opsMonitor.accountHealth.rateLimited)}
+                    </a>
+                  </dd>
                 </div>
                 <div>
                   <dt class="text-[#6e6e6e]">Circuit open</dt>
-                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.circuitOpen)}</dd>
+                  <dd class="mt-1">
+                    <a class="font-mono tabular-nums text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers?status=circuit_open">
+                      {formatTokens(opsMonitor.accountHealth.circuitOpen)}
+                    </a>
+                  </dd>
                 </div>
                 <div>
                   <dt class="text-[#6e6e6e]">Expired</dt>
-                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.expired)}</dd>
+                  <dd class="mt-1">
+                    <a class="font-mono tabular-nums text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers?status=expired">
+                      {formatTokens(opsMonitor.accountHealth.expired)}
+                    </a>
+                  </dd>
                 </div>
               </dl>
             </div>

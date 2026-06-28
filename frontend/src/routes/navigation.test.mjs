@@ -798,6 +798,10 @@ test('ops monitor links error buckets to filtered request logs', () => {
   assert.match(opsPage, /opsMonitor\.accountTests\.tests/);
   assert.match(opsPage, /opsMonitor\.costBreakdown/);
   assert.match(opsPage, /\/providers\?providerAccountId=/);
+  assert.match(opsPage, /href="\/providers\?status=disabled"/);
+  assert.match(opsPage, /href="\/providers\?status=rate_limited"/);
+  assert.match(opsPage, /href="\/providers\?status=circuit_open"/);
+  assert.match(opsPage, /href="\/providers\?status=expired"/);
   assert.match(opsPage, /function opsErrorHref/);
   assert.match(opsPage, /function opsStatusCodeHref/);
   assert.match(opsPage, /function opsRateLimitedModelHref/);
