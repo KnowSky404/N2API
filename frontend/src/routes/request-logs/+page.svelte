@@ -206,10 +206,26 @@
       .join(' ');
   }
 
+  function requestLogDrilldownParams() {
+    const params = new URLSearchParams();
+    if (/^\d+$/.test(requestLogs.since)) params.set('since', requestLogs.since);
+    return params;
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
   function errorHref(log) {
     if (!log.error) return '';
-    return `/request-logs?error=${encodeURIComponent(log.error)}`;
+    const params = requestLogDrilldownParams();
+    params.set('error', log.error);
+    return `/request-logs?${params.toString()}`;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  function routingPoolFallbackChainHref(log) {
+    if (!log.routingPoolFallbackChain) return '';
+    const params = requestLogDrilldownParams();
+    params.set('routingPoolChain', log.routingPoolFallbackChain);
+    return `/request-logs?${params.toString()}`;
   }
 
   const usageRanges = ['24h', '7d', '30d'];
@@ -848,7 +864,7 @@
               {#if log.routingPoolFallbackChain}
                 <a
                   class="mt-1 block max-w-[180px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]"
-                  href={`/request-logs?routingPoolChain=${encodeURIComponent(log.routingPoolFallbackChain)}`}
+                  href={routingPoolFallbackChainHref(log)}
                   title={log.routingPoolFallbackChain}
                   aria-label="View fallback chain logs"
                 >

@@ -287,7 +287,9 @@ test('request logs page formats gateway error codes for scanning', () => {
   assert.match(requestLogsPage, /errorLabel\(log\.error\)/);
   assert.match(requestLogsPage, /title=\{log\.error/);
   assert.match(requestLogsPage, /href=\{errorHref\(log\)\}/);
-  assert.match(requestLogsPage, /error=\$\{encodeURIComponent/);
+  assert.match(requestLogsPage, /function requestLogDrilldownParams/);
+  assert.match(requestLogsPage, /params\.set\('since', requestLogs\.since\)/);
+  assert.match(requestLogsPage, /params\.set\('error', log\.error\)/);
   assert.match(requestLogsPage, /View same error logs/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.errorCode\}/);
   assert.match(requestLogsPage, /Error code filter/);
@@ -316,7 +318,9 @@ test('request logs page shows gateway fallback diagnostics', () => {
   assert.match(requestLogsPage, /log\.gatewayFallbackCount/);
   assert.match(requestLogsPage, /log\.routingPoolFallbackDepth/);
   assert.match(requestLogsPage, /log\.routingPoolFallbackChain/);
-  assert.match(requestLogsPage, /href=\{`\/request-logs\?routingPoolChain=\$\{encodeURIComponent\(log\.routingPoolFallbackChain\)\}`\}/);
+  assert.match(requestLogsPage, /function routingPoolFallbackChainHref/);
+  assert.match(requestLogsPage, /params\.set\('routingPoolChain', log\.routingPoolFallbackChain\)/);
+  assert.match(requestLogsPage, /href=\{routingPoolFallbackChainHref\(log\)\}/);
   assert.match(requestLogsPage, /View fallback chain logs/);
   assert.match(requestLogsPage, /log\.routingPoolError/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolError\}/);
