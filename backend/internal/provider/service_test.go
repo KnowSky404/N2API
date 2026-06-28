@@ -2046,6 +2046,48 @@ func TestSelectAccountForModelAndSessionInRoutingPoolDoesNotCrossScope(t *testin
 	}
 }
 
+func TestSelectAccountForModelAndSessionInRoutingPoolRebindsWhenBoundAccountExcluded(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "bound-token"),
+		testAccount(t, 2, true, 1, "fallback-token"),
+	}
+	repo.routingPoolAccounts[7] = []RoutingPoolAccount{
+		{AccountID: 1, Priority: 0},
+		{AccountID: 2, Priority: 0},
+	}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	repo.sessionBindings[routingPoolSessionBindingKey("openai", 7, "gpt-5", "workspace-123")] = SessionBinding{
+		ID:        1,
+		Provider:  "openai",
+		Model:     "gpt-5",
+		SessionID: "workspace-123",
+		AccountID: 1,
+		CreatedAt: time.Now().Add(-time.Hour),
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountForModelAndSessionInRoutingPool(context.Background(), 7, "gpt-5", "workspace-123", 1)
+	if err != nil {
+		t.Fatalf("SelectAccountForModelAndSessionInRoutingPool returned error: %v", err)
+	}
+	if selected.AccountID != 2 {
+		t.Fatalf("selected account = %d, want fallback account 2", selected.AccountID)
+	}
+	binding := repo.sessionBindings[routingPoolSessionBindingKey("openai", 7, "gpt-5", "workspace-123")]
+	if binding.AccountID != 2 {
+		t.Fatalf("stored pool binding = %+v, want rebound account 2", binding)
+	}
+	if _, ok := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]; ok {
+		t.Fatal("pool-scoped selection wrote a global sticky binding")
+	}
+}
+
 func TestSelectAccountForModelAndSessionRebindsWhenBoundAccountExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
