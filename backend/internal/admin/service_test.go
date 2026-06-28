@@ -553,6 +553,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	logs, err := service.ListRequestLogs(context.Background(), RequestLogFilter{
 		Query:             "  gpt-5  ",
 		StatusClass:       "server_error",
+		StatusCode:        503,
 		ProviderAccountID: 7,
 		ClientKeyID:       12,
 		Model:             " gpt-5 ",
@@ -573,6 +574,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if repo.lastLogFilter.StatusClass != RequestLogStatusServerError {
 		t.Fatalf("repository status class = %q, want %q", repo.lastLogFilter.StatusClass, RequestLogStatusServerError)
+	}
+	if repo.lastLogFilter.StatusCode != 503 {
+		t.Fatalf("repository status code = %d, want 503", repo.lastLogFilter.StatusCode)
 	}
 	if repo.lastLogFilter.ProviderAccountID != 7 {
 		t.Fatalf("repository provider account ID = %d, want 7", repo.lastLogFilter.ProviderAccountID)
@@ -641,6 +645,12 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{ClientKeyID: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs invalid client key ID error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{StatusCode: 99}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs invalid low status code error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{StatusCode: 600}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs invalid high status code error = %v, want ErrInvalidInput", err)
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Model: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long model error = %v, want ErrInvalidInput", err)

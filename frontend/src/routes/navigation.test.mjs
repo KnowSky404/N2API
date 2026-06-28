@@ -332,12 +332,14 @@ test('request logs page shows gateway fallback diagnostics', () => {
 test('request logs page filters by search and status class', () => {
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.query\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.statusClass\}/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogs\.statusCode\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.model\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.sessionId\}/);
   assert.match(requestLogsPage, /value: 'routing_pool', label: 'Routing pool'/);
   assert.match(requestLogsPage, /routing_pool_empty/);
   assert.match(requestLogsPage, /Model filter/);
   assert.match(requestLogsPage, /Session filter/);
+  assert.match(requestLogsPage, /Status code filter/);
   assert.match(requestLogsPage, /statusClass/);
   assert.match(adminState, /params\.set\('q'/);
   assert.match(adminState, /params\.set\('statusClass'/);
@@ -425,12 +427,15 @@ test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /requestLogs\.model = model/);
   assert.match(requestLogsPage, /requestLogs\.sessionId = sessionId/);
   assert.match(requestLogsPage, /requestLogs\.errorCode = error/);
+  assert.match(requestLogsPage, /requestLogs\.statusCode = statusCode/);
   assert.match(requestLogsPage, /requestLogs\.routingPoolChain = routingPoolChain/);
   assert.match(requestLogsPage, /requestLogs\.query = query/);
   assert.match(requestLogsPage, /requestLogs\.statusClass = statusClass/);
   assert.match(requestLogsPage, /requestLogs\.gatewayFallbacks = true/);
   assert.match(requestLogsPage, /void loadRequestLogs\(\)/);
   assert.match(adminState, /params\.set\('clientKeyId'/);
+  assert.match(adminState, /params\.set\('statusCode'/);
+  assert.match(adminState, /statusCode: ''/);
   assert.match(adminState, /routingPoolId: 'all'/);
   assert.match(adminState, /clientKeyId: 'all'/);
   assert.match(adminState, /model: ''/);
@@ -710,8 +715,11 @@ test('ops monitor links error buckets to filtered request logs', () => {
   }
 
   assert.match(opsPage, /function opsErrorHref/);
+  assert.match(opsPage, /function opsStatusCodeHref/);
   assert.match(opsPage, /error=\$\{encodeURIComponent/);
+  assert.match(opsPage, /statusCode=\$\{encodeURIComponent/);
   assert.match(opsPage, /href=\{opsErrorHref\(bucket\)\}/);
+  assert.match(opsPage, /href=\{opsStatusCodeHref\(bucket\)\}/);
   assert.match(opsPage, /View matching request logs/);
 });
 

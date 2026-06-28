@@ -677,6 +677,15 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			clientKeyID = parsed
 		}
+		statusCode := 0
+		if rawStatusCode := r.URL.Query().Get("statusCode"); rawStatusCode != "" {
+			parsed, err := strconv.Atoi(rawStatusCode)
+			if err != nil || parsed < 100 || parsed > 599 {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			statusCode = parsed
+		}
 		gatewayFallbacks := false
 		if rawGatewayFallbacks := r.URL.Query().Get("gatewayFallbacks"); rawGatewayFallbacks != "" {
 			switch rawGatewayFallbacks {
@@ -693,6 +702,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			Limit:             limit,
 			Query:             r.URL.Query().Get("q"),
 			StatusClass:       r.URL.Query().Get("statusClass"),
+			StatusCode:        statusCode,
 			ProviderAccountID: providerAccountID,
 			RoutingPoolID:     routingPoolID,
 			ClientKeyID:       clientKeyID,
@@ -2619,6 +2629,11 @@ func buildRequestLogFilter(r *http.Request) admin.RequestLogFilter {
 	switch sc := r.URL.Query().Get("statusClass"); sc {
 	case "all", "success", "client_error", "server_error":
 		filter.StatusClass = sc
+	}
+	if raw := r.URL.Query().Get("statusCode"); raw != "" {
+		if code, err := strconv.Atoi(raw); err == nil && code >= 100 && code <= 599 {
+			filter.StatusCode = code
+		}
 	}
 	if raw := r.URL.Query().Get("providerAccountId"); raw != "" {
 		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {

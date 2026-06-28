@@ -145,6 +145,7 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 	whereSQL, args := requestLogFilterSQL(admin.RequestLogFilter{
 		Query:             "codex",
 		StatusClass:       admin.RequestLogStatusServerError,
+		StatusCode:        503,
 		ProviderAccountID: 7,
 		RoutingPoolID:     9,
 		ClientKeyID:       12,
@@ -156,12 +157,13 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		RoutingPoolChain:  "primary -> secondary",
 		GatewayFallbacks:  true,
 	})
-	if len(args) != 10 || args[0] != int64(7) || args[1] != int64(9) || args[2] != int64(12) || args[3] != "gpt-5" || args[4] != "workspace-123" || args[5] != "api_key_token_rate_limited" || args[6] != "missing" || args[7] != "routing_pool_unavailable" || args[8] != "primary -> secondary" || args[9] != "codex" {
-		t.Fatalf("args = %+v, want provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, api_key_token_rate_limited, missing usage source, routing_pool_unavailable, routing pool chain, and codex args", args)
+	if len(args) != 11 || args[0] != 503 || args[1] != int64(7) || args[2] != int64(9) || args[3] != int64(12) || args[4] != "gpt-5" || args[5] != "workspace-123" || args[6] != "api_key_token_rate_limited" || args[7] != "missing" || args[8] != "routing_pool_unavailable" || args[9] != "primary -> secondary" || args[10] != "codex" {
+		t.Fatalf("args = %+v, want status code 503, provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, api_key_token_rate_limited, missing usage source, routing_pool_unavailable, routing pool chain, and codex args", args)
 	}
 	for _, want := range []string{
 		"ILIKE '%' || $",
 		"l.status_code >= 500",
+		"l.status_code = $",
 		"l.provider_account_id = $",
 		"l.routing_pool_id = $",
 		"l.client_key_id = $",

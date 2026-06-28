@@ -139,6 +139,7 @@ type RequestLogFilter struct {
 	Limit             int
 	Query             string
 	StatusClass       string
+	StatusCode        int
 	ProviderAccountID int64
 	RoutingPoolID     int64
 	ClientKeyID       int64
@@ -677,6 +678,9 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	switch filter.StatusClass {
 	case RequestLogStatusAll, RequestLogStatusSuccess, RequestLogStatusClientError, RequestLogStatusServerError:
 	default:
+		return nil, ErrInvalidInput
+	}
+	if filter.StatusCode != 0 && (filter.StatusCode < 100 || filter.StatusCode > 599) {
 		return nil, ErrInvalidInput
 	}
 	if filter.ProviderAccountID < 0 {

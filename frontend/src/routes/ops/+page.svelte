@@ -51,6 +51,13 @@ let requested = $state(false);
     if (!key) return '/request-logs';
     return `/request-logs?error=${encodeURIComponent(key)}`;
   }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function opsStatusCodeHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    if (!/^[1-5]\d\d$/.test(key)) return '/request-logs';
+    return `/request-logs?statusCode=${encodeURIComponent(key)}`;
+  }
 </script>
 
 <svelte:head>
@@ -182,7 +189,13 @@ let requested = $state(false);
               <div class="mt-3 space-y-2">
                 {#each opsMonitor.stats.topUpstreamStatuses as bucket}
                   <div class="flex items-center gap-2">
-                    <span class="font-mono text-[13px] font-medium text-[#0d0d0d]">{bucket.key}</span>
+                    <a
+                      class="font-mono text-[13px] font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                      href={opsStatusCodeHref(bucket)}
+                      title="View matching request logs"
+                    >
+                      {bucket.key}
+                    </a>
                     <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.count)}</span>
                   </div>
                 {/each}

@@ -89,6 +89,11 @@
       requestLogs.statusClass = statusClass;
     }
 
+    const statusCode = params.get('statusCode') ?? '';
+    if (/^[1-5]\d\d$/.test(statusCode)) {
+      requestLogs.statusCode = statusCode;
+    }
+
     const routingPoolError = params.get('routingPoolError') ?? '';
     if (
       [
@@ -118,6 +123,7 @@
     const params = new URLSearchParams();
     if (requestLogs.query) params.set('q', requestLogs.query);
     if (requestLogs.statusClass && requestLogs.statusClass !== 'all') params.set('statusClass', requestLogs.statusClass);
+    if (/^[1-5]\d\d$/.test(requestLogs.statusCode)) params.set('statusCode', requestLogs.statusCode);
     if (requestLogs.providerAccountId) params.set('providerAccountId', requestLogs.providerAccountId);
     if (requestLogs.routingPoolId) params.set('routingPoolId', requestLogs.routingPoolId);
     if (requestLogs.clientKeyId) params.set('clientKeyId', requestLogs.clientKeyId);
@@ -595,6 +601,16 @@
             <option value={statusClass.value}>{statusClass.label}</option>
           {/each}
         </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Status code filter
+        <input
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.statusCode}
+          placeholder="503"
+          inputmode="numeric"
+          pattern="[1-5][0-9][0-9]"
+        />
       </label>
       <label class="block text-sm font-medium text-[#3c3c3c]">
         Usage source

@@ -3649,7 +3649,7 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 
 	admins := newFakeAdminService()
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=api_key_token_rate_limited&routingPoolError=routing_pool_unavailable&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&q=codex&statusClass=server_error&statusCode=503&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=api_key_token_rate_limited&routingPoolError=routing_pool_unavailable&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -3669,6 +3669,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 	if admins.requestLogFilter.Limit != 20 || admins.requestLogFilter.Query != "codex" || admins.requestLogFilter.StatusClass != admin.RequestLogStatusServerError {
 		t.Fatalf("request log filter = %+v, want limit 20 query codex status server_error", admins.requestLogFilter)
+	}
+	if admins.requestLogFilter.StatusCode != 503 {
+		t.Fatalf("request log status code = %d, want 503", admins.requestLogFilter.StatusCode)
 	}
 	if admins.requestLogFilter.ProviderAccountID != 7 {
 		t.Fatalf("request log provider account ID = %d, want 7", admins.requestLogFilter.ProviderAccountID)
