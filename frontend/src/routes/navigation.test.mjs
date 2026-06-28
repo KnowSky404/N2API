@@ -505,6 +505,10 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(adminState, /currentConcurrentRequests/);
   assert.match(adminState, /effectiveMaxConcurrentRequests/);
   assert.match(adminState, /concurrencyBlocked/);
+  assert.match(adminState, /diagnosisStatus/);
+  assert.match(adminState, /diagnosisSummary/);
+  assert.match(adminState, /diagnosisHints/);
+  assert.match(adminState, /blockedReasonCounts/);
   assert.match(adminState, /scheduleReason/);
   assert.match(modelsPage, /Excluded account IDs/);
   assert.match(modelsPage, /Routing pool/);
@@ -520,6 +524,15 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /View routing pool/);
   assert.match(modelsPage, /excluding \{modelRoutingPreview\.excludedAccountIds\}/);
   assert.match(modelsPage, /previewConcurrencyLimitLabel/);
+  assert.match(modelsPage, /Routing diagnosis/);
+  assert.match(modelsPage, /diagnosisStatusLabel/);
+  assert.match(modelsPage, /diagnosisStatusClass/);
+  assert.match(modelsPage, /modelRoutingPreview\.result\.diagnosisStatus/);
+  assert.match(modelsPage, /modelRoutingPreview\.result\.diagnosisSummary/);
+  assert.match(modelsPage, /modelRoutingPreview\.result\.diagnosisHints/);
+  assert.match(modelsPage, /modelRoutingPreview\.result\.blockedReasonCounts/);
+  assert.match(modelsPage, /Repair hints/);
+  assert.match(modelsPage, /Blocked reasons/);
   assert.match(modelsPage, /Active/);
   assert.match(modelsPage, /Concurrency full/);
   assert.match(adminState, /excludedAccountIds: ''/);

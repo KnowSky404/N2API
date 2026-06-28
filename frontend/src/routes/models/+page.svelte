@@ -108,6 +108,22 @@
     return limit > 0 ? String(limit) : 'unlimited';
   }
 
+  /** @param {string | null | undefined} value */
+  function diagnosisStatusLabel(value) {
+    if (value === 'routable') return 'Routable';
+    if (value === 'degraded') return 'Degraded';
+    if (value === 'blocked') return 'Blocked';
+    return 'Unknown';
+  }
+
+  /** @param {string | null | undefined} value */
+  function diagnosisStatusClass(value) {
+    if (value === 'routable') return 'rounded-md border border-[#d8ece5] bg-[#e8f5f0] px-2.5 py-1 text-xs font-medium text-[#0a7a5e]';
+    if (value === 'degraded') return 'rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800';
+    if (value === 'blocked') return 'rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700';
+    return 'rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#6e6e6e]';
+  }
+
   /** @param {{ id?: number | null }} account */
   function providerAccountHref(account) {
     const id = Number(account.id ?? 0);
@@ -492,6 +508,41 @@
               Model {modelRoutingPreview.result.model}
             </span>
           </div>
+          {#if modelRoutingPreview.result.diagnosisStatus || modelRoutingPreview.result.diagnosisSummary}
+            <div class="mt-4 rounded-lg border border-[#e5e5e5] bg-white p-3">
+              <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Routing diagnosis</p>
+              <div class="mt-2 flex flex-wrap items-center gap-2">
+                <span class={diagnosisStatusClass(modelRoutingPreview.result.diagnosisStatus)}>
+                  {diagnosisStatusLabel(modelRoutingPreview.result.diagnosisStatus)}
+                </span>
+                {#if modelRoutingPreview.result.diagnosisSummary}
+                  <p class="min-w-[220px] flex-1 text-sm leading-6 text-[#3c3c3c]">{modelRoutingPreview.result.diagnosisSummary}</p>
+                {/if}
+              </div>
+              {#if modelRoutingPreview.result.diagnosisHints?.length}
+                <div class="mt-3">
+                  <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Repair hints</p>
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    {#each modelRoutingPreview.result.diagnosisHints as hint}
+                      <span class="rounded-md border border-[#e5e5e5] bg-[#fafafa] px-2.5 py-1 text-xs leading-5 text-[#3c3c3c]">{hint}</span>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+              {#if modelRoutingPreview.result.blockedReasonCounts?.length}
+                <div class="mt-3">
+                  <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Blocked reasons</p>
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    {#each modelRoutingPreview.result.blockedReasonCounts as reason}
+                      <span class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs leading-5 text-amber-800">
+                        {reason.reason}: {reason.count}
+                      </span>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/if}
           <div class="mt-4 flex flex-wrap gap-2">
             {#each modelRoutingPreview.result.candidates as account}
               <span

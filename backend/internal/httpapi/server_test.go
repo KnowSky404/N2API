@@ -4737,7 +4737,12 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	if providers.previewModel != "gpt-5" || providers.previewSessionID != "workspace-123" {
 		t.Fatalf("preview call = model:%q session:%q", providers.previewModel, providers.previewSessionID)
 	}
-	var body provider.SelectionPreview
+	var body struct {
+		provider.SelectionPreview
+		DiagnosisStatus  string   `json:"diagnosisStatus"`
+		DiagnosisSummary string   `json:"diagnosisSummary"`
+		DiagnosisHints   []string `json:"diagnosisHints"`
+	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
@@ -4749,6 +4754,15 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 	}
 	if body.Candidates[0].ScheduleReason != "sticky session binding" || body.Candidates[1].ScheduleReason != "ordered by priority, load factor, and least-recently-used order" {
 		t.Fatalf("preview schedule reasons = %+v, want provider reasons preserved", body.Candidates)
+	}
+	if body.DiagnosisStatus != "routable" {
+		t.Fatalf("diagnosis status = %q, want routable", body.DiagnosisStatus)
+	}
+	if !strings.Contains(body.DiagnosisSummary, "Sticky") || !strings.Contains(body.DiagnosisSummary, "gpt-5") {
+		t.Fatalf("diagnosis summary = %q, want selected account and model", body.DiagnosisSummary)
+	}
+	if len(body.DiagnosisHints) != 0 {
+		t.Fatalf("diagnosis hints = %+v, want none for routable preview", body.DiagnosisHints)
 	}
 }
 
@@ -4817,7 +4831,10 @@ func TestModelRoutingPreviewIncludesConcurrencyState(t *testing.T) {
 		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
 	}
 	var body struct {
-		Candidates []struct {
+		DiagnosisStatus  string   `json:"diagnosisStatus"`
+		DiagnosisSummary string   `json:"diagnosisSummary"`
+		DiagnosisHints   []string `json:"diagnosisHints"`
+		Candidates       []struct {
 			ID                             int64 `json:"id"`
 			CurrentConcurrentRequests      int   `json:"currentConcurrentRequests"`
 			EffectiveMaxConcurrentRequests int   `json:"effectiveMaxConcurrentRequests"`
@@ -4835,6 +4852,15 @@ func TestModelRoutingPreviewIncludesConcurrencyState(t *testing.T) {
 	}
 	if body.Candidates[1].CurrentConcurrentRequests != 1 || body.Candidates[1].EffectiveMaxConcurrentRequests != 5 || body.Candidates[1].ConcurrencyBlocked {
 		t.Fatalf("second candidate concurrency = %+v, want current 1 effective 5 not blocked", body.Candidates[1])
+	}
+	if body.DiagnosisStatus != "degraded" {
+		t.Fatalf("diagnosis status = %q, want degraded", body.DiagnosisStatus)
+	}
+	if !strings.Contains(body.DiagnosisSummary, "Busy") || !strings.Contains(body.DiagnosisSummary, "concurrency") {
+		t.Fatalf("diagnosis summary = %q, want selected busy account concurrency warning", body.DiagnosisSummary)
+	}
+	if !slices.Contains(body.DiagnosisHints, "Reduce concurrent requests or raise the selected account concurrency limit.") {
+		t.Fatalf("diagnosis hints = %+v, want selected account concurrency hint", body.DiagnosisHints)
 	}
 }
 
@@ -4904,12 +4930,33 @@ func TestModelRoutingPreviewReturnsBlockedCandidatesWhenNoneSchedulable(t *testi
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
 	}
-	var body provider.SelectionPreview
+	var body struct {
+		provider.SelectionPreview
+		DiagnosisStatus     string `json:"diagnosisStatus"`
+		DiagnosisSummary    string `json:"diagnosisSummary"`
+		DiagnosisHints      []string
+		BlockedReasonCounts []struct {
+			Reason string `json:"reason"`
+			Count  int    `json:"count"`
+		} `json:"blockedReasonCounts"`
+	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
 	if body.SelectedAccountID != 0 || len(body.Candidates) != 1 || body.Candidates[0].Schedulable || body.Candidates[0].UnschedulableReason != "model not configured" {
 		t.Fatalf("preview = %+v, want blocked diagnostic candidate", body)
+	}
+	if body.DiagnosisStatus != "blocked" {
+		t.Fatalf("diagnosis status = %q, want blocked", body.DiagnosisStatus)
+	}
+	if !strings.Contains(body.DiagnosisSummary, "No schedulable account") || !strings.Contains(body.DiagnosisSummary, "model not configured") {
+		t.Fatalf("diagnosis summary = %q, want blocked reason summary", body.DiagnosisSummary)
+	}
+	if !slices.Contains(body.DiagnosisHints, "Configure the requested model on at least one enabled provider account.") {
+		t.Fatalf("diagnosis hints = %+v, want model configuration hint", body.DiagnosisHints)
+	}
+	if len(body.BlockedReasonCounts) != 1 || body.BlockedReasonCounts[0].Reason != "model not configured" || body.BlockedReasonCounts[0].Count != 1 {
+		t.Fatalf("blocked reason counts = %+v, want model not configured count 1", body.BlockedReasonCounts)
 	}
 }
 

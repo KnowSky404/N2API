@@ -313,6 +313,10 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} routingPoolFallbackDepth
  * @property {string} routingPoolFallbackChain
  * @property {string} routingPoolError
+ * @property {string} diagnosisStatus
+ * @property {string} diagnosisSummary
+ * @property {string[]} diagnosisHints
+ * @property {{ reason: string, count: number }[]} blockedReasonCounts
  * @property {SelectionPreviewCandidate[]} candidates
  */
 

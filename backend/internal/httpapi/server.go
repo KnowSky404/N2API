@@ -139,7 +139,11 @@ type providerAccountResponse struct {
 
 type selectionPreviewResponse struct {
 	provider.SelectionPreview
-	Candidates []selectionCandidateResponse `json:"candidates"`
+	DiagnosisStatus     string                        `json:"diagnosisStatus"`
+	DiagnosisSummary    string                        `json:"diagnosisSummary"`
+	DiagnosisHints      []string                      `json:"diagnosisHints"`
+	BlockedReasonCounts []selectionBlockedReasonCount `json:"blockedReasonCounts"`
+	Candidates          []selectionCandidateResponse  `json:"candidates"`
 }
 
 type selectionCandidateResponse struct {
@@ -147,6 +151,11 @@ type selectionCandidateResponse struct {
 	CurrentConcurrentRequests      int  `json:"currentConcurrentRequests"`
 	EffectiveMaxConcurrentRequests int  `json:"effectiveMaxConcurrentRequests"`
 	ConcurrencyBlocked             bool `json:"concurrencyBlocked"`
+}
+
+type selectionBlockedReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
 }
 
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
@@ -1497,7 +1506,113 @@ func selectionPreviewWithConcurrency(preview provider.SelectionPreview, accounts
 			ConcurrencyBlocked:             effectiveMaxConcurrentRequests > 0 && currentConcurrentRequests >= effectiveMaxConcurrentRequests,
 		})
 	}
+	diagnoseSelectionPreview(&response)
 	return response
+}
+
+func diagnoseSelectionPreview(response *selectionPreviewResponse) {
+	response.BlockedReasonCounts = blockedReasonCounts(response.Candidates)
+	selected := selectedSelectionCandidate(response.SelectedAccountID, response.Candidates)
+	if response.SelectedAccountID <= 0 || selected == nil {
+		response.DiagnosisStatus = "blocked"
+		response.DiagnosisSummary = blockedSelectionSummary(response.Model, response.BlockedReasonCounts)
+		response.DiagnosisHints = selectionDiagnosisHints(response.BlockedReasonCounts, response.RoutingPoolError)
+		return
+	}
+
+	name := selectionCandidateDisplayName(*selected)
+	if selected.ConcurrencyBlocked {
+		response.DiagnosisStatus = "degraded"
+		response.DiagnosisSummary = fmt.Sprintf("Selected %s for %s, but current concurrency is at the effective limit.", name, response.Model)
+		response.DiagnosisHints = selectionDiagnosisHints([]selectionBlockedReasonCount{{Reason: "concurrency limit reached", Count: 1}}, response.RoutingPoolError)
+		return
+	}
+
+	response.DiagnosisStatus = "routable"
+	response.DiagnosisSummary = fmt.Sprintf("Selected %s for %s.", name, response.Model)
+	response.DiagnosisHints = selectionDiagnosisHints(response.BlockedReasonCounts, response.RoutingPoolError)
+}
+
+func selectedSelectionCandidate(selectedAccountID int64, candidates []selectionCandidateResponse) *selectionCandidateResponse {
+	for i := range candidates {
+		if candidates[i].Selected || candidates[i].ID == selectedAccountID {
+			return &candidates[i]
+		}
+	}
+	return nil
+}
+
+func selectionCandidateDisplayName(candidate selectionCandidateResponse) string {
+	name := strings.TrimSpace(candidate.DisplayName)
+	if name != "" {
+		return name
+	}
+	return fmt.Sprintf("Account %d", candidate.ID)
+}
+
+func blockedReasonCounts(candidates []selectionCandidateResponse) []selectionBlockedReasonCount {
+	counts := map[string]int{}
+	for _, candidate := range candidates {
+		reason := strings.TrimSpace(candidate.UnschedulableReason)
+		if reason == "" {
+			continue
+		}
+		counts[reason]++
+	}
+	reasons := make([]selectionBlockedReasonCount, 0, len(counts))
+	for reason, count := range counts {
+		reasons = append(reasons, selectionBlockedReasonCount{Reason: reason, Count: count})
+	}
+	sort.Slice(reasons, func(i, j int) bool {
+		if reasons[i].Count != reasons[j].Count {
+			return reasons[i].Count > reasons[j].Count
+		}
+		return reasons[i].Reason < reasons[j].Reason
+	})
+	return reasons
+}
+
+func blockedSelectionSummary(model string, reasons []selectionBlockedReasonCount) string {
+	if len(reasons) == 0 {
+		return fmt.Sprintf("No schedulable account for %s.", model)
+	}
+	return fmt.Sprintf("No schedulable account for %s: %s.", model, reasons[0].Reason)
+}
+
+func selectionDiagnosisHints(reasons []selectionBlockedReasonCount, routingPoolError string) []string {
+	hints := make([]string, 0, len(reasons)+1)
+	seen := map[string]struct{}{}
+	addHint := func(hint string) {
+		if hint == "" {
+			return
+		}
+		if _, ok := seen[hint]; ok {
+			return
+		}
+		seen[hint] = struct{}{}
+		hints = append(hints, hint)
+	}
+
+	for _, reasonCount := range reasons {
+		reason := strings.ToLower(reasonCount.Reason)
+		switch {
+		case strings.Contains(reason, "model not configured"):
+			addHint("Configure the requested model on at least one enabled provider account.")
+		case strings.Contains(reason, "concurrency"):
+			addHint("Reduce concurrent requests or raise the selected account concurrency limit.")
+		case strings.Contains(reason, "disabled"):
+			addHint("Enable at least one provider account in the routing scope.")
+		case strings.Contains(reason, "rate limit"):
+			addHint("Wait for the rate limit window to reset or add another account to the routing pool.")
+		case strings.Contains(reason, "excluded"):
+			addHint("Remove excluded account IDs or choose a routing pool with other schedulable accounts.")
+		}
+	}
+
+	if strings.TrimSpace(routingPoolError) != "" {
+		addHint("Check the routing pool membership, enabled state, and fallback chain.")
+	}
+	return hints
 }
 
 func parseExcludedAccountIDs(raw string) ([]int64, error) {
