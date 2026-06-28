@@ -237,7 +237,16 @@ test('request logs page shows token usage', () => {
 });
 
 test('request logs page includes usage accounting UI', () => {
-  for (const label of ['Usage summary', 'Estimated cost', 'Input tokens', 'Output tokens', 'Pricing', 'Session']) {
+  for (const label of [
+    'Usage summary',
+    'Estimated cost',
+    'Input tokens',
+    'Output tokens',
+    'Cached input tokens',
+    'Reasoning tokens',
+    'Pricing',
+    'Session'
+  ]) {
     assert.match(requestLogsPage, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
   }
   assert.match(requestLogsPage, /function usageRowHref/);
@@ -249,6 +258,8 @@ test('request logs page includes usage accounting UI', () => {
   assert.match(requestLogsPage, /usage\.groupBy === 'session'/);
   assert.match(requestLogsPage, /row\.cachedInputTokens/);
   assert.match(requestLogsPage, /row\.reasoningTokens/);
+  assert.match(requestLogsPage, /summary\?\.totalCachedInputTokens/);
+  assert.match(requestLogsPage, /summary\?\.totalReasoningTokens/);
   assert.match(adminState, /totalCachedInputTokens/);
   assert.match(adminState, /totalReasoningTokens/);
   assert.match(requestLogsPage, /href=\{usageRowHref\(row\)\}/);

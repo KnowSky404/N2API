@@ -359,6 +359,16 @@
         <p class="text-xs font-medium uppercase tracking-normal text-[#6e6e6e]">{range}</p>
         <p class="mt-2 text-2xl font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(summary?.totalTokens)}</p>
         <p class="mt-1 text-sm text-[#6e6e6e]">{formatTokens(summary?.totalRequests)} requests · {formatCostMicrousd(summary?.estimatedCostMicrousd)}</p>
+        <div class="mt-3 grid gap-2 text-xs text-[#6e6e6e] sm:grid-cols-2">
+          <div>
+            <p class="font-medium text-[#3c3c3c]">Cached input tokens</p>
+            <p class="mt-1 font-mono tabular-nums">{formatTokens(summary?.totalCachedInputTokens)}</p>
+          </div>
+          <div>
+            <p class="font-medium text-[#3c3c3c]">Reasoning tokens</p>
+            <p class="mt-1 font-mono tabular-nums">{formatTokens(summary?.totalReasoningTokens)}</p>
+          </div>
+        </div>
       </button>
     {/each}
   </div>
