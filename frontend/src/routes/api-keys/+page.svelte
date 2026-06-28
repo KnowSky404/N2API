@@ -76,11 +76,18 @@
     }
   }
 
+  function clientKeyUsageSinceParam() {
+    return String(Math.max(0, Math.floor(Date.now() / 1000) - 86400));
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
   function clientKeyUsageHref(row) {
     const id = String(row.id ?? '').split('/').pop() ?? '';
     if (!/^[1-9]\d*$/.test(id)) return '';
-    return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
+    const params = new URLSearchParams();
+    params.set('clientKeyId', id);
+    params.set('since', clientKeyUsageSinceParam());
+    return `/request-logs?${params.toString()}`;
   }
 
   /**

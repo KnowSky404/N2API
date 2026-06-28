@@ -571,6 +571,9 @@ test('providers page shows provider account usage distribution', () => {
   }
 
   assert.match(providersPage, /providerUsageHref/);
+  assert.match(providersPage, /function providerUsageSinceParam/);
+  assert.match(providersPage, /params\.set\('since', providerUsageSinceParam\(\)\)/);
+  assert.match(providersPage, /params\.set\('providerAccountId', id\)/);
   assert.match(providersPage, /providerAccountId=\$\{encodeURIComponent/);
   assert.match(providersPage, /href=\{providerUsageHref\(row\)\}/);
   assert.match(providersPage, /loadUsageSummary\('24h', 'provider_account'\)/);
@@ -587,6 +590,9 @@ test('api keys page shows per-key usage distribution', () => {
   assert.match(apiKeysPage, /loadUsageSummary\('24h', 'client_key'\)/);
   assert.match(apiKeysPage, /usage24hClientKeys/);
   assert.match(apiKeysPage, /clientKeyUsageHref/);
+  assert.match(apiKeysPage, /function clientKeyUsageSinceParam/);
+  assert.match(apiKeysPage, /params\.set\('since', clientKeyUsageSinceParam\(\)\)/);
+  assert.match(apiKeysPage, /params\.set\('clientKeyId', id\)/);
   assert.match(apiKeysPage, /clientKeyId=\$\{encodeURIComponent/);
   assert.match(apiKeysPage, /href=\{clientKeyUsageHref\(row\)\}/);
   assert.match(apiKeysPage, /formatTokens/);

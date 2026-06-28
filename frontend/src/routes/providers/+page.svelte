@@ -110,11 +110,18 @@
     }
   }
 
+  function providerUsageSinceParam() {
+    return String(Math.max(0, Math.floor(Date.now() / 1000) - 86400));
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
   function providerUsageHref(row) {
     const id = String(row.id ?? '').split('/').pop() ?? '';
     if (!/^[1-9]\d*$/.test(id)) return '';
-    return `/request-logs?providerAccountId=${encodeURIComponent(id)}`;
+    const params = new URLSearchParams();
+    params.set('providerAccountId', id);
+    params.set('since', providerUsageSinceParam());
+    return `/request-logs?${params.toString()}`;
   }
 
   /**
