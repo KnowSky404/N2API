@@ -522,6 +522,26 @@ func TestUpdateAccountClearStatusClearsLocalFailureStateColumns(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountCanClearFingerprintProfileColumn(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	if strings.Contains(sql, "FINGERPRINT_PROFILE_ID = COALESCE($10, FINGERPRINT_PROFILE_ID)") {
+		t.Fatal("UpdateAccount must allow clearing fingerprint_profile_id instead of preserving it with COALESCE")
+	}
+	for _, want := range []string{
+		"FINGERPRINT_PROFILE_ID = CASE",
+		"WHEN $10 THEN $11",
+		"ELSE FINGERPRINT_PROFILE_ID",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("UpdateAccount must distinguish unset and null fingerprint updates, missing %q", want)
+		}
+	}
+}
+
 func TestUpdateAccountCanSetLocalAccountNameColumn(t *testing.T) {
 	source, err := os.ReadFile("provider.go")
 	if err != nil {

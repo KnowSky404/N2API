@@ -1590,24 +1590,35 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		APIKey                *string `json:"apiKey"`
 		FingerprintProfileID  *int64  `json:"fingerprintProfileId"`
 	}
-	if err := decodeJSON(w, r, &req); err != nil {
+	body, err := readJSONBody(w, r)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil && req.FingerprintProfileID == nil {
+	if err := decodeJSONBytes(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	fingerprintProfileIDSet, err := jsonFieldPresent(body, "fingerprintProfileId")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil && !fingerprintProfileIDSet {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
 
 	account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
-		Enabled:               req.Enabled,
-		Priority:              req.Priority,
-		LoadFactor:            req.LoadFactor,
-		MaxConcurrentRequests: req.MaxConcurrentRequests,
-		Name:                  req.Name,
-		APIUpstreamBaseURL:    req.BaseURL,
-		APIUpstreamAPIKey:     req.APIKey,
-		FingerprintProfileID:  req.FingerprintProfileID,
+		Enabled:                 req.Enabled,
+		Priority:                req.Priority,
+		LoadFactor:              req.LoadFactor,
+		MaxConcurrentRequests:   req.MaxConcurrentRequests,
+		Name:                    req.Name,
+		APIUpstreamBaseURL:      req.BaseURL,
+		APIUpstreamAPIKey:       req.APIKey,
+		FingerprintProfileIDSet: fingerprintProfileIDSet,
+		FingerprintProfileID:    req.FingerprintProfileID,
 	})
 	if err != nil {
 		writeProviderAccountError(w, err)
@@ -2450,8 +2461,20 @@ func serveWeb(w http.ResponseWriter, r *http.Request, webFS fs.FS) bool {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
+	body, err := readJSONBody(w, r)
+	if err != nil {
+		return err
+	}
+	return decodeJSONBytes(body, value)
+}
+
+func readJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	decoder := json.NewDecoder(r.Body)
+	return io.ReadAll(r.Body)
+}
+
+func decodeJSONBytes(body []byte, value any) error {
+	decoder := json.NewDecoder(strings.NewReader(string(body)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
 		return err
@@ -2463,6 +2486,15 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) error {
 		return err
 	}
 	return nil
+}
+
+func jsonFieldPresent(body []byte, field string) (bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return false, err
+	}
+	_, ok := raw[field]
+	return ok, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

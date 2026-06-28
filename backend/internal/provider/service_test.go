@@ -3001,6 +3001,9 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 		if update.EncryptedAPIUpstreamAPIKey != nil {
 			r.accounts[i].Credential.EncryptedAPIKey = *update.EncryptedAPIUpstreamAPIKey
 		}
+		if update.FingerprintProfileIDSet {
+			r.accounts[i].FingerprintProfileID = update.FingerprintProfileID
+		}
 		if update.ClearStatus {
 			r.accounts[i].Status = AccountStatusActive
 			r.accounts[i].StatusReason = ""

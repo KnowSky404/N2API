@@ -685,7 +685,7 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 	if s.updateErr != nil {
 		return provider.Account{}, s.updateErr
 	}
-	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil && !update.FingerprintProfileIDSet {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
@@ -720,6 +720,9 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 			}
 			if update.APIUpstreamAPIKey != nil {
 				account.Credential.EncryptedAPIKey = "updated-encrypted-api-key"
+			}
+			if update.FingerprintProfileIDSet {
+				account.FingerprintProfileID = update.FingerprintProfileID
 			}
 			if update.ClearStatus || update.APIUpstreamBaseURL != nil || update.APIUpstreamAPIKey != nil {
 				account.Status = provider.AccountStatusActive
@@ -2230,6 +2233,34 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	}
 	if providers.lastAccountUpdate.MaxConcurrentRequests == nil || *providers.lastAccountUpdate.MaxConcurrentRequests != 3 {
 		t.Fatalf("max concurrency update = %+v, want 3", providers.lastAccountUpdate.MaxConcurrentRequests)
+	}
+}
+
+func TestAdminCanClearProviderAccountFingerprintProfile(t *testing.T) {
+	profileID := int64(42)
+	providers := newFakeProviderService()
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1, FingerprintProfileID: &profileID}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"fingerprintProfileId":null}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Account provider.Account `json:"account"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Account.FingerprintProfileID != nil {
+		t.Fatalf("fingerprintProfileId = %v, want cleared nil", *body.Account.FingerprintProfileID)
+	}
+	if !providers.lastAccountUpdate.FingerprintProfileIDSet || providers.lastAccountUpdate.FingerprintProfileID != nil {
+		t.Fatalf("fingerprint update = set %v value %+v, want explicit clear", providers.lastAccountUpdate.FingerprintProfileIDSet, providers.lastAccountUpdate.FingerprintProfileID)
 	}
 }
 

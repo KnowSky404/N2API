@@ -290,6 +290,7 @@ type AccountUpdate struct {
 	APIUpstreamBaseURL         *string
 	APIUpstreamAPIKey          *string
 	EncryptedAPIUpstreamAPIKey *string
+	FingerprintProfileIDSet    bool
 	FingerprintProfileID       *int64
 }
 
@@ -787,7 +788,7 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil && !update.FingerprintProfileIDSet {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
