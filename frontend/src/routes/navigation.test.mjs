@@ -432,6 +432,7 @@ test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /requestLogs\.sessionId = sessionId/);
   assert.match(requestLogsPage, /requestLogs\.errorCode = error/);
   assert.match(requestLogsPage, /requestLogs\.statusCode = statusCode/);
+  assert.match(requestLogsPage, /requestLogs\.since = since/);
   assert.match(requestLogsPage, /requestLogs\.routingPoolChain = routingPoolChain/);
   assert.match(requestLogsPage, /requestLogs\.query = query/);
   assert.match(requestLogsPage, /requestLogs\.statusClass = statusClass/);
@@ -439,8 +440,10 @@ test('request logs page initializes filters from URL params', () => {
   assert.match(requestLogsPage, /void loadRequestLogs\(\)/);
   assert.match(adminState, /params\.set\('clientKeyId'/);
   assert.match(adminState, /params\.set\('statusCode'/);
+  assert.match(adminState, /params\.set\('since'/);
   assert.match(adminState, /requestId: ''/);
   assert.match(adminState, /statusCode: ''/);
+  assert.match(adminState, /since: ''/);
   assert.match(adminState, /routingPoolId: 'all'/);
   assert.match(adminState, /clientKeyId: 'all'/);
   assert.match(adminState, /model: ''/);
@@ -736,10 +739,13 @@ test('ops monitor links error buckets to filtered request logs', () => {
   assert.match(opsPage, /function opsStatusCodeHref/);
   assert.match(opsPage, /function opsRateLimitedModelHref/);
   assert.match(opsPage, /function opsErrorAccountHref/);
-  assert.match(opsPage, /error=\$\{encodeURIComponent/);
-  assert.match(opsPage, /statusCode=\$\{encodeURIComponent/);
-  assert.match(opsPage, /model=\$\{encodeURIComponent/);
-  assert.match(opsPage, /providerAccountId=\$\{encodeURIComponent/);
+  assert.match(opsPage, /function opsSinceParam/);
+  assert.match(opsPage, /function requestLogHrefWithSince/);
+  assert.match(opsPage, /params\.set\('since', opsSinceParam\(\)\)/);
+  assert.match(opsPage, /params\.set\('error', key\)/);
+  assert.match(opsPage, /params\.set\('statusCode', key\)/);
+  assert.match(opsPage, /params\.set\('model', key\)/);
+  assert.match(opsPage, /params\.set\('providerAccountId', key\)/);
   assert.match(opsPage, /href=\{opsErrorHref\(bucket\)\}/);
   assert.match(opsPage, /href=\{opsStatusCodeHref\(bucket\)\}/);
   assert.match(opsPage, /href=\{opsRateLimitedModelHref\(bucket\)\}/);

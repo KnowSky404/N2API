@@ -137,6 +137,7 @@ type RequestLog struct {
 
 type RequestLogFilter struct {
 	Limit             int
+	Since             time.Time
 	RequestID         string
 	Query             string
 	StatusClass       string

@@ -549,6 +549,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		{ID: 2, RequestID: "req_2", Route: "/v1/chat/completions", StatusCode: 200, ProviderAccountID: 7, ProviderAccountType: "api_upstream", ProviderAccountName: "Upstream A", Model: "gpt-5", SessionID: "workspace-123", InputTokens: 12, OutputTokens: 3, TotalTokens: 15, EstimatedCostMicrousd: 1234, PricingMatched: true, UsageSource: "chat_completions"},
 		{ID: 1, RequestID: "req_1", Route: "/v1/models", StatusCode: 503},
 	}
+	since := time.Unix(2000, 0).UTC()
 
 	logs, err := service.ListRequestLogs(context.Background(), RequestLogFilter{
 		RequestID:         " req_3 ",
@@ -563,6 +564,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 		RoutingPoolError:  " routing_pool_unavailable ",
 		RoutingPoolChain:  " primary -> secondary ",
 		GatewayFallbacks:  true,
+		Since:             since,
 	})
 	if err != nil {
 		t.Fatalf("ListRequestLogs returned error: %v", err)
@@ -602,6 +604,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if !repo.lastLogFilter.GatewayFallbacks {
 		t.Fatal("repository gateway fallback filter = false, want true")
+	}
+	if !repo.lastLogFilter.Since.Equal(since) {
+		t.Fatalf("repository since = %s, want %s", repo.lastLogFilter.Since, since)
 	}
 	if len(logs) != 2 || logs[0].RequestID != "req_2" {
 		t.Fatalf("logs = %+v", logs)

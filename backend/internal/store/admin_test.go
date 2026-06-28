@@ -159,8 +159,10 @@ func TestOpsErrorAccountBucketsUseAccountIDKeys(t *testing.T) {
 }
 
 func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
+	since := time.Unix(2000, 0).UTC()
 	whereSQL, args := requestLogFilterSQL(admin.RequestLogFilter{
 		RequestID:         "req_3",
+		Since:             since,
 		Query:             "codex",
 		StatusClass:       admin.RequestLogStatusServerError,
 		StatusCode:        503,
@@ -175,12 +177,13 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		RoutingPoolChain:  "primary -> secondary",
 		GatewayFallbacks:  true,
 	})
-	if len(args) != 12 || args[0] != "req_3" || args[1] != 503 || args[2] != int64(7) || args[3] != int64(9) || args[4] != int64(12) || args[5] != "gpt-5" || args[6] != "workspace-123" || args[7] != "api_key_token_rate_limited" || args[8] != "missing" || args[9] != "routing_pool_unavailable" || args[10] != "primary -> secondary" || args[11] != "codex" {
-		t.Fatalf("args = %+v, want request ID req_3, status code 503, provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, api_key_token_rate_limited, missing usage source, routing_pool_unavailable, routing pool chain, and codex args", args)
+	if len(args) != 13 || args[0] != "req_3" || args[1] != since || args[2] != 503 || args[3] != int64(7) || args[4] != int64(9) || args[5] != int64(12) || args[6] != "gpt-5" || args[7] != "workspace-123" || args[8] != "api_key_token_rate_limited" || args[9] != "missing" || args[10] != "routing_pool_unavailable" || args[11] != "primary -> secondary" || args[12] != "codex" {
+		t.Fatalf("args = %+v, want request ID req_3, since, status code 503, provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, api_key_token_rate_limited, missing usage source, routing_pool_unavailable, routing pool chain, and codex args", args)
 	}
 	for _, want := range []string{
 		"ILIKE '%' || $",
 		"l.request_id = $",
+		"l.created_at >= $",
 		"l.status_code >= 500",
 		"l.status_code = $",
 		"l.provider_account_id = $",

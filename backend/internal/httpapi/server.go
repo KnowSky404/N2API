@@ -707,8 +707,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				return
 			}
 		}
+		since := parseSinceParam(r)
 		filter := admin.RequestLogFilter{
 			Limit:             limit,
+			Since:             since,
 			RequestID:         r.URL.Query().Get("requestId"),
 			Query:             r.URL.Query().Get("q"),
 			StatusClass:       r.URL.Query().Get("statusClass"),
@@ -2732,6 +2734,7 @@ func csvEscape(s string) string {
 func buildRequestLogFilter(r *http.Request) admin.RequestLogFilter {
 	filter := admin.RequestLogFilter{
 		Limit:       200,
+		Since:       parseSinceParam(r),
 		StatusClass: "all",
 	}
 	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {

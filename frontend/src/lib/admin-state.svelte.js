@@ -382,7 +382,7 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, since: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
@@ -390,6 +390,7 @@ export const requestLogs = $state({
   query: '',
   statusClass: 'all',
   statusCode: '',
+  since: '',
   providerAccountId: 'all',
   routingPoolId: 'all',
   clientKeyId: 'all',
@@ -409,6 +410,7 @@ export function resetRequestLogFilters() {
   requestLogs.query = '';
   requestLogs.statusClass = 'all';
   requestLogs.statusCode = '';
+  requestLogs.since = '';
   requestLogs.providerAccountId = 'all';
   requestLogs.routingPoolId = 'all';
   requestLogs.clientKeyId = 'all';
@@ -2766,6 +2768,10 @@ export async function loadRequestLogs() {
     const statusCode = requestLogs.statusCode.trim();
     if (/^[1-5]\d\d$/.test(statusCode)) {
       params.set('statusCode', statusCode);
+    }
+    const since = requestLogs.since.trim();
+    if (/^\d+$/.test(since)) {
+      params.set('since', since);
     }
     if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') {
       params.set('providerAccountId', requestLogs.providerAccountId);

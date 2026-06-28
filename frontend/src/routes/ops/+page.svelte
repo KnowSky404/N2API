@@ -45,32 +45,52 @@ let requested = $state(false);
     return Math.min(100, (count / max) * 100);
   }
 
+  function opsSinceParam() {
+    const option = rangeOptions.find((r) => r.value === range);
+    const seconds = option ? option.seconds : 86400;
+    return String(Math.max(0, Math.floor(Date.now() / 1000) - seconds));
+  }
+
+  /** @param {URLSearchParams} params */
+  function requestLogHrefWithSince(params) {
+    params.set('since', opsSinceParam());
+    return `/request-logs?${params.toString()}`;
+  }
+
   /** @param {{ key?: string | number | null }} bucket */
   function opsErrorHref(bucket) {
+    const params = new URLSearchParams();
     const key = String(bucket?.key ?? '').trim();
-    if (!key) return '/request-logs';
-    return `/request-logs?error=${encodeURIComponent(key)}`;
+    if (key) params.set('error', key);
+    return requestLogHrefWithSince(params);
   }
 
   /** @param {{ key?: string | number | null }} bucket */
   function opsStatusCodeHref(bucket) {
+    const params = new URLSearchParams();
     const key = String(bucket?.key ?? '').trim();
-    if (!/^[1-5]\d\d$/.test(key)) return '/request-logs';
-    return `/request-logs?statusCode=${encodeURIComponent(key)}`;
+    if (/^[1-5]\d\d$/.test(key)) params.set('statusCode', key);
+    return requestLogHrefWithSince(params);
   }
 
   /** @param {{ key?: string | number | null }} bucket */
   function opsRateLimitedModelHref(bucket) {
+    const params = new URLSearchParams({ statusCode: '429' });
     const key = String(bucket?.key ?? '').trim();
-    if (!key || key === 'unknown') return '/request-logs?statusCode=429';
-    return `/request-logs?model=${encodeURIComponent(key)}&statusCode=429`;
+    if (key && key !== 'unknown') params.set('model', key);
+    return requestLogHrefWithSince(params);
   }
 
   /** @param {{ key?: string | number | null }} bucket */
   function opsErrorAccountHref(bucket) {
+    const params = new URLSearchParams();
     const key = String(bucket?.key ?? '').trim();
-    if (!key || key === 'unknown') return '/request-logs?statusClass=server_error';
-    return `/request-logs?providerAccountId=${encodeURIComponent(key)}`;
+    if (!key || key === 'unknown') {
+      params.set('statusClass', 'server_error');
+    } else {
+      params.set('providerAccountId', key);
+    }
+    return requestLogHrefWithSince(params);
   }
 </script>
 

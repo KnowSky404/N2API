@@ -812,6 +812,11 @@ func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 		conditions = append(conditions, "l.request_id = $"+strconv.Itoa(len(args)))
 	}
 
+	if !filter.Since.IsZero() {
+		args = append(args, filter.Since)
+		conditions = append(conditions, "l.created_at >= $"+strconv.Itoa(len(args)))
+	}
+
 	if filter.StatusCode > 0 {
 		args = append(args, filter.StatusCode)
 		conditions = append(conditions, "l.status_code = $"+strconv.Itoa(len(args)))

@@ -99,6 +99,11 @@
       requestLogs.statusCode = statusCode;
     }
 
+    const since = params.get('since') ?? '';
+    if (/^\d+$/.test(since)) {
+      requestLogs.since = since;
+    }
+
     const routingPoolError = params.get('routingPoolError') ?? '';
     if (
       [
@@ -130,6 +135,7 @@
     if (requestLogs.query) params.set('q', requestLogs.query);
     if (requestLogs.statusClass && requestLogs.statusClass !== 'all') params.set('statusClass', requestLogs.statusClass);
     if (/^[1-5]\d\d$/.test(requestLogs.statusCode)) params.set('statusCode', requestLogs.statusCode);
+    if (/^\d+$/.test(requestLogs.since)) params.set('since', requestLogs.since);
     if (requestLogs.providerAccountId) params.set('providerAccountId', requestLogs.providerAccountId);
     if (requestLogs.routingPoolId) params.set('routingPoolId', requestLogs.routingPoolId);
     if (requestLogs.clientKeyId) params.set('clientKeyId', requestLogs.clientKeyId);
@@ -624,6 +630,16 @@
           placeholder="503"
           inputmode="numeric"
           pattern="[1-5][0-9][0-9]"
+        />
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Since
+        <input
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.since}
+          placeholder="Unix seconds"
+          inputmode="numeric"
+          pattern="[0-9]*"
         />
       </label>
       <label class="block text-sm font-medium text-[#3c3c3c]">
