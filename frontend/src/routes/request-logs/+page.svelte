@@ -34,6 +34,11 @@
   function applyRequestLogURLFilters(search) {
     resetRequestLogFilters();
     const params = new URLSearchParams(search);
+    const requestId = params.get('requestId') ?? '';
+    if (requestId.length > 0 && requestId.length <= 100) {
+      requestLogs.requestId = requestId;
+    }
+
     const providerAccountId = params.get('providerAccountId') ?? '';
     if (/^[1-9]\d*$/.test(providerAccountId)) {
       requestLogs.providerAccountId = providerAccountId;
@@ -121,6 +126,7 @@
   /** @param {string} [format] */
   function exportRequestLogsURL(format) {
     const params = new URLSearchParams();
+    if (requestLogs.requestId) params.set('requestId', requestLogs.requestId);
     if (requestLogs.query) params.set('q', requestLogs.query);
     if (requestLogs.statusClass && requestLogs.statusClass !== 'all') params.set('statusClass', requestLogs.statusClass);
     if (/^[1-5]\d\d$/.test(requestLogs.statusCode)) params.set('statusCode', requestLogs.statusCode);
@@ -565,6 +571,14 @@
           class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.query}
           placeholder="key, account, model, route, error"
+        />
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Request ID filter
+        <input
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.requestId}
+          placeholder="req_..."
         />
       </label>
       <label class="block text-sm font-medium text-[#3c3c3c]">

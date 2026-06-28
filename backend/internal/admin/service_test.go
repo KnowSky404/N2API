@@ -551,6 +551,7 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 
 	logs, err := service.ListRequestLogs(context.Background(), RequestLogFilter{
+		RequestID:         " req_3 ",
 		Query:             "  gpt-5  ",
 		StatusClass:       "server_error",
 		StatusCode:        503,
@@ -571,6 +572,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if repo.lastLogFilter.Query != "gpt-5" {
 		t.Fatalf("repository query = %q, want gpt-5", repo.lastLogFilter.Query)
+	}
+	if repo.lastLogFilter.RequestID != "req_3" {
+		t.Fatalf("repository request ID = %q, want req_3", repo.lastLogFilter.RequestID)
 	}
 	if repo.lastLogFilter.StatusClass != RequestLogStatusServerError {
 		t.Fatalf("repository status class = %q, want %q", repo.lastLogFilter.StatusClass, RequestLogStatusServerError)
@@ -636,6 +640,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Query: strings.Repeat("x", 201)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long query error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{RequestID: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long request ID error = %v, want ErrInvalidInput", err)
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{ProviderAccountID: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs invalid provider account ID error = %v, want ErrInvalidInput", err)

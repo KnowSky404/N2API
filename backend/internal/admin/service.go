@@ -137,6 +137,7 @@ type RequestLog struct {
 
 type RequestLogFilter struct {
 	Limit             int
+	RequestID         string
 	Query             string
 	StatusClass       string
 	StatusCode        int
@@ -662,13 +663,14 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	if len(filter.Query) > maxRequestLogQueryLen {
 		return nil, ErrInvalidInput
 	}
+	filter.RequestID = strings.TrimSpace(filter.RequestID)
 	filter.Model = strings.TrimSpace(filter.Model)
 	filter.SessionID = strings.TrimSpace(filter.SessionID)
 	filter.Error = strings.TrimSpace(filter.Error)
 	filter.UsageSource = strings.TrimSpace(filter.UsageSource)
 	filter.RoutingPoolError = strings.TrimSpace(filter.RoutingPoolError)
 	filter.RoutingPoolChain = strings.TrimSpace(filter.RoutingPoolChain)
-	if len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.Error) > 100 || len(filter.UsageSource) > 100 || len(filter.RoutingPoolError) > 100 || len(filter.RoutingPoolChain) > 200 {
+	if len(filter.RequestID) > 100 || len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.Error) > 100 || len(filter.UsageSource) > 100 || len(filter.RoutingPoolError) > 100 || len(filter.RoutingPoolChain) > 200 {
 		return nil, ErrInvalidInput
 	}
 	filter.StatusClass = strings.TrimSpace(filter.StatusClass)

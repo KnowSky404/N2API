@@ -700,6 +700,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 		filter := admin.RequestLogFilter{
 			Limit:             limit,
+			RequestID:         r.URL.Query().Get("requestId"),
 			Query:             r.URL.Query().Get("q"),
 			StatusClass:       r.URL.Query().Get("statusClass"),
 			StatusCode:        statusCode,
@@ -2626,6 +2627,7 @@ func buildRequestLogFilter(r *http.Request) admin.RequestLogFilter {
 	if q := r.URL.Query().Get("q"); q != "" {
 		filter.Query = q
 	}
+	filter.RequestID = r.URL.Query().Get("requestId")
 	switch sc := r.URL.Query().Get("statusClass"); sc {
 	case "all", "success", "client_error", "server_error":
 		filter.StatusClass = sc

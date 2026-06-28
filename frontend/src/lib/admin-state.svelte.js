@@ -378,10 +378,11 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, statusCode: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
+  requestId: '',
   query: '',
   statusClass: 'all',
   statusCode: '',
@@ -400,6 +401,7 @@ export const requestLogs = $state({
 
 export function resetRequestLogFilters() {
   requestLogs.error = '';
+  requestLogs.requestId = '';
   requestLogs.query = '';
   requestLogs.statusClass = 'all';
   requestLogs.statusCode = '';
@@ -2746,6 +2748,10 @@ export async function loadRequestLogs() {
 
   try {
     const params = new URLSearchParams({ limit: '50' });
+    const requestId = requestLogs.requestId.trim();
+    if (requestId) {
+      params.set('requestId', requestId);
+    }
     const query = requestLogs.query.trim();
     if (query) {
       params.set('q', query);

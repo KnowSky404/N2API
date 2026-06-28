@@ -95,6 +95,9 @@
 
   /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
   function dashboardLogHref(log) {
+    if (log.requestId) {
+      return `/request-logs?requestId=${encodeURIComponent(log.requestId)}`;
+    }
     const params = new URLSearchParams();
     if (log.clientKeyId) params.set('clientKeyId', String(log.clientKeyId));
     if (log.providerAccountId) params.set('providerAccountId', String(log.providerAccountId));
