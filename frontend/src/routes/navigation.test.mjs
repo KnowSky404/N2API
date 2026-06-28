@@ -286,6 +286,7 @@ test('request logs page includes usage accounting UI', () => {
 test('request logs export links request explicit formats', () => {
   assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("csv"\)\}[\s\S]*Export CSV/);
   assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("json"\)\}[\s\S]*Export JSON/);
+  assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("jsonl"\)\}[\s\S]*Export JSONL/);
 });
 
 test('request logs page formats gateway error codes for scanning', () => {

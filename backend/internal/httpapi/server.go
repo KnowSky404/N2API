@@ -2769,7 +2769,7 @@ func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins Admi
 	if format == "" {
 		format = "json"
 	}
-	if format != "json" && format != "csv" {
+	if format != "json" && format != "csv" && format != "jsonl" {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
@@ -2801,6 +2801,14 @@ func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins Admi
 				log.InputTokens, log.OutputTokens, log.TotalTokens, log.CachedInputTokens, log.ReasoningTokens,
 				csvEscape(log.UsageSource), log.EstimatedCostMicrousd, log.PricingMatched,
 				log.GatewayAttemptCount, log.GatewayFallbackCount, log.CreatedAt.Format(time.RFC3339))
+		}
+	case "jsonl":
+		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="n2api-request-logs.jsonl"`)
+		w.WriteHeader(http.StatusOK)
+		encoder := json.NewEncoder(w)
+		for _, log := range logs {
+			_ = encoder.Encode(log)
 		}
 	default:
 		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})

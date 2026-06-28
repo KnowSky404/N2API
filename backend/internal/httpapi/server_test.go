@@ -3861,6 +3861,39 @@ func TestExportRequestLogsReturnsJSONAndRejectsUnknownFormat(t *testing.T) {
 		t.Fatalf("logs = %+v, want exported req_3", body.Logs)
 	}
 
+	admins.logs = []admin.RequestLog{
+		{ID: 1, RequestID: "req_jsonl_1", Model: "gpt-5", StatusCode: 200, CreatedAt: time.Unix(6000, 0).UTC()},
+		{ID: 2, RequestID: "req_jsonl_2", Model: "gpt-5-mini", StatusCode: 429, Error: "rate_limited", CreatedAt: time.Unix(6001, 0).UTC()},
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=jsonl&limit=2", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("jsonl status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "application/x-ndjson; charset=utf-8" {
+		t.Fatalf("jsonl Content-Type = %q, want ndjson", contentType)
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "n2api-request-logs.jsonl") {
+		t.Fatalf("jsonl Content-Disposition = %q, want jsonl attachment", disposition)
+	}
+	lines := strings.Split(strings.TrimSpace(recorder.Body.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("jsonl lines = %d body=%q, want 2", len(lines), recorder.Body.String())
+	}
+	for index, line := range lines {
+		var log admin.RequestLog
+		if err := json.Unmarshal([]byte(line), &log); err != nil {
+			t.Fatalf("decode jsonl line %d: %v", index, err)
+		}
+		if log.RequestID != admins.logs[index].RequestID {
+			t.Fatalf("jsonl line %d request ID = %q, want %q", index, log.RequestID, admins.logs[index].RequestID)
+		}
+	}
+
 	req = httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=xml", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
