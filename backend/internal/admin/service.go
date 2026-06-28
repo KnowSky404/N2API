@@ -300,6 +300,7 @@ type Repository interface {
 	GetOpsThroughputTrend(ctx context.Context, since time.Time, interval string) (OpsThroughputTrend, error)
 	GetOpsErrorTrend(ctx context.Context, since time.Time, interval string) (OpsErrorTrend, error)
 	GetOpsLatencyDistribution(ctx context.Context, since time.Time) (OpsLatencyDistribution, error)
+	GetOpsAccountHealth(ctx context.Context, since time.Time) (OpsAccountHealth, error)
 	ListFingerprintProfiles(ctx context.Context) ([]FingerprintProfile, error)
 	CreateFingerprintProfile(ctx context.Context, input FingerprintProfileInput) (FingerprintProfile, error)
 	UpdateFingerprintProfile(ctx context.Context, id int64, input FingerprintProfileInput) (FingerprintProfile, error)
@@ -1060,6 +1061,13 @@ func (s *Service) GetOpsLatencyDistribution(ctx context.Context, since time.Time
 		since = time.Now().Add(-7 * 24 * time.Hour)
 	}
 	return s.repo.GetOpsLatencyDistribution(ctx, since)
+}
+
+func (s *Service) GetOpsAccountHealth(ctx context.Context, since time.Time) (OpsAccountHealth, error) {
+	if since.IsZero() {
+		since = time.Now().Add(-24 * time.Hour)
+	}
+	return s.repo.GetOpsAccountHealth(ctx, since)
 }
 
 func validOpsInterval(interval string) bool {

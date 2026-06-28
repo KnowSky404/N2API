@@ -277,6 +277,83 @@ let requested = $state(false);
         </section>
       {/if}
 
+      {#if opsMonitor.accountHealth}
+        <section class="rounded-lg border border-[#ededed] bg-white p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 class="text-base font-semibold text-[#0d0d0d]">Account health</h3>
+              <p class="mt-1 text-sm text-[#6e6e6e]">Provider account scheduling and test health in the selected window.</p>
+            </div>
+            <a class="text-sm font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href="/providers">Open providers</a>
+          </div>
+
+          <div class="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-4">
+            <article class="rounded-lg border border-[#ededed] bg-white p-4">
+              <p class="text-sm font-medium text-[#6e6e6e]">Total accounts</p>
+              <p class="mt-2 text-lg font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.totalAccounts)}</p>
+            </article>
+            <article class="rounded-lg border border-[#ededed] bg-white p-4">
+              <p class="text-sm font-medium text-[#6e6e6e]">Schedulable accounts</p>
+              <p class="mt-2 text-lg font-semibold tabular-nums {opsMonitor.accountHealth.schedulable > 0 ? 'text-[#0a7a5e]' : 'text-red-700'}">{formatTokens(opsMonitor.accountHealth.schedulable)}</p>
+            </article>
+            <article class="rounded-lg border border-[#ededed] bg-white p-4">
+              <p class="text-sm font-medium text-[#6e6e6e]">Enabled accounts</p>
+              <p class="mt-2 text-lg font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.enabledAccounts)}</p>
+            </article>
+            <article class="rounded-lg border border-[#ededed] bg-white p-4">
+              <p class="text-sm font-medium text-[#6e6e6e]">Recent test failures</p>
+              <p class="mt-2 text-lg font-semibold tabular-nums {opsMonitor.accountHealth.recentTestFailure > 0 ? 'text-red-700' : 'text-[#0a7a5e]'}">{formatTokens(opsMonitor.accountHealth.recentTestFailure)}</p>
+            </article>
+          </div>
+
+          <div class="mt-4 grid gap-4 lg:grid-cols-2">
+            <div class="rounded-lg border border-[#ededed] bg-white p-4">
+              <h4 class="text-sm font-semibold text-[#0d0d0d]">Scheduling blockers</h4>
+              <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt class="text-[#6e6e6e]">Disabled</dt>
+                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.disabled)}</dd>
+                </div>
+                <div>
+                  <dt class="text-[#6e6e6e]">Rate limited</dt>
+                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.rateLimited)}</dd>
+                </div>
+                <div>
+                  <dt class="text-[#6e6e6e]">Circuit open</dt>
+                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.circuitOpen)}</dd>
+                </div>
+                <div>
+                  <dt class="text-[#6e6e6e]">Expired</dt>
+                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.expired)}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <div class="rounded-lg border border-[#ededed] bg-white p-4">
+              <h4 class="text-sm font-semibold text-[#0d0d0d]">Account tests</h4>
+              <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt class="text-[#6e6e6e]">Tested</dt>
+                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.testedAccounts)}</dd>
+                </div>
+                <div>
+                  <dt class="text-[#6e6e6e]">Missing tests</dt>
+                  <dd class="mt-1 font-mono tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.accountHealth.testMissing)}</dd>
+                </div>
+                <div>
+                  <dt class="text-[#6e6e6e]">Passed</dt>
+                  <dd class="mt-1 font-mono tabular-nums text-[#0a7a5e]">{formatTokens(opsMonitor.accountHealth.testPassed)}</dd>
+                </div>
+                <div>
+                  <dt class="text-[#6e6e6e]">Failed</dt>
+                  <dd class="mt-1 font-mono tabular-nums {opsMonitor.accountHealth.testFailed > 0 ? 'text-red-700' : 'text-[#0d0d0d]'}">{formatTokens(opsMonitor.accountHealth.testFailed)}</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </section>
+      {/if}
+
       <!-- Throughput trend -->
       {#if opsMonitor.throughput?.points?.length > 0}
         <section class="rounded-lg border border-[#ededed] bg-white p-6">

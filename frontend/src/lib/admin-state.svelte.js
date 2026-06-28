@@ -2992,7 +2992,7 @@ export function initializeAdminState() {
 
 // --- Ops monitoring state ---
 
-/** @type {{ loading: boolean; error: string; stats: any; throughput: any; errorTrend: any; latency: any }} */
+/** @type {{ loading: boolean; error: string; stats: any; throughput: any; errorTrend: any; latency: any; accountHealth: any }} */
 export const opsMonitor = $state({
   loading: false,
   error: '',
@@ -3000,6 +3000,7 @@ export const opsMonitor = $state({
   throughput: null,
   errorTrend: null,
   latency: null,
+  accountHealth: null,
 });
 
 /** @param {number} sinceSeconds */
@@ -3068,6 +3069,22 @@ export async function loadOpsLatencyDistribution(sinceSeconds) {
   }
 }
 
+/** @param {number} sinceSeconds */
+export async function loadOpsAccountHealth(sinceSeconds) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  opsMonitor.error = '';
+  try {
+    const params = new URLSearchParams();
+    if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
+    opsMonitor.accountHealth = await requestJSON(`/api/admin/ops/account-health?${params.toString()}`);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops account health';
+  }
+}
+
 /** @param {number} rangeSeconds */
 export async function loadOpsDashboard(rangeSeconds) {
   const since = rangeSeconds ? Math.floor(Date.now() / 1000) - rangeSeconds : 0;
@@ -3079,6 +3096,7 @@ export async function loadOpsDashboard(rangeSeconds) {
       loadOpsThroughputTrend(since, 'hour'),
       loadOpsErrorTrend(since, 'hour'),
       loadOpsLatencyDistribution(since),
+      loadOpsAccountHealth(since),
     ]);
   } finally {
     opsMonitor.loading = false;

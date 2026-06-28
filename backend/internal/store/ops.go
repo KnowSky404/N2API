@@ -237,13 +237,13 @@ func (r *AdminRepository) GetOpsLatencyDistribution(ctx context.Context, since t
 	defer rows.Close()
 
 	buckets := map[string]int64{
-		"0-500ms":   0,
-		"500ms-1s":  0,
-		"1s-2s":     0,
-		"2s-5s":     0,
-		"5s-10s":    0,
-		"10s-30s":   0,
-		">30s":      0,
+		"0-500ms":  0,
+		"500ms-1s": 0,
+		"1s-2s":    0,
+		"2s-5s":    0,
+		"5s-10s":   0,
+		"10s-30s":  0,
+		">30s":     0,
 	}
 	for rows.Next() {
 		var latencyMs int
@@ -298,6 +298,61 @@ func (r *AdminRepository) GetOpsLatencyDistribution(ctx context.Context, since t
 		}
 	}
 	return dist, nil
+}
+
+func (r *AdminRepository) GetOpsAccountHealth(ctx context.Context, since time.Time) (admin.OpsAccountHealth, error) {
+	now := time.Now()
+	health := admin.OpsAccountHealth{
+		WindowStart: since,
+		WindowEnd:   now,
+	}
+
+	row := r.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN enabled THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN enabled
+				AND (
+					status = ''
+					OR status = 'active'
+					OR (status = 'rate_limited' AND rate_limited_until IS NOT NULL AND rate_limited_until <= $2)
+					OR (status = 'circuit_open' AND circuit_open_until IS NOT NULL AND circuit_open_until <= $2)
+				)
+				AND (rate_limited_until IS NULL OR rate_limited_until <= $2)
+				AND (circuit_open_until IS NULL OR circuit_open_until <= $2)
+				THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN NOT enabled OR status = 'disabled' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'rate_limited'
+				AND (rate_limited_until IS NULL OR rate_limited_until > $2)
+				THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'circuit_open'
+				AND (circuit_open_until IS NULL OR circuit_open_until > $2)
+				THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN last_test_at IS NOT NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN last_test_status = 'passed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN last_test_status = 'failed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN last_test_at IS NULL THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN last_test_at >= $1 AND last_test_status = 'failed' THEN 1 ELSE 0 END), 0)
+		FROM provider_accounts
+	`, since, now)
+	if err := row.Scan(
+		&health.TotalAccounts,
+		&health.EnabledAccounts,
+		&health.Schedulable,
+		&health.Disabled,
+		&health.RateLimited,
+		&health.CircuitOpen,
+		&health.Expired,
+		&health.TestedAccounts,
+		&health.TestPassed,
+		&health.TestFailed,
+		&health.TestMissing,
+		&health.RecentTestFailure,
+	); err != nil {
+		return health, err
+	}
+	return health, nil
 }
 
 func opsBucketExpr(interval string) string {

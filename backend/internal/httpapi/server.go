@@ -59,6 +59,7 @@ type AdminService interface {
 	GetOpsThroughputTrend(ctx context.Context, since time.Time, interval string) (admin.OpsThroughputTrend, error)
 	GetOpsErrorTrend(ctx context.Context, since time.Time, interval string) (admin.OpsErrorTrend, error)
 	GetOpsLatencyDistribution(ctx context.Context, since time.Time) (admin.OpsLatencyDistribution, error)
+	GetOpsAccountHealth(ctx context.Context, since time.Time) (admin.OpsAccountHealth, error)
 	ListFingerprintProfiles(ctx context.Context) ([]admin.FingerprintProfile, error)
 	CreateFingerprintProfile(ctx context.Context, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
 	UpdateFingerprintProfile(ctx context.Context, id int64, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
@@ -863,6 +864,16 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, dist)
+	}))
+
+	mux.HandleFunc("GET /api/admin/ops/account-health", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		since := parseSinceParam(r)
+		health, err := admins.GetOpsAccountHealth(r.Context(), since)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, health)
 	}))
 
 	mux.HandleFunc("GET /api/admin/fingerprint-profiles", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

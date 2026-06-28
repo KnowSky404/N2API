@@ -76,6 +76,8 @@ type fakeAdminService struct {
 	usagePricing       admin.UsagePricing
 	gatewaySettings    admin.GatewaySettings
 	gatewaySettingsErr error
+	opsAccountHealth   admin.OpsAccountHealth
+	opsAccountSince    time.Time
 	fingerprintInput   admin.FingerprintProfileInput
 	fingerprintID      int64
 	fingerprintErr     error
@@ -4302,6 +4304,55 @@ func TestUsageSummaryRejectsInvalidQuery(t *testing.T) {
 	}
 }
 
+func TestOpsAccountHealthRequiresSessionAndReturnsHealth(t *testing.T) {
+	admins := newFakeAdminService()
+	since := time.Unix(4000, 0).UTC()
+	admins.opsAccountHealth = admin.OpsAccountHealth{
+		WindowStart:       since,
+		WindowEnd:         time.Unix(5000, 0).UTC(),
+		TotalAccounts:     5,
+		EnabledAccounts:   4,
+		Schedulable:       3,
+		Disabled:          1,
+		RateLimited:       1,
+		CircuitOpen:       1,
+		Expired:           1,
+		TestedAccounts:    4,
+		TestPassed:        3,
+		TestFailed:        1,
+		TestMissing:       1,
+		RecentTestFailure: 1,
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/ops/account-health", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/account-health?since=4000", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !admins.opsAccountSince.Equal(since) {
+		t.Fatalf("ops account since = %v, want %v", admins.opsAccountSince, since)
+	}
+	var body admin.OpsAccountHealth
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body != admins.opsAccountHealth {
+		t.Fatalf("account health = %+v, want %+v", body, admins.opsAccountHealth)
+	}
+}
+
 func TestUsagePricingRequiresSessionAndReturnsPricing(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.usagePricing = admin.UsagePricing{
@@ -5141,6 +5192,11 @@ func (s *fakeAdminService) GetOpsErrorTrend(_ context.Context, _ time.Time, _ st
 
 func (s *fakeAdminService) GetOpsLatencyDistribution(_ context.Context, _ time.Time) (admin.OpsLatencyDistribution, error) {
 	return admin.OpsLatencyDistribution{}, nil
+}
+
+func (s *fakeAdminService) GetOpsAccountHealth(_ context.Context, since time.Time) (admin.OpsAccountHealth, error) {
+	s.opsAccountSince = since
+	return s.opsAccountHealth, nil
 }
 
 func (s *fakeAdminService) ListFingerprintProfiles(_ context.Context) ([]admin.FingerprintProfile, error) {

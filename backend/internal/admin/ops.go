@@ -4,19 +4,19 @@ import "time"
 
 // OpsErrorStats summarizes gateway errors over a time window.
 type OpsErrorStats struct {
-	WindowStart             time.Time         `json:"windowStart"`
-	WindowEnd               time.Time         `json:"windowEnd"`
-	TotalRequests           int64             `json:"totalRequests"`
-	ErrorRequests           int64             `json:"errorRequests"`
-	ErrorRate               float64           `json:"errorRate"`
-	TopErrors               []OpsErrorBucket  `json:"topErrors"`
-	TopUpstreamStatuses     []OpsErrorBucket  `json:"topUpstreamStatuses"`
-	TopRateLimitedModels    []OpsErrorBucket  `json:"topRateLimitedModels"`
-	TopErrorAccounts        []OpsErrorBucket  `json:"topErrorAccounts"`
-	ClientErrors            int64             `json:"clientErrors"`
-	ServerErrors            int64             `json:"serverErrors"`
-	RateLimitErrors         int64             `json:"rateLimitErrors"`
-	UpstreamErrors          int64             `json:"upstreamErrors"`
+	WindowStart          time.Time        `json:"windowStart"`
+	WindowEnd            time.Time        `json:"windowEnd"`
+	TotalRequests        int64            `json:"totalRequests"`
+	ErrorRequests        int64            `json:"errorRequests"`
+	ErrorRate            float64          `json:"errorRate"`
+	TopErrors            []OpsErrorBucket `json:"topErrors"`
+	TopUpstreamStatuses  []OpsErrorBucket `json:"topUpstreamStatuses"`
+	TopRateLimitedModels []OpsErrorBucket `json:"topRateLimitedModels"`
+	TopErrorAccounts     []OpsErrorBucket `json:"topErrorAccounts"`
+	ClientErrors         int64            `json:"clientErrors"`
+	ServerErrors         int64            `json:"serverErrors"`
+	RateLimitErrors      int64            `json:"rateLimitErrors"`
+	UpstreamErrors       int64            `json:"upstreamErrors"`
 }
 
 // OpsErrorBucket is a named count for error distribution charts.
@@ -35,14 +35,14 @@ type OpsThroughputTrend struct {
 
 // OpsThroughputPoint is a single time bucket of throughput data.
 type OpsThroughputPoint struct {
-	Time          time.Time `json:"time"`
-	Requests      int64     `json:"requests"`
-	InputTokens   int64     `json:"inputTokens"`
-	OutputTokens  int64     `json:"outputTokens"`
-	TotalTokens   int64     `json:"totalTokens"`
-	CostMicrousd  int64     `json:"costMicrousd"`
-	ErrorCount    int64     `json:"errorCount"`
-	AvgLatencyMs  float64   `json:"avgLatencyMs"`
+	Time         time.Time `json:"time"`
+	Requests     int64     `json:"requests"`
+	InputTokens  int64     `json:"inputTokens"`
+	OutputTokens int64     `json:"outputTokens"`
+	TotalTokens  int64     `json:"totalTokens"`
+	CostMicrousd int64     `json:"costMicrousd"`
+	ErrorCount   int64     `json:"errorCount"`
+	AvgLatencyMs float64   `json:"avgLatencyMs"`
 }
 
 // OpsErrorTrend contains time-series error rate data.
@@ -54,13 +54,13 @@ type OpsErrorTrend struct {
 
 // OpsErrorTrendPoint is a single time bucket of error data.
 type OpsErrorTrendPoint struct {
-	Time              time.Time `json:"time"`
-	Total             int64     `json:"total"`
-	ClientErrors      int64     `json:"clientErrors"`
-	ServerErrors      int64     `json:"serverErrors"`
-	RateLimitErrors   int64     `json:"rateLimitErrors"`
-	UpstreamErrors    int64     `json:"upstreamErrors"`
-	GatewayErrors     int64     `json:"gatewayErrors"`
+	Time            time.Time `json:"time"`
+	Total           int64     `json:"total"`
+	ClientErrors    int64     `json:"clientErrors"`
+	ServerErrors    int64     `json:"serverErrors"`
+	RateLimitErrors int64     `json:"rateLimitErrors"`
+	UpstreamErrors  int64     `json:"upstreamErrors"`
+	GatewayErrors   int64     `json:"gatewayErrors"`
 }
 
 // OpsLatencyDistribution contains latency bucket counts.
@@ -70,8 +70,26 @@ type OpsLatencyDistribution struct {
 
 // OpsLatencyBucket is one latency range.
 type OpsLatencyBucket struct {
-	Range  string `json:"range"`
-	MinMs  int    `json:"minMs"`
-	MaxMs  int    `json:"maxMs"`
-	Count  int64  `json:"count"`
+	Range string `json:"range"`
+	MinMs int    `json:"minMs"`
+	MaxMs int    `json:"maxMs"`
+	Count int64  `json:"count"`
+}
+
+// OpsAccountHealth summarizes provider account scheduling and test health.
+type OpsAccountHealth struct {
+	WindowStart       time.Time `json:"windowStart"`
+	WindowEnd         time.Time `json:"windowEnd"`
+	TotalAccounts     int64     `json:"totalAccounts"`
+	EnabledAccounts   int64     `json:"enabledAccounts"`
+	Schedulable       int64     `json:"schedulable"`
+	Disabled          int64     `json:"disabled"`
+	RateLimited       int64     `json:"rateLimited"`
+	CircuitOpen       int64     `json:"circuitOpen"`
+	Expired           int64     `json:"expired"`
+	TestedAccounts    int64     `json:"testedAccounts"`
+	TestPassed        int64     `json:"testPassed"`
+	TestFailed        int64     `json:"testFailed"`
+	TestMissing       int64     `json:"testMissing"`
+	RecentTestFailure int64     `json:"recentTestFailure"`
 }

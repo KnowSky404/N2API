@@ -893,6 +893,40 @@ func TestGatewaySettingsRejectsInvalidAutoTestSchedule(t *testing.T) {
 	}
 }
 
+func TestGetOpsAccountHealthReturnsRepositorySummary(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	now := time.Unix(5000, 0).UTC()
+	since := now.Add(-24 * time.Hour)
+	repo.opsAccountHealth = OpsAccountHealth{
+		WindowStart:       since,
+		WindowEnd:         now,
+		TotalAccounts:     5,
+		EnabledAccounts:   4,
+		Schedulable:       3,
+		Disabled:          1,
+		RateLimited:       1,
+		CircuitOpen:       1,
+		Expired:           1,
+		TestedAccounts:    4,
+		TestPassed:        3,
+		TestFailed:        1,
+		TestMissing:       1,
+		RecentTestFailure: 1,
+	}
+
+	health, err := service.GetOpsAccountHealth(context.Background(), since)
+	if err != nil {
+		t.Fatalf("GetOpsAccountHealth returned error: %v", err)
+	}
+	if health != repo.opsAccountHealth {
+		t.Fatalf("GetOpsAccountHealth = %+v, want %+v", health, repo.opsAccountHealth)
+	}
+	if !repo.lastOpsAccountHealthSince.Equal(since) {
+		t.Fatalf("repository since = %v, want %v", repo.lastOpsAccountHealthSince, since)
+	}
+}
+
 func TestUsagePricingDefaultAndUpdate(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1121,24 +1155,26 @@ func requireBootstrap(t *testing.T, service *Service, username, password string)
 }
 
 type memoryRepo struct {
-	admin                   Admin
-	nextAdminID             int64
-	sessions                map[string]memorySession
-	keys                    map[int64]memoryAPIKey
-	nextAPIKeyID            int64
-	touchErr                error
-	logs                    []RequestLog
-	lastLogFilter           RequestLogFilter
-	budgetUsage             map[int64]APIKeyBudgetUsage
-	routingPools            map[int64]RoutingPool
-	usageSummary            UsageSummary
-	lastUsageSince          time.Time
-	lastUsageGroupBy        string
-	modelSettings           ModelSettings
-	gatewaySettings         GatewaySettings
-	usagePricing            UsagePricing
-	lastFingerprintInput    FingerprintProfileInput
-	lastFingerprintUpdateID int64
+	admin                     Admin
+	nextAdminID               int64
+	sessions                  map[string]memorySession
+	keys                      map[int64]memoryAPIKey
+	nextAPIKeyID              int64
+	touchErr                  error
+	logs                      []RequestLog
+	lastLogFilter             RequestLogFilter
+	budgetUsage               map[int64]APIKeyBudgetUsage
+	routingPools              map[int64]RoutingPool
+	usageSummary              UsageSummary
+	lastUsageSince            time.Time
+	lastUsageGroupBy          string
+	modelSettings             ModelSettings
+	gatewaySettings           GatewaySettings
+	usagePricing              UsagePricing
+	opsAccountHealth          OpsAccountHealth
+	lastOpsAccountHealthSince time.Time
+	lastFingerprintInput      FingerprintProfileInput
+	lastFingerprintUpdateID   int64
 }
 
 type memorySession struct {
@@ -1523,6 +1559,11 @@ func (r *memoryRepo) GetOpsErrorTrend(_ context.Context, _ time.Time, _ string) 
 
 func (r *memoryRepo) GetOpsLatencyDistribution(_ context.Context, _ time.Time) (OpsLatencyDistribution, error) {
 	return OpsLatencyDistribution{}, nil
+}
+
+func (r *memoryRepo) GetOpsAccountHealth(_ context.Context, since time.Time) (OpsAccountHealth, error) {
+	r.lastOpsAccountHealthSince = since
+	return r.opsAccountHealth, nil
 }
 
 func (r *memoryRepo) ListFingerprintProfiles(_ context.Context) ([]FingerprintProfile, error) {
