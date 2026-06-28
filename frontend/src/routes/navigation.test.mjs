@@ -710,16 +710,22 @@ test('dashboard shows ops monitoring snapshot', () => {
 });
 
 test('ops monitor links error buckets to filtered request logs', () => {
-  for (const label of ['Operations monitor', 'Top errors', 'Upstream status codes']) {
+  for (const label of ['Operations monitor', 'Top errors', 'Upstream status codes', 'Rate-limited models', 'Error accounts']) {
     assert.match(opsPage, new RegExp(label.replace(' ', '\\s+')), `ops page should include ${label}`);
   }
 
   assert.match(opsPage, /function opsErrorHref/);
   assert.match(opsPage, /function opsStatusCodeHref/);
+  assert.match(opsPage, /function opsRateLimitedModelHref/);
+  assert.match(opsPage, /function opsErrorAccountHref/);
   assert.match(opsPage, /error=\$\{encodeURIComponent/);
   assert.match(opsPage, /statusCode=\$\{encodeURIComponent/);
+  assert.match(opsPage, /model=\$\{encodeURIComponent/);
+  assert.match(opsPage, /q=\$\{encodeURIComponent/);
   assert.match(opsPage, /href=\{opsErrorHref\(bucket\)\}/);
   assert.match(opsPage, /href=\{opsStatusCodeHref\(bucket\)\}/);
+  assert.match(opsPage, /href=\{opsRateLimitedModelHref\(bucket\)\}/);
+  assert.match(opsPage, /href=\{opsErrorAccountHref\(bucket\)\}/);
   assert.match(opsPage, /View matching request logs/);
 });
 

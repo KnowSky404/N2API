@@ -58,6 +58,20 @@ let requested = $state(false);
     if (!/^[1-5]\d\d$/.test(key)) return '/request-logs';
     return `/request-logs?statusCode=${encodeURIComponent(key)}`;
   }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function opsRateLimitedModelHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    if (!key || key === 'unknown') return '/request-logs?statusCode=429';
+    return `/request-logs?model=${encodeURIComponent(key)}&statusCode=429`;
+  }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function opsErrorAccountHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    if (!key || key === 'unknown') return '/request-logs?statusClass=server_error';
+    return `/request-logs?q=${encodeURIComponent(key)}`;
+  }
 </script>
 
 <svelte:head>
@@ -197,6 +211,44 @@ let requested = $state(false);
                       {bucket.key}
                     </a>
                     <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.count)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if opsMonitor.stats.topRateLimitedModels.length > 0}
+            <div class="rounded-lg border border-[#ededed] bg-white p-5">
+              <h3 class="text-base font-semibold text-[#0d0d0d]">Rate-limited models</h3>
+              <div class="mt-3 space-y-2">
+                {#each opsMonitor.stats.topRateLimitedModels as bucket}
+                  <div class="flex items-center gap-2">
+                    <a
+                      class="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                      href={opsRateLimitedModelHref(bucket)}
+                      title="View matching request logs"
+                    >
+                      {bucket.label}
+                    </a>
+                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] shrink-0">{formatTokens(bucket.count)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          {#if opsMonitor.stats.topErrorAccounts.length > 0}
+            <div class="rounded-lg border border-[#ededed] bg-white p-5">
+              <h3 class="text-base font-semibold text-[#0d0d0d]">Error accounts</h3>
+              <div class="mt-3 space-y-2">
+                {#each opsMonitor.stats.topErrorAccounts as bucket}
+                  <div class="flex items-center gap-2">
+                    <a
+                      class="min-w-0 flex-1 truncate text-sm font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                      href={opsErrorAccountHref(bucket)}
+                      title="View matching request logs"
+                    >
+                      {bucket.label}
+                    </a>
+                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] shrink-0">{formatTokens(bucket.count)}</span>
                   </div>
                 {/each}
               </div>
