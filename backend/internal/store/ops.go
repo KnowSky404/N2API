@@ -399,6 +399,110 @@ func (r *AdminRepository) ListOpsAccountTests(ctx context.Context, since time.Ti
 	return tests, rows.Err()
 }
 
+func (r *AdminRepository) GetOpsCostBreakdown(ctx context.Context, since time.Time) (admin.OpsCostBreakdown, error) {
+	breakdown := admin.OpsCostBreakdown{
+		WindowStart: since,
+		WindowEnd:   time.Now(),
+	}
+
+	row := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(l.estimated_cost_microusd), 0)
+		FROM request_logs l
+		WHERE l.created_at >= $1
+	`, since)
+	if err := row.Scan(&breakdown.EstimatedCostMicrousd); err != nil {
+		return breakdown, err
+	}
+
+	topModels, err := r.opsCostBuckets(ctx, since, "top_models", 5)
+	if err != nil {
+		return breakdown, err
+	}
+	breakdown.TopModels = topModels
+
+	topProviderAccounts, err := r.opsCostBuckets(ctx, since, "top_provider_accounts", 5)
+	if err != nil {
+		return breakdown, err
+	}
+	breakdown.TopProviderAccounts = topProviderAccounts
+
+	topClientKeys, err := r.opsCostBuckets(ctx, since, "top_client_keys", 5)
+	if err != nil {
+		return breakdown, err
+	}
+	breakdown.TopClientKeys = topClientKeys
+
+	return breakdown, nil
+}
+
+func (r *AdminRepository) opsCostBuckets(ctx context.Context, since time.Time, kind string, limit int) ([]admin.OpsCostBucket, error) {
+	var query string
+	switch kind {
+	case "top_models":
+		query = `
+			SELECT
+				COALESCE(NULLIF(l.model, ''), 'unknown'),
+				COALESCE(NULLIF(l.model, ''), 'Unknown model'),
+				COALESCE(SUM(l.estimated_cost_microusd), 0),
+				COUNT(*)
+			FROM request_logs l
+			WHERE l.created_at >= $1
+			GROUP BY 1, 2
+			ORDER BY 3 DESC, 4 DESC, 2 ASC
+			LIMIT ` + strconv.Itoa(limit)
+	case "top_provider_accounts":
+		query = `
+			SELECT
+				COALESCE(l.provider_account_id::text, 'unknown'),
+				COALESCE(NULLIF(l.provider, ''), NULLIF(a.provider, ''), 'unknown') || ' / ' ||
+					COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, 'Unassigned'),
+				COALESCE(SUM(l.estimated_cost_microusd), 0),
+				COUNT(*)
+			FROM request_logs l
+			LEFT JOIN provider_accounts a ON a.id = l.provider_account_id
+			WHERE l.created_at >= $1
+			GROUP BY 1, 2
+			ORDER BY 3 DESC, 4 DESC, 2 ASC
+			LIMIT ` + strconv.Itoa(limit)
+	case "top_client_keys":
+		query = `
+			SELECT
+				COALESCE(k.id::text, 'unknown'),
+				COALESCE(NULLIF(k.name, '') || ' (' || k.prefix || ')', 'Unknown key'),
+				COALESCE(SUM(l.estimated_cost_microusd), 0),
+				COUNT(*)
+			FROM request_logs l
+			LEFT JOIN client_api_keys k ON k.id = l.client_key_id
+			WHERE l.created_at >= $1
+			GROUP BY 1, 2
+			ORDER BY 3 DESC, 4 DESC, 2 ASC
+			LIMIT ` + strconv.Itoa(limit)
+	default:
+		return nil, fmt.Errorf("unknown ops cost bucket kind: %s", kind)
+	}
+
+	rows, err := r.pool.Query(ctx, query, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	buckets := make([]admin.OpsCostBucket, 0, limit)
+	for rows.Next() {
+		var bucket admin.OpsCostBucket
+		if err := rows.Scan(
+			&bucket.Key,
+			&bucket.Label,
+			&bucket.EstimatedCostMicrousd,
+			&bucket.Requests,
+		); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, bucket)
+	}
+	return buckets, rows.Err()
+}
+
 func opsBucketExpr(interval string) string {
 	switch interval {
 	case "minute":

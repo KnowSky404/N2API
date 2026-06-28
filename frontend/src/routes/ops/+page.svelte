@@ -93,6 +93,30 @@
     return requestLogHrefWithSince(params);
   }
 
+  /** @param {{ key?: string | number | null }} bucket */
+  function opsCostModelHref(bucket) {
+    const params = new URLSearchParams();
+    const key = String(bucket?.key ?? '').trim();
+    if (key && key !== 'unknown') params.set('model', key);
+    return requestLogHrefWithSince(params);
+  }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function opsCostProviderAccountHref(bucket) {
+    const params = new URLSearchParams();
+    const key = String(bucket?.key ?? '').trim();
+    if (key && key !== 'unknown') params.set('providerAccountId', key);
+    return requestLogHrefWithSince(params);
+  }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function opsCostClientKeyHref(bucket) {
+    const params = new URLSearchParams();
+    const key = String(bucket?.key ?? '').trim();
+    if (key && key !== 'unknown') params.set('clientKeyId', key);
+    return requestLogHrefWithSince(params);
+  }
+
   /** @param {string | null | undefined} status */
   function accountTestStatusClass(status) {
     if (status === 'passed') return 'text-[#0a7a5e]';
@@ -281,6 +305,77 @@
               </div>
             </div>
           {/if}
+        </section>
+      {/if}
+
+      {#if opsMonitor.costBreakdown}
+        <section class="rounded-lg border border-[#ededed] bg-white p-6">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 class="text-base font-semibold text-[#0d0d0d]">Cost attribution</h3>
+              <p class="mt-1 text-sm text-[#6e6e6e]">Estimated request cost by model, provider account, and API key.</p>
+            </div>
+            <p class="font-mono text-sm tabular-nums text-[#0d0d0d]">{formatCostMicrousd(opsMonitor.costBreakdown.estimatedCostMicrousd || 0)}</p>
+          </div>
+
+          <div class="mt-5 grid gap-4 lg:grid-cols-3">
+            <div class="rounded-lg border border-[#ededed] bg-white p-4">
+              <h4 class="text-sm font-semibold text-[#0d0d0d]">Top cost models</h4>
+              <div class="mt-3 space-y-2">
+                {#each opsMonitor.costBreakdown.topModels ?? [] as bucket}
+                  <div class="flex items-center gap-2">
+                    <a
+                      class="min-w-0 flex-1 truncate font-mono text-[13px] font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                      href={opsCostModelHref(bucket)}
+                      title="View matching request logs"
+                    >
+                      {bucket.label}
+                    </a>
+                    <span class="shrink-0 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{formatCostMicrousd(bucket.estimatedCostMicrousd || 0)}</span>
+                    <span class="shrink-0 font-mono text-[12px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.requests)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-[#ededed] bg-white p-4">
+              <h4 class="text-sm font-semibold text-[#0d0d0d]">Top cost provider accounts</h4>
+              <div class="mt-3 space-y-2">
+                {#each opsMonitor.costBreakdown.topProviderAccounts ?? [] as bucket}
+                  <div class="flex items-center gap-2">
+                    <a
+                      class="min-w-0 flex-1 truncate text-sm font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                      href={opsCostProviderAccountHref(bucket)}
+                      title="View matching request logs"
+                    >
+                      {bucket.label}
+                    </a>
+                    <span class="shrink-0 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{formatCostMicrousd(bucket.estimatedCostMicrousd || 0)}</span>
+                    <span class="shrink-0 font-mono text-[12px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.requests)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-[#ededed] bg-white p-4">
+              <h4 class="text-sm font-semibold text-[#0d0d0d]">Top cost API keys</h4>
+              <div class="mt-3 space-y-2">
+                {#each opsMonitor.costBreakdown.topClientKeys ?? [] as bucket}
+                  <div class="flex items-center gap-2">
+                    <a
+                      class="min-w-0 flex-1 truncate text-sm font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                      href={opsCostClientKeyHref(bucket)}
+                      title="View matching request logs"
+                    >
+                      {bucket.label}
+                    </a>
+                    <span class="shrink-0 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{formatCostMicrousd(bucket.estimatedCostMicrousd || 0)}</span>
+                    <span class="shrink-0 font-mono text-[12px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.requests)}</span>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          </div>
         </section>
       {/if}
 

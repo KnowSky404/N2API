@@ -1013,6 +1013,34 @@ func TestListOpsAccountTestsReturnsRepositoryRows(t *testing.T) {
 	}
 }
 
+func TestGetOpsCostBreakdownReturnsRepositoryBreakdown(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	since := time.Unix(5000, 0).UTC().Add(-24 * time.Hour)
+	repo.opsCostBreakdown = OpsCostBreakdown{
+		WindowStart:           since,
+		WindowEnd:             time.Unix(5000, 0).UTC(),
+		EstimatedCostMicrousd: 7500,
+		TopModels: []OpsCostBucket{{
+			Key:                   "gpt-5",
+			Label:                 "gpt-5",
+			Requests:              3,
+			EstimatedCostMicrousd: 7500,
+		}},
+	}
+
+	breakdown, err := service.GetOpsCostBreakdown(context.Background(), since)
+	if err != nil {
+		t.Fatalf("GetOpsCostBreakdown returned error: %v", err)
+	}
+	if breakdown.EstimatedCostMicrousd != 7500 || len(breakdown.TopModels) != 1 {
+		t.Fatalf("ops cost breakdown = %+v, want repo breakdown", breakdown)
+	}
+	if !repo.lastOpsCostSince.Equal(since) {
+		t.Fatalf("repository since = %v, want %v", repo.lastOpsCostSince, since)
+	}
+}
+
 func TestUsagePricingDefaultAndUpdate(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1264,6 +1292,8 @@ type memoryRepo struct {
 	opsAccountTests           []OpsAccountTest
 	lastOpsAccountTestsSince  time.Time
 	lastOpsAccountTestsLimit  int
+	opsCostBreakdown          OpsCostBreakdown
+	lastOpsCostSince          time.Time
 	lastFingerprintInput      FingerprintProfileInput
 	lastFingerprintUpdateID   int64
 }
@@ -1668,6 +1698,11 @@ func (r *memoryRepo) ListOpsAccountTests(_ context.Context, since time.Time, lim
 	r.lastOpsAccountTestsSince = since
 	r.lastOpsAccountTestsLimit = limit
 	return r.opsAccountTests, nil
+}
+
+func (r *memoryRepo) GetOpsCostBreakdown(_ context.Context, since time.Time) (OpsCostBreakdown, error) {
+	r.lastOpsCostSince = since
+	return r.opsCostBreakdown, nil
 }
 
 func (r *memoryRepo) ListFingerprintProfiles(_ context.Context) ([]FingerprintProfile, error) {

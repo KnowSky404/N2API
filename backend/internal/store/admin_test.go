@@ -175,6 +175,28 @@ func TestOpsErrorAccountBucketsUseAccountIDKeys(t *testing.T) {
 	}
 }
 
+func TestOpsCostBreakdownRanksModelsAccountsAndAPIKeysByEstimatedCost(t *testing.T) {
+	source, err := os.ReadFile("ops.go")
+	if err != nil {
+		t.Fatalf("ReadFile ops.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"func (r *AdminRepository) GetOpsCostBreakdown",
+		"top_models",
+		"top_provider_accounts",
+		"top_client_keys",
+		"SUM(l.estimated_cost_microusd)",
+		"ORDER BY 3 DESC",
+		"NULLIF(l.provider_account_name, '')",
+		"NULLIF(k.name, '')",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("ops cost breakdown source missing %q", want)
+		}
+	}
+}
+
 func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 	since := time.Unix(2000, 0).UTC()
 	whereSQL, args := requestLogFilterSQL(admin.RequestLogFilter{

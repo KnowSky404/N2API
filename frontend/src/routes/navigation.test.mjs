@@ -767,7 +767,7 @@ test('dashboard shows ops monitoring snapshot', () => {
 });
 
 test('ops monitor links error buckets to filtered request logs', () => {
-  for (const label of ['Operations monitor', 'Top errors', 'Upstream status codes', 'Rate-limited models', 'Error accounts', 'Account health', 'Schedulable accounts', 'Scheduling blockers', 'Account tests', 'Recent account tests', 'Open providers']) {
+  for (const label of ['Operations monitor', 'Top errors', 'Upstream status codes', 'Rate-limited models', 'Error accounts', 'Cost attribution', 'Top cost models', 'Top cost provider accounts', 'Top cost API keys', 'Account health', 'Schedulable accounts', 'Scheduling blockers', 'Account tests', 'Recent account tests', 'Open providers']) {
     assert.match(opsPage, new RegExp(label.replace(' ', '\\s+')), `ops page should include ${label}`);
   }
 
@@ -778,13 +778,21 @@ test('ops monitor links error buckets to filtered request logs', () => {
   assert.match(adminState, /function loadOpsAccountTests/);
   assert.match(adminState, /\/api\/admin\/ops\/account-tests/);
   assert.match(adminState, /loadOpsAccountTests\(since\)/);
+  assert.match(adminState, /costBreakdown:\s*null/);
+  assert.match(adminState, /function loadOpsCostBreakdown/);
+  assert.match(adminState, /\/api\/admin\/ops\/cost-breakdown/);
+  assert.match(adminState, /loadOpsCostBreakdown\(since\)/);
   assert.match(opsPage, /opsMonitor\.accountHealth/);
   assert.match(opsPage, /opsMonitor\.accountTests\.tests/);
+  assert.match(opsPage, /opsMonitor\.costBreakdown/);
   assert.match(opsPage, /\/providers\?providerAccountId=/);
   assert.match(opsPage, /function opsErrorHref/);
   assert.match(opsPage, /function opsStatusCodeHref/);
   assert.match(opsPage, /function opsRateLimitedModelHref/);
   assert.match(opsPage, /function opsErrorAccountHref/);
+  assert.match(opsPage, /function opsCostModelHref/);
+  assert.match(opsPage, /function opsCostProviderAccountHref/);
+  assert.match(opsPage, /function opsCostClientKeyHref/);
   assert.match(opsPage, /function opsSinceParam/);
   assert.match(opsPage, /function requestLogHrefWithSince/);
   assert.match(opsPage, /params\.set\('since', opsSinceParam\(\)\)/);
@@ -792,10 +800,15 @@ test('ops monitor links error buckets to filtered request logs', () => {
   assert.match(opsPage, /params\.set\('statusCode', key\)/);
   assert.match(opsPage, /params\.set\('model', key\)/);
   assert.match(opsPage, /params\.set\('providerAccountId', key\)/);
+  assert.match(opsPage, /params\.set\('clientKeyId', key\)/);
   assert.match(opsPage, /href=\{opsErrorHref\(bucket\)\}/);
   assert.match(opsPage, /href=\{opsStatusCodeHref\(bucket\)\}/);
   assert.match(opsPage, /href=\{opsRateLimitedModelHref\(bucket\)\}/);
   assert.match(opsPage, /href=\{opsErrorAccountHref\(bucket\)\}/);
+  assert.match(opsPage, /href=\{opsCostModelHref\(bucket\)\}/);
+  assert.match(opsPage, /href=\{opsCostProviderAccountHref\(bucket\)\}/);
+  assert.match(opsPage, /href=\{opsCostClientKeyHref\(bucket\)\}/);
+  assert.match(opsPage, /formatCostMicrousd\(bucket\.estimatedCostMicrousd/);
   assert.match(opsPage, /View matching request logs/);
 });
 

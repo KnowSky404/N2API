@@ -86,6 +86,8 @@ type fakeAdminService struct {
 	opsAccountTests      []admin.OpsAccountTest
 	opsAccountTestsSince time.Time
 	opsAccountTestsLimit int
+	opsCostBreakdown     admin.OpsCostBreakdown
+	opsCostSince         time.Time
 	fingerprintInput     admin.FingerprintProfileInput
 	fingerprintID        int64
 	fingerprintErr       error
@@ -4490,6 +4492,62 @@ func TestOpsAccountTestsRequiresSessionAndReturnsRows(t *testing.T) {
 	}
 }
 
+func TestOpsCostBreakdownRequiresSessionAndReturnsBreakdown(t *testing.T) {
+	admins := newFakeAdminService()
+	since := time.Unix(4000, 0).UTC()
+	admins.opsCostBreakdown = admin.OpsCostBreakdown{
+		WindowStart:           since,
+		WindowEnd:             time.Unix(5000, 0).UTC(),
+		EstimatedCostMicrousd: 7500,
+		TopModels: []admin.OpsCostBucket{{
+			Key:                   "gpt-5",
+			Label:                 "gpt-5",
+			Requests:              3,
+			EstimatedCostMicrousd: 4500,
+		}},
+		TopProviderAccounts: []admin.OpsCostBucket{{
+			Key:                   "7",
+			Label:                 "openai / Work Codex",
+			Requests:              2,
+			EstimatedCostMicrousd: 3000,
+		}},
+		TopClientKeys: []admin.OpsCostBucket{{
+			Key:                   "12",
+			Label:                 "desktop",
+			Requests:              1,
+			EstimatedCostMicrousd: 2000,
+		}},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/ops/cost-breakdown", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/ops/cost-breakdown?since=4000", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !admins.opsCostSince.Equal(since) {
+		t.Fatalf("ops cost since = %v, want %v", admins.opsCostSince, since)
+	}
+	var body admin.OpsCostBreakdown
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.EstimatedCostMicrousd != 7500 || len(body.TopModels) != 1 || len(body.TopProviderAccounts) != 1 || len(body.TopClientKeys) != 1 {
+		t.Fatalf("cost breakdown = %+v, want populated model/account/key buckets", body)
+	}
+}
+
 func TestUsagePricingRequiresSessionAndReturnsPricing(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.usagePricing = admin.UsagePricing{
@@ -5340,6 +5398,11 @@ func (s *fakeAdminService) ListOpsAccountTests(_ context.Context, since time.Tim
 	s.opsAccountTestsSince = since
 	s.opsAccountTestsLimit = limit
 	return s.opsAccountTests, nil
+}
+
+func (s *fakeAdminService) GetOpsCostBreakdown(_ context.Context, since time.Time) (admin.OpsCostBreakdown, error) {
+	s.opsCostSince = since
+	return s.opsCostBreakdown, nil
 }
 
 func (s *fakeAdminService) ListFingerprintProfiles(_ context.Context) ([]admin.FingerprintProfile, error) {

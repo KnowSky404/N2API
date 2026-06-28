@@ -106,3 +106,21 @@ type OpsAccountTest struct {
 	CheckedAt   time.Time `json:"checkedAt"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
+
+// OpsCostBreakdown summarizes estimated gateway cost attribution over a time window.
+type OpsCostBreakdown struct {
+	WindowStart           time.Time       `json:"windowStart"`
+	WindowEnd             time.Time       `json:"windowEnd"`
+	EstimatedCostMicrousd int64           `json:"estimatedCostMicrousd"`
+	TopModels             []OpsCostBucket `json:"topModels"`
+	TopProviderAccounts   []OpsCostBucket `json:"topProviderAccounts"`
+	TopClientKeys         []OpsCostBucket `json:"topClientKeys"`
+}
+
+// OpsCostBucket is a named estimated-cost bucket with request volume.
+type OpsCostBucket struct {
+	Key                   string `json:"key"`
+	Label                 string `json:"label"`
+	Requests              int64  `json:"requests"`
+	EstimatedCostMicrousd int64  `json:"estimatedCostMicrousd"`
+}

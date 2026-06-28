@@ -3060,7 +3060,7 @@ export function initializeAdminState() {
 
 // --- Ops monitoring state ---
 
-/** @type {{ loading: boolean; error: string; stats: any; throughput: any; errorTrend: any; latency: any; accountHealth: any; accountTests: any }} */
+/** @type {{ loading: boolean; error: string; stats: any; throughput: any; errorTrend: any; latency: any; accountHealth: any; accountTests: any; costBreakdown: any }} */
 export const opsMonitor = $state({
   loading: false,
   error: '',
@@ -3070,6 +3070,7 @@ export const opsMonitor = $state({
   latency: null,
   accountHealth: null,
   accountTests: null,
+  costBreakdown: null,
 });
 
 /** @param {number} sinceSeconds */
@@ -3170,6 +3171,22 @@ export async function loadOpsAccountTests(sinceSeconds) {
   }
 }
 
+/** @param {number} sinceSeconds */
+export async function loadOpsCostBreakdown(sinceSeconds) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  opsMonitor.error = '';
+  try {
+    const params = new URLSearchParams();
+    if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
+    opsMonitor.costBreakdown = await requestJSON(`/api/admin/ops/cost-breakdown?${params.toString()}`);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops cost breakdown';
+  }
+}
+
 /** @param {number} rangeSeconds */
 export async function loadOpsDashboard(rangeSeconds) {
   const since = rangeSeconds ? Math.floor(Date.now() / 1000) - rangeSeconds : 0;
@@ -3183,6 +3200,7 @@ export async function loadOpsDashboard(rangeSeconds) {
       loadOpsLatencyDistribution(since),
       loadOpsAccountHealth(since),
       loadOpsAccountTests(since),
+      loadOpsCostBreakdown(since),
     ]);
   } finally {
     opsMonitor.loading = false;
