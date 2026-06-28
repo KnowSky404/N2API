@@ -315,11 +315,12 @@ func TestGatewayDocumentationMentionsAllUsageLogDrilldowns(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"Top provider accounts",
+			"Top usage sources",
 			"Top routing pools",
 			"Top routing pool chains",
 			"Top client keys",
 			"Gateway management and Dashboard",
-			"provider-account, routing-pool, routing-pool-chain, API-key, model, and sticky-session",
+			"provider-account, usage-source, routing-pool, routing-pool-chain, API-key, model, and sticky-session",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in gateway usage log drilldown documentation", path, want)
