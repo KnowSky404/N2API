@@ -657,6 +657,16 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{RoutingPoolChain: strings.Repeat("x", 201)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long routing pool chain error = %v, want ErrInvalidInput", err)
 	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{UsageSource: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long usage source error = %v, want ErrInvalidInput", err)
+	}
+
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{UsageSource: " stream "}); err != nil {
+		t.Fatalf("ListRequestLogs usage source filter returned error: %v", err)
+	}
+	if repo.lastLogFilter.UsageSource != "stream" {
+		t.Fatalf("repository usage source filter = %q, want stream", repo.lastLogFilter.UsageSource)
+	}
 }
 
 func TestGetUsageSummaryValidatesRangeAndGroup(t *testing.T) {

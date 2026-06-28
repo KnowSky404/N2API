@@ -4040,6 +4040,23 @@ func TestListRequestLogsRejectsInvalidClientKeyID(t *testing.T) {
 	}
 }
 
+func TestListRequestLogsPassesUsageSourceFilter(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?usageSource=missing", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if admins.requestLogFilter.UsageSource != "missing" {
+		t.Fatalf("usage source filter = %q, want missing", admins.requestLogFilter.UsageSource)
+	}
+}
+
 func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.gatewaySettings = admin.GatewaySettings{

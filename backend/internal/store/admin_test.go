@@ -135,12 +135,13 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		Model:             "gpt-5",
 		SessionID:         "workspace-123",
 		Error:             "api_key_token_rate_limited",
+		UsageSource:       "missing",
 		RoutingPoolError:  "routing_pool_unavailable",
 		RoutingPoolChain:  "primary -> secondary",
 		GatewayFallbacks:  true,
 	})
-	if len(args) != 9 || args[0] != int64(7) || args[1] != int64(9) || args[2] != int64(12) || args[3] != "gpt-5" || args[4] != "workspace-123" || args[5] != "api_key_token_rate_limited" || args[6] != "routing_pool_unavailable" || args[7] != "primary -> secondary" || args[8] != "codex" {
-		t.Fatalf("args = %+v, want provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, api_key_token_rate_limited, routing_pool_unavailable, routing pool chain, and codex args", args)
+	if len(args) != 10 || args[0] != int64(7) || args[1] != int64(9) || args[2] != int64(12) || args[3] != "gpt-5" || args[4] != "workspace-123" || args[5] != "api_key_token_rate_limited" || args[6] != "missing" || args[7] != "routing_pool_unavailable" || args[8] != "primary -> secondary" || args[9] != "codex" {
+		t.Fatalf("args = %+v, want provider account 7, routing pool 9, client key 12, model gpt-5, session workspace-123, api_key_token_rate_limited, missing usage source, routing_pool_unavailable, routing pool chain, and codex args", args)
 	}
 	for _, want := range []string{
 		"ILIKE '%' || $",
@@ -151,6 +152,7 @@ func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 		"l.model = $",
 		"l.session_id = $",
 		"l.error = $",
+		"l.usage_source = $",
 		"l.routing_pool_error = $",
 		"l.routing_pool_fallback_chain = $",
 		"l.gateway_fallback_count > 0",

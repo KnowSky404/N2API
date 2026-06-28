@@ -699,6 +699,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			Model:             r.URL.Query().Get("model"),
 			SessionID:         r.URL.Query().Get("sessionId"),
 			Error:             r.URL.Query().Get("error"),
+			UsageSource:       r.URL.Query().Get("usageSource"),
 			RoutingPoolError:  r.URL.Query().Get("routingPoolError"),
 			RoutingPoolChain:  r.URL.Query().Get("routingPoolChain"),
 			GatewayFallbacks:  gatewayFallbacks,
@@ -2637,6 +2638,7 @@ func buildRequestLogFilter(r *http.Request) admin.RequestLogFilter {
 	filter.Model = r.URL.Query().Get("model")
 	filter.SessionID = r.URL.Query().Get("sessionId")
 	filter.Error = r.URL.Query().Get("error")
+	filter.UsageSource = r.URL.Query().Get("usageSource")
 	filter.RoutingPoolError = r.URL.Query().Get("routingPoolError")
 	filter.RoutingPoolChain = r.URL.Query().Get("routingPoolChain")
 	if raw := r.URL.Query().Get("gatewayFallbacks"); raw == "1" || raw == "true" {

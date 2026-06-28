@@ -69,6 +69,21 @@
       requestLogs.errorCode = error;
     }
 
+    const usageSource = params.get('usageSource') ?? '';
+    if (
+      [
+        'all',
+        'missing',
+        'chat_completions',
+        'responses',
+        'stream',
+        'gemini_usage_metadata',
+        'anthropic_usage'
+      ].includes(usageSource)
+    ) {
+      requestLogs.usageSource = usageSource;
+    }
+
     const statusClass = params.get('statusClass') ?? '';
     if (['all', 'success', 'client_error', 'server_error'].includes(statusClass)) {
       requestLogs.statusClass = statusClass;
@@ -109,6 +124,7 @@
     if (requestLogs.model) params.set('model', requestLogs.model);
     if (requestLogs.sessionId) params.set('sessionId', requestLogs.sessionId);
     if (requestLogs.errorCode) params.set('error', requestLogs.errorCode);
+    if (requestLogs.usageSource && requestLogs.usageSource !== 'all') params.set('usageSource', requestLogs.usageSource);
     if (requestLogs.routingPoolError) params.set('routingPoolError', requestLogs.routingPoolError);
     if (requestLogs.routingPoolChain) params.set('routingPoolChain', requestLogs.routingPoolChain);
     if (requestLogs.gatewayFallbacks) params.set('gatewayFallbacks', '1');
@@ -200,6 +216,15 @@
     { value: 'routing_pool_empty', label: 'Routing pool empty' },
     { value: 'routing_pool_cycle', label: 'Routing pool cycle' },
     { value: 'routing_pool_exhausted', label: 'Routing pool exhausted' }
+  ];
+  const usageSourceFilters = [
+    { value: 'all', label: 'All usage sources' },
+    { value: 'missing', label: 'Missing usage' },
+    { value: 'chat_completions', label: 'Chat completions' },
+    { value: 'responses', label: 'Responses' },
+    { value: 'stream', label: 'Stream' },
+    { value: 'gemini_usage_metadata', label: 'Gemini metadata' },
+    { value: 'anthropic_usage', label: 'Anthropic usage' }
   ];
 
   /** @param {string} range */
@@ -566,6 +591,17 @@
         >
           {#each requestLogStatusClasses as statusClass}
             <option value={statusClass.value}>{statusClass.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Usage source
+        <select
+          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.usageSource}
+        >
+          {#each usageSourceFilters as usageSource}
+            <option value={usageSource.value}>{usageSource.label}</option>
           {/each}
         </select>
       </label>

@@ -145,6 +145,7 @@ type RequestLogFilter struct {
 	Model             string
 	SessionID         string
 	Error             string
+	UsageSource       string
 	RoutingPoolError  string
 	RoutingPoolChain  string
 	GatewayFallbacks  bool
@@ -663,9 +664,10 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	filter.Model = strings.TrimSpace(filter.Model)
 	filter.SessionID = strings.TrimSpace(filter.SessionID)
 	filter.Error = strings.TrimSpace(filter.Error)
+	filter.UsageSource = strings.TrimSpace(filter.UsageSource)
 	filter.RoutingPoolError = strings.TrimSpace(filter.RoutingPoolError)
 	filter.RoutingPoolChain = strings.TrimSpace(filter.RoutingPoolChain)
-	if len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.Error) > 100 || len(filter.RoutingPoolError) > 100 || len(filter.RoutingPoolChain) > 200 {
+	if len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.Error) > 100 || len(filter.UsageSource) > 100 || len(filter.RoutingPoolError) > 100 || len(filter.RoutingPoolChain) > 200 {
 		return nil, ErrInvalidInput
 	}
 	filter.StatusClass = strings.TrimSpace(filter.StatusClass)

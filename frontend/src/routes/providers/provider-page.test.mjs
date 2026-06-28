@@ -13,6 +13,7 @@ const {
   futureTimeRemainingLabel,
   getAccountTestResultsState,
   loadModelRoutingPreview,
+  loadRequestLogs,
   modelListText,
   modelRoutingPreview,
   getGatewayReadinessIssues,
@@ -24,6 +25,7 @@ const {
   pruneSelectedProviderAccounts,
   providerAccounts,
   providerAccountPauseForm,
+  requestLogs,
   routingPools,
   selectedProviderAccountIds,
   deleteRoutingPool,
@@ -124,6 +126,23 @@ test('futureTimeRemainingLabel formats scheduling block windows', () => {
   assert.equal(futureTimeRemainingLabel('2026-06-24T03:00:00Z', now), '1d 3h remaining');
   assert.equal(futureTimeRemainingLabel('2026-06-22T23:59:00Z', now), '');
   assert.equal(futureTimeRemainingLabel('not-a-date', now), '');
+});
+
+test('loadRequestLogs includes usage source filter when selected', async () => {
+  session.authenticated = true;
+  requestLogs.usageSource = 'missing';
+  let requestedPath = '';
+  globalThis.fetch = async (path) => {
+    requestedPath = path;
+    return new Response(JSON.stringify({ logs: [] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+
+  await loadRequestLogs();
+
+  assert.match(requestedPath, /usageSource=missing/);
 });
 
 test('shouldApplyAccountModelsResponse rejects stale account model responses', () => {

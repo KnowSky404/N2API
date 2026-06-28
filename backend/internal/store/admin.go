@@ -837,6 +837,11 @@ func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 		conditions = append(conditions, "l.error = $"+strconv.Itoa(len(args)))
 	}
 
+	if filter.UsageSource != "" {
+		args = append(args, filter.UsageSource)
+		conditions = append(conditions, "l.usage_source = $"+strconv.Itoa(len(args)))
+	}
+
 	if filter.RoutingPoolError != "" {
 		args = append(args, filter.RoutingPoolError)
 		conditions = append(conditions, "l.routing_pool_error = $"+strconv.Itoa(len(args)))

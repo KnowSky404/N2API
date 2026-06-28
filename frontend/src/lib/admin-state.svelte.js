@@ -378,7 +378,7 @@ export const gatewaySettings = $state({
   saved: false,
   data: null
 });
-/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
+/** @type {{ loading: boolean, error: string, query: string, statusClass: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
 export const requestLogs = $state({
   loading: false,
   error: '',
@@ -390,6 +390,7 @@ export const requestLogs = $state({
   model: '',
   sessionId: '',
   errorCode: '',
+  usageSource: 'all',
   routingPoolError: 'all',
   routingPoolChain: '',
   gatewayFallbacks: false,
@@ -406,6 +407,7 @@ export function resetRequestLogFilters() {
   requestLogs.model = '';
   requestLogs.sessionId = '';
   requestLogs.errorCode = '';
+  requestLogs.usageSource = 'all';
   requestLogs.routingPoolError = 'all';
   requestLogs.routingPoolChain = '';
   requestLogs.gatewayFallbacks = false;
@@ -929,8 +931,10 @@ function clearRequestLogs() {
     model: '',
     sessionId: '',
     errorCode: '',
+    usageSource: 'all',
     routingPoolError: 'all',
     routingPoolChain: '',
+    gatewayFallbacks: false,
     items: []
   });
 }
@@ -2766,6 +2770,9 @@ export async function loadRequestLogs() {
     const errorCode = requestLogs.errorCode.trim();
     if (errorCode) {
       params.set('error', errorCode);
+    }
+    if (requestLogs.usageSource && requestLogs.usageSource !== 'all') {
+      params.set('usageSource', requestLogs.usageSource);
     }
     if (requestLogs.routingPoolError && requestLogs.routingPoolError !== 'all') {
       params.set('routingPoolError', requestLogs.routingPoolError);
