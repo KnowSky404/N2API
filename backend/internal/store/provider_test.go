@@ -126,6 +126,19 @@ func TestHasEnabledAccountsChecksEnabledProviderRows(t *testing.T) {
 	}
 }
 
+func TestFindFingerprintProfileByIDOnlyReturnsEnabledProfiles(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := strings.ToUpper(string(source))
+	if !strings.Contains(sql, "FUNC (R *PROVIDERREPOSITORY) FINDFINGERPRINTPROFILEBYID") ||
+		!strings.Contains(sql, "FROM FINGERPRINT_PROFILES") ||
+		!strings.Contains(sql, "WHERE ID = $1 AND ENABLED = TRUE") {
+		t.Fatal("FindFingerprintProfileByID must only return enabled fingerprint profiles")
+	}
+}
+
 func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
