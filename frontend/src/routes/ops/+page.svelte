@@ -70,7 +70,7 @@ let requested = $state(false);
   function opsErrorAccountHref(bucket) {
     const key = String(bucket?.key ?? '').trim();
     if (!key || key === 'unknown') return '/request-logs?statusClass=server_error';
-    return `/request-logs?q=${encodeURIComponent(key)}`;
+    return `/request-logs?providerAccountId=${encodeURIComponent(key)}`;
   }
 </script>
 

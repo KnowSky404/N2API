@@ -91,11 +91,11 @@ func (r *AdminRepository) opsErrorBuckets(ctx context.Context, since time.Time, 
 			GROUP BY 1 ORDER BY 2 DESC LIMIT ` + strconv.Itoa(limit)
 	case "account":
 		query = `
-			SELECT COALESCE(NULLIF(l.provider_account_name, ''), 'unknown'), COUNT(*)
+			SELECT l.provider_account_id::text, COALESCE(NULLIF(l.provider_account_name, ''), 'unknown'), COUNT(*)
 			FROM request_logs l
 			WHERE l.created_at >= $1 AND l.status_code >= 400
 				AND l.provider_account_id > 0
-			GROUP BY 1 ORDER BY 2 DESC LIMIT ` + strconv.Itoa(limit)
+			GROUP BY 1, 2 ORDER BY 3 DESC LIMIT ` + strconv.Itoa(limit)
 	default:
 		return nil, fmt.Errorf("unknown ops error bucket kind: %s", kind)
 	}
@@ -109,10 +109,16 @@ func (r *AdminRepository) opsErrorBuckets(ctx context.Context, since time.Time, 
 	buckets := make([]admin.OpsErrorBucket, 0, limit)
 	for rows.Next() {
 		var bucket admin.OpsErrorBucket
-		if err := rows.Scan(&bucket.Key, &bucket.Count); err != nil {
-			return nil, err
+		if kind == "account" {
+			if err := rows.Scan(&bucket.Key, &bucket.Label, &bucket.Count); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := rows.Scan(&bucket.Key, &bucket.Count); err != nil {
+				return nil, err
+			}
+			bucket.Label = bucket.Key
 		}
-		bucket.Label = bucket.Key
 		buckets = append(buckets, bucket)
 	}
 	return buckets, rows.Err()

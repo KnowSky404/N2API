@@ -141,6 +141,23 @@ func TestListRequestLogsSelectsGatewayFallbackDiagnostics(t *testing.T) {
 	}
 }
 
+func TestOpsErrorAccountBucketsUseAccountIDKeys(t *testing.T) {
+	source, err := os.ReadFile("ops.go")
+	if err != nil {
+		t.Fatalf("ReadFile ops.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"l.provider_account_id::text",
+		"COALESCE(NULLIF(l.provider_account_name, ''), 'unknown')",
+		"bucket.Label",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("ops error account bucket source missing %q", want)
+		}
+	}
+}
+
 func TestListRequestLogsSupportsParameterizedFilters(t *testing.T) {
 	whereSQL, args := requestLogFilterSQL(admin.RequestLogFilter{
 		Query:             "codex",
