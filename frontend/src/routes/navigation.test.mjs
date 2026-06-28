@@ -732,6 +732,10 @@ test('dashboard shows ops monitoring snapshot', () => {
   assert.match(dashboardPage, /opsMonitor/);
   assert.match(dashboardPage, /loadOpsDashboard/);
   assert.match(dashboardPage, /opsMonitor\.stats/);
+  assert.match(dashboardPage, /function dashboardOpsErrorHref/);
+  assert.match(dashboardPage, /params\.set\('since', dashboardUsageSinceParam\(\)\)/);
+  assert.match(dashboardPage, /params\.set\('error', key\)/);
+  assert.match(dashboardPage, /href=\{dashboardOpsErrorHref\(bucket\)\}/);
   assert.match(dashboardPage, /href="\/ops"/);
   assert.match(adminState, /await loadOpsDashboard\(86400\)/);
 });

@@ -75,6 +75,16 @@
     return `/request-logs?${params.toString()}`;
   }
 
+  /** @param {{ key?: string | number | null }} bucket */
+  function dashboardOpsErrorHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    const params = new URLSearchParams();
+    if (key) {
+      params.set('error', key);
+    }
+    return dashboardUsageHrefWithSince(params);
+  }
+
   /**
    * @param {string} sectionTitle
    * @param {{ id?: string | number | null }} row
@@ -400,7 +410,9 @@
             <div class="divide-y divide-[#ededed]">
               {#each opsMonitor.stats.topErrors.slice(0, 5) as bucket}
                 <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 py-3 text-sm">
-                  <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{bucket.label}</span>
+                  <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={dashboardOpsErrorHref(bucket)}>
+                    {bucket.label}
+                  </a>
                   <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.count)}</span>
                 </div>
               {/each}
