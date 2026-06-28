@@ -222,6 +222,13 @@ type GatewaySettings struct {
 	TokensPerMinutePerKey                  int  `json:"tokensPerMinutePerKey"`
 	ProviderAccountAutoTestEnabled         bool `json:"providerAccountAutoTestEnabled"`
 	ProviderAccountAutoTestIntervalSeconds int  `json:"providerAccountAutoTestIntervalSeconds"`
+	RequestLogRetentionDays                int  `json:"requestLogRetentionDays"`
+}
+
+type RequestLogCleanupResult struct {
+	RetentionDays int       `json:"retentionDays"`
+	Deleted       int64     `json:"deleted"`
+	Before        time.Time `json:"before"`
 }
 
 type ModelRoutingStatus struct {
@@ -289,6 +296,7 @@ type Repository interface {
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error)
+	DeleteRequestLogsBefore(ctx context.Context, before time.Time) (int64, error)
 	GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (UsagePricing, error)
 	SaveUsagePricing(ctx context.Context, pricing UsagePricing) (UsagePricing, error)
@@ -852,6 +860,29 @@ func (s *Service) UpdateGatewaySettings(ctx context.Context, settings GatewaySet
 	return s.repo.SaveGatewaySettings(ctx, normalized)
 }
 
+func (s *Service) CleanupRequestLogs(ctx context.Context, now time.Time) (RequestLogCleanupResult, error) {
+	settings, err := s.GetGatewaySettings(ctx)
+	if err != nil {
+		return RequestLogCleanupResult{}, err
+	}
+	if settings.RequestLogRetentionDays <= 0 {
+		return RequestLogCleanupResult{}, ErrInvalidInput
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	before := now.Add(-time.Duration(settings.RequestLogRetentionDays) * 24 * time.Hour)
+	deleted, err := s.repo.DeleteRequestLogsBefore(ctx, before)
+	if err != nil {
+		return RequestLogCleanupResult{}, err
+	}
+	return RequestLogCleanupResult{
+		RetentionDays: settings.RequestLogRetentionDays,
+		Deleted:       deleted,
+		Before:        before,
+	}, nil
+}
+
 func (s *Service) DefaultModel(ctx context.Context) (string, error) {
 	settings, err := s.GetModelSettings(ctx)
 	if err != nil {
@@ -1012,7 +1043,8 @@ func normalizeGatewaySettings(settings GatewaySettings) (GatewaySettings, error)
 		settings.MaxConcurrentRequestsPerKey < 0 ||
 		settings.RequestsPerMinutePerKey < 0 ||
 		settings.TokensPerMinutePerKey < 0 ||
-		settings.ProviderAccountAutoTestIntervalSeconds < 0 {
+		settings.ProviderAccountAutoTestIntervalSeconds < 0 ||
+		settings.RequestLogRetentionDays < 0 {
 		return GatewaySettings{}, ErrInvalidInput
 	}
 	if settings.ProviderAccountAutoTestIntervalSeconds == 0 {

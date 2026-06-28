@@ -141,6 +141,23 @@ func TestListRequestLogsSelectsGatewayFallbackDiagnostics(t *testing.T) {
 	}
 }
 
+func TestDeleteRequestLogsBeforeUsesCreatedAtCutoff(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("ReadFile admin.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"DELETE FROM request_logs",
+		"created_at < $1",
+		"RowsAffected()",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("DeleteRequestLogsBefore source missing %q", want)
+		}
+	}
+}
+
 func TestOpsErrorAccountBucketsUseAccountIDKeys(t *testing.T) {
 	source, err := os.ReadFile("ops.go")
 	if err != nil {

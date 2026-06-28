@@ -181,6 +181,10 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.tokensPerMinutePerKey\}/);
   assert.match(gatewayPage, /bind:checked=\{gatewaySettings\.data\.providerAccountAutoTestEnabled\}/);
   assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.providerAccountAutoTestIntervalSeconds\}/);
+  assert.match(gatewayPage, /Request log retention/);
+  assert.match(gatewayPage, /Clean request logs/);
+  assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.requestLogRetentionDays\}/);
+  assert.match(gatewayPage, /cleanupRequestLogs/);
   assert.match(gatewayPage, /gatewaySettings\.data\.providerAccountAutoTestStatus/);
   assert.match(gatewayPage, /lastFinishedAt/);
   assert.match(gatewayPage, /lastAccountCount/);
@@ -189,6 +193,9 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(adminState, /\/api\/admin\/gateway-settings/);
   assert.match(adminState, /providerAccountAutoTestEnabled: Boolean/);
   assert.match(adminState, /providerAccountAutoTestIntervalSeconds: Number/);
+  assert.match(adminState, /requestLogRetentionDays: Number/);
+  assert.match(adminState, /export async function cleanupRequestLogs/);
+  assert.match(adminState, /\/api\/admin\/request-logs\/cleanup/);
   assert.match(adminState, /providerAccountAutoTestStatus/);
   assert.match(adminState, /lastStartedAt/);
   assert.match(adminState, /lastFinishedAt/);

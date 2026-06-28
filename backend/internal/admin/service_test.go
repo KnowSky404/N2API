@@ -811,6 +811,7 @@ func TestGatewaySettingsDefaultsToDisabledAndSavesLimits(t *testing.T) {
 		DefaultGatewaySettings: GatewaySettings{
 			ProviderAccountAutoTestEnabled:         true,
 			ProviderAccountAutoTestIntervalSeconds: 120,
+			RequestLogRetentionDays:                14,
 		},
 	})
 
@@ -821,6 +822,7 @@ func TestGatewaySettingsDefaultsToDisabledAndSavesLimits(t *testing.T) {
 	wantDefault := GatewaySettings{
 		ProviderAccountAutoTestEnabled:         true,
 		ProviderAccountAutoTestIntervalSeconds: 120,
+		RequestLogRetentionDays:                14,
 	}
 	if settings != wantDefault {
 		t.Fatalf("default gateway settings = %+v, want %+v", settings, wantDefault)
@@ -834,6 +836,7 @@ func TestGatewaySettingsDefaultsToDisabledAndSavesLimits(t *testing.T) {
 		TokensPerMinutePerKey:                  60000,
 		ProviderAccountAutoTestEnabled:         true,
 		ProviderAccountAutoTestIntervalSeconds: 120,
+		RequestLogRetentionDays:                30,
 	})
 	if err != nil {
 		t.Fatalf("UpdateGatewaySettings returned error: %v", err)
@@ -844,7 +847,8 @@ func TestGatewaySettingsDefaultsToDisabledAndSavesLimits(t *testing.T) {
 		saved.RequestsPerMinutePerKey != 60 ||
 		saved.TokensPerMinutePerKey != 60000 ||
 		!saved.ProviderAccountAutoTestEnabled ||
-		saved.ProviderAccountAutoTestIntervalSeconds != 120 {
+		saved.ProviderAccountAutoTestIntervalSeconds != 120 ||
+		saved.RequestLogRetentionDays != 30 {
 		t.Fatalf("saved gateway settings = %+v", saved)
 	}
 
@@ -862,6 +866,43 @@ func TestGatewaySettingsRejectsNegativeLimits(t *testing.T) {
 
 	if _, err := service.UpdateGatewaySettings(context.Background(), GatewaySettings{MaxConcurrentGatewayRequests: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpdateGatewaySettings error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.UpdateGatewaySettings(context.Background(), GatewaySettings{RequestLogRetentionDays: -1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateGatewaySettings negative request log retention error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestCleanupRequestLogsUsesRetentionDays(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.gatewaySettings = GatewaySettings{RequestLogRetentionDays: 14}
+	repo.deletedRequestLogCount = 3
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+
+	result, err := service.CleanupRequestLogs(context.Background(), now)
+	if err != nil {
+		t.Fatalf("CleanupRequestLogs returned error: %v", err)
+	}
+
+	wantBefore := now.Add(-14 * 24 * time.Hour)
+	if !repo.deletedRequestLogsBefore.Equal(wantBefore) {
+		t.Fatalf("delete cutoff = %s, want %s", repo.deletedRequestLogsBefore, wantBefore)
+	}
+	if result.RetentionDays != 14 || result.Deleted != 3 || !result.Before.Equal(wantBefore) {
+		t.Fatalf("cleanup result = %+v, want retention 14 deleted 3 before %s", result, wantBefore)
+	}
+}
+
+func TestCleanupRequestLogsRejectsDisabledRetention(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	_, err := service.CleanupRequestLogs(context.Background(), time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC))
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("CleanupRequestLogs error = %v, want ErrInvalidInput", err)
+	}
+	if !repo.deletedRequestLogsBefore.IsZero() {
+		t.Fatalf("deleted request logs before = %s, want zero", repo.deletedRequestLogsBefore)
 	}
 }
 
@@ -1199,6 +1240,8 @@ type memoryRepo struct {
 	lastUsageGroupBy          string
 	modelSettings             ModelSettings
 	gatewaySettings           GatewaySettings
+	deletedRequestLogsBefore  time.Time
+	deletedRequestLogCount    int64
 	usagePricing              UsagePricing
 	opsAccountHealth          OpsAccountHealth
 	lastOpsAccountHealthSince time.Time
@@ -1533,6 +1576,11 @@ func (r *memoryRepo) ListRequestLogs(_ context.Context, filter RequestLogFilter)
 		limit = len(r.logs)
 	}
 	return append([]RequestLog(nil), r.logs[:limit]...), nil
+}
+
+func (r *memoryRepo) DeleteRequestLogsBefore(_ context.Context, before time.Time) (int64, error) {
+	r.deletedRequestLogsBefore = before
+	return r.deletedRequestLogCount, nil
 }
 
 func (r *memoryRepo) GetUsageSummary(_ context.Context, since time.Time, groupBy string) (UsageSummary, error) {

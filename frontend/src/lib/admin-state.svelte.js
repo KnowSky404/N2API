@@ -269,6 +269,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} tokensPerMinutePerKey
  * @property {boolean} providerAccountAutoTestEnabled
  * @property {number} providerAccountAutoTestIntervalSeconds
+ * @property {number} requestLogRetentionDays
  * @property {ProviderAccountAutoTestStatus} providerAccountAutoTestStatus
  */
 
@@ -378,12 +379,14 @@ export const apiKeys = $state({
   newKeyName: '',
   oneTimeSecret: ''
 });
-/** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, data: GatewaySettingsData | null }} */
+/** @type {{ loading: boolean, saving: boolean, cleanupRunning: boolean, error: string, saved: boolean, cleanupResult: { retentionDays: number, deleted: number, before: string } | null, data: GatewaySettingsData | null }} */
 export const gatewaySettings = $state({
   loading: false,
   saving: false,
+  cleanupRunning: false,
   error: '',
   saved: false,
+  cleanupResult: null,
   data: null
 });
 /** @type {{ loading: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, since: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
@@ -927,8 +930,10 @@ function clearGatewaySettings() {
   replaceState(gatewaySettings, {
     loading: false,
     saving: false,
+    cleanupRunning: false,
     error: '',
     saved: false,
+    cleanupResult: null,
     data: null
   });
 }
@@ -2385,6 +2390,7 @@ export async function loadGatewaySettings() {
       tokensPerMinutePerKey: Number(payload.tokensPerMinutePerKey ?? 0),
       providerAccountAutoTestEnabled: Boolean(payload.providerAccountAutoTestEnabled),
       providerAccountAutoTestIntervalSeconds: Number(payload.providerAccountAutoTestIntervalSeconds ?? 300),
+      requestLogRetentionDays: Number(payload.requestLogRetentionDays ?? 0),
       providerAccountAutoTestStatus: normalizeProviderAccountAutoTestStatus(payload.providerAccountAutoTestStatus)
     };
   } catch (error) {
@@ -2407,7 +2413,8 @@ export async function updateGatewaySettings() {
     requestsPerMinutePerKey: Number(gatewaySettings.data.requestsPerMinutePerKey),
     tokensPerMinutePerKey: Number(gatewaySettings.data.tokensPerMinutePerKey),
     providerAccountAutoTestEnabled: Boolean(gatewaySettings.data.providerAccountAutoTestEnabled),
-    providerAccountAutoTestIntervalSeconds: Number(gatewaySettings.data.providerAccountAutoTestIntervalSeconds)
+    providerAccountAutoTestIntervalSeconds: Number(gatewaySettings.data.providerAccountAutoTestIntervalSeconds),
+    requestLogRetentionDays: Number(gatewaySettings.data.requestLogRetentionDays)
   };
   const numericValues = [
     payload.maxConcurrentGatewayRequests,
@@ -2415,7 +2422,8 @@ export async function updateGatewaySettings() {
     payload.maxConcurrentRequestsPerKey,
     payload.requestsPerMinutePerKey,
     payload.tokensPerMinutePerKey,
-    payload.providerAccountAutoTestIntervalSeconds
+    payload.providerAccountAutoTestIntervalSeconds,
+    payload.requestLogRetentionDays
   ];
   if (
     numericValues.some((value) => !Number.isInteger(value) || value < 0)
@@ -2433,6 +2441,7 @@ export async function updateGatewaySettings() {
   gatewaySettings.saving = true;
   gatewaySettings.error = '';
   gatewaySettings.saved = false;
+  gatewaySettings.cleanupResult = null;
 
   try {
     const saved = await requestJSON('/api/admin/gateway-settings', {
@@ -2448,6 +2457,7 @@ export async function updateGatewaySettings() {
       tokensPerMinutePerKey: Number(saved.tokensPerMinutePerKey ?? 0),
       providerAccountAutoTestEnabled: Boolean(saved.providerAccountAutoTestEnabled),
       providerAccountAutoTestIntervalSeconds: Number(saved.providerAccountAutoTestIntervalSeconds ?? 300),
+      requestLogRetentionDays: Number(saved.requestLogRetentionDays ?? 0),
       providerAccountAutoTestStatus: normalizeProviderAccountAutoTestStatus(
         saved.providerAccountAutoTestStatus ?? gatewaySettings.data.providerAccountAutoTestStatus
       )
@@ -2459,6 +2469,43 @@ export async function updateGatewaySettings() {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     gatewaySettings.saving = false;
+  }
+}
+
+export async function cleanupRequestLogs() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || !gatewaySettings.data) return;
+
+  const retentionDays = Number(gatewaySettings.data.requestLogRetentionDays);
+  if (!Number.isInteger(retentionDays) || retentionDays <= 0) {
+    gatewaySettings.error = 'Request log retention must be greater than 0 before cleanup';
+    gatewaySettings.saved = false;
+    gatewaySettings.cleanupResult = null;
+    return;
+  }
+
+  gatewaySettings.cleanupRunning = true;
+  gatewaySettings.error = '';
+  gatewaySettings.saved = false;
+  gatewaySettings.cleanupResult = null;
+
+  try {
+    const result = await requestJSON('/api/admin/request-logs/cleanup', {
+      method: 'POST'
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.cleanupResult = {
+      retentionDays: Number(result.retentionDays ?? retentionDays),
+      deleted: Number(result.deleted ?? 0),
+      before: result.before ?? ''
+    };
+    await loadRequestLogs();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.error = error instanceof Error ? error.message : 'Failed to clean request logs';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    gatewaySettings.cleanupRunning = false;
   }
 }
 

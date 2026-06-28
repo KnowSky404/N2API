@@ -76,6 +76,9 @@ type fakeAdminService struct {
 	usagePricing         admin.UsagePricing
 	gatewaySettings      admin.GatewaySettings
 	gatewaySettingsErr   error
+	cleanupResult        admin.RequestLogCleanupResult
+	cleanupCalled        bool
+	cleanupErr           error
 	opsAccountHealth     admin.OpsAccountHealth
 	opsAccountSince      time.Time
 	opsAccountTests      []admin.OpsAccountTest
@@ -482,6 +485,7 @@ func (s *fakeAdminService) UpdateGatewaySettings(_ context.Context, settings adm
 		settings.RequestsPerMinutePerKey < 0 ||
 		settings.TokensPerMinutePerKey < 0 ||
 		settings.ProviderAccountAutoTestIntervalSeconds < 0 ||
+		settings.RequestLogRetentionDays < 0 ||
 		(settings.ProviderAccountAutoTestEnabled && settings.ProviderAccountAutoTestIntervalSeconds < 60) {
 		return admin.GatewaySettings{}, admin.ErrInvalidInput
 	}
@@ -490,6 +494,14 @@ func (s *fakeAdminService) UpdateGatewaySettings(_ context.Context, settings adm
 	}
 	s.gatewaySettings = settings
 	return s.gatewaySettings, nil
+}
+
+func (s *fakeAdminService) CleanupRequestLogs(_ context.Context, _ time.Time) (admin.RequestLogCleanupResult, error) {
+	s.cleanupCalled = true
+	if s.cleanupErr != nil {
+		return admin.RequestLogCleanupResult{}, s.cleanupErr
+	}
+	return s.cleanupResult, nil
 }
 
 func (s *fakeAdminService) DefaultModel(ctx context.Context) (string, error) {
@@ -4101,6 +4113,7 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		TokensPerMinutePerKey:                  60000,
 		ProviderAccountAutoTestEnabled:         true,
 		ProviderAccountAutoTestIntervalSeconds: 120,
+		RequestLogRetentionDays:                14,
 	}
 	cfg := config.Config{
 		GatewayMaxConcurrentRequests:           10,
@@ -4137,6 +4150,7 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		TokensPerMinutePerKey                  int  `json:"tokensPerMinutePerKey"`
 		ProviderAccountAutoTestEnabled         bool `json:"providerAccountAutoTestEnabled"`
 		ProviderAccountAutoTestIntervalSeconds int  `json:"providerAccountAutoTestIntervalSeconds"`
+		RequestLogRetentionDays                int  `json:"requestLogRetentionDays"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
@@ -4147,7 +4161,8 @@ func TestGatewaySettingsRequiresSessionAndReturnsRuntimeLimits(t *testing.T) {
 		body.RequestsPerMinutePerKey != 60 ||
 		body.TokensPerMinutePerKey != 60000 ||
 		!body.ProviderAccountAutoTestEnabled ||
-		body.ProviderAccountAutoTestIntervalSeconds != 120 {
+		body.ProviderAccountAutoTestIntervalSeconds != 120 ||
+		body.RequestLogRetentionDays != 14 {
 		t.Fatalf("gateway settings = %+v, want configured runtime limits", body)
 	}
 }
@@ -4231,7 +4246,8 @@ func TestGatewaySettingsUpdatesStoredLimits(t *testing.T) {
 		"requestsPerMinutePerKey": 70,
 		"tokensPerMinutePerKey": 70000,
 		"providerAccountAutoTestEnabled": true,
-		"providerAccountAutoTestIntervalSeconds": 180
+		"providerAccountAutoTestIntervalSeconds": 180,
+		"requestLogRetentionDays": 30
 	}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
@@ -4249,6 +4265,7 @@ func TestGatewaySettingsUpdatesStoredLimits(t *testing.T) {
 		TokensPerMinutePerKey:                  70000,
 		ProviderAccountAutoTestEnabled:         true,
 		ProviderAccountAutoTestIntervalSeconds: 180,
+		RequestLogRetentionDays:                30,
 	}
 	if admins.gatewaySettings != want {
 		t.Fatalf("stored gateway settings = %+v, want %+v", admins.gatewaySettings, want)
@@ -4259,6 +4276,44 @@ func TestGatewaySettingsUpdatesStoredLimits(t *testing.T) {
 	}
 	if body != want {
 		t.Fatalf("response gateway settings = %+v, want %+v", body, want)
+	}
+}
+
+func TestCleanupRequestLogsRequiresSessionAndReturnsDeletedCount(t *testing.T) {
+	admins := newFakeAdminService()
+	before := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	admins.cleanupResult = admin.RequestLogCleanupResult{
+		RetentionDays: 14,
+		Deleted:       3,
+		Before:        before,
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/request-logs/cleanup", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/request-logs/cleanup", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !admins.cleanupCalled {
+		t.Fatal("CleanupRequestLogs was not called")
+	}
+	var body admin.RequestLogCleanupResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.RetentionDays != 14 || body.Deleted != 3 || !body.Before.Equal(before) {
+		t.Fatalf("cleanup body = %+v, want retention 14 deleted 3 before %s", body, before)
 	}
 }
 

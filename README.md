@@ -100,6 +100,8 @@ Provider account auto tests are disabled by default. `N2API_PROVIDER_ACCOUNT_AUT
 
 Gateway Settings also shows **Auto-test status** for the in-memory runner. The status row reports whether the runner is active, the last finished time, accounts tested in the last cycle, and the last error when a scheduled probe fails.
 
+Gateway Settings includes **Request log retention** for manual request-log cleanup. A value of 0 disables cleanup. Set a positive number of days, save Gateway Settings, then use **Clean request logs** to delete request logs older than the saved retention window.
+
 Use **Pause scheduling** when you want a healthy account to stop receiving traffic for a short window. Set **Pause duration seconds** on the Provider accounts page before clicking the action; it temporarily opens the account circuit for that window without disabling or deleting the account. Paused and rate-limited rows show the remaining scheduling block in the status column. Use **Reset local status** to clear the pause early when you want the account to rejoin routing immediately.
 
 Selected provider accounts can be paused and reset together. Use **Pause selected** to apply the configured **Pause duration seconds** to every selected account, or **Reset selected** to clear local rate-limit, circuit-open, and error status for the selected accounts after recovery.

@@ -776,6 +776,26 @@ func TestGatewayDocumentationMentionsProviderAccountAutoTestStatus(t *testing.T)
 	}
 }
 
+func TestGatewayDocumentationMentionsRequestLogRetentionCleanup(t *testing.T) {
+	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"Request log retention",
+			"Clean request logs",
+			"0 disables",
+			"older than the saved retention window",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in request log retention documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountSchedulingPause(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)

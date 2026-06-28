@@ -1,5 +1,6 @@
 <script>
   import {
+    cleanupRequestLogs,
     formatCostMicrousd,
     formatDate,
     formatTokens,
@@ -334,7 +335,7 @@
         <p class="mt-4 text-sm text-[#6e6e6e]">Loading gateway runtime limits...</p>
       {:else}
         <form class="mt-4" onsubmit={(event) => { event.preventDefault(); updateGatewaySettings(); }}>
-          <dl class="grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
+          <dl class="grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
               <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Gateway concurrency</dt>
               <dd class="mt-2">
@@ -368,6 +369,13 @@
               <dd class="mt-2">
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.tokensPerMinutePerKey} />
                 <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.tokensPerMinutePerKey)}</span>
+              </dd>
+            </div>
+            <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Request log retention</dt>
+              <dd class="mt-2">
+                <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.requestLogRetentionDays} />
+                <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewaySettings.data.requestLogRetentionDays > 0 ? `${gatewaySettings.data.requestLogRetentionDays} days` : 'Disabled'}</span>
               </dd>
             </div>
           </dl>
@@ -413,6 +421,14 @@
             </button>
             {#if gatewaySettings.saved}
               <span class="text-sm text-[#0a7a5e]">Runtime limits saved.</span>
+            {/if}
+            <button type="button" class="rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
+              {gatewaySettings.cleanupRunning ? 'Cleaning' : 'Clean request logs'}
+            </button>
+            {#if gatewaySettings.cleanupResult}
+              <span class="text-sm text-[#0a7a5e]">
+                Removed {gatewaySettings.cleanupResult.deleted} logs before {formatDate(gatewaySettings.cleanupResult.before)}.
+              </span>
             {/if}
           </div>
         </form>

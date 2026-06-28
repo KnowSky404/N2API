@@ -48,6 +48,7 @@ type AdminService interface {
 	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (admin.APIKey, error)
 	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
+	CleanupRequestLogs(ctx context.Context, now time.Time) (admin.RequestLogCleanupResult, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (admin.UsagePricing, error)
 	UpdateUsagePricing(ctx context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error)
@@ -742,6 +743,18 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("GET /api/admin/request-logs/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleExportRequestLogs(w, r, admins)
+	}))
+	mux.HandleFunc("POST /api/admin/request-logs/cleanup", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		result, err := admins.CleanupRequestLogs(r.Context(), time.Now())
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	}))
 	mux.HandleFunc("GET /api/admin/gateway-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		settings, err := admins.GetGatewaySettings(r.Context())

@@ -794,6 +794,17 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.Requ
 	return logs, nil
 }
 
+func (r *AdminRepository) DeleteRequestLogsBefore(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM request_logs
+		WHERE created_at < $1
+	`, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 	var conditions []string
 	var args []any
