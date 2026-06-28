@@ -663,7 +663,7 @@ func TestGetUsageSummaryValidatesRangeAndGroup(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	repo.usageSummary = UsageSummary{
-		Rows: []UsageSummaryRow{{ID: "gpt-5", Label: "gpt-5", Requests: 2, InputTokens: 30, OutputTokens: 10, TotalTokens: 40}},
+		Rows: []UsageSummaryRow{{ID: "gpt-5", Label: "gpt-5", Requests: 2, InputTokens: 30, OutputTokens: 10, TotalTokens: 40, CachedInputTokens: 12, ReasoningTokens: 4}},
 	}
 
 	summary, err := service.GetUsageSummary(context.Background(), "7d", "model")
@@ -675,6 +675,9 @@ func TestGetUsageSummaryValidatesRangeAndGroup(t *testing.T) {
 	}
 	if summary.TotalRequests != 2 || summary.TotalInputTokens != 30 || summary.TotalOutputTokens != 10 || summary.TotalTokens != 40 {
 		t.Fatalf("summary totals = %+v, want row totals", summary)
+	}
+	if summary.TotalCachedInputTokens != 12 || summary.TotalReasoningTokens != 4 {
+		t.Fatalf("summary cached/reasoning totals = %d/%d, want 12/4", summary.TotalCachedInputTokens, summary.TotalReasoningTokens)
 	}
 	if _, err := service.GetUsageSummary(context.Background(), "7d", "session"); err != nil {
 		t.Fatalf("GetUsageSummary session returned error: %v", err)

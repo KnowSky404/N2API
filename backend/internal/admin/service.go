@@ -151,14 +151,16 @@ type RequestLogFilter struct {
 }
 
 type UsageSummary struct {
-	Range                 string            `json:"range"`
-	GroupBy               string            `json:"groupBy"`
-	TotalRequests         int64             `json:"totalRequests"`
-	TotalInputTokens      int64             `json:"totalInputTokens"`
-	TotalOutputTokens     int64             `json:"totalOutputTokens"`
-	TotalTokens           int64             `json:"totalTokens"`
-	EstimatedCostMicrousd int64             `json:"estimatedCostMicrousd"`
-	Rows                  []UsageSummaryRow `json:"rows"`
+	Range                  string            `json:"range"`
+	GroupBy                string            `json:"groupBy"`
+	TotalRequests          int64             `json:"totalRequests"`
+	TotalInputTokens       int64             `json:"totalInputTokens"`
+	TotalOutputTokens      int64             `json:"totalOutputTokens"`
+	TotalTokens            int64             `json:"totalTokens"`
+	TotalCachedInputTokens int64             `json:"totalCachedInputTokens"`
+	TotalReasoningTokens   int64             `json:"totalReasoningTokens"`
+	EstimatedCostMicrousd  int64             `json:"estimatedCostMicrousd"`
+	Rows                   []UsageSummaryRow `json:"rows"`
 }
 
 type UsageSummaryRow struct {
@@ -168,6 +170,8 @@ type UsageSummaryRow struct {
 	InputTokens           int64  `json:"inputTokens"`
 	OutputTokens          int64  `json:"outputTokens"`
 	TotalTokens           int64  `json:"totalTokens"`
+	CachedInputTokens     int64  `json:"cachedInputTokens"`
+	ReasoningTokens       int64  `json:"reasoningTokens"`
 	EstimatedCostMicrousd int64  `json:"estimatedCostMicrousd"`
 }
 
@@ -738,12 +742,16 @@ func (s *UsageSummary) recalculateTotals() {
 	s.TotalInputTokens = 0
 	s.TotalOutputTokens = 0
 	s.TotalTokens = 0
+	s.TotalCachedInputTokens = 0
+	s.TotalReasoningTokens = 0
 	s.EstimatedCostMicrousd = 0
 	for _, row := range s.Rows {
 		s.TotalRequests += row.Requests
 		s.TotalInputTokens += row.InputTokens
 		s.TotalOutputTokens += row.OutputTokens
 		s.TotalTokens += row.TotalTokens
+		s.TotalCachedInputTokens += row.CachedInputTokens
+		s.TotalReasoningTokens += row.ReasoningTokens
 		s.EstimatedCostMicrousd += row.EstimatedCostMicrousd
 	}
 }

@@ -372,17 +372,19 @@
           <th class="px-4 py-3 font-medium">Input tokens</th>
           <th class="px-4 py-3 font-medium">Output tokens</th>
           <th class="px-4 py-3 font-medium">Total tokens</th>
+          <th class="px-4 py-3 font-medium">Cached input</th>
+          <th class="px-4 py-3 font-medium">Reasoning</th>
           <th class="px-4 py-3 font-medium">Estimated cost</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-[#ededed]">
         {#if usage.loading && !usage.current}
           <tr>
-            <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">Loading usage summary...</td>
+            <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading usage summary...</td>
           </tr>
         {:else if !usage.current || usage.current.rows.length === 0}
           <tr>
-            <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No usage in this range.</td>
+            <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No usage in this range.</td>
           </tr>
         {:else}
           {#each usage.current.rows as row}
@@ -400,6 +402,8 @@
               <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.inputTokens)}</td>
               <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.outputTokens)}</td>
               <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.cachedInputTokens)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.reasoningTokens)}</td>
               <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
             </tr>
           {/each}

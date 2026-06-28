@@ -78,6 +78,24 @@ func TestUsageSummarySessionGroupUsesLoggedSessionID(t *testing.T) {
 	}
 }
 
+func TestUsageSummarySelectsCachedAndReasoningTokens(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("ReadFile admin.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"COALESCE(SUM(l.cached_input_tokens), 0)",
+		"COALESCE(SUM(l.reasoning_tokens), 0)",
+		"&row.CachedInputTokens",
+		"&row.ReasoningTokens",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("GetUsageSummary source missing %q", want)
+		}
+	}
+}
+
 func TestListRequestLogsPrefersProviderAccountNameSnapshot(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {

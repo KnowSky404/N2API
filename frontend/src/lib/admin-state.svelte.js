@@ -146,6 +146,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} inputTokens
  * @property {number} outputTokens
  * @property {number} totalTokens
+ * @property {number} cachedInputTokens
+ * @property {number} reasoningTokens
  * @property {number} estimatedCostMicrousd
  */
 
@@ -157,6 +159,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} totalInputTokens
  * @property {number} totalOutputTokens
  * @property {number} totalTokens
+ * @property {number} totalCachedInputTokens
+ * @property {number} totalReasoningTokens
  * @property {number} estimatedCostMicrousd
  * @property {UsageSummaryRow[]} rows
  */

@@ -893,6 +893,8 @@ func (r *AdminRepository) GetUsageSummary(ctx context.Context, since time.Time, 
 			COALESCE(SUM(l.input_tokens), 0),
 			COALESCE(SUM(l.output_tokens), 0),
 			COALESCE(SUM(l.total_tokens), 0),
+			COALESCE(SUM(l.cached_input_tokens), 0),
+			COALESCE(SUM(l.reasoning_tokens), 0),
 			COALESCE(SUM(l.estimated_cost_microusd), 0)
 		FROM request_logs l
 		`+joinSQL+`
@@ -915,6 +917,8 @@ func (r *AdminRepository) GetUsageSummary(ctx context.Context, since time.Time, 
 			&row.InputTokens,
 			&row.OutputTokens,
 			&row.TotalTokens,
+			&row.CachedInputTokens,
+			&row.ReasoningTokens,
 			&row.EstimatedCostMicrousd,
 		); err != nil {
 			return admin.UsageSummary{}, err
