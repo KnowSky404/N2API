@@ -38,6 +38,7 @@ type SelectedAccount struct {
 	DisplayName              string
 	AuthorizationToken       string
 	BaseURL                  string
+	ProxyURL                 string
 	ChatGPTAccountID         string
 	MaxConcurrentRequests    int
 	RoutingPoolID            int64
@@ -469,7 +470,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
 			return
 		}
-		upstreamResp, err := p.client.Do(upstreamReq)
+		upstreamResp, err := p.clientForSelectedAccount(selected).Do(upstreamReq)
 		if err != nil {
 			releaseAccount()
 			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", err.Error())
@@ -513,6 +514,26 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
 		return
 	}
+}
+
+func (p *Proxy) clientForSelectedAccount(selected SelectedAccount) *http.Client {
+	proxyURL := strings.TrimSpace(selected.ProxyURL)
+	if proxyURL == "" {
+		return p.client
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return p.client
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(parsed)
+	client := &http.Client{Transport: transport}
+	if p.client != nil {
+		client.Timeout = p.client.Timeout
+		client.CheckRedirect = p.client.CheckRedirect
+		client.Jar = p.client.Jar
+	}
+	return client
 }
 
 func (p *Proxy) tryAcquireAccountSlot(accountID int64, limit int) (func(), bool) {

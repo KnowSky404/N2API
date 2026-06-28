@@ -27,7 +27,7 @@ const providerAccountColumns = `
 	a.last_test_at, a.last_test_status, a.last_test_error, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
 	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
-	c.base_url, c.metadata
+	c.encrypted_proxy_url, c.base_url, c.metadata
 `
 
 const routingPoolProviderAccountColumns = `
@@ -37,7 +37,7 @@ const routingPoolProviderAccountColumns = `
 	a.last_test_at, a.last_test_status, a.last_test_error, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
 	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
-	c.base_url, c.metadata
+	c.encrypted_proxy_url, c.base_url, c.metadata
 `
 
 const providerAccountModelColumns = `
@@ -82,6 +82,7 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.Credential.LastRefreshError,
 		&account.Credential.LastRefreshErrorAt,
 		&account.Credential.EncryptedAPIKey,
+		&account.Credential.EncryptedProxyURL,
 		&account.Credential.BaseURL,
 		&account.Credential.Metadata,
 	)
@@ -163,6 +164,7 @@ func syncAccountLegacyFields(account *provider.Account) {
 	account.LastRefreshError = account.Credential.LastRefreshError
 	account.LastRefreshErrorAt = account.Credential.LastRefreshErrorAt
 	account.BaseURL = account.Credential.BaseURL
+	account.ProxyURLConfigured = account.Credential.EncryptedProxyURL != ""
 	account.Metadata = account.Credential.Metadata
 	if account.Metadata == nil {
 		account.Metadata = map[string]string{}
@@ -187,9 +189,9 @@ func upsertProviderAccountCredential(ctx context.Context, tx pgx.Tx, account pro
 		INSERT INTO provider_account_credentials (
 			account_id, credential_type, encrypted_access_token, encrypted_refresh_token,
 			encrypted_id_token, access_token_expires_at, last_refresh_at, last_refresh_error,
-			last_refresh_error_at, encrypted_api_key, base_url, metadata, updated_at
+			last_refresh_error_at, encrypted_api_key, encrypted_proxy_url, base_url, metadata, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
 		ON CONFLICT (account_id)
 		DO UPDATE SET
 			credential_type = EXCLUDED.credential_type,
@@ -201,6 +203,7 @@ func upsertProviderAccountCredential(ctx context.Context, tx pgx.Tx, account pro
 			last_refresh_error = EXCLUDED.last_refresh_error,
 			last_refresh_error_at = EXCLUDED.last_refresh_error_at,
 			encrypted_api_key = EXCLUDED.encrypted_api_key,
+			encrypted_proxy_url = EXCLUDED.encrypted_proxy_url,
 			base_url = EXCLUDED.base_url,
 			metadata = provider_account_credentials.metadata || EXCLUDED.metadata,
 			updated_at = now()
@@ -214,6 +217,7 @@ func upsertProviderAccountCredential(ctx context.Context, tx pgx.Tx, account pro
 		account.Credential.LastRefreshError,
 		account.Credential.LastRefreshErrorAt,
 		account.Credential.EncryptedAPIKey,
+		account.Credential.EncryptedProxyURL,
 		account.Credential.BaseURL,
 		metadataJSON(account.Credential.Metadata),
 	)
@@ -767,15 +771,16 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 	if err != nil {
 		return provider.Account{}, err
 	}
-	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil {
+	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil || update.EncryptedProxyURL != nil {
 		_, err = tx.Exec(ctx, `
 			UPDATE provider_account_credentials
 			SET
 				encrypted_api_key = CASE WHEN $2 THEN $3 ELSE encrypted_api_key END,
 				base_url = CASE WHEN $4 THEN $5 ELSE base_url END,
+				encrypted_proxy_url = CASE WHEN $6 THEN $7 ELSE encrypted_proxy_url END,
 				updated_at = now()
 			WHERE account_id = $1
-		`, updatedID, update.EncryptedAPIUpstreamAPIKey != nil, update.EncryptedAPIUpstreamAPIKey, update.APIUpstreamBaseURL != nil, update.APIUpstreamBaseURL)
+		`, updatedID, update.EncryptedAPIUpstreamAPIKey != nil, update.EncryptedAPIUpstreamAPIKey, update.APIUpstreamBaseURL != nil, update.APIUpstreamBaseURL, update.EncryptedProxyURL != nil, update.EncryptedProxyURL)
 		if err != nil {
 			return provider.Account{}, err
 		}

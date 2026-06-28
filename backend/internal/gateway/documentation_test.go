@@ -357,6 +357,8 @@ func TestGatewayDocumentationMentionsAPIUpstreamCredentialRotation(t *testing.T)
 		for _, want := range []string{
 			"API upstream credentials can be updated",
 			"base URL",
+			"per-account outbound proxy URL",
+			"redacted proxy summary",
 			"clears local failure status",
 		} {
 			if !strings.Contains(text, want) {

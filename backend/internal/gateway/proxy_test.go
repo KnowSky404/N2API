@@ -1914,6 +1914,53 @@ func TestProxyRoutesAPIUpstreamAccountToConfiguredBaseURLAndToken(t *testing.T) 
 	}
 }
 
+func TestProxyUsesSelectedAccountProxyURLForUpstreamRequest(t *testing.T) {
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("default upstream should not be called for proxied account")
+	}))
+	defer defaultUpstream.Close()
+	directUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("direct upstream should not be called when account proxy is configured")
+	}))
+	defer directUpstream.Close()
+
+	var proxiedTarget string
+	var proxiedAuthorization string
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxiedTarget = r.URL.String()
+		proxiedAuthorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl_proxy"}`))
+	}))
+	defer proxyServer.Close()
+
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID:          9,
+		AccountType:        provider.AccountTypeAPIUpstream,
+		AuthorizationToken: "sk-upstream",
+		BaseURL:            directUpstream.URL,
+		ProxyURL:           proxyServer.URL,
+	}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{UpstreamBaseURL: defaultUpstream.URL})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.HasPrefix(proxiedTarget, directUpstream.URL+"/v1/chat/completions") {
+		t.Fatalf("proxied target = %q, want absolute upstream URL through proxy", proxiedTarget)
+	}
+	if proxiedAuthorization != "Bearer sk-upstream" {
+		t.Fatalf("proxied Authorization = %q, want selected account token", proxiedAuthorization)
+	}
+}
+
 func TestProxyDoesNotDuplicateV1ForAPIUpstreamBaseURL(t *testing.T) {
 	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("default upstream should not be called for API upstream account")

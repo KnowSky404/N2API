@@ -62,6 +62,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} name
  * @property {string} displayName
  * @property {string} baseUrl
+ * @property {boolean} proxyUrlConfigured
+ * @property {string} proxyUrlSummary
  * @property {boolean} enabled
  * @property {number} priority
  * @property {number} loadFactor
@@ -358,6 +360,7 @@ export const apiUpstreamForm = $state({
   name: '',
   baseUrl: '',
   apiKey: '',
+  proxyUrl: '',
   priority: 100,
   loadFactor: 1,
   enabled: true,
@@ -1016,6 +1019,7 @@ function resetAPIUpstreamForm() {
     name: '',
     baseUrl: '',
     apiKey: '',
+    proxyUrl: '',
     priority: 100,
     loadFactor: 1,
     enabled: true,
@@ -1464,7 +1468,7 @@ export async function completeProviderCallback() {
 
 /**
  * @param {ProviderAccount} account
- * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'maxConcurrentRequests' | 'name' | 'baseUrl' | 'fingerprintProfileId'>> & { apiKey?: string }} patch
+ * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'maxConcurrentRequests' | 'name' | 'baseUrl' | 'fingerprintProfileId'>> & { apiKey?: string, proxyUrl?: string }} patch
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
@@ -1783,6 +1787,7 @@ export async function createAPIUpstreamAccount() {
         name: apiUpstreamForm.name,
         baseUrl: apiUpstreamForm.baseUrl,
         apiKey: apiUpstreamForm.apiKey,
+        proxyUrl: apiUpstreamForm.proxyUrl,
         priority: Number(apiUpstreamForm.priority) || 100,
         loadFactor: Number(apiUpstreamForm.loadFactor) || 1,
         enabled: apiUpstreamForm.enabled,

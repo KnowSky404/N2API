@@ -624,6 +624,23 @@ func TestAccessTokenForAccountRefreshPreservesExistingIdentityAndRefreshToken(t 
 	}
 }
 
+func TestAccessTokenForAccountRefreshPassesConfiguredProxyURL(t *testing.T) {
+	repo := newMemoryRepo()
+	expired := time.Now().Add(-time.Minute)
+	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
+	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", "http://proxy.example.test:8080")
+	repo.accounts = []Account{account}
+	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "new-access", ExpiresIn: 3600, Subject: "acct_7"}}
+	service := newConfiguredService(repo, client)
+
+	if _, err := service.AccessTokenForAccount(context.Background(), repo.accounts[0]); err != nil {
+		t.Fatalf("AccessTokenForAccount returned error: %v", err)
+	}
+	if client.gotConfig.ProxyURL != "http://proxy.example.test:8080" {
+		t.Fatalf("refresh proxy URL = %q, want account proxy URL", client.gotConfig.ProxyURL)
+	}
+}
+
 func TestAccessTokenForAccountSerializesConcurrentRefresh(t *testing.T) {
 	repo := newMemoryRepo()
 	expired := time.Now().Add(-time.Minute)
@@ -1134,6 +1151,26 @@ func TestTestAccountsProbesEveryProviderAccount(t *testing.T) {
 	}
 	if tested[1].ID != 8 || tested[1].Status != AccountStatusActive || tested[1].CircuitOpenUntil != nil || tested[1].LastError != "" {
 		t.Fatalf("second tested account = %+v, want cleared active account", tested[1])
+	}
+}
+
+func TestTestAccountPassesConfiguredProxyURLToProbe(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 3, "unused-oauth-token")
+	account.AccountType = AccountTypeAPIUpstream
+	account.Credential.CredentialType = CredentialTypeAPIKey
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "api-secret")
+	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", "http://proxy.example.test:8080")
+	account.Credential.BaseURL = "https://upstream.example.test"
+	repo.accounts = []Account{account}
+	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
+	service := newConfiguredService(repo, client)
+
+	if _, err := service.TestAccount(context.Background(), account.ID); err != nil {
+		t.Fatalf("TestAccount returned error: %v", err)
+	}
+	if client.gotConfig.ProxyURL != "http://proxy.example.test:8080" {
+		t.Fatalf("probe proxy URL = %q, want account proxy URL", client.gotConfig.ProxyURL)
 	}
 }
 
@@ -2687,6 +2724,66 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 	}
 }
 
+func TestCreateAPIUpstreamAccountStoresEncryptedProxyURL(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:     "Upstream",
+		BaseURL:  "https://upstream.example.test/v1",
+		APIKey:   "sk-upstream",
+		ProxyURL: " http://proxy-user:proxy-pass@proxy.example.test:8080 ",
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+	if account.Credential.EncryptedProxyURL == "" {
+		t.Fatal("proxy URL was not stored encrypted")
+	}
+	if strings.Contains(account.Credential.EncryptedProxyURL, "proxy-pass") || !account.ProxyURLConfigured {
+		t.Fatalf("proxy fields leaked or missing configured flag: %+v", account)
+	}
+
+	selected, err := service.SelectAccountForModel(context.Background(), "")
+	if err != nil {
+		t.Fatalf("SelectAccountForModel returned error: %v", err)
+	}
+	if selected.ProxyURL != "http://proxy-user:proxy-pass@proxy.example.test:8080" {
+		t.Fatalf("selected proxy URL = %q, want trimmed cleartext for outbound use", selected.ProxyURL)
+	}
+}
+
+func TestUpdateAccountCanSetAndClearProxyURL(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:    "Upstream",
+		BaseURL: "https://upstream.example.test/v1",
+		APIKey:  "sk-upstream",
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+
+	proxyURL := "https://proxy.example.test:8443"
+	updated, err := service.UpdateAccount(context.Background(), account.ID, AccountUpdate{ProxyURL: &proxyURL})
+	if err != nil {
+		t.Fatalf("UpdateAccount set proxy returned error: %v", err)
+	}
+	if !updated.ProxyURLConfigured || updated.ProxyURLSummary != "https://proxy.example.test:8443" {
+		t.Fatalf("updated proxy summary = configured:%v summary:%q", updated.ProxyURLConfigured, updated.ProxyURLSummary)
+	}
+
+	clear := ""
+	updated, err = service.UpdateAccount(context.Background(), account.ID, AccountUpdate{ProxyURL: &clear})
+	if err != nil {
+		t.Fatalf("UpdateAccount clear proxy returned error: %v", err)
+	}
+	if updated.ProxyURLConfigured || updated.ProxyURLSummary != "" || updated.Credential.EncryptedProxyURL != "" {
+		t.Fatalf("cleared proxy fields = %+v", updated)
+	}
+}
+
 func TestCreateAPIUpstreamAccountDefaultsEnabledWhenOmitted(t *testing.T) {
 	repo := newMemoryRepo()
 	service := newConfiguredService(repo, fakeOAuthClient{})
@@ -3045,6 +3142,7 @@ func normalizeMemoryAccount(account *Account) {
 	account.LastRefreshAt = account.Credential.LastRefreshAt
 	account.LastRefreshError = account.Credential.LastRefreshError
 	account.LastRefreshErrorAt = account.Credential.LastRefreshErrorAt
+	account.ProxyURLConfigured = account.Credential.EncryptedProxyURL != ""
 	account.Metadata = account.Credential.Metadata
 	if account.Metadata == nil {
 		account.Metadata = map[string]string{}
@@ -3086,6 +3184,10 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 		}
 		if update.EncryptedAPIUpstreamAPIKey != nil {
 			r.accounts[i].Credential.EncryptedAPIKey = *update.EncryptedAPIUpstreamAPIKey
+		}
+		if update.EncryptedProxyURL != nil {
+			r.accounts[i].Credential.EncryptedProxyURL = *update.EncryptedProxyURL
+			r.accounts[i].ProxyURLConfigured = *update.EncryptedProxyURL != ""
 		}
 		if update.FingerprintProfileIDSet {
 			r.accounts[i].FingerprintProfileID = update.FingerprintProfileID
@@ -3607,6 +3709,20 @@ func (c *captureProbeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Co
 		return probeResult{statusCode: http.StatusOK}, nil
 	}
 	return c.probe, nil
+}
+
+type captureRefreshOAuthClient struct {
+	refresh   TokenResponse
+	gotConfig Config
+}
+
+func (c *captureRefreshOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
+	return TokenResponse{}, errors.New("unexpected exchange")
+}
+
+func (c *captureRefreshOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
+	c.gotConfig = cfg
+	return c.refresh, nil
 }
 
 func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {

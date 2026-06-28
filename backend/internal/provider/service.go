@@ -104,6 +104,7 @@ type Config struct {
 	TokenURL              string
 	APIBaseURL            string
 	CodexResponsesBaseURL string
+	ProxyURL              string
 	ProbeChatGPTAccountID string
 	Secret                string
 	StateTTL              time.Duration
@@ -167,6 +168,8 @@ type Account struct {
 	Name                  string            `json:"name"`
 	DisplayName           string            `json:"displayName"`
 	BaseURL               string            `json:"baseUrl,omitempty"`
+	ProxyURLConfigured    bool              `json:"proxyUrlConfigured"`
+	ProxyURLSummary       string            `json:"proxyUrlSummary,omitempty"`
 	Credential            AccountCredential `json:"-"`
 	EncryptedAccessToken  string            `json:"-"`
 	EncryptedRefreshToken string            `json:"-"`
@@ -242,6 +245,7 @@ type AccountCredential struct {
 	LastRefreshError      string            `json:"lastRefreshError"`
 	LastRefreshErrorAt    *time.Time        `json:"lastRefreshErrorAt"`
 	EncryptedAPIKey       string            `json:"-"`
+	EncryptedProxyURL     string            `json:"-"`
 	BaseURL               string            `json:"baseUrl"`
 	Metadata              map[string]string `json:"metadata"`
 }
@@ -269,6 +273,7 @@ type APIUpstreamInput struct {
 	Name       string   `json:"name"`
 	BaseURL    string   `json:"baseUrl"`
 	APIKey     string   `json:"apiKey"`
+	ProxyURL   string   `json:"proxyUrl"`
 	Enabled    *bool    `json:"enabled"`
 	Priority   int      `json:"priority"`
 	LoadFactor int      `json:"loadFactor"`
@@ -290,6 +295,8 @@ type AccountUpdate struct {
 	APIUpstreamBaseURL         *string
 	APIUpstreamAPIKey          *string
 	EncryptedAPIUpstreamAPIKey *string
+	ProxyURL                   *string
+	EncryptedProxyURL          *string
 	FingerprintProfileIDSet    bool
 	FingerprintProfileID       *int64
 }
@@ -301,6 +308,7 @@ type SelectedAccount struct {
 	DisplayName              string
 	AuthorizationToken       string
 	BaseURL                  string
+	ProxyURL                 string
 	ChatGPTAccountID         string
 	MaxConcurrentRequests    int
 	RoutingPoolID            int64
@@ -471,7 +479,7 @@ func (c *HTTPClient) ExchangeCode(ctx context.Context, cfg Config, code string) 
 	if strings.TrimSpace(cfg.CodeVerifier) != "" {
 		values.Set("code_verifier", cfg.CodeVerifier)
 	}
-	return c.postToken(ctx, cfg.TokenURL, values)
+	return c.postToken(ctx, cfg.TokenURL, values, cfg.ProxyURL)
 }
 
 func (c *HTTPClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
@@ -483,7 +491,7 @@ func (c *HTTPClient) RefreshToken(ctx context.Context, cfg Config, refreshToken 
 	if strings.TrimSpace(cfg.ClientSecret) != "" {
 		values.Set("client_secret", cfg.ClientSecret)
 	}
-	return c.postToken(ctx, cfg.TokenURL, values)
+	return c.postToken(ctx, cfg.TokenURL, values, cfg.ProxyURL)
 }
 
 func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
@@ -531,7 +539,7 @@ func (c *HTTPClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessT
 		if codexBaseURL == "" {
 			codexBaseURL = "https://chatgpt.com/backend-api/codex"
 		}
-		return c.probeURL(ctx, codexBaseURL+"/responses", accessToken, func(req *http.Request) {
+		return c.probeURL(ctx, codexBaseURL+"/responses", accessToken, cfg.ProxyURL, func(req *http.Request) {
 			req.Header.Set("chatgpt-account-id", chatGPTAccountID)
 			req.Header.Set("Accept", "text/event-stream")
 			req.Header.Set("OpenAI-Beta", "responses=experimental")
@@ -545,10 +553,10 @@ func (c *HTTPClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessT
 	if apiBaseURL == "" {
 		apiBaseURL = "https://api.openai.com"
 	}
-	return c.probeURL(ctx, apiBaseURL+"/v1/models", accessToken, nil)
+	return c.probeURL(ctx, apiBaseURL+"/v1/models", accessToken, cfg.ProxyURL, nil)
 }
 
-func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken string, decorate func(*http.Request)) (probeResult, error) {
+func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken, proxyURL string, decorate func(*http.Request)) (probeResult, error) {
 	var body io.Reader
 	method := http.MethodGet
 	if strings.HasSuffix(targetURL, "/responses") {
@@ -565,7 +573,7 @@ func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken string
 		decorate(req)
 	}
 
-	resp, err := c.client.Do(req)
+	resp, err := c.clientForProxy(proxyURL).Do(req)
 	if err != nil {
 		return probeResult{}, err
 	}
@@ -599,7 +607,7 @@ func readErrorMessage(body io.Reader, statusCode int) string {
 	return strings.TrimSpace(string(raw))
 }
 
-func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.Values) (TokenResponse, error) {
+func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.Values, proxyURL string) (TokenResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return TokenResponse{}, fmt.Errorf("create oauth token request: %w", err)
@@ -607,7 +615,7 @@ func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.client.Do(req)
+	resp, err := c.clientForProxy(proxyURL).Do(req)
 	if err != nil {
 		return TokenResponse{}, fmt.Errorf("send oauth token request: %w", err)
 	}
@@ -643,6 +651,26 @@ func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.
 		Email:        payload.Email,
 		PlanType:     payload.PlanType,
 	}, nil
+}
+
+func (c *HTTPClient) clientForProxy(proxyURL string) *http.Client {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return c.client
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return c.client
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(parsed)
+	client := &http.Client{Transport: transport}
+	if c.client != nil {
+		client.Timeout = c.client.Timeout
+		client.CheckRedirect = c.client.CheckRedirect
+		client.Jar = c.client.Jar
+	}
+	return client
 }
 
 func (s *Service) Configured() bool {
@@ -781,14 +809,21 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 }
 
 func (s *Service) ListAccounts(ctx context.Context) ([]Account, error) {
-	return s.repo.ListAccounts(ctx, s.cfg.Provider)
+	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
+	if err != nil {
+		return nil, err
+	}
+	for i := range accounts {
+		accounts[i] = s.withProxySummary(accounts[i])
+	}
+	return accounts, nil
 }
 
 func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpdate) (Account, error) {
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil && !update.FingerprintProfileIDSet {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil && update.ProxyURL == nil && !update.FingerprintProfileIDSet {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
@@ -847,10 +882,29 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		update.EncryptedAPIUpstreamAPIKey = &encryptedAPIKey
 		update.APIUpstreamAPIKey = nil
 	}
-	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil {
+	if update.ProxyURL != nil {
+		proxyURL, err := normalizeProxyURL(*update.ProxyURL)
+		if err != nil {
+			return Account{}, err
+		}
+		encryptedProxyURL := ""
+		if proxyURL != "" {
+			encryptedProxyURL, err = secret.EncryptString(s.cfg.Secret, proxyURL)
+			if err != nil {
+				return Account{}, err
+			}
+		}
+		update.ProxyURL = &proxyURL
+		update.EncryptedProxyURL = &encryptedProxyURL
+	}
+	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil || update.EncryptedProxyURL != nil {
 		update.ClearStatus = true
 	}
-	return s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
+	account, err := s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
+	if err != nil {
+		return Account{}, err
+	}
+	return s.withProxySummary(account), nil
 }
 
 func (s *Service) ResetAccountStatus(ctx context.Context, id int64) (Account, error) {
@@ -876,6 +930,17 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	if err != nil {
 		return Account{}, err
 	}
+	proxyURL, err := normalizeProxyURL(input.ProxyURL)
+	if err != nil {
+		return Account{}, err
+	}
+	encryptedProxyURL := ""
+	if proxyURL != "" {
+		encryptedProxyURL, err = secret.EncryptString(s.cfg.Secret, proxyURL)
+		if err != nil {
+			return Account{}, err
+		}
+	}
 	enabled := true
 	if input.Enabled != nil {
 		enabled = *input.Enabled
@@ -890,9 +955,10 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 		LoadFactor:  normalizedLoadFactor(input.LoadFactor),
 		Status:      AccountStatusActive,
 		Credential: AccountCredential{
-			CredentialType:  CredentialTypeAPIKey,
-			EncryptedAPIKey: encryptedAPIKey,
-			BaseURL:         baseURL,
+			CredentialType:    CredentialTypeAPIKey,
+			EncryptedAPIKey:   encryptedAPIKey,
+			EncryptedProxyURL: encryptedProxyURL,
+			BaseURL:           baseURL,
 		},
 	})
 	if err != nil {
@@ -914,7 +980,7 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 			return Account{}, err
 		}
 	}
-	return account, nil
+	return s.withProxySummary(account), nil
 }
 
 func normalizeOpenAICompatibleBaseURL(value string) string {
@@ -1059,7 +1125,9 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 	if err != nil {
 		return Account{}, err
 	}
-	tokens, err := s.client.RefreshToken(ctx, s.cfg, refreshToken)
+	refreshCfg := s.cfg
+	refreshCfg.ProxyURL = s.accountProxyURL(account)
+	tokens, err := s.client.RefreshToken(ctx, refreshCfg, refreshToken)
 	if err != nil {
 		now := time.Now()
 		var openUntil *time.Time
@@ -1111,6 +1179,7 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	} else {
 		cfg.ProbeChatGPTAccountID = strings.TrimSpace(selected.ChatGPTAccountID)
 	}
+	cfg.ProxyURL = selected.ProxyURL
 
 	result, err := s.prober.ProbeAccountStatus(ctx, cfg, selected.AuthorizationToken)
 	if err != nil {
@@ -1203,6 +1272,7 @@ func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account,
 	}
 	cfg := s.cfg
 	cfg.ProbeChatGPTAccountID = strings.TrimSpace(account.Metadata["chatgpt_account_id"])
+	cfg.ProxyURL = s.accountProxyURL(account)
 	result, err := s.prober.ProbeAccountStatus(ctx, cfg, accessToken)
 	if err != nil {
 		return account, nil
@@ -1256,7 +1326,9 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 	if err != nil {
 		return "", err
 	}
-	tokens, err := s.client.RefreshToken(ctx, s.cfg, refreshToken)
+	refreshCfg := s.cfg
+	refreshCfg.ProxyURL = s.accountProxyURL(account)
+	tokens, err := s.client.RefreshToken(ctx, refreshCfg, refreshToken)
 	if err != nil {
 		if account.ID > 0 {
 			now := time.Now()
@@ -1943,6 +2015,13 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 		ChatGPTAccountID:      strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
 		MaxConcurrentRequests: account.MaxConcurrentRequests,
 	}
+	if strings.TrimSpace(account.Credential.EncryptedProxyURL) != "" {
+		proxyURL, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedProxyURL)
+		if err != nil {
+			return SelectedAccount{}, err
+		}
+		selected.ProxyURL = strings.TrimSpace(proxyURL)
+	}
 	switch accountType {
 	case AccountTypeCodexOAuth:
 		token, err := s.AccessTokenForAccount(ctx, account)
@@ -1986,6 +2065,63 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 	}
 
 	return selected, nil
+}
+
+func (s *Service) withProxySummary(account Account) Account {
+	account = normalizeAccountCredentialFields(account)
+	encryptedProxyURL := strings.TrimSpace(account.Credential.EncryptedProxyURL)
+	account.ProxyURLConfigured = encryptedProxyURL != ""
+	account.ProxyURLSummary = ""
+	if encryptedProxyURL == "" {
+		return account
+	}
+	proxyURL, err := secret.DecryptString(s.cfg.Secret, encryptedProxyURL)
+	if err != nil {
+		account.ProxyURLSummary = "configured"
+		return account
+	}
+	account.ProxyURLSummary = proxyURLSummary(proxyURL)
+	return account
+}
+
+func (s *Service) accountProxyURL(account Account) string {
+	account = normalizeAccountCredentialFields(account)
+	if strings.TrimSpace(account.Credential.EncryptedProxyURL) == "" {
+		return ""
+	}
+	proxyURL, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedProxyURL)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(proxyURL)
+}
+
+func normalizeProxyURL(value string) (string, error) {
+	proxyURL := strings.TrimSpace(value)
+	if proxyURL == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(proxyURL)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return "", ErrInvalidInput
+	}
+	switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+	case "http", "https":
+		return parsed.String(), nil
+	default:
+		return "", ErrInvalidInput
+	}
+}
+
+func proxyURLSummary(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" {
+		return "configured"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func (s *Service) apiUpstreamSchemeAllowed(scheme string) bool {

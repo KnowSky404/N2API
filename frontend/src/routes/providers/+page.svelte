@@ -162,6 +162,7 @@
       account.displayName,
       account.subject,
       account.baseUrl,
+      account.proxyUrlSummary,
       account.provider,
       accountTypeLabel(account),
       accountRoutingPools(account.id).map((pool) => pool.name).join(' '),
@@ -318,7 +319,8 @@
     const data = new FormData(form);
     const baseUrl = String(data.get('baseUrl') ?? '');
     const apiKey = String(data.get('apiKey') ?? '');
-    /** @type {{ baseUrl?: string, apiKey?: string }} */
+    const proxyUrl = String(data.get('proxyUrl') ?? '');
+    /** @type {{ baseUrl?: string, apiKey?: string, proxyUrl?: string }} */
     const patch = {};
 
     if (baseUrl.trim() && baseUrl.trim() !== (account.baseUrl ?? '').trim()) {
@@ -326,6 +328,9 @@
     }
     if (apiKey.trim()) {
       patch.apiKey = apiKey;
+    }
+    if (proxyUrl.trim() !== (account.proxyUrlSummary ?? '').trim()) {
+      patch.proxyUrl = proxyUrl;
     }
     if (Object.keys(patch).length === 0) return;
 
@@ -597,13 +602,13 @@ type="submit"
   </form>
 
   <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_120px_120px_auto]"
+    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_minmax(220px,1fr)_120px_120px_auto]"
     onsubmit={(event) => {
       event.preventDefault();
       createAPIUpstreamAccount();
     }}
   >
-    <div class="lg:col-span-6">
+    <div class="lg:col-span-7">
       <h3 class="text-base font-semibold text-[#0d0d0d]">API upstream</h3>
       <p class="mt-1 text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
     </div>
@@ -639,6 +644,16 @@ API key
 />
     </label>
     <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Proxy URL
+<input
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  type="url"
+  placeholder="http://proxy.example.test:8080"
+  bind:value={apiUpstreamForm.proxyUrl}
+/>
+<span class="text-xs font-normal text-[#6e6e6e]">Optional HTTP or HTTPS outbound proxy for this account.</span>
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
 Priority
 <input
   class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -667,7 +682,7 @@ Load factor
 />
 Enabled
     </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-5">
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-6">
 Manual models
 <textarea
   class="min-h-20 w-full min-w-0 resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -683,7 +698,7 @@ disabled={apiUpstreamForm.submitting}
 {apiUpstreamForm.submitting ? 'Adding' : 'Add API upstream'}
     </button>
     {#if apiUpstreamForm.error}
-      <p class="lg:col-span-5 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+      <p class="lg:col-span-6 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
         {apiUpstreamForm.error}
       </p>
     {/if}
@@ -1078,6 +1093,17 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
                   disabled={providerAccounts.saving}
                 />
               </label>
+              <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
+                Proxy URL
+                <input
+                  class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  name="proxyUrl"
+                  type="url"
+                  value={account.proxyUrlSummary || ''}
+                  placeholder="Leave blank to clear proxy"
+                  disabled={providerAccounts.saving}
+                />
+              </label>
               <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                 <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
                   API key
@@ -1098,6 +1124,30 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
                   Save upstream
                 </button>
               </div>
+            </form>
+          {:else}
+            <form
+              class="mt-3 grid max-w-[18rem] gap-2"
+              onsubmit={(event) => updateAPIUpstreamCredential(account, event)}
+            >
+              <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
+                Proxy URL
+                <input
+                  class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  name="proxyUrl"
+                  type="url"
+                  value={account.proxyUrlSummary || ''}
+                  placeholder="Leave blank to clear proxy"
+                  disabled={providerAccounts.saving}
+                />
+              </label>
+              <button
+                class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                type="submit"
+                disabled={providerAccounts.saving}
+              >
+                Save proxy
+              </button>
             </form>
           {/if}
         </td>

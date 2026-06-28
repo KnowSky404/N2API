@@ -67,6 +67,7 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 		DisplayName:              selected.DisplayName,
 		AuthorizationToken:       selected.AuthorizationToken,
 		BaseURL:                  selected.BaseURL,
+		ProxyURL:                 selected.ProxyURL,
 		ChatGPTAccountID:         selected.ChatGPTAccountID,
 		MaxConcurrentRequests:    selected.MaxConcurrentRequests,
 		RoutingPoolID:            selected.RoutingPoolID,

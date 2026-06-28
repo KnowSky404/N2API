@@ -1083,6 +1083,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			Name       string   `json:"name"`
 			BaseURL    string   `json:"baseUrl"`
 			APIKey     string   `json:"apiKey"`
+			ProxyURL   string   `json:"proxyUrl"`
 			Enabled    *bool    `json:"enabled"`
 			Priority   int      `json:"priority"`
 			LoadFactor int      `json:"loadFactor"`
@@ -1096,6 +1097,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			Name:       req.Name,
 			BaseURL:    req.BaseURL,
 			APIKey:     req.APIKey,
+			ProxyURL:   req.ProxyURL,
 			Enabled:    req.Enabled,
 			Priority:   req.Priority,
 			LoadFactor: req.LoadFactor,
@@ -1728,6 +1730,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		Name                  *string `json:"name"`
 		BaseURL               *string `json:"baseUrl"`
 		APIKey                *string `json:"apiKey"`
+		ProxyURL              *string `json:"proxyUrl"`
 		FingerprintProfileID  *int64  `json:"fingerprintProfileId"`
 	}
 	body, err := readJSONBody(w, r)
@@ -1744,7 +1747,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil && !fingerprintProfileIDSet {
+	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil && req.ProxyURL == nil && !fingerprintProfileIDSet {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
@@ -1757,6 +1760,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		Name:                    req.Name,
 		APIUpstreamBaseURL:      req.BaseURL,
 		APIUpstreamAPIKey:       req.APIKey,
+		ProxyURL:                req.ProxyURL,
 		FingerprintProfileIDSet: fingerprintProfileIDSet,
 		FingerprintProfileID:    req.FingerprintProfileID,
 	})

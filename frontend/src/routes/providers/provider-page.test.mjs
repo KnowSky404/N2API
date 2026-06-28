@@ -208,6 +208,15 @@ test('provider account state can bulk update selected account enabled state', ()
   assert.match(adminStateSource, /clearProviderAccountSelection/);
 });
 
+test('provider accounts expose per-account outbound proxy controls', () => {
+  assert.match(adminStateSource, /proxyUrlConfigured/);
+  assert.match(adminStateSource, /proxyUrlSummary/);
+  assert.match(adminStateSource, /proxyUrl: apiUpstreamForm\.proxyUrl/);
+  assert.match(source, /Proxy URL/);
+  assert.match(source, /name="proxyUrl"/);
+  assert.match(source, /patch\.proxyUrl = proxyUrl/);
+});
+
 test('provider account state can bulk update selected scheduling fields', () => {
   const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 

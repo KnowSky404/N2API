@@ -2033,7 +2033,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 func TestCreateAPIUpstreamAccount(t *testing.T) {
 	providers := newFakeProviderService()
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":" Upstream ","baseUrl":"https://upstream.example.test/v1/","apiKey":" secret ","enabled":true,"priority":8,"models":[" gpt-5 ","gpt-4.1"]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":" Upstream ","baseUrl":"https://upstream.example.test/v1/","apiKey":" secret ","proxyUrl":" http://proxy-user:proxy-pass@proxy.example.test:8080 ","enabled":true,"priority":8,"models":[" gpt-5 ","gpt-4.1"]}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -2044,6 +2044,9 @@ func TestCreateAPIUpstreamAccount(t *testing.T) {
 	}
 	if providers.createdAPIUpstream.Name != " Upstream " || providers.createdAPIUpstream.BaseURL != "https://upstream.example.test/v1/" || providers.createdAPIUpstream.APIKey != " secret " {
 		t.Fatalf("created input = %+v", providers.createdAPIUpstream)
+	}
+	if providers.createdAPIUpstream.ProxyURL != " http://proxy-user:proxy-pass@proxy.example.test:8080 " {
+		t.Fatalf("created proxy URL = %q", providers.createdAPIUpstream.ProxyURL)
 	}
 	if providers.createdAPIUpstream.Enabled == nil || !*providers.createdAPIUpstream.Enabled || providers.createdAPIUpstream.Priority != 8 || len(providers.createdAPIUpstream.Models) != 2 {
 		t.Fatalf("created input scheduling/models = %+v", providers.createdAPIUpstream)
@@ -2059,6 +2062,9 @@ func TestCreateAPIUpstreamAccount(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "secret") {
 		t.Fatalf("response leaked api key: %s", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "proxy-pass") {
+		t.Fatalf("response leaked proxy credential: %s", recorder.Body.String())
 	}
 }
 
@@ -2750,7 +2756,7 @@ func TestAdminBulkProviderAccountModelsValidatesInput(t *testing.T) {
 	}
 }
 
-func TestAdminCanUpdateAPIUpstreamCredential(t *testing.T) {
+func TestAdminCanUpdateAPIUpstreamCredentialAndProxy(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{{
 		ID:          7,
@@ -2764,7 +2770,7 @@ func TestAdminCanUpdateAPIUpstreamCredential(t *testing.T) {
 		Credential:  provider.AccountCredential{BaseURL: "https://old.example.test"},
 	}}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"baseUrl":" https://new.example.test/v1 ","apiKey":" new-secret "}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"baseUrl":" https://new.example.test/v1 ","apiKey":" new-secret ","proxyUrl":"https://proxy.example.test:8443"}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -2778,6 +2784,9 @@ func TestAdminCanUpdateAPIUpstreamCredential(t *testing.T) {
 	}
 	if providers.lastAccountUpdate.APIUpstreamAPIKey == nil || *providers.lastAccountUpdate.APIUpstreamAPIKey != " new-secret " {
 		t.Fatalf("API key update = %+v", providers.lastAccountUpdate.APIUpstreamAPIKey)
+	}
+	if providers.lastAccountUpdate.ProxyURL == nil || *providers.lastAccountUpdate.ProxyURL != "https://proxy.example.test:8443" {
+		t.Fatalf("proxy URL update = %+v", providers.lastAccountUpdate.ProxyURL)
 	}
 	var body struct {
 		Account provider.Account `json:"account"`
