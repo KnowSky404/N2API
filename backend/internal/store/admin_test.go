@@ -19,7 +19,7 @@ func TestAdminRepositoryImplementsInterface(t *testing.T) {
 }
 
 func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
-	for _, groupBy := range []string{"client_key", "provider_account", "routing_pool", "routing_pool_chain", "model", "session"} {
+	for _, groupBy := range []string{"client_key", "provider_account", "routing_pool", "routing_pool_chain", "model", "session", "usage_source"} {
 		t.Run(groupBy, func(t *testing.T) {
 			groupExpr, labelExpr, _, ok := usageSummaryGroupSQL(groupBy)
 			if !ok {
@@ -75,6 +75,22 @@ func TestUsageSummarySessionGroupUsesLoggedSessionID(t *testing.T) {
 	}
 	if joinSQL != "" {
 		t.Fatalf("session group join SQL = %q, want no join", joinSQL)
+	}
+}
+
+func TestUsageSummaryUsageSourceGroupUsesLoggedUsageSource(t *testing.T) {
+	groupExpr, labelExpr, joinSQL, ok := usageSummaryGroupSQL("usage_source")
+	if !ok {
+		t.Fatal("usageSummaryGroupSQL(usage_source) ok = false, want true")
+	}
+	if !strings.Contains(groupExpr, "l.usage_source") || !strings.Contains(labelExpr, "l.usage_source") {
+		t.Fatalf("usage source group expressions = %q / %q, want request log usage_source", groupExpr, labelExpr)
+	}
+	if !strings.Contains(labelExpr, "Missing usage") {
+		t.Fatalf("usage source label expression = %q, want missing usage fallback label", labelExpr)
+	}
+	if joinSQL != "" {
+		t.Fatalf("usage source group join SQL = %q, want no join", joinSQL)
 	}
 }
 

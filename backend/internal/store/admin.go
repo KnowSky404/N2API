@@ -952,6 +952,8 @@ func usageSummaryGroupSQL(groupBy string) (groupExpr, labelExpr, joinSQL string,
 		return "COALESCE(NULLIF(l.model, ''), 'unknown')", "COALESCE(NULLIF(l.model, ''), 'Unknown model')", "", true
 	case "session":
 		return "COALESCE(NULLIF(l.session_id, ''), 'none')", "COALESCE(NULLIF(l.session_id, ''), 'No session')", "", true
+	case "usage_source":
+		return "COALESCE(NULLIF(l.usage_source, ''), 'missing')", "COALESCE(NULLIF(l.usage_source, ''), 'Missing usage')", "", true
 	default:
 		return "", "", "", false
 	}

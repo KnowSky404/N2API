@@ -256,6 +256,8 @@ test('request logs page includes usage accounting UI', () => {
   assert.match(requestLogsPage, /usage\.groupBy === 'routing_pool'/);
   assert.match(requestLogsPage, /usage\.groupBy === 'routing_pool_chain'/);
   assert.match(requestLogsPage, /usage\.groupBy === 'session'/);
+  assert.match(requestLogsPage, /usage\.groupBy === 'usage_source'/);
+  assert.match(requestLogsPage, /value: 'usage_source'/);
   assert.match(requestLogsPage, /row\.cachedInputTokens/);
   assert.match(requestLogsPage, /row\.reasoningTokens/);
   assert.match(requestLogsPage, /summary\?\.totalCachedInputTokens/);

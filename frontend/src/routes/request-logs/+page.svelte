@@ -201,7 +201,8 @@
     { value: 'provider_account', label: 'Provider account' },
     { value: 'routing_pool', label: 'Routing pool' },
     { value: 'routing_pool_chain', label: 'Routing pool chain' },
-    { value: 'session', label: 'Session' }
+    { value: 'session', label: 'Session' },
+    { value: 'usage_source', label: 'Usage source' }
   ];
   const requestLogStatusClasses = [
     { value: 'all', label: 'All statuses' },
@@ -251,6 +252,7 @@
       return `/request-logs?routingPoolChain=${encodeURIComponent(id)}`;
     }
     if (usage.groupBy === 'session') return `/request-logs?sessionId=${encodeURIComponent(id)}`;
+    if (usage.groupBy === 'usage_source') return `/request-logs?usageSource=${encodeURIComponent(id)}`;
     return '';
   }
 
