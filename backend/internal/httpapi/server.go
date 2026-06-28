@@ -39,7 +39,7 @@ type AdminService interface {
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
-	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error)
+	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (admin.APIKey, error)
 	ListRoutingPools(ctx context.Context) ([]admin.RoutingPool, error)
 	CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error)
 	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error)
@@ -483,16 +483,18 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 
 		var req struct {
-			RequestBudget24h int `json:"requestBudget24h"`
-			TokenBudget24h   int `json:"tokenBudget24h"`
-			RequestBudget30d int `json:"requestBudget30d"`
-			TokenBudget30d   int `json:"tokenBudget30d"`
+			RequestBudget24h      int   `json:"requestBudget24h"`
+			TokenBudget24h        int   `json:"tokenBudget24h"`
+			CostBudgetMicrousd24h int64 `json:"costBudgetMicrousd24h"`
+			RequestBudget30d      int   `json:"requestBudget30d"`
+			TokenBudget30d        int   `json:"tokenBudget30d"`
+			CostBudgetMicrousd30d int64 `json:"costBudgetMicrousd30d"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		key, err := admins.UpdateAPIKeyBudgets(r.Context(), id, req.RequestBudget24h, req.TokenBudget24h, req.RequestBudget30d, req.TokenBudget30d)
+		key, err := admins.UpdateAPIKeyBudgets(r.Context(), id, req.RequestBudget24h, req.TokenBudget24h, req.CostBudgetMicrousd24h, req.RequestBudget30d, req.TokenBudget30d, req.CostBudgetMicrousd30d)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")

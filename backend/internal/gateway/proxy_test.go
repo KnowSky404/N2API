@@ -2975,6 +2975,30 @@ func TestProxyLogsPreciseAPIKeyTokenBudgetReason(t *testing.T) {
 	assertLastLoggedError(t, logger, "api_key_token_budget_exceeded")
 }
 
+func TestProxyLogsPreciseAPIKeyCostBudgetReason(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	budgets := &fakeBudgetProvider{usage: admin.APIKeyBudgetUsage{CostBudgetExceeded: true}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", CostBudgetMicrousd24h: 1}}, tokens, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		Logger:          logger,
+		BudgetProvider:  budgets,
+	}, http.DefaultClient)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
+		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
+	}
+	if tokens.calls != 0 {
+		t.Fatalf("account calls = %d, want 0 when key cost budget is exceeded", tokens.calls)
+	}
+	assertLastLoggedError(t, logger, "api_key_cost_budget_exceeded")
+}
+
 func TestProxyFailsClosedWhenAPIKeyBudgetUsageCannotBeChecked(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	budgets := &fakeBudgetProvider{err: errors.New("budget store unavailable")}

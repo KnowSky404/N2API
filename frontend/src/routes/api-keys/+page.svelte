@@ -141,7 +141,8 @@
       key.requestRateLimited ? 'request limit full' : '',
       key.tokenRateLimited ? 'token limit full' : '',
       key.requestBudgetExceeded ? 'request budget exceeded' : '',
-      key.tokenBudgetExceeded ? 'token budget exceeded' : ''
+      key.tokenBudgetExceeded ? 'token budget exceeded' : '',
+      key.costBudgetExceeded ? 'cost budget exceeded' : ''
     ]
       .filter(Boolean)
       .join(' ')
@@ -751,8 +752,10 @@ All routable models
                 key.id,
                 key.requestBudget24h ?? 0,
                 key.tokenBudget24h ?? 0,
+                key.costBudgetMicrousd24h ?? 0,
                 key.requestBudget30d ?? 0,
-                key.tokenBudget30d ?? 0
+                key.tokenBudget30d ?? 0,
+                key.costBudgetMicrousd30d ?? 0
               );
             }}
           >
@@ -788,6 +791,21 @@ All routable models
                   }}
                 />
               </label>
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-cost-budget-24h-${key.id}`}>
+                Cost 24h
+                <input
+                  id={`api-key-cost-budget-24h-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.costBudgetMicrousd24h ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.costBudgetMicrousd24h = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
               <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-request-budget-30d-${key.id}`}>
                 Requests 30d
                 <input
@@ -818,6 +836,21 @@ All routable models
                   }}
                 />
               </label>
+              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-cost-budget-30d-${key.id}`}>
+                Cost 30d
+                <input
+                  id={`api-key-cost-budget-30d-${key.id}`}
+                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={key.costBudgetMicrousd30d ?? 0}
+                  disabled={Boolean(key.revokedAt)}
+                  oninput={(event) => {
+                    key.costBudgetMicrousd30d = Number(event.currentTarget.value || 0);
+                  }}
+                />
+              </label>
             </div>
             <div>
               <p class="text-xs text-[#6e6e6e]">
@@ -833,6 +866,12 @@ All routable models
                 {/if}
               </p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
+                Cost 24h {formatCostMicrousd(key.costMicrousd24h || 0)} / {key.costBudgetMicrousd24h > 0 ? formatCostMicrousd(key.costBudgetMicrousd24h) : 'unlimited'}
+                {#if key.costRemainingMicrousd24h !== null && key.costRemainingMicrousd24h !== undefined}
+                  <span>({formatCostMicrousd(key.costRemainingMicrousd24h)} remaining)</span>
+                {/if}
+              </p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
                 Requests 30d {keyBudgetUsageLabel(key.requestsUsed30d, key.requestBudget30d)}
                 {#if key.requestsRemaining30d !== null && key.requestsRemaining30d !== undefined}
                   <span>({key.requestsRemaining30d} remaining)</span>
@@ -844,11 +883,20 @@ All routable models
                   <span>({formatTokens(key.tokensRemaining30d)} remaining)</span>
                 {/if}
               </p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                Cost 30d {formatCostMicrousd(key.costMicrousd30d || 0)} / {key.costBudgetMicrousd30d > 0 ? formatCostMicrousd(key.costBudgetMicrousd30d) : 'unlimited'}
+                {#if key.costRemainingMicrousd30d !== null && key.costRemainingMicrousd30d !== undefined}
+                  <span>({formatCostMicrousd(key.costRemainingMicrousd30d)} remaining)</span>
+                {/if}
+              </p>
               {#if key.requestBudgetExceeded}
                 <p class="mt-1 text-xs font-medium text-amber-700">Request budget exceeded</p>
               {/if}
               {#if key.tokenBudgetExceeded}
                 <p class="mt-1 text-xs font-medium text-amber-700">Token budget exceeded</p>
+              {/if}
+              {#if key.costBudgetExceeded}
+                <p class="mt-1 text-xs font-medium text-amber-700">Cost budget exceeded</p>
               {/if}
             </div>
             <button

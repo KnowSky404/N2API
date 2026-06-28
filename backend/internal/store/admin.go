@@ -23,7 +23,8 @@ const gatewaySettingsKey = "gateway_settings"
 const apiKeySelectColumns = `
 	k.id, k.name, k.prefix, k.created_at, k.last_used_at, k.revoked_at, k.disabled_at,
 	k.model_policy, k.requests_per_minute, k.tokens_per_minute,
-	k.request_budget_24h, k.token_budget_24h, k.request_budget_30d, k.token_budget_30d,
+	k.request_budget_24h, k.token_budget_24h, k.cost_budget_microusd_24h,
+	k.request_budget_30d, k.token_budget_30d, k.cost_budget_microusd_30d,
 	k.routing_pool_id, COALESCE(rp.name, '')
 `
 
@@ -45,8 +46,10 @@ func scanAPIKey(key *admin.APIKey) []any {
 		&key.TokensPerMinute,
 		&key.RequestBudget24h,
 		&key.TokenBudget24h,
+		&key.CostBudgetMicrousd24h,
 		&key.RequestBudget30d,
 		&key.TokenBudget30d,
+		&key.CostBudgetMicrousd30d,
 		&key.RoutingPoolID,
 		&key.RoutingPoolName,
 	}
@@ -359,18 +362,20 @@ func (r *AdminRepository) UpdateAPIKeyLimits(ctx context.Context, id int64, requ
 	return r.loadAPIKey(ctx, updatedID)
 }
 
-func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error) {
+func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (admin.APIKey, error) {
 	var updatedID int64
 	err := r.pool.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET request_budget_24h = $2,
 			token_budget_24h = $3,
-			request_budget_30d = $4,
-			token_budget_30d = $5
+			cost_budget_microusd_24h = $4,
+			request_budget_30d = $5,
+			token_budget_30d = $6,
+			cost_budget_microusd_30d = $7
 		WHERE id = $1
 			AND revoked_at IS NULL
 		RETURNING id
-	`, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d).Scan(&updatedID)
+	`, id, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d).Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
@@ -611,15 +616,19 @@ func (r *AdminRepository) GetAPIKeyBudgetUsage(ctx context.Context, keyID int64,
 		SELECT
 			COALESCE(COUNT(*) FILTER (WHERE created_at >= $2), 0),
 			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $2), 0),
+			COALESCE(SUM(estimated_cost_microusd) FILTER (WHERE created_at >= $2), 0),
 			COALESCE(COUNT(*) FILTER (WHERE created_at >= $3), 0),
-			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $3), 0)
+			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $3), 0),
+			COALESCE(SUM(estimated_cost_microusd) FILTER (WHERE created_at >= $3), 0)
 		FROM request_logs
 		WHERE client_key_id = $1
 	`, keyID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(
 		&usage.RequestsUsed24h,
 		&usage.TokensUsed24h,
+		&usage.CostMicrousd24h,
 		&usage.RequestsUsed30d,
 		&usage.TokensUsed30d,
+		&usage.CostMicrousd30d,
 	)
 	if err != nil {
 		return admin.APIKeyBudgetUsage{}, err

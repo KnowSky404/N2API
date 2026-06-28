@@ -51,23 +51,25 @@ type Session struct {
 }
 
 type APIKey struct {
-	ID                int64      `json:"id"`
-	Name              string     `json:"name"`
-	Prefix            string     `json:"prefix"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	LastUsedAt        *time.Time `json:"lastUsedAt"`
-	RevokedAt         *time.Time `json:"revokedAt"`
-	DisabledAt        *time.Time `json:"disabledAt"`
-	ModelPolicy       string     `json:"modelPolicy"`
-	AllowedModels     []string   `json:"allowedModels"`
-	RequestsPerMinute int        `json:"requestsPerMinute"`
-	TokensPerMinute   int        `json:"tokensPerMinute"`
-	RequestBudget24h  int        `json:"requestBudget24h"`
-	TokenBudget24h    int        `json:"tokenBudget24h"`
-	RequestBudget30d  int        `json:"requestBudget30d"`
-	TokenBudget30d    int        `json:"tokenBudget30d"`
-	RoutingPoolID     *int64     `json:"routingPoolId"`
-	RoutingPoolName   string     `json:"routingPoolName"`
+	ID                    int64      `json:"id"`
+	Name                  string     `json:"name"`
+	Prefix                string     `json:"prefix"`
+	CreatedAt             time.Time  `json:"createdAt"`
+	LastUsedAt            *time.Time `json:"lastUsedAt"`
+	RevokedAt             *time.Time `json:"revokedAt"`
+	DisabledAt            *time.Time `json:"disabledAt"`
+	ModelPolicy           string     `json:"modelPolicy"`
+	AllowedModels         []string   `json:"allowedModels"`
+	RequestsPerMinute     int        `json:"requestsPerMinute"`
+	TokensPerMinute       int        `json:"tokensPerMinute"`
+	RequestBudget24h      int        `json:"requestBudget24h"`
+	TokenBudget24h        int        `json:"tokenBudget24h"`
+	CostBudgetMicrousd24h int64      `json:"costBudgetMicrousd24h"`
+	RequestBudget30d      int        `json:"requestBudget30d"`
+	TokenBudget30d        int        `json:"tokenBudget30d"`
+	CostBudgetMicrousd30d int64      `json:"costBudgetMicrousd30d"`
+	RoutingPoolID         *int64     `json:"routingPoolId"`
+	RoutingPoolName       string     `json:"routingPoolName"`
 }
 
 type RoutingPool struct {
@@ -89,17 +91,22 @@ type RoutingPoolAccount struct {
 }
 
 type APIKeyBudgetUsage struct {
-	KeyID                 int64  `json:"-"`
-	RequestsUsed24h       int64  `json:"requestsUsed24h"`
-	TokensUsed24h         int64  `json:"tokensUsed24h"`
-	RequestsUsed30d       int64  `json:"requestsUsed30d"`
-	TokensUsed30d         int64  `json:"tokensUsed30d"`
-	RequestsRemaining24h  *int64 `json:"requestsRemaining24h"`
-	TokensRemaining24h    *int64 `json:"tokensRemaining24h"`
-	RequestsRemaining30d  *int64 `json:"requestsRemaining30d"`
-	TokensRemaining30d    *int64 `json:"tokensRemaining30d"`
-	RequestBudgetExceeded bool   `json:"requestBudgetExceeded"`
-	TokenBudgetExceeded   bool   `json:"tokenBudgetExceeded"`
+	KeyID                    int64  `json:"-"`
+	RequestsUsed24h          int64  `json:"requestsUsed24h"`
+	TokensUsed24h            int64  `json:"tokensUsed24h"`
+	CostMicrousd24h          int64  `json:"costMicrousd24h"`
+	RequestsUsed30d          int64  `json:"requestsUsed30d"`
+	TokensUsed30d            int64  `json:"tokensUsed30d"`
+	CostMicrousd30d          int64  `json:"costMicrousd30d"`
+	RequestsRemaining24h     *int64 `json:"requestsRemaining24h"`
+	TokensRemaining24h       *int64 `json:"tokensRemaining24h"`
+	CostRemainingMicrousd24h *int64 `json:"costRemainingMicrousd24h"`
+	RequestsRemaining30d     *int64 `json:"requestsRemaining30d"`
+	TokensRemaining30d       *int64 `json:"tokensRemaining30d"`
+	CostRemainingMicrousd30d *int64 `json:"costRemainingMicrousd30d"`
+	RequestBudgetExceeded    bool   `json:"requestBudgetExceeded"`
+	TokenBudgetExceeded      bool   `json:"tokenBudgetExceeded"`
+	CostBudgetExceeded       bool   `json:"costBudgetExceeded"`
 }
 
 type RequestLog struct {
@@ -285,7 +292,7 @@ type Repository interface {
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
-	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error)
+	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (APIKey, error)
 	ListRoutingPools(ctx context.Context) ([]RoutingPool, error)
 	CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error)
 	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error)
@@ -491,11 +498,11 @@ func (s *Service) UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerM
 	return s.repo.UpdateAPIKeyLimits(ctx, id, requestsPerMinute, tokensPerMinute)
 }
 
-func (s *Service) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error) {
-	if requestBudget24h < 0 || tokenBudget24h < 0 || requestBudget30d < 0 || tokenBudget30d < 0 {
+func (s *Service) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (APIKey, error) {
+	if requestBudget24h < 0 || tokenBudget24h < 0 || costBudgetMicrousd24h < 0 || requestBudget30d < 0 || tokenBudget30d < 0 || costBudgetMicrousd30d < 0 {
 		return APIKey{}, ErrInvalidInput
 	}
-	return s.repo.UpdateAPIKeyBudgets(ctx, id, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d)
+	return s.repo.UpdateAPIKeyBudgets(ctx, id, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d)
 }
 
 func (s *Service) ListRoutingPools(ctx context.Context) ([]RoutingPool, error) {
@@ -594,19 +601,27 @@ func applyBudgetRemaining(usage *APIKeyBudgetUsage, key APIKey) {
 	usage.KeyID = key.ID
 	usage.RequestsRemaining24h = remainingBudget(key.RequestBudget24h, usage.RequestsUsed24h)
 	usage.TokensRemaining24h = remainingBudget(key.TokenBudget24h, usage.TokensUsed24h)
+	usage.CostRemainingMicrousd24h = remainingBudget64(key.CostBudgetMicrousd24h, usage.CostMicrousd24h)
 	usage.RequestsRemaining30d = remainingBudget(key.RequestBudget30d, usage.RequestsUsed30d)
 	usage.TokensRemaining30d = remainingBudget(key.TokenBudget30d, usage.TokensUsed30d)
+	usage.CostRemainingMicrousd30d = remainingBudget64(key.CostBudgetMicrousd30d, usage.CostMicrousd30d)
 	usage.RequestBudgetExceeded = budgetExceeded(key.RequestBudget24h, usage.RequestsUsed24h) ||
 		budgetExceeded(key.RequestBudget30d, usage.RequestsUsed30d)
 	usage.TokenBudgetExceeded = budgetExceeded(key.TokenBudget24h, usage.TokensUsed24h) ||
 		budgetExceeded(key.TokenBudget30d, usage.TokensUsed30d)
+	usage.CostBudgetExceeded = budgetExceeded64(key.CostBudgetMicrousd24h, usage.CostMicrousd24h) ||
+		budgetExceeded64(key.CostBudgetMicrousd30d, usage.CostMicrousd30d)
 }
 
 func remainingBudget(limit int, used int64) *int64 {
+	return remainingBudget64(int64(limit), used)
+}
+
+func remainingBudget64(limit int64, used int64) *int64 {
 	if limit <= 0 {
 		return nil
 	}
-	remaining := int64(limit) - used
+	remaining := limit - used
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -614,7 +629,11 @@ func remainingBudget(limit int, used int64) *int64 {
 }
 
 func budgetExceeded(limit int, used int64) bool {
-	return limit > 0 && used >= int64(limit)
+	return budgetExceeded64(int64(limit), used)
+}
+
+func budgetExceeded64(limit int64, used int64) bool {
+	return limit > 0 && used >= limit
 }
 
 func (s *Service) APIKeyAllowsModel(key APIKey, model string) bool {

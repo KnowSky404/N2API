@@ -363,18 +363,18 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 		t.Fatalf("FindAPIKeyByHash after enable returned error: %v", err)
 	}
 
-	budgeted, err := repo.UpdateAPIKeyBudgets(ctx, created.ID, 12, 1200, 300, 30000)
+	budgeted, err := repo.UpdateAPIKeyBudgets(ctx, created.ID, 12, 1200, 1500000, 300, 30000, 9000000)
 	if err != nil {
 		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
 	}
-	if budgeted.RequestBudget24h != 12 || budgeted.TokenBudget24h != 1200 || budgeted.RequestBudget30d != 300 || budgeted.TokenBudget30d != 30000 {
+	if budgeted.RequestBudget24h != 12 || budgeted.TokenBudget24h != 1200 || budgeted.CostBudgetMicrousd24h != 1500000 || budgeted.RequestBudget30d != 300 || budgeted.TokenBudget30d != 30000 || budgeted.CostBudgetMicrousd30d != 9000000 {
 		t.Fatalf("budgeted key = %+v", budgeted)
 	}
 	keys, err = repo.ListAPIKeys(ctx)
 	if err != nil {
 		t.Fatalf("ListAPIKeys after budgets returned error: %v", err)
 	}
-	if len(keys) != 1 || keys[0].RequestBudget24h != 12 || keys[0].TokenBudget30d != 30000 {
+	if len(keys) != 1 || keys[0].RequestBudget24h != 12 || keys[0].CostBudgetMicrousd24h != 1500000 || keys[0].TokenBudget30d != 30000 || keys[0].CostBudgetMicrousd30d != 9000000 {
 		t.Fatalf("listed budget fields = %+v", keys)
 	}
 
@@ -409,7 +409,7 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	if _, err := repo.SetAPIKeyDisabled(ctx, created.ID, true); !errors.Is(err, admin.ErrNotFound) {
 		t.Fatalf("SetAPIKeyDisabled revoked error = %v, want ErrNotFound", err)
 	}
-	if _, err := repo.UpdateAPIKeyBudgets(ctx, created.ID, 1, 1, 1, 1); !errors.Is(err, admin.ErrNotFound) {
+	if _, err := repo.UpdateAPIKeyBudgets(ctx, created.ID, 1, 1, 1, 1, 1, 1); !errors.Is(err, admin.ErrNotFound) {
 		t.Fatalf("UpdateAPIKeyBudgets revoked error = %v, want ErrNotFound", err)
 	}
 }
@@ -427,17 +427,17 @@ func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAPIKey other returned error: %v", err)
 	}
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 40)
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-23*time.Hour), 200, 60)
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-25*time.Hour), 200, 90)
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-31*24*time.Hour), 200, 900)
-	insertRequestLog(t, repo.pool, other.ID, now.Add(-time.Hour), 200, 700)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 40, 400)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-23*time.Hour), 200, 60, 600)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-25*time.Hour), 200, 90, 900)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-31*24*time.Hour), 200, 900, 9000)
+	insertRequestLog(t, repo.pool, other.ID, now.Add(-time.Hour), 200, 700, 7000)
 
 	usage, err := repo.GetAPIKeyBudgetUsage(ctx, key.ID, now)
 	if err != nil {
 		t.Fatalf("GetAPIKeyBudgetUsage returned error: %v", err)
 	}
-	if usage.KeyID != key.ID || usage.RequestsUsed24h != 2 || usage.TokensUsed24h != 100 || usage.RequestsUsed30d != 3 || usage.TokensUsed30d != 190 {
+	if usage.KeyID != key.ID || usage.RequestsUsed24h != 2 || usage.TokensUsed24h != 100 || usage.CostMicrousd24h != 1000 || usage.RequestsUsed30d != 3 || usage.TokensUsed30d != 190 || usage.CostMicrousd30d != 1900 {
 		t.Fatalf("usage = %+v, want key usage across 24h and 30d windows", usage)
 	}
 }
@@ -527,16 +527,16 @@ func insertProviderAccount(t *testing.T, pool *pgxpool.Pool, providerName, accou
 	return accountID
 }
 
-func insertRequestLog(t *testing.T, pool *pgxpool.Pool, keyID int64, createdAt time.Time, statusCode, totalTokens int) {
+func insertRequestLog(t *testing.T, pool *pgxpool.Pool, keyID int64, createdAt time.Time, statusCode, totalTokens int, costMicrousd int64) {
 	t.Helper()
 
 	requestID := "req_budget_" + strconv.FormatInt(createdAt.UnixNano(), 10)
 	if _, err := pool.Exec(context.Background(), `
 		INSERT INTO request_logs (
-			request_id, client_key_id, provider, route, method, status_code, latency_ms, total_tokens, created_at
+			request_id, client_key_id, provider, route, method, status_code, latency_ms, total_tokens, estimated_cost_microusd, created_at
 		)
-		VALUES ($1, $2, 'openai', '/v1/responses', 'POST', $3, 12, $4, $5)
-	`, requestID, keyID, statusCode, totalTokens, createdAt); err != nil {
+		VALUES ($1, $2, 'openai', '/v1/responses', 'POST', $3, 12, $4, $5, $6)
+	`, requestID, keyID, statusCode, totalTokens, costMicrousd, createdAt); err != nil {
 		t.Fatalf("insert request log failed: %v", err)
 	}
 }

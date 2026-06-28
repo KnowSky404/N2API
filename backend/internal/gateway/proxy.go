@@ -603,7 +603,7 @@ func (p *Proxy) apiKeyBudgetErrorCode(ctx context.Context, key admin.APIKey, now
 	if p.budgets == nil {
 		return "", nil
 	}
-	if key.RequestBudget24h <= 0 && key.TokenBudget24h <= 0 && key.RequestBudget30d <= 0 && key.TokenBudget30d <= 0 {
+	if key.RequestBudget24h <= 0 && key.TokenBudget24h <= 0 && key.CostBudgetMicrousd24h <= 0 && key.RequestBudget30d <= 0 && key.TokenBudget30d <= 0 && key.CostBudgetMicrousd30d <= 0 {
 		return "", nil
 	}
 	usage, err := p.budgets.GetAPIKeyBudgetUsage(ctx, key, now)
@@ -615,6 +615,9 @@ func (p *Proxy) apiKeyBudgetErrorCode(ctx context.Context, key admin.APIKey, now
 	}
 	if usage.TokenBudgetExceeded {
 		return "api_key_token_budget_exceeded", nil
+	}
+	if usage.CostBudgetExceeded {
+		return "api_key_cost_budget_exceeded", nil
 	}
 	return "", nil
 }

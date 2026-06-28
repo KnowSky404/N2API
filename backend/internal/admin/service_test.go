@@ -188,25 +188,31 @@ func TestUpdateAPIKeyBudgetsValidatesNonNegativeValues(t *testing.T) {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
 
-	updated, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 10, 1000, 300, 30000)
+	updated, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 10, 1000, 1_500_000, 300, 30000, 9_000_000)
 	if err != nil {
 		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
 	}
-	if updated.RequestBudget24h != 10 || updated.TokenBudget24h != 1000 || updated.RequestBudget30d != 300 || updated.TokenBudget30d != 30000 {
+	if updated.RequestBudget24h != 10 || updated.TokenBudget24h != 1000 || updated.CostBudgetMicrousd24h != 1_500_000 || updated.RequestBudget30d != 300 || updated.TokenBudget30d != 30000 || updated.CostBudgetMicrousd30d != 9_000_000 {
 		t.Fatalf("budgets = %+v, want configured values", updated)
 	}
 
-	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, -1, 0, 0, 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, -1, 0, 0, 0, 0, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("negative requestBudget24h error = %v, want ErrInvalidInput", err)
 	}
-	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, -1, 0, 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, -1, 0, 0, 0, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("negative tokenBudget24h error = %v, want ErrInvalidInput", err)
 	}
-	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, -1, 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, -1, 0, 0, 0); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative costBudgetMicrousd24h error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, 0, -1, 0, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("negative requestBudget30d error = %v, want ErrInvalidInput", err)
 	}
-	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, 0, -1); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, 0, 0, -1, 0); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("negative tokenBudget30d error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.UpdateAPIKeyBudgets(context.Background(), result.Key.ID, 0, 0, 0, 0, 0, -1); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("negative costBudgetMicrousd30d error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -285,18 +291,22 @@ func TestAPIKeyBudgetUsageComputesRemainingAndExceeded(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{})
 	key := APIKey{
-		ID:               42,
-		RequestBudget24h: 3,
-		TokenBudget24h:   80,
-		RequestBudget30d: 10,
-		TokenBudget30d:   100,
+		ID:                    42,
+		RequestBudget24h:      3,
+		TokenBudget24h:        80,
+		CostBudgetMicrousd24h: 2000,
+		RequestBudget30d:      10,
+		TokenBudget30d:        100,
+		CostBudgetMicrousd30d: 3000,
 	}
 	repo.budgetUsage[key.ID] = APIKeyBudgetUsage{
 		KeyID:           key.ID,
 		RequestsUsed24h: 3,
 		TokensUsed24h:   70,
+		CostMicrousd24h: 1500,
 		RequestsUsed30d: 8,
 		TokensUsed30d:   120,
+		CostMicrousd30d: 3500,
 	}
 
 	usage, err := service.GetAPIKeyBudgetUsage(context.Background(), key, time.Unix(5000, 0).UTC())
@@ -309,21 +319,27 @@ func TestAPIKeyBudgetUsageComputesRemainingAndExceeded(t *testing.T) {
 	if usage.TokensRemaining24h == nil || *usage.TokensRemaining24h != 10 {
 		t.Fatalf("TokensRemaining24h = %v, want 10", usage.TokensRemaining24h)
 	}
+	if usage.CostRemainingMicrousd24h == nil || *usage.CostRemainingMicrousd24h != 500 {
+		t.Fatalf("CostRemainingMicrousd24h = %v, want 500", usage.CostRemainingMicrousd24h)
+	}
 	if usage.RequestsRemaining30d == nil || *usage.RequestsRemaining30d != 2 {
 		t.Fatalf("RequestsRemaining30d = %v, want 2", usage.RequestsRemaining30d)
 	}
 	if usage.TokensRemaining30d == nil || *usage.TokensRemaining30d != 0 {
 		t.Fatalf("TokensRemaining30d = %v, want 0", usage.TokensRemaining30d)
 	}
-	if !usage.RequestBudgetExceeded || !usage.TokenBudgetExceeded {
-		t.Fatalf("budget exceeded flags = request:%v token:%v, want both true", usage.RequestBudgetExceeded, usage.TokenBudgetExceeded)
+	if usage.CostRemainingMicrousd30d == nil || *usage.CostRemainingMicrousd30d != 0 {
+		t.Fatalf("CostRemainingMicrousd30d = %v, want 0", usage.CostRemainingMicrousd30d)
+	}
+	if !usage.RequestBudgetExceeded || !usage.TokenBudgetExceeded || !usage.CostBudgetExceeded {
+		t.Fatalf("budget exceeded flags = request:%v token:%v cost:%v, want all true", usage.RequestBudgetExceeded, usage.TokenBudgetExceeded, usage.CostBudgetExceeded)
 	}
 
 	uncapped, err := service.GetAPIKeyBudgetUsage(context.Background(), APIKey{ID: 43}, time.Unix(5000, 0).UTC())
 	if err != nil {
 		t.Fatalf("GetAPIKeyBudgetUsage uncapped returned error: %v", err)
 	}
-	if uncapped.RequestsRemaining24h != nil || uncapped.TokensRemaining30d != nil || uncapped.RequestBudgetExceeded || uncapped.TokenBudgetExceeded {
+	if uncapped.RequestsRemaining24h != nil || uncapped.TokensRemaining30d != nil || uncapped.CostRemainingMicrousd30d != nil || uncapped.RequestBudgetExceeded || uncapped.TokenBudgetExceeded || uncapped.CostBudgetExceeded {
 		t.Fatalf("uncapped usage = %+v, want nil remaining and no exceeded flags", uncapped)
 	}
 }
@@ -1408,15 +1424,17 @@ func (r *memoryRepo) UpdateAPIKeyLimits(_ context.Context, id int64, requestsPer
 	return key.APIKey, nil
 }
 
-func (r *memoryRepo) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (APIKey, error) {
+func (r *memoryRepo) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (APIKey, error) {
 	key, ok := r.keys[id]
 	if !ok || key.RevokedAt != nil {
 		return APIKey{}, ErrNotFound
 	}
 	key.RequestBudget24h = requestBudget24h
 	key.TokenBudget24h = tokenBudget24h
+	key.CostBudgetMicrousd24h = costBudgetMicrousd24h
 	key.RequestBudget30d = requestBudget30d
 	key.TokenBudget30d = tokenBudget30d
+	key.CostBudgetMicrousd30d = costBudgetMicrousd30d
 	r.keys[id] = key
 	return key.APIKey, nil
 }

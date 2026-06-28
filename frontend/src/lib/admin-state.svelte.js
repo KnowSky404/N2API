@@ -16,8 +16,10 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} tokensPerMinute
  * @property {number} requestBudget24h
  * @property {number} tokenBudget24h
+ * @property {number} costBudgetMicrousd24h
  * @property {number} requestBudget30d
  * @property {number} tokenBudget30d
+ * @property {number} costBudgetMicrousd30d
  * @property {number} currentConcurrentRequests
  * @property {number} effectiveMaxConcurrentRequests
  * @property {boolean} concurrencyBlocked
@@ -31,14 +33,19 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} tokenRateLimited
  * @property {number} requestsUsed24h
  * @property {number} tokensUsed24h
+ * @property {number} costMicrousd24h
  * @property {number} requestsUsed30d
  * @property {number} tokensUsed30d
+ * @property {number} costMicrousd30d
  * @property {number | null} requestsRemaining24h
  * @property {number | null} tokensRemaining24h
+ * @property {number | null} costRemainingMicrousd24h
  * @property {number | null} requestsRemaining30d
  * @property {number | null} tokensRemaining30d
+ * @property {number | null} costRemainingMicrousd30d
  * @property {boolean} requestBudgetExceeded
  * @property {boolean} tokenBudgetExceeded
+ * @property {boolean} costBudgetExceeded
  * @property {number | null} routingPoolId
  * @property {string} routingPoolName
  */
@@ -2623,18 +2630,22 @@ export async function updateAPIKeyLimits(keyId, requestsPerMinute, tokensPerMinu
  * @param {number} keyId
  * @param {string | number} requestBudget24h
  * @param {string | number} tokenBudget24h
+ * @param {string | number} costBudgetMicrousd24h
  * @param {string | number} requestBudget30d
  * @param {string | number} tokenBudget30d
+ * @param {string | number} costBudgetMicrousd30d
  */
-export async function updateAPIKeyBudgets(keyId, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d) {
+export async function updateAPIKeyBudgets(keyId, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
 
   const payload = {
     requestBudget24h: Number(requestBudget24h),
     tokenBudget24h: Number(tokenBudget24h),
+    costBudgetMicrousd24h: Number(costBudgetMicrousd24h),
     requestBudget30d: Number(requestBudget30d),
-    tokenBudget30d: Number(tokenBudget30d)
+    tokenBudget30d: Number(tokenBudget30d),
+    costBudgetMicrousd30d: Number(costBudgetMicrousd30d)
   };
   if (Object.values(payload).some((value) => !Number.isInteger(value) || value < 0)) {
     apiKeys.error = 'API key budgets must be non-negative whole numbers';

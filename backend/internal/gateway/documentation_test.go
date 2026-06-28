@@ -206,10 +206,12 @@ func TestGatewayDocumentationMentionsAPIKeyBudgets(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"API key budgets",
-			"request and token budgets over rolling 24h and 30d windows",
+			"request, token, and estimated cost budgets over rolling 24h and 30d windows",
+			"cost budgets use stored estimated request cost",
 			"`0` disables a budget field",
 			"`api_key_request_budget_exceeded`",
 			"`api_key_token_budget_exceeded`",
+			"`api_key_cost_budget_exceeded`",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in API key budget documentation", path, want)

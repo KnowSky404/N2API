@@ -61,8 +61,10 @@ type fakeAdminService struct {
 	budgetKeyID          int64
 	requestBudget24h     int
 	tokenBudget24h       int
+	costBudget24h        int64
 	requestBudget30d     int
 	tokenBudget30d       int
+	costBudget30d        int64
 	budgetsErr           error
 	routingPools         []admin.RoutingPool
 	createFallbackID     *int64
@@ -312,12 +314,14 @@ func (s *fakeAdminService) UpdateAPIKeyLimits(_ context.Context, id int64, reque
 	return admin.APIKey{}, admin.ErrNotFound
 }
 
-func (s *fakeAdminService) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int) (admin.APIKey, error) {
+func (s *fakeAdminService) UpdateAPIKeyBudgets(_ context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (admin.APIKey, error) {
 	s.budgetKeyID = id
 	s.requestBudget24h = requestBudget24h
 	s.tokenBudget24h = tokenBudget24h
+	s.costBudget24h = costBudgetMicrousd24h
 	s.requestBudget30d = requestBudget30d
 	s.tokenBudget30d = tokenBudget30d
+	s.costBudget30d = costBudgetMicrousd30d
 	if s.budgetsErr != nil {
 		return admin.APIKey{}, s.budgetsErr
 	}
@@ -325,8 +329,10 @@ func (s *fakeAdminService) UpdateAPIKeyBudgets(_ context.Context, id int64, requ
 		if key.ID == id {
 			key.RequestBudget24h = requestBudget24h
 			key.TokenBudget24h = tokenBudget24h
+			key.CostBudgetMicrousd24h = costBudgetMicrousd24h
 			key.RequestBudget30d = requestBudget30d
 			key.TokenBudget30d = tokenBudget30d
+			key.CostBudgetMicrousd30d = costBudgetMicrousd30d
 			s.keys[i] = key
 			return key, nil
 		}
@@ -1202,19 +1208,25 @@ func TestListAPIKeysIncludesRateWindowState(t *testing.T) {
 func TestListAPIKeysIncludesBudgetUsageState(t *testing.T) {
 	admins := newFakeAdminService()
 	remainingRequests24h := int64(3)
+	remainingCost24h := int64(500)
 	remainingTokens30d := int64(0)
 	admins.keys[0].RequestBudget24h = 10
+	admins.keys[0].CostBudgetMicrousd24h = 1500
 	admins.keys[0].TokenBudget30d = 100
 	admins.budgetUsage[7] = admin.APIKeyBudgetUsage{
-		KeyID:                 7,
-		RequestsUsed24h:       7,
-		TokensUsed24h:         42,
-		RequestsUsed30d:       12,
-		TokensUsed30d:         120,
-		RequestsRemaining24h:  &remainingRequests24h,
-		TokensRemaining30d:    &remainingTokens30d,
-		RequestBudgetExceeded: false,
-		TokenBudgetExceeded:   true,
+		KeyID:                    7,
+		RequestsUsed24h:          7,
+		TokensUsed24h:            42,
+		CostMicrousd24h:          1000,
+		RequestsUsed30d:          12,
+		TokensUsed30d:            120,
+		CostMicrousd30d:          5000,
+		RequestsRemaining24h:     &remainingRequests24h,
+		CostRemainingMicrousd24h: &remainingCost24h,
+		TokensRemaining30d:       &remainingTokens30d,
+		RequestBudgetExceeded:    false,
+		TokenBudgetExceeded:      true,
+		CostBudgetExceeded:       true,
 	}
 	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/keys", nil)
@@ -1229,12 +1241,15 @@ func TestListAPIKeysIncludesBudgetUsageState(t *testing.T) {
 	var body struct {
 		Keys []struct {
 			admin.APIKey
-			RequestsUsed24h       int64  `json:"requestsUsed24h"`
-			TokensUsed30d         int64  `json:"tokensUsed30d"`
-			RequestsRemaining24h  *int64 `json:"requestsRemaining24h"`
-			TokensRemaining30d    *int64 `json:"tokensRemaining30d"`
-			RequestBudgetExceeded bool   `json:"requestBudgetExceeded"`
-			TokenBudgetExceeded   bool   `json:"tokenBudgetExceeded"`
+			RequestsUsed24h          int64  `json:"requestsUsed24h"`
+			CostMicrousd24h          int64  `json:"costMicrousd24h"`
+			TokensUsed30d            int64  `json:"tokensUsed30d"`
+			RequestsRemaining24h     *int64 `json:"requestsRemaining24h"`
+			CostRemainingMicrousd24h *int64 `json:"costRemainingMicrousd24h"`
+			TokensRemaining30d       *int64 `json:"tokensRemaining30d"`
+			RequestBudgetExceeded    bool   `json:"requestBudgetExceeded"`
+			TokenBudgetExceeded      bool   `json:"tokenBudgetExceeded"`
+			CostBudgetExceeded       bool   `json:"costBudgetExceeded"`
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
@@ -1244,14 +1259,14 @@ func TestListAPIKeysIncludesBudgetUsageState(t *testing.T) {
 		t.Fatalf("keys = %+v, want one key", body.Keys)
 	}
 	key := body.Keys[0]
-	if key.RequestBudget24h != 10 || key.TokenBudget30d != 100 || key.RequestsUsed24h != 7 || key.TokensUsed30d != 120 {
+	if key.RequestBudget24h != 10 || key.CostBudgetMicrousd24h != 1500 || key.TokenBudget30d != 100 || key.RequestsUsed24h != 7 || key.CostMicrousd24h != 1000 || key.TokensUsed30d != 120 {
 		t.Fatalf("budget fields = %+v, want configured budgets and usage", key)
 	}
-	if key.RequestsRemaining24h == nil || *key.RequestsRemaining24h != 3 || key.TokensRemaining30d == nil || *key.TokensRemaining30d != 0 {
+	if key.RequestsRemaining24h == nil || *key.RequestsRemaining24h != 3 || key.CostRemainingMicrousd24h == nil || *key.CostRemainingMicrousd24h != 500 || key.TokensRemaining30d == nil || *key.TokensRemaining30d != 0 {
 		t.Fatalf("budget remaining = %+v, want request 3 and token 0", key)
 	}
-	if key.RequestBudgetExceeded || !key.TokenBudgetExceeded {
-		t.Fatalf("budget exceeded flags = request:%v token:%v, want request false token true", key.RequestBudgetExceeded, key.TokenBudgetExceeded)
+	if key.RequestBudgetExceeded || !key.TokenBudgetExceeded || !key.CostBudgetExceeded {
+		t.Fatalf("budget exceeded flags = request:%v token:%v cost:%v, want request false token/cost true", key.RequestBudgetExceeded, key.TokenBudgetExceeded, key.CostBudgetExceeded)
 	}
 }
 
@@ -1622,7 +1637,7 @@ func TestUpdateAPIKeyLimitsEndpointMapsErrors(t *testing.T) {
 func TestUpdateAPIKeyBudgetsEndpoint(t *testing.T) {
 	admins := newFakeAdminService()
 	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/budgets", strings.NewReader(`{"requestBudget24h":10,"tokenBudget24h":1000,"requestBudget30d":300,"tokenBudget30d":30000}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/keys/7/budgets", strings.NewReader(`{"requestBudget24h":10,"tokenBudget24h":1000,"costBudgetMicrousd24h":1500000,"requestBudget30d":300,"tokenBudget30d":30000,"costBudgetMicrousd30d":9000000}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -1637,11 +1652,11 @@ func TestUpdateAPIKeyBudgetsEndpoint(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Key.ID != 7 || body.Key.RequestBudget24h != 10 || body.Key.TokenBudget24h != 1000 || body.Key.RequestBudget30d != 300 || body.Key.TokenBudget30d != 30000 {
+	if body.Key.ID != 7 || body.Key.RequestBudget24h != 10 || body.Key.TokenBudget24h != 1000 || body.Key.CostBudgetMicrousd24h != 1500000 || body.Key.RequestBudget30d != 300 || body.Key.TokenBudget30d != 30000 || body.Key.CostBudgetMicrousd30d != 9000000 {
 		t.Fatalf("key = %+v, want key budget updates", body.Key)
 	}
-	if admins.budgetKeyID != 7 || admins.requestBudget24h != 10 || admins.tokenBudget24h != 1000 || admins.requestBudget30d != 300 || admins.tokenBudget30d != 30000 {
-		t.Fatalf("recorded budgets = id:%d request24h:%d token24h:%d request30d:%d token30d:%d", admins.budgetKeyID, admins.requestBudget24h, admins.tokenBudget24h, admins.requestBudget30d, admins.tokenBudget30d)
+	if admins.budgetKeyID != 7 || admins.requestBudget24h != 10 || admins.tokenBudget24h != 1000 || admins.costBudget24h != 1500000 || admins.requestBudget30d != 300 || admins.tokenBudget30d != 30000 || admins.costBudget30d != 9000000 {
+		t.Fatalf("recorded budgets = id:%d request24h:%d token24h:%d cost24h:%d request30d:%d token30d:%d cost30d:%d", admins.budgetKeyID, admins.requestBudget24h, admins.tokenBudget24h, admins.costBudget24h, admins.requestBudget30d, admins.tokenBudget30d, admins.costBudget30d)
 	}
 }
 

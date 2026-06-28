@@ -917,25 +917,27 @@ test('api key state can save per-key gateway limits', async () => {
 test('api key state can save per-key budgets', async () => {
   session.authenticated = true;
   apiKeys.error = '';
-  apiKeys.items = [{ id: 7, name: 'codex laptop', requestBudget24h: 0, tokenBudget24h: 0, requestBudget30d: 0, tokenBudget30d: 0 }];
+  apiKeys.items = [{ id: 7, name: 'codex laptop', requestBudget24h: 0, tokenBudget24h: 0, costBudgetMicrousd24h: 0, requestBudget30d: 0, tokenBudget30d: 0, costBudgetMicrousd30d: 0 }];
   let request = null;
   globalThis.fetch = async (path, options) => {
     request = { path, options };
     return new Response(
       JSON.stringify({
-        key: { id: 7, name: 'codex laptop', requestBudget24h: 10, tokenBudget24h: 1000, requestBudget30d: 300, tokenBudget30d: 30000 }
+        key: { id: 7, name: 'codex laptop', requestBudget24h: 10, tokenBudget24h: 1000, costBudgetMicrousd24h: 1500000, requestBudget30d: 300, tokenBudget30d: 30000, costBudgetMicrousd30d: 9000000 }
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   };
 
-  await updateAPIKeyBudgets(7, '10', '1000', '300', '30000');
+  await updateAPIKeyBudgets(7, '10', '1000', '1500000', '300', '30000', '9000000');
 
   assert.equal(request.path, '/api/admin/keys/7/budgets');
   assert.equal(request.options.method, 'PUT');
-  assert.deepEqual(JSON.parse(request.options.body), { requestBudget24h: 10, tokenBudget24h: 1000, requestBudget30d: 300, tokenBudget30d: 30000 });
+  assert.deepEqual(JSON.parse(request.options.body), { requestBudget24h: 10, tokenBudget24h: 1000, costBudgetMicrousd24h: 1500000, requestBudget30d: 300, tokenBudget30d: 30000, costBudgetMicrousd30d: 9000000 });
   assert.equal(apiKeys.items[0].requestBudget24h, 10);
+  assert.equal(apiKeys.items[0].costBudgetMicrousd24h, 1500000);
   assert.equal(apiKeys.items[0].tokenBudget30d, 30000);
+  assert.equal(apiKeys.items[0].costBudgetMicrousd30d, 9000000);
 });
 
 test('api keys page edits per-key gateway limits', () => {
