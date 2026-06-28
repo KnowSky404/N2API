@@ -20,6 +20,7 @@
     getUnschedulableProviderAccountSummary,
     health,
     loadModelSettings,
+    loadOpsDashboard,
     loadProviderAccounts,
     loadRequestLogs,
     login,
@@ -27,6 +28,7 @@
     logout,
     modelSettings,
     modelRouting,
+    opsMonitor,
     provider,
     providerAccounts,
     providerConnectForm,
@@ -301,6 +303,81 @@
             {/if}
           </div>
         {/each}
+      {/if}
+    </article>
+
+    <!-- Operations snapshot -->
+    <article class="rounded-lg border border-[#ededed] bg-white p-6">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Operations snapshot</h2>
+          <p class="mt-2 text-sm text-[#6e6e6e]">24h gateway error pressure and upstream health.</p>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={opsMonitor.loading}
+            onclick={() => loadOpsDashboard(86400)}
+          >
+            {opsMonitor.loading ? 'Refreshing' : 'Refresh'}
+          </button>
+          <a
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            href="/ops"
+          >
+            Open ops monitor
+          </a>
+        </div>
+      </div>
+      {#if opsMonitor.error && !opsMonitor.stats}
+        <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{opsMonitor.error}</p>
+      {:else if opsMonitor.loading && !opsMonitor.stats}
+        <p class="mt-5 text-sm text-[#6e6e6e]">Loading operations snapshot...</p>
+      {:else}
+        <dl class="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3">
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <dt class="text-sm font-medium text-[#6e6e6e]">Error rate</dt>
+            <dd class="mt-2 text-base font-semibold tabular-nums {opsMonitor.stats?.errorRate > 0.1 ? 'text-red-700' : opsMonitor.stats?.errorRate > 0.02 ? 'text-amber-700' : 'text-[#0a7a5e]'}">
+              {(((opsMonitor.stats?.errorRate ?? 0) * 100).toFixed(1))}%
+            </dd>
+          </div>
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <dt class="text-sm font-medium text-[#6e6e6e]">Client errors</dt>
+            <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.stats?.clientErrors)}</dd>
+          </div>
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <dt class="text-sm font-medium text-[#6e6e6e]">Server errors</dt>
+            <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.stats?.serverErrors)}</dd>
+          </div>
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <dt class="text-sm font-medium text-[#6e6e6e]">Rate limited</dt>
+            <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.stats?.rateLimitErrors)}</dd>
+          </div>
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <dt class="text-sm font-medium text-[#6e6e6e]">Upstream errors</dt>
+            <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.stats?.upstreamErrors)}</dd>
+          </div>
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <dt class="text-sm font-medium text-[#6e6e6e]">Total requests</dt>
+            <dd class="mt-2 text-base font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(opsMonitor.stats?.totalRequests)}</dd>
+          </div>
+        </dl>
+        {#if opsMonitor.stats?.topErrors?.length > 0}
+          <div class="mt-5 rounded-lg border border-[#ededed]">
+            <div class="border-b border-[#ededed] bg-[#f5f5f5] px-4 py-3">
+              <h3 class="text-sm font-semibold text-[#0d0d0d]">Top errors</h3>
+            </div>
+            <div class="divide-y divide-[#ededed]">
+              {#each opsMonitor.stats.topErrors.slice(0, 5) as bucket}
+                <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 px-4 py-3 text-sm">
+                  <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{bucket.label}</span>
+                  <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.count)}</span>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
       {/if}
     </article>
 

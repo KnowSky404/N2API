@@ -11,7 +11,10 @@ const expectedFiles = [
   'src/routes/routing-pools/+page.svelte',
   'src/routes/models/+page.svelte',
   'src/routes/api-keys/+page.svelte',
-  'src/routes/request-logs/+page.svelte'
+  'src/routes/request-logs/+page.svelte',
+  'src/routes/ops/+page.svelte',
+  'src/routes/fingerprints/+page.svelte',
+  'src/routes/error-passthrough/+page.svelte'
 ];
 
 const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
@@ -28,7 +31,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Sign out']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Error rules', 'Sign out']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -651,6 +654,18 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(adminState, /await loadUsageSummary\('24h', 'session'\)/);
   assert.match(dashboardPage, /formatTokens/);
   assert.match(dashboardPage, /formatCostMicrousd/);
+});
+
+test('dashboard shows ops monitoring snapshot', () => {
+  for (const label of ['Operations snapshot', 'Error rate', 'Client errors', 'Server errors', 'Rate limited', 'Upstream errors', 'Open ops monitor']) {
+    assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
+  }
+
+  assert.match(dashboardPage, /opsMonitor/);
+  assert.match(dashboardPage, /loadOpsDashboard/);
+  assert.match(dashboardPage, /opsMonitor\.stats/);
+  assert.match(dashboardPage, /href="\/ops"/);
+  assert.match(adminState, /await loadOpsDashboard\(86400\)/);
 });
 
 test('dashboard recent activity links to filtered request logs', () => {

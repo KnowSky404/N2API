@@ -1086,6 +1086,7 @@ export async function loadSession() {
     await loadUsageSummary('24h', usage.groupBy);
     await loadUsageSummary('30d', usage.groupBy);
     await loadUsageSummary('7d', usage.groupBy);
+    await loadOpsDashboard(86400);
   } catch (error) {
     if (version !== sessionVersion) return;
 
