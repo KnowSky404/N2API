@@ -495,7 +495,7 @@
       <div class="flex items-center gap-2 mt-2">
         <a
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
-          href={exportRequestLogsURL()}
+          href={exportRequestLogsURL("csv")}
           target="_blank" rel="noopener noreferrer"
         >
           Export CSV

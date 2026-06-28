@@ -242,6 +242,11 @@ test('request logs page includes usage accounting UI', () => {
   assert.match(requestLogsPage, /href=\{usageRowHref\(row\)\}/);
 });
 
+test('request logs export links request explicit formats', () => {
+  assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("csv"\)\}[\s\S]*Export CSV/);
+  assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("json"\)\}[\s\S]*Export JSON/);
+});
+
 test('request logs page formats gateway error codes for scanning', () => {
   assert.match(requestLogsPage, /function errorLabel/);
   assert.match(requestLogsPage, /function errorHref/);
