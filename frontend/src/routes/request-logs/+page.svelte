@@ -156,6 +156,8 @@
     if (value === 'chat_completions') return 'Chat';
     if (value === 'responses') return 'Responses';
     if (value === 'stream') return 'Stream';
+    if (value === 'gemini_usage_metadata') return 'Gemini';
+    if (value === 'anthropic_usage') return 'Anthropic';
     return value || 'Missing';
   }
 

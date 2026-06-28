@@ -224,6 +224,10 @@ test('request logs page shows token usage', () => {
   assert.match(requestLogsPage, /log\.outputTokens/);
   assert.match(requestLogsPage, /log\.totalTokens/);
   assert.match(requestLogsPage, /log\.usageSource/);
+  assert.match(requestLogsPage, /gemini_usage_metadata/);
+  assert.match(requestLogsPage, /Gemini/);
+  assert.match(requestLogsPage, /anthropic_usage/);
+  assert.match(requestLogsPage, /Anthropic/);
   assert.match(requestLogsPage, /formatRequestLogCost/);
   assert.match(requestLogsPage, /Unpriced/);
 });
