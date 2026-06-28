@@ -44,6 +44,13 @@ let requested = $state(false);
     if (!max || max <= 0) return 0;
     return Math.min(100, (count / max) * 100);
   }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function opsErrorHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    if (!key) return '/request-logs';
+    return `/request-logs?error=${encodeURIComponent(key)}`;
+  }
 </script>
 
 <svelte:head>
@@ -156,7 +163,13 @@ let requested = $state(false);
               <div class="mt-3 space-y-2">
                 {#each opsMonitor.stats.topErrors as bucket}
                   <div class="flex items-center gap-2">
-                    <span class="min-w-0 flex-1 truncate text-sm font-medium text-[#0d0d0d]">{bucket.label}</span>
+                    <a
+                      class="min-w-0 flex-1 truncate text-sm font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                      href={opsErrorHref(bucket)}
+                      title="View matching request logs"
+                    >
+                      {bucket.label}
+                    </a>
                     <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] shrink-0">{formatTokens(bucket.count)}</span>
                   </div>
                 {/each}

@@ -23,6 +23,7 @@ const gatewayPage = readFileSync('src/routes/gateway/+page.svelte', 'utf8');
 const providersPage = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const apiKeysPage = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
 const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
+const opsPage = readFileSync('src/routes/ops/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {
@@ -701,6 +702,17 @@ test('dashboard shows ops monitoring snapshot', () => {
   assert.match(dashboardPage, /opsMonitor\.stats/);
   assert.match(dashboardPage, /href="\/ops"/);
   assert.match(adminState, /await loadOpsDashboard\(86400\)/);
+});
+
+test('ops monitor links error buckets to filtered request logs', () => {
+  for (const label of ['Operations monitor', 'Top errors', 'Upstream status codes']) {
+    assert.match(opsPage, new RegExp(label.replace(' ', '\\s+')), `ops page should include ${label}`);
+  }
+
+  assert.match(opsPage, /function opsErrorHref/);
+  assert.match(opsPage, /error=\$\{encodeURIComponent/);
+  assert.match(opsPage, /href=\{opsErrorHref\(bucket\)\}/);
+  assert.match(opsPage, /View matching request logs/);
 });
 
 test('dashboard recent activity links to filtered request logs', () => {
