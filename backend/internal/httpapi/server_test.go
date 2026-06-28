@@ -3662,6 +3662,124 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 	}
 }
 
+func TestExportRequestLogsRequiresSessionAndReturnsCSV(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=csv", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	admins := newFakeAdminService()
+	admins.logs = []admin.RequestLog{{
+		ID:                    9,
+		RequestID:             "req_csv",
+		ClientKey:             `codex "daily", key`,
+		Provider:              "openai",
+		Model:                 "gpt-5",
+		Route:                 "/v1/chat/completions",
+		Method:                http.MethodPost,
+		StatusCode:            429,
+		LatencyMS:             123,
+		Error:                 "upstream_rate_limited",
+		InputTokens:           10,
+		OutputTokens:          20,
+		TotalTokens:           30,
+		EstimatedCostMicrousd: 42,
+		SessionID:             "workspace-123",
+		CreatedAt:             time.Unix(5000, 0).UTC(),
+	}}
+	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=csv&limit=10000&q=codex&statusClass=client_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=upstream_rate_limited&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); contentType != "text/csv; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want CSV", contentType)
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "n2api-request-logs.csv") {
+		t.Fatalf("Content-Disposition = %q, want csv attachment", disposition)
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "id,request_id,client_key,provider,model,route,method,status_code") {
+		t.Fatalf("CSV body missing header: %q", body)
+	}
+	if !strings.Contains(body, `9,req_csv,"codex ""daily"", key",openai,gpt-5,/v1/chat/completions,POST,429,123,upstream_rate_limited,10,20,30,42,workspace-123,1970-01-01T01:23:20Z`) {
+		t.Fatalf("CSV body missing escaped row: %q", body)
+	}
+	if admins.requestLogFilter.Limit != 10000 || admins.requestLogFilter.Query != "codex" || admins.requestLogFilter.StatusClass != admin.RequestLogStatusClientError {
+		t.Fatalf("request log filter = %+v, want export query filters", admins.requestLogFilter)
+	}
+	if admins.requestLogFilter.ProviderAccountID != 7 || admins.requestLogFilter.RoutingPoolID != 9 || admins.requestLogFilter.ClientKeyID != 12 {
+		t.Fatalf("request log ids = provider:%d pool:%d key:%d, want 7/9/12", admins.requestLogFilter.ProviderAccountID, admins.requestLogFilter.RoutingPoolID, admins.requestLogFilter.ClientKeyID)
+	}
+	if admins.requestLogFilter.Model != "gpt-5" || admins.requestLogFilter.SessionID != "workspace-123" || admins.requestLogFilter.Error != "upstream_rate_limited" || admins.requestLogFilter.RoutingPoolChain != "primary -> secondary" || !admins.requestLogFilter.GatewayFallbacks {
+		t.Fatalf("request log filter = %+v, want model/session/error/chain/fallback filters", admins.requestLogFilter)
+	}
+}
+
+func TestExportRequestLogsReturnsJSONAndRejectsUnknownFormat(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=json&limit=1", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Logs []admin.RequestLog `json:"logs"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode export JSON: %v", err)
+	}
+	if len(body.Logs) != 1 || body.Logs[0].RequestID != "req_3" {
+		t.Fatalf("logs = %+v, want exported req_3", body.Logs)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=xml", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unknown format status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestErrorPassthroughRulesRouteIsRegisteredImmediately(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/error-passthrough-rules", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Rules []admin.ErrorPassthroughRule `json:"rules"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Rules) != 1 || body.Rules[0].Pattern != "insufficient_quota" {
+		t.Fatalf("rules = %+v, want seeded error passthrough rule", body.Rules)
+	}
+}
+
 func TestListRequestLogsRejectsInvalidFilter(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?statusClass=bad", nil)
@@ -4745,7 +4863,7 @@ func (s *fakeAdminService) DeleteFingerprintProfile(_ context.Context, _ int64) 
 }
 
 func (s *fakeAdminService) ListErrorPassthroughRules(_ context.Context) ([]admin.ErrorPassthroughRule, error) {
-	return nil, nil
+	return []admin.ErrorPassthroughRule{{ID: 1, Pattern: "insufficient_quota", MatchType: "error_code", Enabled: true}}, nil
 }
 
 func (s *fakeAdminService) CreateErrorPassthroughRule(_ context.Context, _ admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error) {

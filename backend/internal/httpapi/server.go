@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"io"
-	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
@@ -715,7 +715,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
 	}))
 
-
 	mux.HandleFunc("GET /api/admin/request-logs/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleExportRequestLogs(w, r, admins)
 	}))
@@ -792,7 +791,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 		writeJSON(w, http.StatusOK, pricing)
 	}))
-
 
 	mux.HandleFunc("GET /api/admin/ops/error-stats", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		since := parseSinceParam(r)
@@ -914,7 +912,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	mux.HandleFunc("GET /api/admin/model-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 
 	mux.HandleFunc("GET /api/admin/error-passthrough-rules", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		rules, err := admins.ListErrorPassthroughRules(r.Context())
@@ -986,6 +983,8 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+
+	mux.HandleFunc("GET /api/admin/model-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		settings, err := admins.GetModelSettings(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error")
@@ -1608,7 +1607,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		Name:                  req.Name,
 		APIUpstreamBaseURL:    req.BaseURL,
 		APIUpstreamAPIKey:     req.APIKey,
-		FingerprintProfileID: req.FingerprintProfileID,
+		FingerprintProfileID:  req.FingerprintProfileID,
 	})
 	if err != nil {
 		writeProviderAccountError(w, err)
@@ -2525,6 +2524,10 @@ func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins Admi
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = "json"
+	}
+	if format != "json" && format != "csv" {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
 	}
 
 	logs, err := admins.ListRequestLogs(r.Context(), filter)
