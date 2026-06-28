@@ -557,15 +557,16 @@ func (s *fakeProviderService) CreateAPIUpstreamAccount(_ context.Context, input 
 		loadFactor = 1
 	}
 	account := provider.Account{
-		ID:          int64(len(s.accounts) + 1),
-		Provider:    "openai",
-		AccountType: provider.AccountTypeAPIUpstream,
-		Name:        strings.TrimSpace(input.Name),
-		DisplayName: strings.TrimSpace(input.Name),
-		Enabled:     enabled,
-		Priority:    input.Priority,
-		LoadFactor:  loadFactor,
-		Status:      provider.AccountStatusActive,
+		ID:                   int64(len(s.accounts) + 1),
+		Provider:             "openai",
+		AccountType:          provider.AccountTypeAPIUpstream,
+		Name:                 strings.TrimSpace(input.Name),
+		DisplayName:          strings.TrimSpace(input.Name),
+		Enabled:              enabled,
+		Priority:             input.Priority,
+		LoadFactor:           loadFactor,
+		Status:               provider.AccountStatusActive,
+		FingerprintProfileID: input.FingerprintProfileID,
 		Credential: provider.AccountCredential{
 			CredentialType: provider.CredentialTypeAPIKey,
 			BaseURL:        strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"),
@@ -1848,7 +1849,7 @@ func TestProviderConnectReturnsAuthorizationURL(t *testing.T) {
 func TestProviderConnectAcceptsAccountOptionsAndFingerprint(t *testing.T) {
 	providers := newFakeProviderService()
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp","fingerprintProfileId":9}`))
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
@@ -1864,7 +1865,9 @@ func TestProviderConnectAcceptsAccountOptionsAndFingerprint(t *testing.T) {
 		providers.connectOptions.Priority != 7 ||
 		providers.connectOptions.Enabled == nil ||
 		*providers.connectOptions.Enabled ||
-		providers.connectOptions.TargetAccountID != 42 {
+		providers.connectOptions.TargetAccountID != 42 ||
+		providers.connectOptions.FingerprintProfileID == nil ||
+		*providers.connectOptions.FingerprintProfileID != 9 {
 		t.Fatalf("connectOptions = %+v", providers.connectOptions)
 	}
 	if providers.connectOptions.Fingerprint.Value != "browser-fp" ||
@@ -1877,7 +1880,7 @@ func TestProviderConnectAcceptsAccountOptionsAndFingerprint(t *testing.T) {
 func TestUnifiedProviderAccountCodexOAuthConnectDelegatesToProviderConnect(t *testing.T) {
 	providers := newFakeProviderService()
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp","fingerprintProfileId":9}`))
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
@@ -1901,7 +1904,9 @@ func TestUnifiedProviderAccountCodexOAuthConnectDelegatesToProviderConnect(t *te
 		providers.connectOptions.Priority != 7 ||
 		providers.connectOptions.Enabled == nil ||
 		*providers.connectOptions.Enabled ||
-		providers.connectOptions.TargetAccountID != 42 {
+		providers.connectOptions.TargetAccountID != 42 ||
+		providers.connectOptions.FingerprintProfileID == nil ||
+		*providers.connectOptions.FingerprintProfileID != 9 {
 		t.Fatalf("connectOptions = %+v", providers.connectOptions)
 	}
 }
@@ -2036,7 +2041,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 func TestCreateAPIUpstreamAccount(t *testing.T) {
 	providers := newFakeProviderService()
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":" Upstream ","baseUrl":"https://upstream.example.test/v1/","apiKey":" secret ","proxyUrl":" http://proxy-user:proxy-pass@proxy.example.test:8080 ","enabled":true,"priority":8,"models":[" gpt-5 ","gpt-4.1"]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":" Upstream ","baseUrl":"https://upstream.example.test/v1/","apiKey":" secret ","proxyUrl":" http://proxy-user:proxy-pass@proxy.example.test:8080 ","enabled":true,"priority":8,"fingerprintProfileId":9,"models":[" gpt-5 ","gpt-4.1"]}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -2053,6 +2058,9 @@ func TestCreateAPIUpstreamAccount(t *testing.T) {
 	}
 	if providers.createdAPIUpstream.Enabled == nil || !*providers.createdAPIUpstream.Enabled || providers.createdAPIUpstream.Priority != 8 || len(providers.createdAPIUpstream.Models) != 2 {
 		t.Fatalf("created input scheduling/models = %+v", providers.createdAPIUpstream)
+	}
+	if providers.createdAPIUpstream.FingerprintProfileID == nil || *providers.createdAPIUpstream.FingerprintProfileID != 9 {
+		t.Fatalf("created input fingerprint profile = %+v, want 9", providers.createdAPIUpstream.FingerprintProfileID)
 	}
 	var body struct {
 		Account provider.Account `json:"account"`

@@ -133,31 +133,33 @@ type Fingerprint struct {
 }
 
 type ConnectOptions struct {
-	RedirectAfter   string
-	Name            string
-	Priority        int
-	Enabled         *bool
-	TargetAccountID int64
-	Fingerprint     Fingerprint
+	RedirectAfter        string
+	Name                 string
+	Priority             int
+	Enabled              *bool
+	TargetAccountID      int64
+	FingerprintProfileID *int64
+	Fingerprint          Fingerprint
 }
 
 type OAuthState struct {
-	Provider              string
-	StateHash             string
-	RedirectAfter         string
-	ExpiresAt             time.Time
-	ConsumedAt            *time.Time
-	CodeVerifier          string `json:"-"`
-	EncryptedCodeVerifier string `json:"-"`
-	CodeVerifierHash      string
-	ClientID              string
-	TargetAccountID       int64
-	PendingAccountName    string
-	PendingPriority       int
-	PendingEnabled        *bool
-	FingerprintHash       string
-	UserAgentHash         string
-	IPHash                string
+	Provider                    string
+	StateHash                   string
+	RedirectAfter               string
+	ExpiresAt                   time.Time
+	ConsumedAt                  *time.Time
+	CodeVerifier                string `json:"-"`
+	EncryptedCodeVerifier       string `json:"-"`
+	CodeVerifierHash            string
+	ClientID                    string
+	TargetAccountID             int64
+	PendingAccountName          string
+	PendingPriority             int
+	PendingEnabled              *bool
+	PendingFingerprintProfileID *int64
+	FingerprintHash             string
+	UserAgentHash               string
+	IPHash                      string
 }
 
 type Account struct {
@@ -270,14 +272,15 @@ type AccountModelInput struct {
 }
 
 type APIUpstreamInput struct {
-	Name       string   `json:"name"`
-	BaseURL    string   `json:"baseUrl"`
-	APIKey     string   `json:"apiKey"`
-	ProxyURL   string   `json:"proxyUrl"`
-	Enabled    *bool    `json:"enabled"`
-	Priority   int      `json:"priority"`
-	LoadFactor int      `json:"loadFactor"`
-	Models     []string `json:"models"`
+	Name                 string   `json:"name"`
+	BaseURL              string   `json:"baseUrl"`
+	APIKey               string   `json:"apiKey"`
+	ProxyURL             string   `json:"proxyUrl"`
+	Enabled              *bool    `json:"enabled"`
+	Priority             int      `json:"priority"`
+	LoadFactor           int      `json:"loadFactor"`
+	FingerprintProfileID *int64   `json:"fingerprintProfileId"`
+	Models               []string `json:"models"`
 }
 
 type ExposedModel struct {
@@ -709,6 +712,14 @@ func (s *Service) StartConnect(ctx context.Context, options ConnectOptions) (Con
 	if strings.TrimSpace(options.RedirectAfter) == "" {
 		options.RedirectAfter = "/"
 	}
+	if options.FingerprintProfileID != nil {
+		if *options.FingerprintProfileID <= 0 {
+			return ConnectResult{}, ErrInvalidInput
+		}
+		if _, err := s.repo.FindFingerprintProfileByID(ctx, *options.FingerprintProfileID); err != nil {
+			return ConnectResult{}, ErrInvalidInput
+		}
+	}
 
 	state, err := secret.GenerateToken("oauth_state")
 	if err != nil {
@@ -725,21 +736,22 @@ func (s *Service) StartConnect(ctx context.Context, options ConnectOptions) (Con
 	}
 
 	if err := s.repo.CreateState(ctx, OAuthState{
-		Provider:              s.cfg.Provider,
-		StateHash:             secret.HashAPIKey(state),
-		RedirectAfter:         options.RedirectAfter,
-		ExpiresAt:             time.Now().Add(s.cfg.StateTTL),
-		CodeVerifier:          codeVerifier,
-		EncryptedCodeVerifier: encryptedCodeVerifier,
-		CodeVerifierHash:      secret.HashAPIKey(codeVerifier),
-		ClientID:              s.cfg.ClientID,
-		TargetAccountID:       options.TargetAccountID,
-		PendingAccountName:    strings.TrimSpace(options.Name),
-		PendingPriority:       options.Priority,
-		PendingEnabled:        options.Enabled,
-		FingerprintHash:       hashOptional(options.Fingerprint.Value),
-		UserAgentHash:         hashOptional(options.Fingerprint.UserAgent),
-		IPHash:                hashOptional(options.Fingerprint.IP),
+		Provider:                    s.cfg.Provider,
+		StateHash:                   secret.HashAPIKey(state),
+		RedirectAfter:               options.RedirectAfter,
+		ExpiresAt:                   time.Now().Add(s.cfg.StateTTL),
+		CodeVerifier:                codeVerifier,
+		EncryptedCodeVerifier:       encryptedCodeVerifier,
+		CodeVerifierHash:            secret.HashAPIKey(codeVerifier),
+		ClientID:                    s.cfg.ClientID,
+		TargetAccountID:             options.TargetAccountID,
+		PendingAccountName:          strings.TrimSpace(options.Name),
+		PendingPriority:             options.Priority,
+		PendingEnabled:              options.Enabled,
+		PendingFingerprintProfileID: options.FingerprintProfileID,
+		FingerprintHash:             hashOptional(options.Fingerprint.Value),
+		UserAgentHash:               hashOptional(options.Fingerprint.UserAgent),
+		IPHash:                      hashOptional(options.Fingerprint.IP),
 	}); err != nil {
 		return ConnectResult{}, err
 	}
@@ -934,6 +946,14 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	if err != nil {
 		return Account{}, err
 	}
+	if input.FingerprintProfileID != nil {
+		if *input.FingerprintProfileID <= 0 {
+			return Account{}, ErrInvalidInput
+		}
+		if _, err := s.repo.FindFingerprintProfileByID(ctx, *input.FingerprintProfileID); err != nil {
+			return Account{}, ErrInvalidInput
+		}
+	}
 	encryptedProxyURL := ""
 	if proxyURL != "" {
 		encryptedProxyURL, err = secret.EncryptString(s.cfg.Secret, proxyURL)
@@ -946,14 +966,15 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 		enabled = *input.Enabled
 	}
 	account, err := s.repo.SaveAccount(ctx, Account{
-		Provider:    s.cfg.Provider,
-		AccountType: AccountTypeAPIUpstream,
-		Name:        name,
-		DisplayName: name,
-		Enabled:     enabled,
-		Priority:    input.Priority,
-		LoadFactor:  normalizedLoadFactor(input.LoadFactor),
-		Status:      AccountStatusActive,
+		Provider:             s.cfg.Provider,
+		AccountType:          AccountTypeAPIUpstream,
+		Name:                 name,
+		DisplayName:          name,
+		Enabled:              enabled,
+		Priority:             input.Priority,
+		LoadFactor:           normalizedLoadFactor(input.LoadFactor),
+		Status:               AccountStatusActive,
+		FingerprintProfileID: input.FingerprintProfileID,
 		Credential: AccountCredential{
 			CredentialType:    CredentialTypeAPIKey,
 			EncryptedAPIKey:   encryptedAPIKey,
@@ -2575,6 +2596,9 @@ func applyOAuthStateToAccount(account *Account, state OAuthState, previous *Acco
 	}
 	if state.PendingEnabled != nil && (previous == nil || state.TargetAccountID > 0) {
 		account.Enabled = *state.PendingEnabled
+	}
+	if state.PendingFingerprintProfileID != nil && (previous == nil || state.TargetAccountID > 0) {
+		account.FingerprintProfileID = state.PendingFingerprintProfileID
 	}
 	if previous == nil && account.Priority == 0 {
 		account.Priority = 100

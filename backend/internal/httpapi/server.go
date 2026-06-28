@@ -1096,28 +1096,34 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		var req struct {
-			Name       string   `json:"name"`
-			BaseURL    string   `json:"baseUrl"`
-			APIKey     string   `json:"apiKey"`
-			ProxyURL   string   `json:"proxyUrl"`
-			Enabled    *bool    `json:"enabled"`
-			Priority   int      `json:"priority"`
-			LoadFactor int      `json:"loadFactor"`
-			Models     []string `json:"models"`
+			Name                 string   `json:"name"`
+			BaseURL              string   `json:"baseUrl"`
+			APIKey               string   `json:"apiKey"`
+			ProxyURL             string   `json:"proxyUrl"`
+			Enabled              *bool    `json:"enabled"`
+			Priority             int      `json:"priority"`
+			LoadFactor           int      `json:"loadFactor"`
+			FingerprintProfileID *int64   `json:"fingerprintProfileId"`
+			Models               []string `json:"models"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
+		fingerprintProfileID := req.FingerprintProfileID
+		if fingerprintProfileID != nil && *fingerprintProfileID == 0 {
+			fingerprintProfileID = nil
+		}
 		account, err := providers.CreateAPIUpstreamAccount(r.Context(), provider.APIUpstreamInput{
-			Name:       req.Name,
-			BaseURL:    req.BaseURL,
-			APIKey:     req.APIKey,
-			ProxyURL:   req.ProxyURL,
-			Enabled:    req.Enabled,
-			Priority:   req.Priority,
-			LoadFactor: req.LoadFactor,
-			Models:     req.Models,
+			Name:                 req.Name,
+			BaseURL:              req.BaseURL,
+			APIKey:               req.APIKey,
+			ProxyURL:             req.ProxyURL,
+			Enabled:              req.Enabled,
+			Priority:             req.Priority,
+			LoadFactor:           req.LoadFactor,
+			FingerprintProfileID: fingerprintProfileID,
+			Models:               req.Models,
 		})
 		if err != nil {
 			writeProviderAccountError(w, err)
@@ -2530,12 +2536,13 @@ func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.Conn
 		return options, nil
 	}
 	var req struct {
-		RedirectAfter   string `json:"redirectAfter"`
-		Name            string `json:"name"`
-		Priority        int    `json:"priority"`
-		Enabled         *bool  `json:"enabled"`
-		TargetAccountID int64  `json:"targetAccountId"`
-		Fingerprint     string `json:"fingerprint"`
+		RedirectAfter        string `json:"redirectAfter"`
+		Name                 string `json:"name"`
+		Priority             int    `json:"priority"`
+		Enabled              *bool  `json:"enabled"`
+		TargetAccountID      int64  `json:"targetAccountId"`
+		FingerprintProfileID *int64 `json:"fingerprintProfileId"`
+		Fingerprint          string `json:"fingerprint"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		return provider.ConnectOptions{}, err
@@ -2547,6 +2554,10 @@ func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.Conn
 	options.Priority = req.Priority
 	options.Enabled = req.Enabled
 	options.TargetAccountID = req.TargetAccountID
+	options.FingerprintProfileID = req.FingerprintProfileID
+	if options.FingerprintProfileID != nil && *options.FingerprintProfileID == 0 {
+		options.FingerprintProfileID = nil
+	}
 	options.Fingerprint.Value = strings.TrimSpace(req.Fingerprint)
 	return options, nil
 }

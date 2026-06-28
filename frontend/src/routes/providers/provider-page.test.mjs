@@ -7,11 +7,14 @@ globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
   accountTestResults,
+  apiUpstreamForm,
   apiKeys,
   apiKeyModelWarnings,
   accountModelsText,
   futureTimeRemainingLabel,
   getAccountTestResultsState,
+  connectProvider,
+  createAPIUpstreamAccount,
   loadModelRoutingPreview,
   loadRequestLogs,
   modelListText,
@@ -25,6 +28,7 @@ const {
   pruneSelectedProviderAccounts,
   providerAccounts,
   providerAccountPauseForm,
+  providerConnectForm,
   requestLogs,
   routingPools,
   selectedProviderAccountIds,
@@ -215,6 +219,63 @@ test('provider accounts expose per-account outbound proxy controls', () => {
   assert.match(source, /Proxy URL/);
   assert.match(source, /name="proxyUrl"/);
   assert.match(source, /patch\.proxyUrl = proxyUrl/);
+});
+
+test('provider account create forms can bind fingerprint profiles', () => {
+  assert.match(source, /providerConnectForm\.fingerprintProfileId/);
+  assert.match(source, /apiUpstreamForm\.fingerprintProfileId/);
+  assert.match(source, /Fingerprint profile/);
+  assert.match(source, /fingerprintProfiles\.items/);
+  assert.match(adminStateSource, /fingerprintProfileId: account \? account\.fingerprintProfileId \?\? 0 : Number\(providerConnectForm\.fingerprintProfileId\)/);
+  assert.match(adminStateSource, /fingerprintProfileId: Number\(apiUpstreamForm\.fingerprintProfileId\)/);
+});
+
+test('provider account state sends fingerprint profile on new account creation', async () => {
+  session.authenticated = true;
+  providerConnectForm.name = 'Work Codex';
+  providerConnectForm.priority = 7;
+  providerConnectForm.enabled = true;
+  providerConnectForm.fingerprintProfileId = '9';
+  apiUpstreamForm.name = 'Upstream';
+  apiUpstreamForm.baseUrl = 'https://upstream.example.test/v1';
+  apiUpstreamForm.apiKey = 'secret';
+  apiUpstreamForm.proxyUrl = '';
+  apiUpstreamForm.priority = 8;
+  apiUpstreamForm.loadFactor = 1;
+  apiUpstreamForm.enabled = true;
+  apiUpstreamForm.modelsText = 'gpt-5';
+  apiUpstreamForm.fingerprintProfileId = '9';
+
+  const requests = [];
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({ path, options });
+    if (path === '/api/admin/provider-accounts/codex-oauth/connect') {
+      return new Response(JSON.stringify({ authorizationUrl: 'https://auth.example.test' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    if (path === '/api/admin/provider-accounts/api-upstream') {
+      return new Response(JSON.stringify({ account: { id: 12 } }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ accounts: [], models: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  await connectProvider();
+  await createAPIUpstreamAccount();
+
+  const oauthRequest = requests.find((request) => request.path === '/api/admin/provider-accounts/codex-oauth/connect');
+  const upstreamRequest = requests.find((request) => request.path === '/api/admin/provider-accounts/api-upstream');
+  assert.ok(oauthRequest);
+  assert.ok(upstreamRequest);
+  assert.equal(JSON.parse(oauthRequest.options.body).fingerprintProfileId, 9);
+  assert.equal(JSON.parse(upstreamRequest.options.body).fingerprintProfileId, 9);
 });
 
 test('provider account state can bulk update selected scheduling fields', () => {

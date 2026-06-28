@@ -1291,10 +1291,10 @@ func (r *ProviderRepository) CreateState(ctx context.Context, state provider.OAu
 		INSERT INTO oauth_states (
 			provider, state_hash, redirect_after, expires_at, encrypted_code_verifier, code_verifier_hash,
 			client_id, target_account_id, pending_account_name, pending_priority, pending_enabled,
-			fingerprint_hash, user_agent_hash, ip_hash
+			pending_fingerprint_profile_id, fingerprint_hash, user_agent_hash, ip_hash
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0), $9, $10, $11, $12, $13, $14)
-	`, state.Provider, state.StateHash, state.RedirectAfter, state.ExpiresAt, state.EncryptedCodeVerifier, state.CodeVerifierHash, state.ClientID, state.TargetAccountID, state.PendingAccountName, state.PendingPriority, state.PendingEnabled, state.FingerprintHash, state.UserAgentHash, state.IPHash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0), $9, $10, $11, $12, $13, $14, $15)
+	`, state.Provider, state.StateHash, state.RedirectAfter, state.ExpiresAt, state.EncryptedCodeVerifier, state.CodeVerifierHash, state.ClientID, state.TargetAccountID, state.PendingAccountName, state.PendingPriority, state.PendingEnabled, state.PendingFingerprintProfileID, state.FingerprintHash, state.UserAgentHash, state.IPHash)
 	return err
 }
 
@@ -1309,7 +1309,7 @@ func (r *ProviderRepository) ClaimState(ctx context.Context, providerName, state
 			AND consumed_at IS NULL
 		RETURNING provider, state_hash, redirect_after, expires_at, consumed_at, encrypted_code_verifier,
 			code_verifier_hash, client_id, COALESCE(target_account_id, 0), pending_account_name,
-			pending_priority, pending_enabled, fingerprint_hash, user_agent_hash, ip_hash
+			pending_priority, pending_enabled, pending_fingerprint_profile_id, fingerprint_hash, user_agent_hash, ip_hash
 	`, providerName, stateHash, now, now).Scan(
 		&state.Provider,
 		&state.StateHash,
@@ -1323,6 +1323,7 @@ func (r *ProviderRepository) ClaimState(ctx context.Context, providerName, state
 		&state.PendingAccountName,
 		&state.PendingPriority,
 		&state.PendingEnabled,
+		&state.PendingFingerprintProfileID,
 		&state.FingerprintHash,
 		&state.UserAgentHash,
 		&state.IPHash,

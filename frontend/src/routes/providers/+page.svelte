@@ -152,6 +152,7 @@
     if (!routingPoolsRequested) {
       routingPoolsRequested = true;
       void loadRoutingPools();
+      void loadFingerprintProfiles();
     }
   });
 
@@ -559,7 +560,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   </div>
 
   <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_140px_minmax(170px,auto)_auto]"
+    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_140px_minmax(180px,1fr)_minmax(170px,auto)_auto]"
     onsubmit={(event) => {
 event.preventDefault();
 connectProvider();
@@ -584,6 +585,18 @@ Priority
   bind:value={providerConnectForm.priority}
 />
     </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Fingerprint profile
+<select
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  bind:value={providerConnectForm.fingerprintProfileId}
+>
+  <option value="0">No fingerprint profile</option>
+  {#each fingerprintProfiles.items as fp}
+    <option value={String(fp.id)}>{fp.name}</option>
+  {/each}
+</select>
+    </label>
     <label class="inline-flex h-10 self-end whitespace-nowrap items-center gap-2 text-sm font-medium text-[#3c3c3c]">
 <input
   class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
@@ -602,13 +615,13 @@ type="submit"
   </form>
 
   <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_minmax(220px,1fr)_120px_120px_auto]"
+    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_minmax(220px,1fr)_120px_120px_minmax(180px,1fr)_auto]"
     onsubmit={(event) => {
       event.preventDefault();
       createAPIUpstreamAccount();
     }}
   >
-    <div class="lg:col-span-7">
+    <div class="lg:col-span-8">
       <h3 class="text-base font-semibold text-[#0d0d0d]">API upstream</h3>
       <p class="mt-1 text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
     </div>
@@ -674,6 +687,18 @@ Load factor
   bind:value={apiUpstreamForm.loadFactor}
 />
     </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Fingerprint profile
+<select
+  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  bind:value={apiUpstreamForm.fingerprintProfileId}
+>
+  <option value="0">No fingerprint profile</option>
+  {#each fingerprintProfiles.items as fp}
+    <option value={String(fp.id)}>{fp.name}</option>
+  {/each}
+</select>
+    </label>
     <label class="inline-flex h-10 self-end whitespace-nowrap items-center gap-2 text-sm font-medium text-[#3c3c3c]">
 <input
   class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
@@ -682,7 +707,7 @@ Load factor
 />
 Enabled
     </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-6">
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-7">
 Manual models
 <textarea
   class="min-h-20 w-full min-w-0 resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -698,7 +723,7 @@ disabled={apiUpstreamForm.submitting}
 {apiUpstreamForm.submitting ? 'Adding' : 'Add API upstream'}
     </button>
     {#if apiUpstreamForm.error}
-      <p class="lg:col-span-6 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+      <p class="lg:col-span-7 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
         {apiUpstreamForm.error}
       </p>
     {/if}

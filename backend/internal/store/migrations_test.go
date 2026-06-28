@@ -119,6 +119,21 @@ func TestCodexAccountPoolStateMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestOAuthStateFingerprintProfileMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00030_oauth_state_fingerprint_profile.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE oauth_states ADD COLUMN IF NOT EXISTS pending_fingerprint_profile_id BIGINT REFERENCES fingerprint_profiles(id) ON DELETE SET NULL",
+		"ALTER TABLE oauth_states DROP COLUMN IF EXISTS pending_fingerprint_profile_id",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountModelsMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00007_oauth_account_models.sql")
 	if err != nil {
@@ -539,10 +554,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 29 {
-		t.Fatalf("migration sources = %d, want 29", len(sources))
+	if len(sources) != 30 {
+		t.Fatalf("migration sources = %d, want 30", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[28].Path != "00029_provider_account_proxy_url.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[29].Path != "00030_oauth_state_fingerprint_profile.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

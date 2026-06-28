@@ -351,7 +351,7 @@ export const routingPools = $state({
   newPoolDescription: '',
   newPoolFallbackPoolId: '0'
 });
-export const providerConnectForm = $state({ name: '', priority: 100, enabled: true });
+export const providerConnectForm = $state({ name: '', priority: 100, enabled: true, fingerprintProfileId: '0' });
 export const providerAccountPauseForm = $state({ durationSeconds: 300 });
 export const providerAccountBulkSchedulingForm = $state({ priority: '', loadFactor: '', maxConcurrentRequests: '' });
 export const providerAccountBulkModelsForm = $state({ text: '' });
@@ -364,6 +364,7 @@ export const apiUpstreamForm = $state({
   priority: 100,
   loadFactor: 1,
   enabled: true,
+  fingerprintProfileId: '0',
   modelsText: '',
   submitting: false,
   error: ''
@@ -1009,7 +1010,7 @@ function clearProvider() {
   });
   replaceState(providerAccounts, { loading: false, saving: false, error: '', items: [] });
   replaceState(accountModels, {});
-  replaceState(providerConnectForm, { name: '', priority: 100, enabled: true });
+  replaceState(providerConnectForm, { name: '', priority: 100, enabled: true, fingerprintProfileId: '0' });
   replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
   resetAPIUpstreamForm();
 }
@@ -1023,6 +1024,7 @@ function resetAPIUpstreamForm() {
     priority: 100,
     loadFactor: 1,
     enabled: true,
+    fingerprintProfileId: '0',
     modelsText: '',
     submitting: false,
     error: ''
@@ -1398,11 +1400,12 @@ export function statusLabel(status) {
 
 function browserFingerprint() {
   if (typeof navigator === 'undefined') return '';
+  const screenInfo = globalThis.screen;
   return [
     navigator.userAgent,
     navigator.language,
-    String(screen?.width ?? ''),
-    String(screen?.height ?? ''),
+    String(screenInfo?.width ?? ''),
+    String(screenInfo?.height ?? ''),
     Intl.DateTimeFormat().resolvedOptions().timeZone
   ].join('|');
 }
@@ -1425,6 +1428,7 @@ export async function connectProvider(account = null) {
         priority: account ? account.priority : Number(providerConnectForm.priority),
         enabled: account ? account.enabled : providerConnectForm.enabled,
         targetAccountId: account?.id ?? 0,
+        fingerprintProfileId: account ? account.fingerprintProfileId ?? 0 : Number(providerConnectForm.fingerprintProfileId),
         fingerprint: browserFingerprint()
       })
     });
@@ -1791,6 +1795,7 @@ export async function createAPIUpstreamAccount() {
         priority: Number(apiUpstreamForm.priority) || 100,
         loadFactor: Number(apiUpstreamForm.loadFactor) || 1,
         enabled: apiUpstreamForm.enabled,
+        fingerprintProfileId: Number(apiUpstreamForm.fingerprintProfileId),
         models: parseModelLines(apiUpstreamForm.modelsText)
       })
     });

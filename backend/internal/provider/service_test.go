@@ -138,12 +138,15 @@ func TestStartConnectStoresPendingAccountOptionsAndFingerprintHashes(t *testing.
 		RedirectURL: "http://localhost:3000/oauth/openai/callback",
 		Secret:      "encryption-secret",
 	})
+	profileID := int64(9)
+	repo.fingerprintProfiles[profileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
 
 	result, err := service.StartConnect(context.Background(), ConnectOptions{
-		RedirectAfter: "/",
-		Name:          "Work Codex",
-		Priority:      25,
-		Enabled:       boolPtr(false),
+		RedirectAfter:        "/",
+		Name:                 "Work Codex",
+		Priority:             25,
+		Enabled:              boolPtr(false),
+		FingerprintProfileID: &profileID,
 		Fingerprint: Fingerprint{
 			Value:     "browser-fingerprint",
 			UserAgent: "Mozilla/5.0",
@@ -159,6 +162,9 @@ func TestStartConnectStoresPendingAccountOptionsAndFingerprintHashes(t *testing.
 	state := repo.states[0]
 	if state.PendingAccountName != "Work Codex" || state.PendingPriority != 25 || state.PendingEnabled == nil || *state.PendingEnabled {
 		t.Fatalf("state pending account fields = %+v", state)
+	}
+	if state.PendingFingerprintProfileID == nil || *state.PendingFingerprintProfileID != profileID {
+		t.Fatalf("state pending fingerprint profile = %+v, want %d", state.PendingFingerprintProfileID, profileID)
 	}
 	if state.FingerprintHash == "" || state.UserAgentHash == "" || state.IPHash == "" {
 		t.Fatalf("state fingerprint hashes incomplete: %+v", state)
@@ -2750,6 +2756,29 @@ func TestCreateAPIUpstreamAccountStoresEncryptedProxyURL(t *testing.T) {
 	}
 	if selected.ProxyURL != "http://proxy-user:proxy-pass@proxy.example.test:8080" {
 		t.Fatalf("selected proxy URL = %q, want trimmed cleartext for outbound use", selected.ProxyURL)
+	}
+}
+
+func TestCreateAPIUpstreamAccountSetsKnownFingerprintProfile(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	profileID := int64(9)
+	repo.fingerprintProfiles[profileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
+
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:                 "Upstream",
+		BaseURL:              "https://upstream.example.test/v1",
+		APIKey:               "sk-upstream",
+		FingerprintProfileID: &profileID,
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+	if account.FingerprintProfileID == nil || *account.FingerprintProfileID != profileID {
+		t.Fatalf("FingerprintProfileID = %+v, want %d", account.FingerprintProfileID, profileID)
+	}
+	if repo.accounts[0].FingerprintProfileID == nil || *repo.accounts[0].FingerprintProfileID != profileID {
+		t.Fatalf("saved FingerprintProfileID = %+v, want %d", repo.accounts[0].FingerprintProfileID, profileID)
 	}
 }
 
