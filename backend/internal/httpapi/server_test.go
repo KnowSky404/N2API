@@ -3680,22 +3680,36 @@ func TestExportRequestLogsRequiresSessionAndReturnsCSV(t *testing.T) {
 
 	admins := newFakeAdminService()
 	admins.logs = []admin.RequestLog{{
-		ID:                    9,
-		RequestID:             "req_csv",
-		ClientKey:             `codex "daily", key`,
-		Provider:              "openai",
-		Model:                 "gpt-5",
-		Route:                 "/v1/chat/completions",
-		Method:                http.MethodPost,
-		StatusCode:            429,
-		LatencyMS:             123,
-		Error:                 "upstream_rate_limited",
-		InputTokens:           10,
-		OutputTokens:          20,
-		TotalTokens:           30,
-		EstimatedCostMicrousd: 42,
-		SessionID:             "workspace-123",
-		CreatedAt:             time.Unix(5000, 0).UTC(),
+		ID:                       9,
+		RequestID:                "req_csv",
+		ClientKey:                `codex "daily", key`,
+		Provider:                 "openai",
+		ProviderAccountID:        7,
+		ProviderAccountType:      "codex_oauth",
+		ProviderAccountName:      `primary "oauth"`,
+		RoutingPoolID:            9,
+		RoutingPoolName:          "primary",
+		RoutingPoolFallbackDepth: 1,
+		RoutingPoolFallbackChain: "primary -> secondary",
+		RoutingPoolError:         "routing_pool_exhausted",
+		Model:                    "gpt-5",
+		SessionID:                "workspace-123",
+		Route:                    "/v1/chat/completions",
+		Method:                   http.MethodPost,
+		StatusCode:               429,
+		LatencyMS:                123,
+		Error:                    "upstream_rate_limited",
+		InputTokens:              10,
+		OutputTokens:             20,
+		TotalTokens:              30,
+		CachedInputTokens:        4,
+		ReasoningTokens:          6,
+		UsageSource:              "stream",
+		EstimatedCostMicrousd:    42,
+		PricingMatched:           true,
+		GatewayAttemptCount:      2,
+		GatewayFallbackCount:     1,
+		CreatedAt:                time.Unix(5000, 0).UTC(),
 	}}
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=csv&limit=10000&q=codex&statusClass=client_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=upstream_rate_limited&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1", nil)
@@ -3714,10 +3728,10 @@ func TestExportRequestLogsRequiresSessionAndReturnsCSV(t *testing.T) {
 		t.Fatalf("Content-Disposition = %q, want csv attachment", disposition)
 	}
 	body := recorder.Body.String()
-	if !strings.Contains(body, "id,request_id,client_key,provider,model,route,method,status_code") {
+	if !strings.Contains(body, "id,request_id,client_key,provider,provider_account_id,provider_account_type,provider_account_name,routing_pool_id,routing_pool_name,routing_pool_fallback_depth,routing_pool_fallback_chain,routing_pool_error,model,session_id,route,method,status_code,latency_ms,error,input_tokens,output_tokens,total_tokens,cached_input_tokens,reasoning_tokens,usage_source,estimated_cost_microusd,pricing_matched,gateway_attempt_count,gateway_fallback_count,created_at") {
 		t.Fatalf("CSV body missing header: %q", body)
 	}
-	if !strings.Contains(body, `9,req_csv,"codex ""daily"", key",openai,gpt-5,/v1/chat/completions,POST,429,123,upstream_rate_limited,10,20,30,42,workspace-123,1970-01-01T01:23:20Z`) {
+	if !strings.Contains(body, `9,req_csv,"codex ""daily"", key",openai,7,codex_oauth,"primary ""oauth""",9,primary,1,primary -> secondary,routing_pool_exhausted,gpt-5,workspace-123,/v1/chat/completions,POST,429,123,upstream_rate_limited,10,20,30,4,6,stream,42,true,2,1,1970-01-01T01:23:20Z`) {
 		t.Fatalf("CSV body missing escaped row: %q", body)
 	}
 	if admins.requestLogFilter.Limit != 10000 || admins.requestLogFilter.Query != "codex" || admins.requestLogFilter.StatusClass != admin.RequestLogStatusClientError {

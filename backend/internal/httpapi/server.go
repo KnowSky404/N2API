@@ -2545,14 +2545,18 @@ func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins Admi
 		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="n2api-request-logs.csv"`)
 		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "id,request_id,client_key,provider,model,route,method,status_code,latency_ms,error,input_tokens,output_tokens,total_tokens,estimated_cost_microusd,session_id,created_at\n")
+		_, _ = io.WriteString(w, "id,request_id,client_key,provider,provider_account_id,provider_account_type,provider_account_name,routing_pool_id,routing_pool_name,routing_pool_fallback_depth,routing_pool_fallback_chain,routing_pool_error,model,session_id,route,method,status_code,latency_ms,error,input_tokens,output_tokens,total_tokens,cached_input_tokens,reasoning_tokens,usage_source,estimated_cost_microusd,pricing_matched,gateway_attempt_count,gateway_fallback_count,created_at\n")
 		for _, log := range logs {
-			_, _ = fmt.Fprintf(w, "%d,%s,%s,%s,%s,%s,%s,%d,%d,%s,%d,%d,%d,%d,%s,%s\n",
+			_, _ = fmt.Fprintf(w, "%d,%s,%s,%s,%d,%s,%s,%d,%s,%d,%s,%s,%s,%s,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%s,%d,%t,%d,%d,%s\n",
 				log.ID, csvEscape(log.RequestID), csvEscape(log.ClientKey), csvEscape(log.Provider),
-				csvEscape(log.Model), csvEscape(log.Route), csvEscape(log.Method),
+				log.ProviderAccountID, csvEscape(log.ProviderAccountType), csvEscape(log.ProviderAccountName),
+				log.RoutingPoolID, csvEscape(log.RoutingPoolName), log.RoutingPoolFallbackDepth,
+				csvEscape(log.RoutingPoolFallbackChain), csvEscape(log.RoutingPoolError),
+				csvEscape(log.Model), csvEscape(log.SessionID), csvEscape(log.Route), csvEscape(log.Method),
 				log.StatusCode, log.LatencyMS, csvEscape(log.Error),
-				log.InputTokens, log.OutputTokens, log.TotalTokens,
-				log.EstimatedCostMicrousd, csvEscape(log.SessionID), log.CreatedAt.Format(time.RFC3339))
+				log.InputTokens, log.OutputTokens, log.TotalTokens, log.CachedInputTokens, log.ReasoningTokens,
+				csvEscape(log.UsageSource), log.EstimatedCostMicrousd, log.PricingMatched,
+				log.GatewayAttemptCount, log.GatewayFallbackCount, log.CreatedAt.Format(time.RFC3339))
 		}
 	default:
 		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
