@@ -21,11 +21,21 @@ func ParseUsageFromJSON(route string, raw []byte) Usage {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return Usage{Source: "missing"}
 	}
+	model, _ := payload["model"].(string)
 	usagePayload, ok := payload["usage"].(map[string]any)
 	if !ok {
+		if usageMetadata, ok := payload["usageMetadata"].(map[string]any); ok {
+			usage := parseGeminiUsageMetadata(usageMetadata)
+			usage.Model = strings.TrimSpace(model)
+			if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+				usage.Source = "missing"
+			} else {
+				usage.Source = "gemini_usage_metadata"
+			}
+			return usage
+		}
 		return Usage{Source: "missing"}
 	}
-	model, _ := payload["model"].(string)
 	switch route {
 	case "/v1/chat/completions":
 		usage := parseChatUsage(usagePayload)
@@ -42,10 +52,15 @@ func ParseUsageFromJSON(route string, raw []byte) Usage {
 		if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
 			usage = parseChatUsage(usagePayload)
 		}
+		if usage.TotalTokens == 0 && usage.InputTokens > 0 && usage.OutputTokens > 0 {
+			usage.Source = "anthropic_usage"
+			usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+			usage.CachedInputTokens = intFromAny(usagePayload["cache_read_input_tokens"]) + intFromAny(usagePayload["cache_creation_input_tokens"])
+		}
 		usage.Model = strings.TrimSpace(model)
 		if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
 			usage.Source = "missing"
-		} else {
+		} else if usage.Source == "" {
 			usage.Source = "json"
 		}
 		return usage
@@ -153,6 +168,16 @@ func parseResponsesUsage(payload map[string]any) Usage {
 		usage.ReasoningTokens = intFromAny(details["reasoning_tokens"])
 	}
 	return usage
+}
+
+func parseGeminiUsageMetadata(payload map[string]any) Usage {
+	return Usage{
+		InputTokens:       intFromAny(payload["promptTokenCount"]),
+		OutputTokens:      intFromAny(payload["candidatesTokenCount"]),
+		TotalTokens:       intFromAny(payload["totalTokenCount"]),
+		CachedInputTokens: intFromAny(payload["cachedContentTokenCount"]),
+		ReasoningTokens:   intFromAny(payload["thoughtsTokenCount"]),
+	}
 }
 
 func intFromAny(value any) int {
