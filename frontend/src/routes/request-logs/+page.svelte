@@ -740,6 +740,8 @@
         <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
           {formatTokens(log.inputTokens)} in / {formatTokens(log.outputTokens)} out
           <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total</p>
+          <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.cachedInputTokens)} Cached</p>
+          <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.reasoningTokens)} Reasoning</p>
         </td>
         <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
           {#if requestLogCost === 'Unpriced'}

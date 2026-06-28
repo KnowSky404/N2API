@@ -223,6 +223,10 @@ test('request logs page shows token usage', () => {
   assert.match(requestLogsPage, /log\.inputTokens/);
   assert.match(requestLogsPage, /log\.outputTokens/);
   assert.match(requestLogsPage, /log\.totalTokens/);
+  assert.match(requestLogsPage, /log\.cachedInputTokens/);
+  assert.match(requestLogsPage, /log\.reasoningTokens/);
+  assert.match(requestLogsPage, /Cached/);
+  assert.match(requestLogsPage, /Reasoning/);
   assert.match(requestLogsPage, /log\.usageSource/);
   assert.match(requestLogsPage, /gemini_usage_metadata/);
   assert.match(requestLogsPage, /Gemini/);
