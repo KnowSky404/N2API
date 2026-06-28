@@ -75,6 +75,7 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 		RoutingPoolFallbackChain: selected.RoutingPoolFallbackChain,
 		RoutingPoolError:         selected.RoutingPoolError,
 		FingerprintUA:            selected.FingerprintUA,
+		FingerprintTLS:           selected.FingerprintTLS,
 		FingerprintHeaders:       selected.FingerprintHeaders,
 	}
 	if err != nil {

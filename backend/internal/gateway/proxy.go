@@ -46,6 +46,7 @@ type SelectedAccount struct {
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
 	FingerprintUA            string
+	FingerprintTLS           string
 	FingerprintHeaders       map[string]string
 }
 
@@ -142,6 +143,7 @@ type RequestLog struct {
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
 	FingerprintUA            string
+	FingerprintTLS           string
 	FingerprintHeaders       map[string]string
 	Model                    string
 	SessionID                string
@@ -200,7 +202,7 @@ type Proxy struct {
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
-	return NewProxyWithClient(auth, accounts, cfg, http.DefaultClient)
+	return NewProxyWithClient(auth, accounts, cfg, &http.Client{Transport: newTLSFingerprintTransport(http.DefaultTransport)})
 }
 
 func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config, client *http.Client) *Proxy {
@@ -1250,6 +1252,9 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 	}
 	for key, value := range selected.FingerprintHeaders {
 		req.Header.Set(key, value)
+	}
+	if strings.TrimSpace(selected.FingerprintTLS) != "" {
+		req = req.WithContext(contextWithTLSFingerprint(req.Context(), selected.FingerprintTLS))
 	}
 
 	return req, nil

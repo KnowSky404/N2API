@@ -3543,15 +3543,18 @@ func TestProxyDoesNotRetryAfterStreamingBegins(t *testing.T) {
 func TestProxyAppliesSelectedAccountFingerprintHeaders(t *testing.T) {
 	var gotUserAgent string
 	var gotHeader string
+	var gotTLS string
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
 		AccountID:          1,
 		AuthorizationToken: "upstream-token",
 		FingerprintUA:      "N2API-Fingerprint/1.0",
+		FingerprintTLS:     "chrome",
 		FingerprintHeaders: map[string]string{"X-Fingerprint-Test": "enabled"},
 	}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		gotUserAgent = r.Header.Get("User-Agent")
 		gotHeader = r.Header.Get("X-Fingerprint-Test")
+		gotTLS = tlsFingerprintFromContext(r.Context())
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
@@ -3575,6 +3578,9 @@ func TestProxyAppliesSelectedAccountFingerprintHeaders(t *testing.T) {
 	}
 	if gotHeader != "enabled" {
 		t.Fatalf("X-Fingerprint-Test = %q, want fingerprint custom header", gotHeader)
+	}
+	if gotTLS != "chrome" {
+		t.Fatalf("TLS fingerprint = %q, want chrome", gotTLS)
 	}
 }
 

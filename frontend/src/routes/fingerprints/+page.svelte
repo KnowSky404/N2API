@@ -166,8 +166,8 @@ async function handleSubmit(e) {
             <input class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={form.userAgent} placeholder="Mozilla/5.0 (X11; Linux x86_64)..." />
           </label>
           <label class="block text-sm font-medium text-[#3c3c3c]">
-            TLS Fingerprint (JA4 or similar)
-            <input class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={form.tlsFingerprint} placeholder="t13d1516h2_8daaf6152771_e4107deab09e" />
+            TLS preset
+            <input class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={form.tlsFingerprint} placeholder="chrome, firefox, safari, ios, android, edge, randomized" />
           </label>
           <label class="block text-sm font-medium text-[#3c3c3c]">
             Custom headers (JSON object)

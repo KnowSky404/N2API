@@ -1573,6 +1573,77 @@ func TestSelectAccountForModelRespectsExcludedAccountIDsWithModelFilter(t *testi
 	}
 }
 
+func TestSelectAccountAppliesFingerprintProfileForOAuthAndAPIUpstream(t *testing.T) {
+	profileID := int64(7)
+	for _, tc := range []struct {
+		name        string
+		account     Account
+		wantToken   string
+		wantBaseURL string
+	}{
+		{
+			name: "codex oauth",
+			account: func() Account {
+				account := testAccount(t, 1, true, 1, "oauth-token")
+				account.FingerprintProfileID = &profileID
+				return account
+			}(),
+			wantToken:   "oauth-token",
+			wantBaseURL: "https://api.openai.example.test",
+		},
+		{
+			name: "api upstream",
+			account: Account{
+				ID:                   2,
+				Provider:             "openai",
+				AccountType:          AccountTypeAPIUpstream,
+				Subject:              "api-upstream",
+				DisplayName:          "API upstream",
+				Enabled:              true,
+				Priority:             1,
+				FingerprintProfileID: &profileID,
+				Credential: AccountCredential{
+					BaseURL:         "https://upstream.example.test/v1",
+					EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "api-token"),
+				},
+			},
+			wantToken:   "api-token",
+			wantBaseURL: "https://upstream.example.test/v1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			repo.accounts = []Account{tc.account}
+			repo.accountModels[tc.account.ID] = []AccountModel{{AccountID: tc.account.ID, Provider: "openai", Model: "gpt-5", Enabled: true}}
+			repo.fingerprintProfiles[profileID] = FingerprintProfileData{
+				UserAgent:      "Mozilla/5.0",
+				TLSFingerprint: "chrome",
+				Headers:        map[string]string{"X-Fingerprint": "enabled"},
+			}
+			service := newConfiguredService(repo, fakeOAuthClient{})
+			service.cfg.APIBaseURL = "https://api.openai.example.test"
+
+			selected, err := service.SelectAccountForModel(context.Background(), "gpt-5")
+			if err != nil {
+				t.Fatalf("SelectAccountForModel returned error: %v", err)
+			}
+
+			if selected.AuthorizationToken != tc.wantToken || selected.BaseURL != tc.wantBaseURL {
+				t.Fatalf("selected token/baseURL = %q/%q, want %q/%q", selected.AuthorizationToken, selected.BaseURL, tc.wantToken, tc.wantBaseURL)
+			}
+			if selected.FingerprintUA != "Mozilla/5.0" {
+				t.Fatalf("fingerprint UA = %q, want Mozilla/5.0", selected.FingerprintUA)
+			}
+			if selected.FingerprintTLS != "chrome" {
+				t.Fatalf("fingerprint TLS = %q, want chrome", selected.FingerprintTLS)
+			}
+			if selected.FingerprintHeaders["X-Fingerprint"] != "enabled" {
+				t.Fatalf("fingerprint headers = %+v, want custom header", selected.FingerprintHeaders)
+			}
+		})
+	}
+}
+
 func TestSelectAccountForModelAndSessionUsesStickyHashAcrossCandidateOrder(t *testing.T) {
 	now := time.Now()
 	recent := now.Add(-time.Minute)
@@ -2704,6 +2775,7 @@ type memoryRepo struct {
 	sessionBindings     map[string]SessionBinding
 	routingPools        map[int64]RoutingPool
 	routingPoolAccounts map[int64][]RoutingPoolAccount
+	fingerprintProfiles map[int64]FingerprintProfileData
 	states              []OAuthState
 
 	saveCount           int
@@ -2720,6 +2792,7 @@ func newMemoryRepo() *memoryRepo {
 		sessionBindings:     make(map[string]SessionBinding),
 		routingPools:        make(map[int64]RoutingPool),
 		routingPoolAccounts: make(map[int64][]RoutingPoolAccount),
+		fingerprintProfiles: make(map[int64]FingerprintProfileData),
 		nextID:              1,
 	}
 }
@@ -2964,8 +3037,12 @@ func (r *memoryRepo) DeleteAccounts(ctx context.Context, providerName string) er
 	return nil
 }
 
-func (r *memoryRepo) FindFingerprintProfileByID(_ context.Context, _ int64) (FingerprintProfileData, error) {
-	return FingerprintProfileData{}, nil
+func (r *memoryRepo) FindFingerprintProfileByID(_ context.Context, id int64) (FingerprintProfileData, error) {
+	profile, ok := r.fingerprintProfiles[id]
+	if !ok {
+		return FingerprintProfileData{}, ErrNotConnected
+	}
+	return profile, nil
 }
 
 func (r *memoryRepo) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {

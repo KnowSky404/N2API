@@ -192,7 +192,7 @@ type Account struct {
 	FailureCount          int               `json:"failureCount"`
 	CircuitOpenUntil      *time.Time        `json:"circuitOpenUntil"`
 	RateLimitedUntil      *time.Time        `json:"rateLimitedUntil"`
-	FingerprintProfileID   *int64            `json:"fingerprintProfileId"`
+	FingerprintProfileID  *int64            `json:"fingerprintProfileId"`
 	LastRefreshError      string            `json:"lastRefreshError"`
 	LastRefreshErrorAt    *time.Time        `json:"lastRefreshErrorAt"`
 	CreatedAt             time.Time         `json:"createdAt"`
@@ -308,21 +308,23 @@ type SelectedAccount struct {
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
 	FingerprintUA            string
+	FingerprintTLS           string
 	FingerprintHeaders       map[string]string
 }
 
 type SelectionPreview struct {
-	Model                    string               `json:"model"`
-	SessionID                string               `json:"sessionId"`
-	SelectedAccountID        int64                `json:"selectedAccountId"`
-	StickyBoundAccountID     int64                `json:"stickyBoundAccountId,omitempty"`
-	RoutingPoolID            int64                `json:"routingPoolId,omitempty"`
-	RoutingPoolName          string               `json:"routingPoolName,omitempty"`
-	RoutingPoolFallbackDepth int                  `json:"routingPoolFallbackDepth,omitempty"`
-	RoutingPoolFallbackChain string               `json:"routingPoolFallbackChain,omitempty"`
+	Model                    string `json:"model"`
+	SessionID                string `json:"sessionId"`
+	SelectedAccountID        int64  `json:"selectedAccountId"`
+	StickyBoundAccountID     int64  `json:"stickyBoundAccountId,omitempty"`
+	RoutingPoolID            int64  `json:"routingPoolId,omitempty"`
+	RoutingPoolName          string `json:"routingPoolName,omitempty"`
+	RoutingPoolFallbackDepth int    `json:"routingPoolFallbackDepth,omitempty"`
+	RoutingPoolFallbackChain string `json:"routingPoolFallbackChain,omitempty"`
 	RoutingPoolError         string
 	FingerprintUA            string
-	FingerprintHeaders       map[string]string               `json:"routingPoolError,omitempty"`
+	FingerprintTLS           string               `json:"fingerprintTLS,omitempty"`
+	FingerprintHeaders       map[string]string    `json:"fingerprintHeaders,omitempty"`
 	Candidates               []SelectionCandidate `json:"candidates"`
 }
 
@@ -1940,7 +1942,6 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 		}
 		selected.AuthorizationToken = token
 		selected.BaseURL = strings.TrimRight(strings.TrimSpace(s.cfg.APIBaseURL), "/")
-		return selected, nil
 	case AccountTypeAPIUpstream:
 		token, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedAPIKey)
 		if err != nil {
@@ -1956,7 +1957,6 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 			return SelectedAccount{}, ErrInvalidInput
 		}
 		selected.BaseURL = baseURL
-		return selected, nil
 	default:
 		return SelectedAccount{}, fmt.Errorf("unsupported account type %q", accountType)
 	}
@@ -1966,6 +1966,9 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 		if fpErr == nil {
 			if strings.TrimSpace(fp.UserAgent) != "" {
 				selected.FingerprintUA = strings.TrimSpace(fp.UserAgent)
+			}
+			if strings.TrimSpace(fp.TLSFingerprint) != "" {
+				selected.FingerprintTLS = strings.TrimSpace(fp.TLSFingerprint)
 			}
 			if len(fp.Headers) > 0 {
 				selected.FingerprintHeaders = fp.Headers
@@ -2713,6 +2716,7 @@ func previousIPHash(previous *Account) string {
 
 // FingerprintProfileData is the subset of a fingerprint profile needed for outbound requests.
 type FingerprintProfileData struct {
-	UserAgent string
-	Headers   map[string]string
+	UserAgent      string
+	TLSFingerprint string
+	Headers        map[string]string
 }

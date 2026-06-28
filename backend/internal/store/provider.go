@@ -1386,10 +1386,10 @@ func (r *ProviderRepository) FindFingerprintProfileByID(ctx context.Context, id 
 	var data provider.FingerprintProfileData
 	var headersRaw []byte
 	err := r.pool.QueryRow(ctx, `
-		SELECT user_agent, headers_json
+		SELECT user_agent, tls_fingerprint, headers_json
 		FROM fingerprint_profiles
 		WHERE id = $1 AND enabled = true
-	`, id).Scan(&data.UserAgent, &headersRaw)
+	`, id).Scan(&data.UserAgent, &data.TLSFingerprint, &headersRaw)
 	if err != nil {
 		return provider.FingerprintProfileData{}, err
 	}
