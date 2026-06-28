@@ -43,6 +43,10 @@ jobs:
         working-directory: frontend
         run: bun run check
 
+      - name: Test frontend
+        working-directory: frontend
+        run: bun test
+
       - name: Build frontend
         working-directory: frontend
         run: bun run build

@@ -53,6 +53,7 @@ Frontend:
 ```bash
 cd frontend
 bun install
+bun test
 bun run check
 bun run build
 ```
