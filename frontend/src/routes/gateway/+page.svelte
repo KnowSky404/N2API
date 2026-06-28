@@ -87,6 +87,16 @@
     return /^[1-9]\d*$/.test(accountId) ? accountId : '';
   }
 
+  function gatewayUsageSinceParam() {
+    return String(Math.max(0, Math.floor(Date.now() / 1000) - 86400));
+  }
+
+  /** @param {URLSearchParams} params */
+  function gatewayUsageHrefWithSince(params) {
+    params.set('since', gatewayUsageSinceParam());
+    return `/request-logs?${params.toString()}`;
+  }
+
   /**
    * @param {string} sectionTitle
    * @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row
@@ -94,27 +104,36 @@
   function usageRowHref(sectionTitle, row) {
     const id = String(row?.id ?? '');
     if (!id || id === 'unknown') return '';
+    const params = new URLSearchParams();
     if (sectionTitle === 'Top models') {
-      return `/request-logs?model=${encodeURIComponent(id)}`;
+      params.set('model', id);
+      return gatewayUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top provider accounts') {
       const accountId = providerAccountUsageId(id);
-      return accountId ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
+      if (!accountId) return '';
+      params.set('providerAccountId', accountId);
+      return gatewayUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top usage sources') {
-      return `/request-logs?usageSource=${encodeURIComponent(id)}`;
+      params.set('usageSource', id);
+      return gatewayUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top routing pools' && /^[1-9]\d*$/.test(id)) {
-      return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
+      params.set('routingPoolId', id);
+      return gatewayUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top routing pool chains' && id !== 'none') {
-      return `/request-logs?routingPoolChain=${encodeURIComponent(id)}`;
+      params.set('routingPoolChain', id);
+      return gatewayUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top client keys' && /^[1-9]\d*$/.test(id)) {
-      return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
+      params.set('clientKeyId', id);
+      return gatewayUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top sessions' && id !== 'none') {
-      return `/request-logs?sessionId=${encodeURIComponent(id)}`;
+      params.set('sessionId', id);
+      return gatewayUsageHrefWithSince(params);
     }
     return '';
   }

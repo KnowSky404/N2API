@@ -65,6 +65,16 @@
     return /^[1-9]\d*$/.test(accountId) ? accountId : '';
   }
 
+  function dashboardUsageSinceParam() {
+    return String(Math.max(0, Math.floor(Date.now() / 1000) - 86400));
+  }
+
+  /** @param {URLSearchParams} params */
+  function dashboardUsageHrefWithSince(params) {
+    params.set('since', dashboardUsageSinceParam());
+    return `/request-logs?${params.toString()}`;
+  }
+
   /**
    * @param {string} sectionTitle
    * @param {{ id?: string | number | null }} row
@@ -72,23 +82,36 @@
   function dashboardUsageHref(sectionTitle, row) {
     const id = String(row?.id ?? '');
     if (!id || id === 'unknown') return '';
-    if (sectionTitle === 'Top models') return `/request-logs?model=${encodeURIComponent(id)}`;
+    const params = new URLSearchParams();
+    if (sectionTitle === 'Top models') {
+      params.set('model', id);
+      return dashboardUsageHrefWithSince(params);
+    }
     if (sectionTitle === 'Top provider accounts') {
       const accountId = providerAccountUsageId(id);
-      return accountId ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
+      if (!accountId) return '';
+      params.set('providerAccountId', accountId);
+      return dashboardUsageHrefWithSince(params);
     }
-    if (sectionTitle === 'Top usage sources') return `/request-logs?usageSource=${encodeURIComponent(id)}`;
+    if (sectionTitle === 'Top usage sources') {
+      params.set('usageSource', id);
+      return dashboardUsageHrefWithSince(params);
+    }
     if (sectionTitle === 'Top routing pools' && /^[1-9]\d*$/.test(id)) {
-      return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
+      params.set('routingPoolId', id);
+      return dashboardUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top routing pool chains' && id !== 'none') {
-      return `/request-logs?routingPoolChain=${encodeURIComponent(id)}`;
+      params.set('routingPoolChain', id);
+      return dashboardUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top client keys' && /^[1-9]\d*$/.test(id)) {
-      return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
+      params.set('clientKeyId', id);
+      return dashboardUsageHrefWithSince(params);
     }
     if (sectionTitle === 'Top sessions' && id !== 'none') {
-      return `/request-logs?sessionId=${encodeURIComponent(id)}`;
+      params.set('sessionId', id);
+      return dashboardUsageHrefWithSince(params);
     }
     return '';
   }

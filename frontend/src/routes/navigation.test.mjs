@@ -150,6 +150,9 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /href="\/models\?status=routable"/);
   assert.match(gatewayPage, /href="\/api-keys\?status=active"/);
   assert.match(gatewayPage, /href="\/request-logs\?gatewayFallbacks=1"/);
+  assert.match(gatewayPage, /function gatewayUsageSinceParam/);
+  assert.match(gatewayPage, /function gatewayUsageHrefWithSince/);
+  assert.match(gatewayPage, /params\.set\('since', gatewayUsageSinceParam\(\)\)/);
 
   assert.match(gatewayPage, /loadGatewaySettings/);
   assert.match(gatewayPage, /loadProviderAccounts/);
@@ -452,13 +455,13 @@ test('request logs page initializes filters from URL params', () => {
 
 test('gateway usage rows link to filtered request logs', () => {
   assert.match(gatewayPage, /usageRowHref/);
-  assert.match(gatewayPage, /model=\$\{encodeURIComponent/);
-  assert.match(gatewayPage, /sessionId=\$\{encodeURIComponent/);
-  assert.match(gatewayPage, /providerAccountId=\$\{encodeURIComponent/);
-  assert.match(gatewayPage, /routingPoolId=\$\{encodeURIComponent/);
-  assert.match(gatewayPage, /routingPoolChain=\$\{encodeURIComponent/);
-  assert.match(gatewayPage, /clientKeyId=\$\{encodeURIComponent/);
-  assert.match(gatewayPage, /usageSource=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /params\.set\('model', id\)/);
+  assert.match(gatewayPage, /params\.set\('sessionId', id\)/);
+  assert.match(gatewayPage, /params\.set\('providerAccountId', accountId\)/);
+  assert.match(gatewayPage, /params\.set\('routingPoolId', id\)/);
+  assert.match(gatewayPage, /params\.set\('routingPoolChain', id\)/);
+  assert.match(gatewayPage, /params\.set\('clientKeyId', id\)/);
+  assert.match(gatewayPage, /params\.set\('usageSource', id\)/);
   assert.match(gatewayPage, /providerAccountUsageId/);
   assert.match(gatewayPage, /href=\{href\}/);
 });
@@ -699,14 +702,17 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(dashboardPage, /usage\.summaries\['24h:/);
   assert.match(dashboardPage, /section.data.rows/);
   assert.match(dashboardPage, /dashboardUsageHref/);
+  assert.match(dashboardPage, /function dashboardUsageSinceParam/);
+  assert.match(dashboardPage, /function dashboardUsageHrefWithSince/);
+  assert.match(dashboardPage, /params\.set\('since', dashboardUsageSinceParam\(\)\)/);
   assert.match(dashboardPage, /providerAccountUsageId/);
-  assert.match(dashboardPage, /request-logs\?model=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /request-logs\?providerAccountId=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /request-logs\?usageSource=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /request-logs\?routingPoolId=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /request-logs\?routingPoolChain=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /request-logs\?clientKeyId=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /request-logs\?sessionId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /params\.set\('model', id\)/);
+  assert.match(dashboardPage, /params\.set\('providerAccountId', accountId\)/);
+  assert.match(dashboardPage, /params\.set\('usageSource', id\)/);
+  assert.match(dashboardPage, /params\.set\('routingPoolId', id\)/);
+  assert.match(dashboardPage, /params\.set\('routingPoolChain', id\)/);
+  assert.match(dashboardPage, /params\.set\('clientKeyId', id\)/);
+  assert.match(dashboardPage, /params\.set\('sessionId', id\)/);
   assert.match(dashboardPage, /href="\/request-logs\?gatewayFallbacks=1"/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'usage_source'\)/);
@@ -756,11 +762,11 @@ test('ops monitor links error buckets to filtered request logs', () => {
 test('dashboard recent activity links to filtered request logs', () => {
   assert.match(dashboardPage, /function dashboardLogHref/);
   assert.match(dashboardPage, /requestId=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /clientKeyId=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /providerAccountId=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /routingPoolId=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /model=\$\{encodeURIComponent/);
-  assert.match(dashboardPage, /sessionId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /params\.set\('clientKeyId', String\(log\.clientKeyId\)\)/);
+  assert.match(dashboardPage, /params\.set\('providerAccountId', String\(log\.providerAccountId\)\)/);
+  assert.match(dashboardPage, /params\.set\('routingPoolId', String\(log\.routingPoolId\)\)/);
+  assert.match(dashboardPage, /params\.set\('model', log\.model\)/);
+  assert.match(dashboardPage, /params\.set\('sessionId', log\.sessionId\)/);
   assert.match(dashboardPage, /href=\{dashboardLogHref\(log\)\}/);
 });
 
