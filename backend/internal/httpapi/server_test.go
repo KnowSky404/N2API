@@ -76,6 +76,12 @@ type fakeAdminService struct {
 	usagePricing       admin.UsagePricing
 	gatewaySettings    admin.GatewaySettings
 	gatewaySettingsErr error
+	fingerprintInput   admin.FingerprintProfileInput
+	fingerprintID      int64
+	fingerprintErr     error
+	errorRuleInput     admin.ErrorPassthroughRuleInput
+	errorRuleID        int64
+	errorRuleErr       error
 }
 
 type fakeProviderService struct {
@@ -3780,6 +3786,176 @@ func TestErrorPassthroughRulesRouteIsRegisteredImmediately(t *testing.T) {
 	}
 }
 
+func TestFingerprintProfilesCRUDRequiresSessionAndMapsInputs(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/fingerprint-profiles", nil))
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
+	}
+
+	admins := newFakeAdminService()
+	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/fingerprint-profiles", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var listBody struct {
+		Profiles []admin.FingerprintProfile `json:"profiles"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &listBody); err != nil {
+		t.Fatalf("decode list body: %v", err)
+	}
+	if len(listBody.Profiles) != 1 || listBody.Profiles[0].TLSFingerprint != "chrome" || listBody.Profiles[0].Headers["X-Test"] != "1" {
+		t.Fatalf("profiles = %+v, want seeded fingerprint profile", listBody.Profiles)
+	}
+
+	payload := `{"name":"Firefox","description":"desktop","userAgent":"Mozilla/5.0","tlsFingerprint":"firefox","headers":{"X-FP":"yes"},"enabled":true}`
+	req = httptest.NewRequest(http.MethodPost, "/api/admin/fingerprint-profiles", strings.NewReader(payload))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
+	}
+	if admins.fingerprintInput.Name != "Firefox" || admins.fingerprintInput.TLSFingerprint != "firefox" || admins.fingerprintInput.Headers["X-FP"] != "yes" {
+		t.Fatalf("fingerprint create input = %+v", admins.fingerprintInput)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/fingerprint-profiles/8", strings.NewReader(payload))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if admins.fingerprintID != 8 || admins.fingerprintInput.Name != "Firefox" {
+		t.Fatalf("fingerprint update id/input = %d/%+v, want 8/Firefox", admins.fingerprintID, admins.fingerprintInput)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/admin/fingerprint-profiles/8", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body=%s, want 204", recorder.Code, recorder.Body.String())
+	}
+	if admins.fingerprintID != 8 {
+		t.Fatalf("fingerprint delete id = %d, want 8", admins.fingerprintID)
+	}
+}
+
+func TestFingerprintProfilesCRUDMapsValidationAndNotFoundErrors(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.fingerprintErr = admin.ErrInvalidInput
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/fingerprint-profiles", strings.NewReader(`{"name":""}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid create status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+
+	admins = newFakeAdminService()
+	admins.fingerprintErr = admin.ErrNotFound
+	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/fingerprint-profiles/404", strings.NewReader(`{"name":"Missing"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("not found update status = %d body=%s, want 404", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestErrorPassthroughRulesCRUDMapsInputsAndErrors(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	payload := `{"pattern":"insufficient_quota","matchType":"error_code","description":"quota passthrough","enabled":true,"priority":5}`
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/error-passthrough-rules", strings.NewReader(payload))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
+	}
+	if admins.errorRuleInput.Pattern != "insufficient_quota" || admins.errorRuleInput.MatchType != "error_code" || admins.errorRuleInput.Priority != 5 {
+		t.Fatalf("error rule create input = %+v", admins.errorRuleInput)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/error-passthrough-rules/2", strings.NewReader(payload))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("update status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if admins.errorRuleID != 2 || admins.errorRuleInput.Description != "quota passthrough" {
+		t.Fatalf("error rule update id/input = %d/%+v, want 2/description", admins.errorRuleID, admins.errorRuleInput)
+	}
+
+	req = httptest.NewRequest(http.MethodDelete, "/api/admin/error-passthrough-rules/2", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d body=%s, want 204", recorder.Code, recorder.Body.String())
+	}
+	if admins.errorRuleID != 2 {
+		t.Fatalf("error rule delete id = %d, want 2", admins.errorRuleID)
+	}
+
+	admins = newFakeAdminService()
+	admins.errorRuleErr = admin.ErrInvalidInput
+	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req = httptest.NewRequest(http.MethodPost, "/api/admin/error-passthrough-rules", strings.NewReader(payload))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid create status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+
+	admins = newFakeAdminService()
+	admins.errorRuleErr = admin.ErrNotFound
+	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req = httptest.NewRequest(http.MethodPatch, "/api/admin/error-passthrough-rules/404", strings.NewReader(payload))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder = httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("not found update status = %d body=%s, want 404", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestListRequestLogsRejectsInvalidFilter(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?statusClass=bad", nil)
@@ -4847,33 +5023,61 @@ func (s *fakeAdminService) GetOpsLatencyDistribution(_ context.Context, _ time.T
 }
 
 func (s *fakeAdminService) ListFingerprintProfiles(_ context.Context) ([]admin.FingerprintProfile, error) {
-	return nil, nil
+	return []admin.FingerprintProfile{{
+		ID:             8,
+		Name:           "Chrome",
+		Description:    "browser preset",
+		UserAgent:      "Mozilla/5.0",
+		TLSFingerprint: "chrome",
+		Headers:        map[string]string{"X-Test": "1"},
+		Enabled:        true,
+	}}, nil
 }
 
-func (s *fakeAdminService) CreateFingerprintProfile(_ context.Context, _ admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
-	return admin.FingerprintProfile{}, nil
+func (s *fakeAdminService) CreateFingerprintProfile(_ context.Context, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
+	s.fingerprintInput = input
+	if s.fingerprintErr != nil {
+		return admin.FingerprintProfile{}, s.fingerprintErr
+	}
+	return admin.FingerprintProfile{ID: 9, Name: input.Name, Description: input.Description, UserAgent: input.UserAgent, TLSFingerprint: input.TLSFingerprint, Headers: input.Headers, Enabled: input.Enabled}, nil
 }
 
-func (s *fakeAdminService) UpdateFingerprintProfile(_ context.Context, _ int64, _ admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
-	return admin.FingerprintProfile{}, nil
+func (s *fakeAdminService) UpdateFingerprintProfile(_ context.Context, id int64, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
+	s.fingerprintID = id
+	s.fingerprintInput = input
+	if s.fingerprintErr != nil {
+		return admin.FingerprintProfile{}, s.fingerprintErr
+	}
+	return admin.FingerprintProfile{ID: id, Name: input.Name, Description: input.Description, UserAgent: input.UserAgent, TLSFingerprint: input.TLSFingerprint, Headers: input.Headers, Enabled: input.Enabled}, nil
 }
 
-func (s *fakeAdminService) DeleteFingerprintProfile(_ context.Context, _ int64) error {
-	return nil
+func (s *fakeAdminService) DeleteFingerprintProfile(_ context.Context, id int64) error {
+	s.fingerprintID = id
+	return s.fingerprintErr
 }
 
 func (s *fakeAdminService) ListErrorPassthroughRules(_ context.Context) ([]admin.ErrorPassthroughRule, error) {
 	return []admin.ErrorPassthroughRule{{ID: 1, Pattern: "insufficient_quota", MatchType: "error_code", Enabled: true}}, nil
 }
 
-func (s *fakeAdminService) CreateErrorPassthroughRule(_ context.Context, _ admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error) {
-	return admin.ErrorPassthroughRule{}, nil
+func (s *fakeAdminService) CreateErrorPassthroughRule(_ context.Context, input admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error) {
+	s.errorRuleInput = input
+	if s.errorRuleErr != nil {
+		return admin.ErrorPassthroughRule{}, s.errorRuleErr
+	}
+	return admin.ErrorPassthroughRule{ID: 2, Pattern: input.Pattern, MatchType: input.MatchType, Description: input.Description, Enabled: input.Enabled, Priority: input.Priority}, nil
 }
 
-func (s *fakeAdminService) UpdateErrorPassthroughRule(_ context.Context, _ int64, _ admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error) {
-	return admin.ErrorPassthroughRule{}, nil
+func (s *fakeAdminService) UpdateErrorPassthroughRule(_ context.Context, id int64, input admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error) {
+	s.errorRuleID = id
+	s.errorRuleInput = input
+	if s.errorRuleErr != nil {
+		return admin.ErrorPassthroughRule{}, s.errorRuleErr
+	}
+	return admin.ErrorPassthroughRule{ID: id, Pattern: input.Pattern, MatchType: input.MatchType, Description: input.Description, Enabled: input.Enabled, Priority: input.Priority}, nil
 }
 
-func (s *fakeAdminService) DeleteErrorPassthroughRule(_ context.Context, _ int64) error {
-	return nil
+func (s *fakeAdminService) DeleteErrorPassthroughRule(_ context.Context, id int64) error {
+	s.errorRuleID = id
+	return s.errorRuleErr
 }
