@@ -85,6 +85,36 @@
     return dashboardUsageHrefWithSince(params);
   }
 
+  /** @param {{ key?: string | number | null }} bucket */
+  function dashboardCostModelHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    const params = new URLSearchParams();
+    if (key && key !== 'unknown') {
+      params.set('model', key);
+    }
+    return dashboardUsageHrefWithSince(params);
+  }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function dashboardCostProviderAccountHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    const params = new URLSearchParams();
+    if (key && key !== 'unknown') {
+      params.set('providerAccountId', key);
+    }
+    return dashboardUsageHrefWithSince(params);
+  }
+
+  /** @param {{ key?: string | number | null }} bucket */
+  function dashboardCostClientKeyHref(bucket) {
+    const key = String(bucket?.key ?? '').trim();
+    const params = new URLSearchParams();
+    if (key && key !== 'unknown') {
+      params.set('clientKeyId', key);
+    }
+    return dashboardUsageHrefWithSince(params);
+  }
+
   /**
    * @param {string} sectionTitle
    * @param {{ id?: string | number | null }} row
@@ -416,6 +446,58 @@
                   <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatTokens(bucket.count)}</span>
                 </div>
               {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if opsMonitor.costBreakdown}
+          <div class="mt-5 rounded-lg border border-[#ededed]">
+            <div class="border-b border-[#ededed] bg-[#f5f5f5] px-4 py-3">
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="text-sm font-semibold text-[#0d0d0d]">Cost attribution</h3>
+                <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatCostMicrousd(opsMonitor.costBreakdown.estimatedCostMicrousd || 0)}</span>
+              </div>
+            </div>
+            <div class="grid gap-0 lg:grid-cols-3">
+              <div class="border-b border-[#ededed] p-4 lg:border-b-0 lg:border-r">
+                <h4 class="text-xs font-semibold uppercase text-[#6e6e6e]">Top cost models</h4>
+                <div class="mt-3 space-y-2">
+                  {#each (opsMonitor.costBreakdown.topModels ?? []).slice(0, 3) as bucket}
+                    <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-sm">
+                      <a class="min-w-0 truncate font-mono text-[13px] font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={dashboardCostModelHref(bucket)}>
+                        {bucket.label}
+                      </a>
+                      <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatCostMicrousd(bucket.estimatedCostMicrousd || 0)}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              <div class="border-b border-[#ededed] p-4 lg:border-b-0 lg:border-r">
+                <h4 class="text-xs font-semibold uppercase text-[#6e6e6e]">Top cost provider accounts</h4>
+                <div class="mt-3 space-y-2">
+                  {#each (opsMonitor.costBreakdown.topProviderAccounts ?? []).slice(0, 3) as bucket}
+                    <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-sm">
+                      <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={dashboardCostProviderAccountHref(bucket)}>
+                        {bucket.label}
+                      </a>
+                      <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatCostMicrousd(bucket.estimatedCostMicrousd || 0)}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              <div class="p-4">
+                <h4 class="text-xs font-semibold uppercase text-[#6e6e6e]">Top cost API keys</h4>
+                <div class="mt-3 space-y-2">
+                  {#each (opsMonitor.costBreakdown.topClientKeys ?? []).slice(0, 3) as bucket}
+                    <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-sm">
+                      <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={dashboardCostClientKeyHref(bucket)}>
+                        {bucket.label}
+                      </a>
+                      <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e]">{formatCostMicrousd(bucket.estimatedCostMicrousd || 0)}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
             </div>
           </div>
         {/if}

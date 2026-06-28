@@ -752,17 +752,28 @@ test('dashboard shows 24h gateway usage snapshot', () => {
 });
 
 test('dashboard shows ops monitoring snapshot', () => {
-  for (const label of ['Operations snapshot', 'Error rate', 'Client errors', 'Server errors', 'Rate limited', 'Upstream errors', 'Open ops monitor']) {
+  for (const label of ['Operations snapshot', 'Error rate', 'Client errors', 'Server errors', 'Rate limited', 'Upstream errors', 'Cost attribution', 'Top cost models', 'Top cost provider accounts', 'Top cost API keys', 'Open ops monitor']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
   }
 
   assert.match(dashboardPage, /opsMonitor/);
   assert.match(dashboardPage, /loadOpsDashboard/);
   assert.match(dashboardPage, /opsMonitor\.stats/);
+  assert.match(dashboardPage, /opsMonitor\.costBreakdown/);
   assert.match(dashboardPage, /function dashboardOpsErrorHref/);
+  assert.match(dashboardPage, /function dashboardCostModelHref/);
+  assert.match(dashboardPage, /function dashboardCostProviderAccountHref/);
+  assert.match(dashboardPage, /function dashboardCostClientKeyHref/);
   assert.match(dashboardPage, /params\.set\('since', dashboardUsageSinceParam\(\)\)/);
   assert.match(dashboardPage, /params\.set\('error', key\)/);
+  assert.match(dashboardPage, /params\.set\('model', key\)/);
+  assert.match(dashboardPage, /params\.set\('providerAccountId', key\)/);
+  assert.match(dashboardPage, /params\.set\('clientKeyId', key\)/);
   assert.match(dashboardPage, /href=\{dashboardOpsErrorHref\(bucket\)\}/);
+  assert.match(dashboardPage, /href=\{dashboardCostModelHref\(bucket\)\}/);
+  assert.match(dashboardPage, /href=\{dashboardCostProviderAccountHref\(bucket\)\}/);
+  assert.match(dashboardPage, /href=\{dashboardCostClientKeyHref\(bucket\)\}/);
+  assert.match(dashboardPage, /formatCostMicrousd\(bucket\.estimatedCostMicrousd/);
   assert.match(dashboardPage, /href="\/ops"/);
   assert.match(adminState, /await loadOpsDashboard\(86400\)/);
 });
