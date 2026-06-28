@@ -4711,3 +4711,51 @@ func TestWrongMethodAdminPathDoesNotReturnRootFallback(t *testing.T) {
 		t.Fatalf("content-type = %q, want application/json", got)
 	}
 }
+
+func (s *fakeAdminService) GetOpsErrorStats(_ context.Context, _ time.Time) (admin.OpsErrorStats, error) {
+	return admin.OpsErrorStats{}, nil
+}
+
+func (s *fakeAdminService) GetOpsThroughputTrend(_ context.Context, _ time.Time, _ string) (admin.OpsThroughputTrend, error) {
+	return admin.OpsThroughputTrend{}, nil
+}
+
+func (s *fakeAdminService) GetOpsErrorTrend(_ context.Context, _ time.Time, _ string) (admin.OpsErrorTrend, error) {
+	return admin.OpsErrorTrend{}, nil
+}
+
+func (s *fakeAdminService) GetOpsLatencyDistribution(_ context.Context, _ time.Time) (admin.OpsLatencyDistribution, error) {
+	return admin.OpsLatencyDistribution{}, nil
+}
+
+func (s *fakeAdminService) ListFingerprintProfiles(_ context.Context) ([]admin.FingerprintProfile, error) {
+	return nil, nil
+}
+
+func (s *fakeAdminService) CreateFingerprintProfile(_ context.Context, _ admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
+	return admin.FingerprintProfile{}, nil
+}
+
+func (s *fakeAdminService) UpdateFingerprintProfile(_ context.Context, _ int64, _ admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
+	return admin.FingerprintProfile{}, nil
+}
+
+func (s *fakeAdminService) DeleteFingerprintProfile(_ context.Context, _ int64) error {
+	return nil
+}
+
+func (s *fakeAdminService) ListErrorPassthroughRules(_ context.Context) ([]admin.ErrorPassthroughRule, error) {
+	return nil, nil
+}
+
+func (s *fakeAdminService) CreateErrorPassthroughRule(_ context.Context, _ admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error) {
+	return admin.ErrorPassthroughRule{}, nil
+}
+
+func (s *fakeAdminService) UpdateErrorPassthroughRule(_ context.Context, _ int64, _ admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error) {
+	return admin.ErrorPassthroughRule{}, nil
+}
+
+func (s *fakeAdminService) DeleteErrorPassthroughRule(_ context.Context, _ int64) error {
+	return nil
+}

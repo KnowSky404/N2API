@@ -1419,3 +1419,51 @@ func (r *memoryRepo) SaveUsagePricing(_ context.Context, pricing UsagePricing) (
 	r.usagePricing = pricing
 	return pricing, nil
 }
+
+func (r *memoryRepo) GetOpsErrorStats(_ context.Context, _ time.Time) (OpsErrorStats, error) {
+	return OpsErrorStats{}, nil
+}
+
+func (r *memoryRepo) GetOpsThroughputTrend(_ context.Context, _ time.Time, _ string) (OpsThroughputTrend, error) {
+	return OpsThroughputTrend{}, nil
+}
+
+func (r *memoryRepo) GetOpsErrorTrend(_ context.Context, _ time.Time, _ string) (OpsErrorTrend, error) {
+	return OpsErrorTrend{}, nil
+}
+
+func (r *memoryRepo) GetOpsLatencyDistribution(_ context.Context, _ time.Time) (OpsLatencyDistribution, error) {
+	return OpsLatencyDistribution{}, nil
+}
+
+func (r *memoryRepo) ListFingerprintProfiles(_ context.Context) ([]FingerprintProfile, error) {
+	return nil, nil
+}
+
+func (r *memoryRepo) CreateFingerprintProfile(_ context.Context, _ FingerprintProfileInput) (FingerprintProfile, error) {
+	return FingerprintProfile{}, nil
+}
+
+func (r *memoryRepo) UpdateFingerprintProfile(_ context.Context, _ int64, _ FingerprintProfileInput) (FingerprintProfile, error) {
+	return FingerprintProfile{}, nil
+}
+
+func (r *memoryRepo) DeleteFingerprintProfile(_ context.Context, _ int64) error {
+	return nil
+}
+
+func (r *memoryRepo) ListErrorPassthroughRules(_ context.Context) ([]ErrorPassthroughRule, error) {
+	return nil, nil
+}
+
+func (r *memoryRepo) CreateErrorPassthroughRule(_ context.Context, _ ErrorPassthroughRuleInput) (ErrorPassthroughRule, error) {
+	return ErrorPassthroughRule{}, nil
+}
+
+func (r *memoryRepo) UpdateErrorPassthroughRule(_ context.Context, _ int64, _ ErrorPassthroughRuleInput) (ErrorPassthroughRule, error) {
+	return ErrorPassthroughRule{}, nil
+}
+
+func (r *memoryRepo) DeleteErrorPassthroughRule(_ context.Context, _ int64) error {
+	return nil
+}

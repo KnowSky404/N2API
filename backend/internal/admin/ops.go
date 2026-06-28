@@ -1,0 +1,77 @@
+package admin
+
+import "time"
+
+// OpsErrorStats summarizes gateway errors over a time window.
+type OpsErrorStats struct {
+	WindowStart             time.Time         `json:"windowStart"`
+	WindowEnd               time.Time         `json:"windowEnd"`
+	TotalRequests           int64             `json:"totalRequests"`
+	ErrorRequests           int64             `json:"errorRequests"`
+	ErrorRate               float64           `json:"errorRate"`
+	TopErrors               []OpsErrorBucket  `json:"topErrors"`
+	TopUpstreamStatuses     []OpsErrorBucket  `json:"topUpstreamStatuses"`
+	TopRateLimitedModels    []OpsErrorBucket  `json:"topRateLimitedModels"`
+	TopErrorAccounts        []OpsErrorBucket  `json:"topErrorAccounts"`
+	ClientErrors            int64             `json:"clientErrors"`
+	ServerErrors            int64             `json:"serverErrors"`
+	RateLimitErrors         int64             `json:"rateLimitErrors"`
+	UpstreamErrors          int64             `json:"upstreamErrors"`
+}
+
+// OpsErrorBucket is a named count for error distribution charts.
+type OpsErrorBucket struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int64  `json:"count"`
+}
+
+// OpsThroughputTrend contains time-series throughput data.
+type OpsThroughputTrend struct {
+	Points    []OpsThroughputPoint `json:"points"`
+	Interval  string               `json:"interval"`
+	WindowEnd time.Time            `json:"windowEnd"`
+}
+
+// OpsThroughputPoint is a single time bucket of throughput data.
+type OpsThroughputPoint struct {
+	Time          time.Time `json:"time"`
+	Requests      int64     `json:"requests"`
+	InputTokens   int64     `json:"inputTokens"`
+	OutputTokens  int64     `json:"outputTokens"`
+	TotalTokens   int64     `json:"totalTokens"`
+	CostMicrousd  int64     `json:"costMicrousd"`
+	ErrorCount    int64     `json:"errorCount"`
+	AvgLatencyMs  float64   `json:"avgLatencyMs"`
+}
+
+// OpsErrorTrend contains time-series error rate data.
+type OpsErrorTrend struct {
+	Points    []OpsErrorTrendPoint `json:"points"`
+	Interval  string               `json:"interval"`
+	WindowEnd time.Time            `json:"windowEnd"`
+}
+
+// OpsErrorTrendPoint is a single time bucket of error data.
+type OpsErrorTrendPoint struct {
+	Time              time.Time `json:"time"`
+	Total             int64     `json:"total"`
+	ClientErrors      int64     `json:"clientErrors"`
+	ServerErrors      int64     `json:"serverErrors"`
+	RateLimitErrors   int64     `json:"rateLimitErrors"`
+	UpstreamErrors    int64     `json:"upstreamErrors"`
+	GatewayErrors     int64     `json:"gatewayErrors"`
+}
+
+// OpsLatencyDistribution contains latency bucket counts.
+type OpsLatencyDistribution struct {
+	Buckets []OpsLatencyBucket `json:"buckets"`
+}
+
+// OpsLatencyBucket is one latency range.
+type OpsLatencyBucket struct {
+	Range  string `json:"range"`
+	MinMs  int    `json:"minMs"`
+	MaxMs  int    `json:"maxMs"`
+	Count  int64  `json:"count"`
+}

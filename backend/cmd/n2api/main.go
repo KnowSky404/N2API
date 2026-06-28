@@ -74,6 +74,8 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 		RoutingPoolFallbackDepth: selected.RoutingPoolFallbackDepth,
 		RoutingPoolFallbackChain: selected.RoutingPoolFallbackChain,
 		RoutingPoolError:         selected.RoutingPoolError,
+		FingerprintUA:            selected.FingerprintUA,
+		FingerprintHeaders:       selected.FingerprintHeaders,
 	}
 	if err != nil {
 		return mapped, err
@@ -254,6 +256,7 @@ func main() {
 		MaxTokensPerMinutePerKey:        cfg.GatewayTokensPerMinutePerKey,
 		SettingsProvider:                adminService,
 		BudgetProvider:                  adminService,
+		ErrorPassthroughRulesProvider:   adminService,
 		Logger:                          store.NewGatewayRepository(pool),
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,

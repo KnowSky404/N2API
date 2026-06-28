@@ -288,6 +288,18 @@ type Repository interface {
 	SaveModelSettings(ctx context.Context, settings ModelSettings) (ModelSettings, error)
 	GetGatewaySettings(ctx context.Context) (GatewaySettings, error)
 	SaveGatewaySettings(ctx context.Context, settings GatewaySettings) (GatewaySettings, error)
+	GetOpsErrorStats(ctx context.Context, since time.Time) (OpsErrorStats, error)
+	GetOpsThroughputTrend(ctx context.Context, since time.Time, interval string) (OpsThroughputTrend, error)
+	GetOpsErrorTrend(ctx context.Context, since time.Time, interval string) (OpsErrorTrend, error)
+	GetOpsLatencyDistribution(ctx context.Context, since time.Time) (OpsLatencyDistribution, error)
+	ListFingerprintProfiles(ctx context.Context) ([]FingerprintProfile, error)
+	CreateFingerprintProfile(ctx context.Context, input FingerprintProfileInput) (FingerprintProfile, error)
+	UpdateFingerprintProfile(ctx context.Context, id int64, input FingerprintProfileInput) (FingerprintProfile, error)
+	DeleteFingerprintProfile(ctx context.Context, id int64) error
+	ListErrorPassthroughRules(ctx context.Context) ([]ErrorPassthroughRule, error)
+	CreateErrorPassthroughRule(ctx context.Context, input ErrorPassthroughRuleInput) (ErrorPassthroughRule, error)
+	UpdateErrorPassthroughRule(ctx context.Context, id int64, input ErrorPassthroughRuleInput) (ErrorPassthroughRule, error)
+	DeleteErrorPassthroughRule(ctx context.Context, id int64) error
 }
 
 type Service struct {
@@ -991,4 +1003,128 @@ func normalizeGatewaySettings(settings GatewaySettings) (GatewaySettings, error)
 		return GatewaySettings{}, ErrInvalidInput
 	}
 	return settings, nil
+}
+
+func (s *Service) GetOpsErrorStats(ctx context.Context, since time.Time) (OpsErrorStats, error) {
+	if since.IsZero() {
+		since = time.Now().Add(-7 * 24 * time.Hour)
+	}
+	return s.repo.GetOpsErrorStats(ctx, since)
+}
+
+func (s *Service) GetOpsThroughputTrend(ctx context.Context, since time.Time, interval string) (OpsThroughputTrend, error) {
+	if since.IsZero() {
+		since = time.Now().Add(-24 * time.Hour)
+	}
+	if interval == "" {
+		interval = "hour"
+	}
+	if !validOpsInterval(interval) {
+		return OpsThroughputTrend{}, ErrInvalidInput
+	}
+	return s.repo.GetOpsThroughputTrend(ctx, since, interval)
+}
+
+func (s *Service) GetOpsErrorTrend(ctx context.Context, since time.Time, interval string) (OpsErrorTrend, error) {
+	if since.IsZero() {
+		since = time.Now().Add(-24 * time.Hour)
+	}
+	if interval == "" {
+		interval = "hour"
+	}
+	if !validOpsInterval(interval) {
+		return OpsErrorTrend{}, ErrInvalidInput
+	}
+	return s.repo.GetOpsErrorTrend(ctx, since, interval)
+}
+
+func (s *Service) GetOpsLatencyDistribution(ctx context.Context, since time.Time) (OpsLatencyDistribution, error) {
+	if since.IsZero() {
+		since = time.Now().Add(-7 * 24 * time.Hour)
+	}
+	return s.repo.GetOpsLatencyDistribution(ctx, since)
+}
+
+func validOpsInterval(interval string) bool {
+	switch interval {
+	case "minute", "hour", "day":
+		return true
+	}
+	return false
+}
+
+func (s *Service) ListFingerprintProfiles(ctx context.Context) ([]FingerprintProfile, error) {
+	return s.repo.ListFingerprintProfiles(ctx)
+}
+
+func (s *Service) CreateFingerprintProfile(ctx context.Context, input FingerprintProfileInput) (FingerprintProfile, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return FingerprintProfile{}, ErrInvalidInput
+	}
+	if err := input.Normalize(); err != nil {
+		return FingerprintProfile{}, err
+	}
+	return s.repo.CreateFingerprintProfile(ctx, input)
+}
+
+func (s *Service) UpdateFingerprintProfile(ctx context.Context, id int64, input FingerprintProfileInput) (FingerprintProfile, error) {
+	if id <= 0 {
+		return FingerprintProfile{}, ErrInvalidInput
+	}
+	if strings.TrimSpace(input.Name) == "" {
+		return FingerprintProfile{}, ErrInvalidInput
+	}
+	if err := input.Normalize(); err != nil {
+		return FingerprintProfile{}, err
+	}
+	return s.repo.UpdateFingerprintProfile(ctx, id, input)
+}
+
+func (s *Service) DeleteFingerprintProfile(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrInvalidInput
+	}
+	return s.repo.DeleteFingerprintProfile(ctx, id)
+}
+
+func (s *Service) ListErrorPassthroughRules(ctx context.Context) ([]ErrorPassthroughRule, error) {
+	return s.repo.ListErrorPassthroughRules(ctx)
+}
+
+func (s *Service) CreateErrorPassthroughRule(ctx context.Context, input ErrorPassthroughRuleInput) (ErrorPassthroughRule, error) {
+	if strings.TrimSpace(input.Pattern) == "" {
+		return ErrorPassthroughRule{}, ErrInvalidInput
+	}
+	if !validErrorPassthroughMatchType(input.MatchType) {
+		return ErrorPassthroughRule{}, ErrInvalidInput
+	}
+	return s.repo.CreateErrorPassthroughRule(ctx, input)
+}
+
+func (s *Service) UpdateErrorPassthroughRule(ctx context.Context, id int64, input ErrorPassthroughRuleInput) (ErrorPassthroughRule, error) {
+	if id <= 0 {
+		return ErrorPassthroughRule{}, ErrInvalidInput
+	}
+	if strings.TrimSpace(input.Pattern) == "" {
+		return ErrorPassthroughRule{}, ErrInvalidInput
+	}
+	if !validErrorPassthroughMatchType(input.MatchType) {
+		return ErrorPassthroughRule{}, ErrInvalidInput
+	}
+	return s.repo.UpdateErrorPassthroughRule(ctx, id, input)
+}
+
+func (s *Service) DeleteErrorPassthroughRule(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return ErrInvalidInput
+	}
+	return s.repo.DeleteErrorPassthroughRule(ctx, id)
+}
+
+func validErrorPassthroughMatchType(matchType string) bool {
+	switch matchType {
+	case "status_code", "error_message", "error_code":
+		return true
+	}
+	return false
 }

@@ -745,6 +745,7 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 			priority = COALESCE($4, priority),
 			load_factor = COALESCE($8, load_factor),
 			max_concurrent_requests = COALESCE($9, max_concurrent_requests),
+			fingerprint_profile_id = COALESCE($10, fingerprint_profile_id),
 			name = CASE WHEN $7 THEN $6 ELSE name END,
 			last_error = CASE WHEN $5 THEN '' ELSE last_error END,
 			last_error_at = CASE WHEN $5 THEN NULL ELSE last_error_at END,
@@ -757,7 +758,7 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 		WHERE provider = $1
 			AND id = $2
 		RETURNING id
-	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus, update.Name, update.Name != nil, update.LoadFactor, update.MaxConcurrentRequests)
+	`, providerName, id, update.Enabled, update.Priority, update.ClearStatus, update.Name, update.Name != nil, update.LoadFactor, update.MaxConcurrentRequests, update.FingerprintProfileID)
 	var updatedID int64
 	err = row.Scan(&updatedID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1379,4 +1380,24 @@ func metadataJSON(metadata map[string]string) []byte {
 		return []byte(`{}`)
 	}
 	return payload
+}
+
+func (r *ProviderRepository) FindFingerprintProfileByID(ctx context.Context, id int64) (provider.FingerprintProfileData, error) {
+	var data provider.FingerprintProfileData
+	var headersRaw []byte
+	err := r.pool.QueryRow(ctx, `
+		SELECT user_agent, headers_json
+		FROM fingerprint_profiles
+		WHERE id = $1 AND enabled = true
+	`, id).Scan(&data.UserAgent, &headersRaw)
+	if err != nil {
+		return provider.FingerprintProfileData{}, err
+	}
+	if len(headersRaw) > 0 {
+		_ = json.Unmarshal(headersRaw, &data.Headers)
+	}
+	if data.Headers == nil {
+		data.Headers = map[string]string{}
+	}
+	return data, nil
 }

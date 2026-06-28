@@ -59,6 +59,9 @@
     updateProviderAccountMaxConcurrentRequests,
     updateProviderAccountName,
     updateProviderAccountPriority,
+    updateProviderAccountFingerprintProfile,
+    fingerprintProfiles,
+    loadFingerprintProfiles,
     routingPools,
     usage
   } from '$lib/admin-state.svelte.js';
@@ -1193,6 +1196,22 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           <p class="mt-1 whitespace-nowrap text-xs text-[#6e6e6e]">
             Active {account.currentConcurrentRequests || 0} / {concurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}
           </p>
+        </td>
+        <td class="px-4 py-3 align-middle">
+          <select
+            class="w-32 rounded-lg border border-[#e5e5e5] bg-white px-2 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5]"
+            disabled={providerAccounts.saving}
+            value={account.fingerprintProfileId ?? 0}
+            onchange={(event) => {
+              const target = /** @type {HTMLSelectElement} */ (event.target);
+              updateProviderAccountFingerprintProfile(account, target.value);
+            }}
+          >
+            <option value="0">None</option>
+            {#each fingerprintProfiles.items as fp}
+              <option value={fp.id}>{fp.name}</option>
+            {/each}
+          </select>
         </td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.accessTokenExpiresAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>

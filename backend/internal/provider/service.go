@@ -192,6 +192,7 @@ type Account struct {
 	FailureCount          int               `json:"failureCount"`
 	CircuitOpenUntil      *time.Time        `json:"circuitOpenUntil"`
 	RateLimitedUntil      *time.Time        `json:"rateLimitedUntil"`
+	FingerprintProfileID   *int64            `json:"fingerprintProfileId"`
 	LastRefreshError      string            `json:"lastRefreshError"`
 	LastRefreshErrorAt    *time.Time        `json:"lastRefreshErrorAt"`
 	CreatedAt             time.Time         `json:"createdAt"`
@@ -289,6 +290,7 @@ type AccountUpdate struct {
 	APIUpstreamBaseURL         *string
 	APIUpstreamAPIKey          *string
 	EncryptedAPIUpstreamAPIKey *string
+	FingerprintProfileID       *int64
 }
 
 type SelectedAccount struct {
@@ -305,6 +307,8 @@ type SelectedAccount struct {
 	RoutingPoolFallbackDepth int
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
+	FingerprintUA            string
+	FingerprintHeaders       map[string]string
 }
 
 type SelectionPreview struct {
@@ -316,7 +320,9 @@ type SelectionPreview struct {
 	RoutingPoolName          string               `json:"routingPoolName,omitempty"`
 	RoutingPoolFallbackDepth int                  `json:"routingPoolFallbackDepth,omitempty"`
 	RoutingPoolFallbackChain string               `json:"routingPoolFallbackChain,omitempty"`
-	RoutingPoolError         string               `json:"routingPoolError,omitempty"`
+	RoutingPoolError         string
+	FingerprintUA            string
+	FingerprintHeaders       map[string]string               `json:"routingPoolError,omitempty"`
 	Candidates               []SelectionCandidate `json:"candidates"`
 }
 
@@ -384,6 +390,7 @@ type Repository interface {
 	UpdateAccount(ctx context.Context, provider string, id int64, update AccountUpdate) (Account, error)
 	DeleteAccount(ctx context.Context, provider string, id int64) error
 	DeleteAccounts(ctx context.Context, provider string) error
+	FindFingerprintProfileByID(ctx context.Context, id int64) (FingerprintProfileData, error)
 	MarkAccountUsed(ctx context.Context, provider string, id int64, usedAt time.Time) error
 	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error
 	RecordRefreshFailure(ctx context.Context, provider string, id int64, message string, at time.Time, openUntil *time.Time) error
@@ -1953,6 +1960,20 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 	default:
 		return SelectedAccount{}, fmt.Errorf("unsupported account type %q", accountType)
 	}
+
+	if account.FingerprintProfileID != nil && *account.FingerprintProfileID > 0 {
+		fp, fpErr := s.repo.FindFingerprintProfileByID(ctx, *account.FingerprintProfileID)
+		if fpErr == nil {
+			if strings.TrimSpace(fp.UserAgent) != "" {
+				selected.FingerprintUA = strings.TrimSpace(fp.UserAgent)
+			}
+			if len(fp.Headers) > 0 {
+				selected.FingerprintHeaders = fp.Headers
+			}
+		}
+	}
+
+	return selected, nil
 }
 
 func (s *Service) apiUpstreamSchemeAllowed(scheme string) bool {
@@ -2688,4 +2709,10 @@ func previousIPHash(previous *Account) string {
 		return ""
 	}
 	return previous.IPHash
+}
+
+// FingerprintProfileData is the subset of a fingerprint profile needed for outbound requests.
+type FingerprintProfileData struct {
+	UserAgent string
+	Headers   map[string]string
 }

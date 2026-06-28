@@ -6,6 +6,7 @@ import (
 	"errors"
 	"html"
 	"io"
+	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
@@ -54,6 +55,18 @@ type AdminService interface {
 	UpdateModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error)
 	GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error)
 	UpdateGatewaySettings(ctx context.Context, settings admin.GatewaySettings) (admin.GatewaySettings, error)
+	GetOpsErrorStats(ctx context.Context, since time.Time) (admin.OpsErrorStats, error)
+	GetOpsThroughputTrend(ctx context.Context, since time.Time, interval string) (admin.OpsThroughputTrend, error)
+	GetOpsErrorTrend(ctx context.Context, since time.Time, interval string) (admin.OpsErrorTrend, error)
+	GetOpsLatencyDistribution(ctx context.Context, since time.Time) (admin.OpsLatencyDistribution, error)
+	ListFingerprintProfiles(ctx context.Context) ([]admin.FingerprintProfile, error)
+	CreateFingerprintProfile(ctx context.Context, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
+	UpdateFingerprintProfile(ctx context.Context, id int64, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
+	DeleteFingerprintProfile(ctx context.Context, id int64) error
+	ListErrorPassthroughRules(ctx context.Context) ([]admin.ErrorPassthroughRule, error)
+	CreateErrorPassthroughRule(ctx context.Context, input admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error)
+	UpdateErrorPassthroughRule(ctx context.Context, id int64, input admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error)
+	DeleteErrorPassthroughRule(ctx context.Context, id int64) error
 	DefaultModel(ctx context.Context) (string, error)
 	IsModelAllowed(ctx context.Context, model string) (bool, error)
 }
@@ -702,6 +715,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
 	}))
 
+
+	mux.HandleFunc("GET /api/admin/request-logs/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleExportRequestLogs(w, r, admins)
+	}))
 	mux.HandleFunc("GET /api/admin/gateway-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		settings, err := admins.GetGatewaySettings(r.Context())
 		if err != nil {
@@ -776,7 +793,199 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, pricing)
 	}))
 
+
+	mux.HandleFunc("GET /api/admin/ops/error-stats", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		since := parseSinceParam(r)
+		stats, err := admins.GetOpsErrorStats(r.Context(), since)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, stats)
+	}))
+
+	mux.HandleFunc("GET /api/admin/ops/throughput-trend", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		since := parseSinceParam(r)
+		interval := r.URL.Query().Get("interval")
+		trend, err := admins.GetOpsThroughputTrend(r.Context(), since, interval)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, trend)
+	}))
+
+	mux.HandleFunc("GET /api/admin/ops/error-trend", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		since := parseSinceParam(r)
+		interval := r.URL.Query().Get("interval")
+		trend, err := admins.GetOpsErrorTrend(r.Context(), since, interval)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, trend)
+	}))
+
+	mux.HandleFunc("GET /api/admin/ops/latency-distribution", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		since := parseSinceParam(r)
+		dist, err := admins.GetOpsLatencyDistribution(r.Context(), since)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, dist)
+	}))
+
+	mux.HandleFunc("GET /api/admin/fingerprint-profiles", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		profiles, err := admins.ListFingerprintProfiles(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]admin.FingerprintProfile{"profiles": profiles})
+	}))
+
+	mux.HandleFunc("POST /api/admin/fingerprint-profiles", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		var req admin.FingerprintProfileInput
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		profile, err := admins.CreateFingerprintProfile(r.Context(), req)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]admin.FingerprintProfile{"profile": profile})
+	}))
+
+	mux.HandleFunc("PATCH /api/admin/fingerprint-profiles/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		var req admin.FingerprintProfileInput
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		profile, err := admins.UpdateFingerprintProfile(r.Context(), id, req)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]admin.FingerprintProfile{"profile": profile})
+	}))
+
+	mux.HandleFunc("DELETE /api/admin/fingerprint-profiles/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		if err := admins.DeleteFingerprintProfile(r.Context(), id); err != nil {
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	mux.HandleFunc("GET /api/admin/model-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+
+	mux.HandleFunc("GET /api/admin/error-passthrough-rules", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		rules, err := admins.ListErrorPassthroughRules(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]admin.ErrorPassthroughRule{"rules": rules})
+	}))
+
+	mux.HandleFunc("POST /api/admin/error-passthrough-rules", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		var req admin.ErrorPassthroughRuleInput
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		rule, err := admins.CreateErrorPassthroughRule(r.Context(), req)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]admin.ErrorPassthroughRule{"rule": rule})
+	}))
+
+	mux.HandleFunc("PATCH /api/admin/error-passthrough-rules/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		var req admin.ErrorPassthroughRuleInput
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		rule, err := admins.UpdateErrorPassthroughRule(r.Context(), id, req)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]admin.ErrorPassthroughRule{"rule": rule})
+	}))
+
+	mux.HandleFunc("DELETE /api/admin/error-passthrough-rules/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		if err := admins.DeleteErrorPassthroughRule(r.Context(), id); err != nil {
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
 		settings, err := admins.GetModelSettings(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error")
@@ -1380,12 +1589,13 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		Name                  *string `json:"name"`
 		BaseURL               *string `json:"baseUrl"`
 		APIKey                *string `json:"apiKey"`
+		FingerprintProfileID  *int64  `json:"fingerprintProfileId"`
 	}
 	if err := decodeJSON(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil {
+	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil && req.FingerprintProfileID == nil {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
@@ -1398,6 +1608,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		Name:                  req.Name,
 		APIUpstreamBaseURL:    req.BaseURL,
 		APIUpstreamAPIKey:     req.APIKey,
+		FingerprintProfileID: req.FingerprintProfileID,
 	})
 	if err != nil {
 		writeProviderAccountError(w, err)
@@ -2295,4 +2506,102 @@ func clearSessionCookie(w http.ResponseWriter, secure bool) {
 		Secure:   secure,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+func parseSinceParam(r *http.Request) time.Time {
+	raw := r.URL.Query().Get("since")
+	if raw == "" {
+		return time.Time{}
+	}
+	seconds, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
+}
+
+func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins AdminService) {
+	filter := buildRequestLogFilter(r)
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "json"
+	}
+
+	logs, err := admins.ListRequestLogs(r.Context(), filter)
+	if err != nil {
+		if errors.Is(err, admin.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+
+	switch format {
+	case "csv":
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="n2api-request-logs.csv"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "id,request_id,client_key,provider,model,route,method,status_code,latency_ms,error,input_tokens,output_tokens,total_tokens,estimated_cost_microusd,session_id,created_at\n")
+		for _, log := range logs {
+			_, _ = fmt.Fprintf(w, "%d,%s,%s,%s,%s,%s,%s,%d,%d,%s,%d,%d,%d,%d,%s,%s\n",
+				log.ID, csvEscape(log.RequestID), csvEscape(log.ClientKey), csvEscape(log.Provider),
+				csvEscape(log.Model), csvEscape(log.Route), csvEscape(log.Method),
+				log.StatusCode, log.LatencyMS, csvEscape(log.Error),
+				log.InputTokens, log.OutputTokens, log.TotalTokens,
+				log.EstimatedCostMicrousd, csvEscape(log.SessionID), log.CreatedAt.Format(time.RFC3339))
+		}
+	default:
+		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
+	}
+}
+
+func csvEscape(s string) string {
+	if strings.ContainsAny(s, "\",\n") {
+		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	return s
+}
+
+func buildRequestLogFilter(r *http.Request) admin.RequestLogFilter {
+	filter := admin.RequestLogFilter{
+		Limit:       200,
+		StatusClass: "all",
+	}
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 && parsed <= 10000 {
+			filter.Limit = parsed
+		}
+	}
+	if q := r.URL.Query().Get("q"); q != "" {
+		filter.Query = q
+	}
+	switch sc := r.URL.Query().Get("statusClass"); sc {
+	case "all", "success", "client_error", "server_error":
+		filter.StatusClass = sc
+	}
+	if raw := r.URL.Query().Get("providerAccountId"); raw != "" {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
+			filter.ProviderAccountID = id
+		}
+	}
+	if raw := r.URL.Query().Get("routingPoolId"); raw != "" {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
+			filter.RoutingPoolID = id
+		}
+	}
+	if raw := r.URL.Query().Get("clientKeyId"); raw != "" {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
+			filter.ClientKeyID = id
+		}
+	}
+	filter.Model = r.URL.Query().Get("model")
+	filter.SessionID = r.URL.Query().Get("sessionId")
+	filter.Error = r.URL.Query().Get("error")
+	filter.RoutingPoolError = r.URL.Query().Get("routingPoolError")
+	filter.RoutingPoolChain = r.URL.Query().Get("routingPoolChain")
+	if raw := r.URL.Query().Get("gatewayFallbacks"); raw == "1" || raw == "true" {
+		filter.GatewayFallbacks = true
+	}
+	return filter
 }

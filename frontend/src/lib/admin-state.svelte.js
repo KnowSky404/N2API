@@ -80,6 +80,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string | null} lastTestAt
  * @property {string} lastTestStatus
  * @property {string} lastTestError
+ * @property {number | null} fingerprintProfileId
  */
 
 /**
@@ -1443,7 +1444,7 @@ export async function completeProviderCallback() {
 
 /**
  * @param {ProviderAccount} account
- * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'maxConcurrentRequests' | 'name' | 'baseUrl'>> & { apiKey?: string }} patch
+ * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'maxConcurrentRequests' | 'name' | 'baseUrl' | 'fingerprintProfileId'>> & { apiKey?: string }} patch
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
@@ -1830,6 +1831,14 @@ export async function updateProviderAccountMaxConcurrentRequests(account, event)
 
   await updateProviderAccount(account, { maxConcurrentRequests });
 }
+
+
+/** @param {any} account @param {string} fingerprintProfileId "0" means clear */
+export async function updateProviderAccountFingerprintProfile(account, fingerprintProfileId) {
+  const id = fingerprintProfileId === '0' ? null : (Number(fingerprintProfileId) || null);
+  await updateProviderAccount(account, { fingerprintProfileId: id });
+}
+
 
 /** @param {ProviderAccount} account */
 export async function refreshProviderAccount(account) {
@@ -2944,4 +2953,282 @@ export async function revokeKey(id) {
 export function initializeAdminState() {
   loadHealth();
   loadSession();
+}
+
+// --- Ops monitoring state ---
+
+/** @type {{ loading: boolean; error: string; stats: any; throughput: any; errorTrend: any; latency: any }} */
+export const opsMonitor = $state({
+  loading: false,
+  error: '',
+  stats: null,
+  throughput: null,
+  errorTrend: null,
+  latency: null,
+});
+
+/** @param {number} sinceSeconds */
+export async function loadOpsErrorStats(sinceSeconds) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  opsMonitor.error = '';
+  try {
+    const params = new URLSearchParams();
+    if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
+    opsMonitor.stats = await requestJSON(`/api/admin/ops/error-stats?${params.toString()}`);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops error stats';
+  }
+}
+
+/** @param {number} sinceSeconds @param {string} interval */
+export async function loadOpsThroughputTrend(sinceSeconds, interval) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  opsMonitor.error = '';
+  try {
+    const params = new URLSearchParams();
+    if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
+    if (interval) params.set('interval', interval);
+    opsMonitor.throughput = await requestJSON(`/api/admin/ops/throughput-trend?${params.toString()}`);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops throughput trend';
+  }
+}
+
+/** @param {number} sinceSeconds @param {string} interval */
+export async function loadOpsErrorTrend(sinceSeconds, interval) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  opsMonitor.error = '';
+  try {
+    const params = new URLSearchParams();
+    if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
+    if (interval) params.set('interval', interval);
+    opsMonitor.errorTrend = await requestJSON(`/api/admin/ops/error-trend?${params.toString()}`);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops error trend';
+  }
+}
+
+/** @param {number} sinceSeconds */
+export async function loadOpsLatencyDistribution(sinceSeconds) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  opsMonitor.error = '';
+  try {
+    const params = new URLSearchParams();
+    if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
+    opsMonitor.latency = await requestJSON(`/api/admin/ops/latency-distribution?${params.toString()}`);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops latency distribution';
+  }
+}
+
+/** @param {number} rangeSeconds */
+export async function loadOpsDashboard(rangeSeconds) {
+  const since = rangeSeconds ? Math.floor(Date.now() / 1000) - rangeSeconds : 0;
+  opsMonitor.loading = true;
+  opsMonitor.error = '';
+  try {
+    await Promise.all([
+      loadOpsErrorStats(since),
+      loadOpsThroughputTrend(since, 'hour'),
+      loadOpsErrorTrend(since, 'hour'),
+      loadOpsLatencyDistribution(since),
+    ]);
+  } finally {
+    opsMonitor.loading = false;
+  }
+}
+
+// --- Fingerprint profile state ---
+
+/** @type {{ loading: boolean; error: string; items: any[]; saving: boolean }} */
+export const fingerprintProfiles = $state({
+  loading: false,
+  error: '',
+  items: [],
+  saving: false,
+});
+
+export async function loadFingerprintProfiles() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  fingerprintProfiles.loading = true;
+  fingerprintProfiles.error = '';
+  try {
+    const data = await requestJSON('/api/admin/fingerprint-profiles');
+    if (!isCurrentAuthenticated(version)) return;
+    fingerprintProfiles.items = data.profiles ?? [];
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to load fingerprint profiles';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    fingerprintProfiles.loading = false;
+  }
+}
+
+/** @param {{name: string; description: string; userAgent: string; tlsFingerprint: string; headers: Record<string,string>; enabled: boolean}} input */
+export async function createFingerprintProfile(input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+
+  fingerprintProfiles.saving = true;
+  fingerprintProfiles.error = '';
+  try {
+    await requestJSON('/api/admin/fingerprint-profiles', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadFingerprintProfiles();
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to create fingerprint profile';
+    return false;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    fingerprintProfiles.saving = false;
+  }
+}
+
+/** @param {number} id @param {any} input */
+export async function updateFingerprintProfile(id, input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+
+  fingerprintProfiles.saving = true;
+  fingerprintProfiles.error = '';
+  try {
+    await requestJSON(`/api/admin/fingerprint-profiles/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadFingerprintProfiles();
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to update fingerprint profile';
+    return false;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    fingerprintProfiles.saving = false;
+  }
+}
+
+/** @param {number} id */
+export async function deleteFingerprintProfile(id) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+
+  fingerprintProfiles.error = '';
+  try {
+    await requestJSON(`/api/admin/fingerprint-profiles/${id}`, { method: 'DELETE' });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadFingerprintProfiles();
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to delete fingerprint profile';
+    return false;
+  }
+}
+
+// --- Error passthrough rules state ---
+/** @type {{ loading: boolean; error: string; items: any[]; saving: boolean }} */
+export const errorPassthroughRules = $state({
+  loading: false,
+  error: '',
+  items: [],
+  saving: false,
+});
+
+export async function loadErrorPassthroughRules() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  errorPassthroughRules.loading = true;
+  errorPassthroughRules.error = '';
+  try {
+    const data = await requestJSON('/api/admin/error-passthrough-rules');
+    if (!isCurrentAuthenticated(version)) return;
+    errorPassthroughRules.items = data.rules ?? [];
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    errorPassthroughRules.error = error instanceof Error ? error.message : 'Failed to load error passthrough rules';
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    errorPassthroughRules.loading = false;
+  }
+}
+
+/** @param {{pattern: string; matchType: string; description: string; enabled: boolean; priority: number}} input */
+export async function createErrorPassthroughRule(input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  errorPassthroughRules.saving = true;
+  errorPassthroughRules.error = '';
+  try {
+    await requestJSON('/api/admin/error-passthrough-rules', { method: 'POST', body: JSON.stringify(input) });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadErrorPassthroughRules();
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    errorPassthroughRules.error = error instanceof Error ? error.message : 'Failed to create error passthrough rule';
+    return false;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    errorPassthroughRules.saving = false;
+  }
+}
+
+/** @param {number} id @param {any} input */
+export async function updateErrorPassthroughRule(id, input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  errorPassthroughRules.saving = true;
+  errorPassthroughRules.error = '';
+  try {
+    await requestJSON(`/api/admin/error-passthrough-rules/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadErrorPassthroughRules();
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    errorPassthroughRules.error = error instanceof Error ? error.message : 'Failed to update error passthrough rule';
+    return false;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return;
+    errorPassthroughRules.saving = false;
+  }
+}
+
+/** @param {number} id */
+export async function deleteErrorPassthroughRule(id) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  errorPassthroughRules.error = '';
+  try {
+    await requestJSON(`/api/admin/error-passthrough-rules/${id}`, { method: 'DELETE' });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadErrorPassthroughRules();
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    errorPassthroughRules.error = error instanceof Error ? error.message : 'Failed to delete error passthrough rule';
+    return false;
+  }
 }

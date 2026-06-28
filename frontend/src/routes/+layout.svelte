@@ -18,7 +18,10 @@
     { href: '/providers', label: 'Providers' },
     { href: '/routing-pools', label: 'Routing pools' },
     { href: '/api-keys', label: 'API Keys' },
-    { href: '/request-logs', label: 'Request Logs' }
+    { href: '/request-logs', label: 'Request Logs' },
+    { href: '/ops', label: 'Ops' },
+    { href: '/fingerprints', label: 'Fingerprints' },
+    { href: '/error-passthrough', label: 'Error rules' }
   ];
 
   const activePath = $derived(page.url.pathname);

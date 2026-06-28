@@ -196,6 +196,20 @@ func (p *fakeGatewaySettingsProvider) GetGatewaySettings(context.Context) (admin
 	return p.settings, nil
 }
 
+type fakeErrorPassthroughRuleProvider struct {
+	rules []admin.ErrorPassthroughRule
+	err   error
+	calls int
+}
+
+func (p *fakeErrorPassthroughRuleProvider) ListErrorPassthroughRules(context.Context) ([]admin.ErrorPassthroughRule, error) {
+	p.calls++
+	if p.err != nil {
+		return nil, p.err
+	}
+	return append([]admin.ErrorPassthroughRule(nil), p.rules...), nil
+}
+
 type fakeBudgetProvider struct {
 	usage admin.APIKeyBudgetUsage
 	err   error
@@ -3523,5 +3537,92 @@ func TestProxyDoesNotRetryAfterStreamingBegins(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "data: partial") {
 		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
+func TestProxyAppliesSelectedAccountFingerprintHeaders(t *testing.T) {
+	var gotUserAgent string
+	var gotHeader string
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID:          1,
+		AuthorizationToken: "upstream-token",
+		FingerprintUA:      "N2API-Fingerprint/1.0",
+		FingerprintHeaders: map[string]string{"X-Fingerprint-Test": "enabled"},
+	}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotUserAgent = r.Header.Get("User-Agent")
+		gotHeader = r.Header.Get("X-Fingerprint-Test")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if gotUserAgent != "N2API-Fingerprint/1.0" {
+		t.Fatalf("User-Agent = %q, want fingerprint override", gotUserAgent)
+	}
+	if gotHeader != "enabled" {
+		t.Fatalf("X-Fingerprint-Test = %q, want fingerprint custom header", gotHeader)
+	}
+}
+
+func TestProxyPassesThroughMatchingRetryableUpstreamError(t *testing.T) {
+	transportCalls := 0
+	rules := &fakeErrorPassthroughRuleProvider{rules: []admin.ErrorPassthroughRule{{
+		Pattern:   "insufficient_quota",
+		MatchType: "error_code",
+		Enabled:   true,
+		Priority:  1,
+	}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AuthorizationToken: "first-token"},
+		{AccountID: 2, AuthorizationToken: "second-token"},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "Retry-After": []string{"60"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"insufficient_quota","message":"quota exceeded"}}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL:               "https://upstream.example.test",
+		ErrorPassthroughRulesProvider: rules,
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d body=%s, want upstream 429", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "insufficient_quota") {
+		t.Fatalf("body = %q, want upstream error body", recorder.Body.String())
+	}
+	if transportCalls != 1 {
+		t.Fatalf("transport calls = %d, want no fallback retry", transportCalls)
+	}
+	if tokens.calls != 1 {
+		t.Fatalf("account selections = %d, want one selected account", tokens.calls)
+	}
+	if rules.calls != 1 {
+		t.Fatalf("rule lookups = %d, want one lookup", rules.calls)
 	}
 }

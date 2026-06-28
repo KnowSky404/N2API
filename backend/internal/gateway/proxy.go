@@ -45,6 +45,8 @@ type SelectedAccount struct {
 	RoutingPoolFallbackDepth int
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
+	FingerprintUA            string
+	FingerprintHeaders       map[string]string
 }
 
 type AccountProvider interface {
@@ -113,6 +115,10 @@ type GatewaySettingsProvider interface {
 	GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error)
 }
 
+type ErrorPassthroughRulesProvider interface {
+	ListErrorPassthroughRules(ctx context.Context) ([]admin.ErrorPassthroughRule, error)
+}
+
 type BudgetProvider interface {
 	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
 }
@@ -135,6 +141,8 @@ type RequestLog struct {
 	RoutingPoolFallbackDepth int
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
+	FingerprintUA            string
+	FingerprintHeaders       map[string]string
 	Model                    string
 	SessionID                string
 	Route                    string
@@ -168,6 +176,7 @@ type Config struct {
 	UsagePricer                     UsagePricer
 	SettingsProvider                GatewaySettingsProvider
 	BudgetProvider                  BudgetProvider
+	ErrorPassthroughRulesProvider   ErrorPassthroughRulesProvider
 }
 
 type Proxy struct {
@@ -187,6 +196,7 @@ type Proxy struct {
 	models          ModelProvider
 	usagePricer     UsagePricer
 	budgets         BudgetProvider
+	errorRules      ErrorPassthroughRulesProvider
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -231,6 +241,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		models:          cfg.ModelProvider,
 		usagePricer:     cfg.UsagePricer,
 		budgets:         cfg.BudgetProvider,
+		errorRules:      cfg.ErrorPassthroughRulesProvider,
 	}
 }
 
@@ -471,7 +482,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if retryableUpstreamStatus(upstreamResp.StatusCode) {
-			message := captureFailureMessage(upstreamResp)
+			message, failureBody := captureFailure(upstreamResp)
+			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
+				errorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
+				defer releaseAccount()
+				defer upstreamResp.Body.Close()
+
+				copyResponseHeaders(recorder.Header(), upstreamResp.Header)
+				recorder.WriteHeader(upstreamResp.StatusCode)
+				observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
+				return
+			}
 			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
@@ -1098,18 +1119,75 @@ func upstreamStatusErrorCode(statusCode int) string {
 	}
 }
 
-func captureFailureMessage(resp *http.Response) string {
+func (p *Proxy) shouldPassThroughUpstreamError(ctx context.Context, statusCode int, failureBody string) bool {
+	if p.errorRules == nil {
+		return false
+	}
+	rules, err := p.errorRules.ListErrorPassthroughRules(ctx)
+	if err != nil {
+		return false
+	}
+	errorCode, errorMessage := upstreamErrorFields(failureBody)
+	if strings.TrimSpace(errorMessage) == "" {
+		errorMessage = failureBody
+	}
+	status := strconv.Itoa(statusCode)
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		pattern := strings.TrimSpace(rule.Pattern)
+		if pattern == "" {
+			continue
+		}
+		switch rule.MatchType {
+		case "status_code":
+			if pattern == status {
+				return true
+			}
+		case "error_code":
+			if strings.EqualFold(pattern, strings.TrimSpace(errorCode)) {
+				return true
+			}
+		case "error_message":
+			if strings.Contains(strings.ToLower(errorMessage), strings.ToLower(pattern)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func upstreamErrorFields(body string) (string, string) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", ""
+	}
+	var payload struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(payload.Error.Code), strings.TrimSpace(payload.Error.Message)
+}
+
+func captureFailure(resp *http.Response) (string, string) {
 	if resp == nil || resp.Body == nil {
-		return ""
+		return "", ""
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFailureBody+1))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 {
-		return http.StatusText(resp.StatusCode)
+	failureBody := string(bytes.TrimSpace(body))
+	message := http.StatusText(resp.StatusCode)
+	if strings.TrimSpace(failureBody) == "" {
+		return message, failureBody
 	}
 	var payload struct {
 		Error struct {
@@ -1118,12 +1196,17 @@ func captureFailureMessage(resp *http.Response) string {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &payload); err == nil && strings.TrimSpace(payload.Error.Message) != "" {
-		return strings.TrimSpace(payload.Error.Message)
+		return strings.TrimSpace(payload.Error.Message), failureBody
 	}
 	if len(body) > maxFailureBody {
 		body = body[:maxFailureBody]
 	}
-	return string(body)
+	return string(bytes.TrimSpace(body)), failureBody
+}
+
+func captureFailureMessage(resp *http.Response) string {
+	message, _ := captureFailure(resp)
+	return message
 }
 
 func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, body io.ReadCloser) (*http.Request, error) {
@@ -1160,6 +1243,15 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 		req.Header.Set("User-Agent", defaultCodexUserAgent)
 		req.Header.Set("Content-Type", "application/json")
 	}
+
+	// Apply fingerprint profile overrides (User-Agent and custom headers)
+	if strings.TrimSpace(selected.FingerprintUA) != "" {
+		req.Header.Set("User-Agent", strings.TrimSpace(selected.FingerprintUA))
+	}
+	for key, value := range selected.FingerprintHeaders {
+		req.Header.Set(key, value)
+	}
+
 	return req, nil
 }
 

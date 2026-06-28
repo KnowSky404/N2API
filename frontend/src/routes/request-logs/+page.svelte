@@ -98,6 +98,24 @@
       requestLogs.gatewayFallbacks = true;
     }
   }
+  /** @param {string} [format] */
+  function exportRequestLogsURL(format) {
+    const params = new URLSearchParams();
+    if (requestLogs.query) params.set('q', requestLogs.query);
+    if (requestLogs.statusClass && requestLogs.statusClass !== 'all') params.set('statusClass', requestLogs.statusClass);
+    if (requestLogs.providerAccountId) params.set('providerAccountId', requestLogs.providerAccountId);
+    if (requestLogs.routingPoolId) params.set('routingPoolId', requestLogs.routingPoolId);
+    if (requestLogs.clientKeyId) params.set('clientKeyId', requestLogs.clientKeyId);
+    if (requestLogs.model) params.set('model', requestLogs.model);
+    if (requestLogs.sessionId) params.set('sessionId', requestLogs.sessionId);
+    if (requestLogs.errorCode) params.set('error', requestLogs.errorCode);
+    if (requestLogs.routingPoolError) params.set('routingPoolError', requestLogs.routingPoolError);
+    if (requestLogs.routingPoolChain) params.set('routingPoolChain', requestLogs.routingPoolChain);
+    if (requestLogs.gatewayFallbacks) params.set('gatewayFallbacks', '1');
+    if (format) params.set('format', format);
+    return '/api/admin/request-logs/export?' + params.toString();
+  }
+
 
   $effect(() => {
     if (!session.authenticated) {
@@ -474,6 +492,22 @@
 <p class="mt-1 text-sm text-[#6e6e6e]">
   Recent OpenAI-compatible gateway requests.
 </p>
+      <div class="flex items-center gap-2 mt-2">
+        <a
+          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
+          href={exportRequestLogsURL()}
+          target="_blank" rel="noopener noreferrer"
+        >
+          Export CSV
+        </a>
+        <a
+          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
+          href={exportRequestLogsURL("json")}
+          target="_blank" rel="noopener noreferrer"
+        >
+          Export JSON
+        </a>
+      </div>
     </div>
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
       <label class="block text-sm font-medium text-[#3c3c3c]">

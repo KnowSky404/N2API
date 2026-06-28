@@ -2964,6 +2964,10 @@ func (r *memoryRepo) DeleteAccounts(ctx context.Context, providerName string) er
 	return nil
 }
 
+func (r *memoryRepo) FindFingerprintProfileByID(_ context.Context, _ int64) (FingerprintProfileData, error) {
+	return FingerprintProfileData{}, nil
+}
+
 func (r *memoryRepo) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {
 	if r.markAccountUsedErr != nil {
 		return r.markAccountUsedErr
