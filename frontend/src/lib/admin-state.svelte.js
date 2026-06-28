@@ -1087,6 +1087,7 @@ export async function loadSession() {
     await loadRequestLogs();
     await loadUsagePricing();
     await loadUsageSummary('24h', 'provider_account');
+    await loadUsageSummary('24h', 'usage_source');
     await loadUsageSummary('24h', 'routing_pool');
     await loadUsageSummary('24h', 'routing_pool_chain');
     await loadUsageSummary('24h', 'client_key');

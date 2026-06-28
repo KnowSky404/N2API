@@ -51,6 +51,7 @@
   const routableModelCount = $derived(getRoutableModelCount());
   const usage24h = $derived(usage.summaries['24h:model'] ?? null);
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
+  const usage24hUsageSources = $derived(usage.summaries['24h:usage_source'] ?? null);
   const usage24hRoutingPools = $derived(usage.summaries['24h:routing_pool'] ?? null);
   const usage24hRoutingPoolChains = $derived(usage.summaries['24h:routing_pool_chain'] ?? null);
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
@@ -76,6 +77,7 @@
       const accountId = providerAccountUsageId(id);
       return accountId ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
     }
+    if (sectionTitle === 'Top usage sources') return `/request-logs?usageSource=${encodeURIComponent(id)}`;
     if (sectionTitle === 'Top routing pools' && /^[1-9]\d*$/.test(id)) {
       return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
     }
@@ -273,6 +275,7 @@
         {#each [
           { title: 'Top models', data: usage24h },
           { title: 'Top provider accounts', data: usage24hProviderAccounts },
+          { title: 'Top usage sources', data: usage24hUsageSources },
           { title: 'Top routing pools', data: usage24hRoutingPools },
           { title: 'Top routing pool chains', data: usage24hRoutingPoolChains },
           { title: 'Top client keys', data: usage24hClientKeys },

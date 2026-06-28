@@ -132,6 +132,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
     '24h usage',
     'Top models',
     'Top provider accounts',
+    'Top usage sources',
     'Top routing pool chains',
     'Top client keys',
     'Top sessions'
@@ -161,6 +162,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /getActiveKeys/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'model'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'provider_account'\)/);
+  assert.match(gatewayPage, /loadUsageSummary\('24h', 'usage_source'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'routing_pool'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'routing_pool_chain'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'client_key'\)/);
@@ -442,6 +444,7 @@ test('gateway usage rows link to filtered request logs', () => {
   assert.match(gatewayPage, /routingPoolId=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /routingPoolChain=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /clientKeyId=\$\{encodeURIComponent/);
+  assert.match(gatewayPage, /usageSource=\$\{encodeURIComponent/);
   assert.match(gatewayPage, /providerAccountUsageId/);
   assert.match(gatewayPage, /href=\{href\}/);
 });
@@ -662,7 +665,7 @@ test('dashboard shows gateway runtime scheduling limits', () => {
 });
 
 test('dashboard shows 24h gateway usage snapshot', () => {
-  for (const label of ['24h usage', 'Top models', 'Top provider accounts', 'Top routing pools', 'Top routing pool chains', 'Top client keys', 'Top sessions', 'Requests', 'Tokens', 'Estimated cost']) {
+  for (const label of ['24h usage', 'Top models', 'Top provider accounts', 'Top usage sources', 'Top routing pools', 'Top routing pool chains', 'Top client keys', 'Top sessions', 'Requests', 'Tokens', 'Estimated cost']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
   }
 
@@ -672,12 +675,14 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   assert.match(dashboardPage, /providerAccountUsageId/);
   assert.match(dashboardPage, /request-logs\?model=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?providerAccountId=\$\{encodeURIComponent/);
+  assert.match(dashboardPage, /request-logs\?usageSource=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?routingPoolId=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?routingPoolChain=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?clientKeyId=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /request-logs\?sessionId=\$\{encodeURIComponent/);
   assert.match(dashboardPage, /href="\/request-logs\?gatewayFallbacks=1"/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'provider_account'\)/);
+  assert.match(adminState, /await loadUsageSummary\('24h', 'usage_source'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'routing_pool'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'routing_pool_chain'\)/);
   assert.match(adminState, /await loadUsageSummary\('24h', 'client_key'\)/);
