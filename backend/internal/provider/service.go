@@ -807,6 +807,14 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		}
 		update.Name = &name
 	}
+	if update.FingerprintProfileIDSet && update.FingerprintProfileID != nil {
+		if *update.FingerprintProfileID <= 0 {
+			return Account{}, ErrInvalidInput
+		}
+		if _, err := s.repo.FindFingerprintProfileByID(ctx, *update.FingerprintProfileID); err != nil {
+			return Account{}, ErrInvalidInput
+		}
+	}
 	if update.APIUpstreamBaseURL != nil || update.APIUpstreamAPIKey != nil {
 		account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
 		if err != nil {

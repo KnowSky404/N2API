@@ -1430,6 +1430,50 @@ func TestUpdateAccountRejectsEmptyLocalAccountLabel(t *testing.T) {
 	}
 }
 
+func TestUpdateAccountRejectsUnknownFingerprintProfile(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	profileID := int64(999)
+
+	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{FingerprintProfileIDSet: true, FingerprintProfileID: &profileID}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("UpdateAccount error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestUpdateAccountCanSetKnownFingerprintProfile(t *testing.T) {
+	profileID := int64(7)
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
+	repo.fingerprintProfiles[profileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	updated, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{FingerprintProfileIDSet: true, FingerprintProfileID: &profileID})
+	if err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if updated.FingerprintProfileID == nil || *updated.FingerprintProfileID != profileID {
+		t.Fatalf("FingerprintProfileID = %+v, want %d", updated.FingerprintProfileID, profileID)
+	}
+}
+
+func TestUpdateAccountAllowsClearingFingerprintProfile(t *testing.T) {
+	profileID := int64(7)
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 1, "access-token")
+	account.FingerprintProfileID = &profileID
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	updated, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{FingerprintProfileIDSet: true})
+	if err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if updated.FingerprintProfileID != nil {
+		t.Fatalf("FingerprintProfileID = %v, want cleared nil", *updated.FingerprintProfileID)
+	}
+}
+
 func TestSelectAccountForModelSkipsExcludedAccount(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
