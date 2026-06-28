@@ -251,26 +251,55 @@
     return usage.summaries[`${range}:${usage.groupBy}`] ?? null;
   }
 
+  function usageRangeSinceParam() {
+    let seconds = 86400;
+    if (usage.range === '7d') seconds = 604800;
+    if (usage.range === '30d') seconds = 2592000;
+    return String(Math.max(0, Math.floor(Date.now() / 1000) - seconds));
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
   function usageRowHref(row) {
     const id = String(row?.id ?? '');
     if (!id || id === 'unknown' || id === 'none') return '';
-    if (usage.groupBy === 'model') return `/request-logs?model=${encodeURIComponent(id)}`;
+    const params = new URLSearchParams();
+    if (usage.groupBy === 'model') {
+      params.set('model', id);
+      params.set('since', usageRangeSinceParam());
+      return `/request-logs?${params.toString()}`;
+    }
     if (usage.groupBy === 'client_key' && /^[1-9]\d*$/.test(id)) {
-      return `/request-logs?clientKeyId=${encodeURIComponent(id)}`;
+      params.set('clientKeyId', id);
+      params.set('since', usageRangeSinceParam());
+      return `/request-logs?${params.toString()}`;
     }
     if (usage.groupBy === 'provider_account') {
       const accountId = id.split('/').pop() ?? '';
-      return /^[1-9]\d*$/.test(accountId) ? `/request-logs?providerAccountId=${encodeURIComponent(accountId)}` : '';
+      if (!/^[1-9]\d*$/.test(accountId)) return '';
+      params.set('providerAccountId', accountId);
+      params.set('since', usageRangeSinceParam());
+      return `/request-logs?${params.toString()}`;
     }
     if (usage.groupBy === 'routing_pool' && /^[1-9]\d*$/.test(id)) {
-      return `/request-logs?routingPoolId=${encodeURIComponent(id)}`;
+      params.set('routingPoolId', id);
+      params.set('since', usageRangeSinceParam());
+      return `/request-logs?${params.toString()}`;
     }
     if (usage.groupBy === 'routing_pool_chain') {
-      return `/request-logs?routingPoolChain=${encodeURIComponent(id)}`;
+      params.set('routingPoolChain', id);
+      params.set('since', usageRangeSinceParam());
+      return `/request-logs?${params.toString()}`;
     }
-    if (usage.groupBy === 'session') return `/request-logs?sessionId=${encodeURIComponent(id)}`;
-    if (usage.groupBy === 'usage_source') return `/request-logs?usageSource=${encodeURIComponent(id)}`;
+    if (usage.groupBy === 'session') {
+      params.set('sessionId', id);
+      params.set('since', usageRangeSinceParam());
+      return `/request-logs?${params.toString()}`;
+    }
+    if (usage.groupBy === 'usage_source') {
+      params.set('usageSource', id);
+      params.set('since', usageRangeSinceParam());
+      return `/request-logs?${params.toString()}`;
+    }
     return '';
   }
 

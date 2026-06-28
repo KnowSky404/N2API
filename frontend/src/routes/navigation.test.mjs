@@ -256,6 +256,9 @@ test('request logs page includes usage accounting UI', () => {
     assert.match(requestLogsPage, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
   }
   assert.match(requestLogsPage, /function usageRowHref/);
+  assert.match(requestLogsPage, /function usageRangeSinceParam/);
+  assert.match(requestLogsPage, /params\.set\('since', usageRangeSinceParam\(\)\)/);
+  assert.match(requestLogsPage, /params\.set\('model', id\)/);
   assert.match(requestLogsPage, /usage\.groupBy === 'model'/);
   assert.match(requestLogsPage, /usage\.groupBy === 'client_key'/);
   assert.match(requestLogsPage, /usage\.groupBy === 'provider_account'/);
