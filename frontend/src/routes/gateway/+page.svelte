@@ -11,6 +11,7 @@
     getRoutableModelCount,
     getSchedulableProviderAccounts,
     getUnschedulableProviderAccountSummary,
+    unschedulableReasonHref,
     loadGatewaySettings,
     loadKeys,
     loadModelRouting,
@@ -307,9 +308,13 @@
         {:else}
           <div class="mt-3 flex flex-wrap gap-2">
             {#each unschedulableAccountSummary as item}
-              <span class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#3c3c3c]">
+              <a
+                class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#3c3c3c] underline-offset-2 hover:underline"
+                href={unschedulableReasonHref(item.reason)}
+                aria-label="View provider accounts with this blocked reason"
+              >
                 {item.reasonLabel}: <span class="font-mono text-[#0d0d0d]">{item.count}</span>
-              </span>
+              </a>
             {/each}
           </div>
         {/if}

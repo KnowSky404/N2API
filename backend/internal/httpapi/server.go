@@ -31,6 +31,7 @@ type HealthChecker interface {
 type AdminService interface {
 	Login(ctx context.Context, username, password string) (admin.Session, error)
 	Logout(ctx context.Context, token string) error
+	ChangePassword(ctx context.Context, adminID int64, currentPassword, newPassword string) error
 	ValidateSession(ctx context.Context, token string) (admin.Admin, error)
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
 	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
@@ -276,6 +277,30 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("GET /api/admin/me", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
 		writeJSON(w, http.StatusOK, map[string]string{"username": currentAdmin.Username})
+	}))
+
+	mux.HandleFunc("POST /api/admin/change-password", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
+		var body struct {
+			CurrentPassword string `json:"currentPassword"`
+			NewPassword     string `json:"newPassword"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		if err := admins.ChangePassword(r.Context(), currentAdmin.ID, body.CurrentPassword, body.NewPassword); err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, admin.ErrUnauthorized) {
+				writeError(w, http.StatusUnauthorized, "unauthorized")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 	}))
 
 	mux.HandleFunc("GET /api/admin/keys", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

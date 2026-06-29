@@ -32,10 +32,14 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Error rules', 'Sign out']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Error rules', 'Sign out', 'Change password', 'Update password', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
+  assert.match(layout, /changePassword/);
+  assert.match(layout, /changePasswordForm\.currentPassword/);
+  assert.match(layout, /changePasswordForm\.newPassword/);
+  assert.match(layout, /onsubmit=\{changePassword\}/);
 });
 
 test('primary navigation moves model policy ownership to API keys', () => {
@@ -160,7 +164,9 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /loadKeys/);
   assert.match(gatewayPage, /getSchedulableProviderAccounts/);
   assert.match(gatewayPage, /getUnschedulableProviderAccountSummary/);
+  assert.match(gatewayPage, /unschedulableReasonHref/);
   assert.match(gatewayPage, /unschedulableAccountSummary/);
+  assert.match(gatewayPage, /href={unschedulableReasonHref\(item\.reason\)}/);
   assert.match(gatewayPage, /enabledProviderAccountCount/);
   assert.match(gatewayPage, /getRoutableModelCount/);
   assert.match(gatewayPage, /getActiveKeys/);
@@ -530,6 +536,9 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(adminState, /diagnosisSummary/);
   assert.match(adminState, /diagnosisHints/);
   assert.match(adminState, /blockedReasonCounts/);
+  assert.match(adminState, /changePassword/);
+  assert.match(adminState, /\/api\/admin\/change-password/);
+  assert.match(adminState, /unschedulableReasonHref/);
   assert.match(adminState, /scheduleReason/);
   assert.match(modelsPage, /Excluded account IDs/);
   assert.match(modelsPage, /Routing pool/);
@@ -552,6 +561,13 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /modelRoutingPreview\.result\.diagnosisSummary/);
   assert.match(modelsPage, /modelRoutingPreview\.result\.diagnosisHints/);
   assert.match(modelsPage, /modelRoutingPreview\.result\.blockedReasonCounts/);
+  assert.match(modelsPage, /function modelRoutingBlockedReasonHref/);
+  assert.match(modelsPage, /href=\{modelRoutingBlockedReasonHref\(reason\.reason\)\}/);
+  assert.match(modelsPage, /href=\{modelRoutingBlockedReasonHref\(reason\)\}/);
+  assert.match(modelsPage, /params\.set\('status', 'disabled'\)/);
+  assert.match(modelsPage, /params\.set\('status', 'rate_limited'\)/);
+  assert.match(modelsPage, /params\.set\('status', 'circuit_open'\)/);
+  assert.match(modelsPage, /params\.set\('status', 'expired'\)/);
   assert.match(modelsPage, /Repair hints/);
   assert.match(modelsPage, /Blocked reasons/);
   assert.match(modelsPage, /Active/);

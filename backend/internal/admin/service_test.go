@@ -1348,6 +1348,14 @@ func (r *memoryRepo) UpdateAdminUsername(_ context.Context, id int64, username s
 	return r.admin, nil
 }
 
+func (r *memoryRepo) UpdateAdminPassword(_ context.Context, id int64, passwordHash string) error {
+	if r.admin.ID != id || r.admin.ID == 0 {
+		return ErrNotFound
+	}
+	r.admin.PasswordHash = passwordHash
+	return nil
+}
+
 func (r *memoryRepo) CreateSession(_ context.Context, adminID int64, tokenHash string, expiresAt time.Time) error {
 	r.sessions[tokenHash] = memorySession{adminID: adminID, expiresAt: expiresAt}
 	return nil

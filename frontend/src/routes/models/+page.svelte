@@ -138,6 +138,24 @@
     return `/routing-pools?routingPoolId=${encodeURIComponent(String(id))}`;
   }
 
+  /** @param {string | null | undefined} reason */
+  function modelRoutingBlockedReasonHref(reason) {
+    const value = String(reason ?? '').trim();
+    const params = new URLSearchParams();
+    if (value === 'disabled') {
+      params.set('status', 'disabled');
+    } else if (value === 'rate_limited') {
+      params.set('status', 'rate_limited');
+    } else if (value === 'circuit_open') {
+      params.set('status', 'circuit_open');
+    } else if (value === 'expired') {
+      params.set('status', 'expired');
+    } else {
+      params.set('status', 'blocked');
+    }
+    return `/providers?${params.toString()}`;
+  }
+
   /** @param {{ id?: number | null }} key */
   function diagnosticAPIKeyHref(key) {
     const id = Number(key.id ?? 0);
@@ -380,9 +398,13 @@
           {#if blockedReasonSummary.length > 0}
             <div class="mt-2 flex flex-wrap gap-2">
               {#each blockedReasonSummary as [reason, count]}
-                <span class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
+                <a
+                  class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 underline-offset-2 hover:underline"
+                  href={modelRoutingBlockedReasonHref(reason)}
+                  aria-label="View provider accounts with this blocked reason"
+                >
                   {statusLabel(reason)}: {count}
-                </span>
+                </a>
               {/each}
             </div>
           {:else}
@@ -534,9 +556,13 @@
                   <p class="text-xs font-medium uppercase tracking-[0.08em] text-[#6e6e6e]">Blocked reasons</p>
                   <div class="mt-2 flex flex-wrap gap-2">
                     {#each modelRoutingPreview.result.blockedReasonCounts as reason}
-                      <span class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs leading-5 text-amber-800">
+                      <a
+                        class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs leading-5 text-amber-800 underline-offset-2 hover:underline"
+                        href={modelRoutingBlockedReasonHref(reason.reason)}
+                        aria-label="View provider accounts with this blocked reason"
+                      >
                         {reason.reason}: {reason.count}
-                      </span>
+                      </a>
                     {/each}
                   </div>
                 </div>

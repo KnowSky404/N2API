@@ -209,6 +209,13 @@ func (s *fakeAdminService) Logout(_ context.Context, token string) error {
 	return nil
 }
 
+func (s *fakeAdminService) ChangePassword(_ context.Context, _ int64, currentPassword, newPassword string) error {
+	if currentPassword == "" || newPassword == "" {
+		return admin.ErrInvalidInput
+	}
+	return nil
+}
+
 func (s *fakeAdminService) ValidateSession(_ context.Context, token string) (admin.Admin, error) {
 	if token != "valid-session" {
 		return admin.Admin{}, admin.ErrUnauthorized

@@ -142,6 +142,21 @@ func (r *AdminRepository) UpdateAdminUsername(ctx context.Context, id int64, use
 	return updated, nil
 }
 
+func (r *AdminRepository) UpdateAdminPassword(ctx context.Context, id int64, passwordHash string) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE admins
+		SET password_hash = $2, updated_at = now()
+		WHERE id = $1
+	`, id, passwordHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return admin.ErrNotFound
+	}
+	return nil
+}
+
 func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO admin_sessions (admin_id, token_hash, expires_at)

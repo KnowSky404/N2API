@@ -281,6 +281,7 @@ type Repository interface {
 	FindAdminByUsername(ctx context.Context, username string) (Admin, error)
 	CreateAdmin(ctx context.Context, username, passwordHash string) (Admin, error)
 	UpdateAdminUsername(ctx context.Context, id int64, username string) (Admin, error)
+	UpdateAdminPassword(ctx context.Context, id int64, passwordHash string) error
 	CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
 	RevokeSession(ctx context.Context, tokenHash string) error
@@ -419,6 +420,33 @@ func (s *Service) ValidateSession(ctx context.Context, token string) (Admin, err
 		return Admin{}, err
 	}
 	return admin, nil
+}
+
+// ChangePassword updates the password for an already-authenticated admin.
+func (s *Service) ChangePassword(ctx context.Context, adminID int64, currentPassword, newPassword string) error {
+	currentPassword = strings.TrimSpace(currentPassword)
+	newPassword = strings.TrimSpace(newPassword)
+	if currentPassword == "" || newPassword == "" {
+		return ErrInvalidInput
+	}
+	if len(newPassword) < 8 {
+		return ErrInvalidInput
+	}
+	adminRecord, err := s.repo.FindBootstrapAdmin(ctx)
+	if err != nil {
+		return err
+	}
+	if adminRecord.ID != adminID {
+		return ErrUnauthorized
+	}
+	if !secret.VerifyPassword(adminRecord.PasswordHash, currentPassword) {
+		return ErrUnauthorized
+	}
+	newHash, hashErr := secret.HashPassword(newPassword)
+	if hashErr != nil {
+		return fmt.Errorf("hash new password: %w", hashErr)
+	}
+	return s.repo.UpdateAdminPassword(ctx, adminID, newHash)
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {

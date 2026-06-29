@@ -709,6 +709,28 @@ export function getUnschedulableProviderAccountSummary(accounts = providerAccoun
   }));
 }
 
+/**
+ * Build a providers page href filtered by unschedulable reason.
+ * @param {string | null | undefined} reason
+ */
+export function unschedulableReasonHref(reason) {
+  const value = String(reason ?? '').trim();
+  const params = new URLSearchParams();
+  if (value === 'disabled') {
+    params.set('status', 'disabled');
+  } else if (value === 'rate_limited') {
+    params.set('status', 'rate_limited');
+  } else if (value === 'circuit_open') {
+    params.set('status', 'circuit_open');
+  } else if (value === 'expired') {
+    params.set('status', 'expired');
+  } else {
+    params.set('status', 'blocked');
+  }
+  const query = params.toString();
+  return query ? `/providers?${query}` : '/providers';
+}
+
 /** @param {Array<Partial<ModelRoutingModel>>} [models] */
 export function getRoutableModelCount(models = modelRouting.models) {
   return models.filter((model) => Number(model.enabledCount ?? 0) > 0).length;
@@ -1175,6 +1197,48 @@ export async function logout() {
   clearRequestLogs();
   clearUsage();
   loginForm.password = '';
+}
+
+export const changePasswordForm = $state({ currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
+
+/**
+ * @param {Event} event
+ */
+export async function changePassword(event) {
+  event.preventDefault();
+  changePasswordForm.error = '';
+  changePasswordForm.saved = false;
+
+  const currentPassword = changePasswordForm.currentPassword.trim();
+  const newPassword = changePasswordForm.newPassword.trim();
+  if (!currentPassword || !newPassword) {
+    changePasswordForm.error = 'Both fields are required.';
+    return;
+  }
+  if (newPassword.length < 8) {
+    changePasswordForm.error = 'New password must be at least 8 characters.';
+    return;
+  }
+
+  changePasswordForm.submitting = true;
+  try {
+    const response = await requestJSON('/api/admin/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    if (response && response.ok === 'true') {
+      changePasswordForm.saved = true;
+      changePasswordForm.currentPassword = '';
+      changePasswordForm.newPassword = '';
+    } else {
+      changePasswordForm.error = 'Password change failed.';
+    }
+  } catch (error) {
+    changePasswordForm.error = error instanceof Error ? error.message : 'Failed to change password';
+  } finally {
+    changePasswordForm.submitting = false;
+  }
 }
 
 export async function loadProvider() {

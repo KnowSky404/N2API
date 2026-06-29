@@ -6,6 +6,8 @@
     health,
     getProviderStateLabel,
     initializeAdminState,
+    changePassword,
+    changePasswordForm,
     logout,
     session
   } from '$lib/admin-state.svelte.js';
@@ -86,6 +88,35 @@
             <p class="truncate text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
             <p class="text-xs text-[#6e6e6e]">Signed in</p>
           </div>
+          <form class="mt-3 border-t border-[#ededed] pt-3" onsubmit={changePassword}>
+            <p class="px-2 text-xs font-medium text-[#6e6e6e]">Change password</p>
+            <input
+              class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              type="password"
+              placeholder="Current password"
+              bind:value={changePasswordForm.currentPassword}
+              autocomplete="current-password"
+            />
+            <input
+              class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              type="password"
+              placeholder="New password (min 8 chars)"
+              bind:value={changePasswordForm.newPassword}
+              autocomplete="new-password"
+            />
+            {#if changePasswordForm.error}
+              <p class="mt-2 text-xs text-red-700">{changePasswordForm.error}</p>
+            {/if}
+            {#if changePasswordForm.saved}
+              <p class="mt-2 text-xs text-[#0a7a5e]">Password changed.</p>
+            {/if}
+            <button
+              class="mt-2 w-full rounded-md bg-[#0d0d0d] px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={changePasswordForm.submitting}
+            >
+              {changePasswordForm.submitting ? 'Saving...' : 'Update password'}
+            </button>
+          </form>
           <button
             class="mt-3 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-left text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             type="button"
