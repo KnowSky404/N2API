@@ -351,7 +351,7 @@
             <div class="border-b border-[#ededed] bg-[#f5f5f5] px-4 py-3">
               <h3 class="text-sm font-semibold text-[#0d0d0d]">{section.title}</h3>
             </div>
-            {#if !section.data || section.data.rows.length === 0}
+            {#if !section.data?.rows?.length}
               <p class="px-4 py-4 text-sm text-[#6e6e6e]">No usage in this range.</p>
             {:else}
               <div class="divide-y divide-[#ededed]">

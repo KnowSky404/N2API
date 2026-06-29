@@ -499,7 +499,7 @@ class={[
     </div>
     {#if usage.error}
       <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
-    {:else if !usage24hProviderAccounts || usage24hProviderAccounts.rows.length === 0}
+    {:else if !usage24hProviderAccounts?.rows?.length}
       <p class="mt-4 text-sm text-[#6e6e6e]">No provider account usage in the last 24h.</p>
     {:else}
       <div class="mt-4 overflow-x-auto rounded-lg border border-[#ededed] bg-white">

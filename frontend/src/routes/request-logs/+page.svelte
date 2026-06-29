@@ -482,7 +482,7 @@
           <tr>
             <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading usage summary...</td>
           </tr>
-        {:else if !usage.current || usage.current.rows.length === 0}
+        {:else if !usage.current?.rows?.length}
           <tr>
             <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No usage in this range.</td>
           </tr>
@@ -560,7 +560,7 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-[#ededed]">
-          {#if usagePricing.rows.length === 0}
+          {#if !usagePricing.rows?.length}
             <tr>
               <td class="px-4 py-5 text-[#6e6e6e]" colspan="5">No pricing rows configured.</td>
             </tr>

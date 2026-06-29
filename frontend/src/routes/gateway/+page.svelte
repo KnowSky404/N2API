@@ -463,7 +463,7 @@
                 {formatTokens(section.summary?.totalRequests)} requests · {formatCostMicrousd(section.summary?.estimatedCostMicrousd)}
               </p>
             </div>
-            {#if !section.summary || section.summary.rows.length === 0}
+            {#if !section.summary?.rows?.length}
               <p class="px-4 py-4 text-sm text-[#6e6e6e]">No usage in this range.</p>
             {:else}
               <div class="divide-y divide-[#ededed]">
