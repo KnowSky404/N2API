@@ -32,14 +32,14 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Error rules', 'Sign out', 'Change password', 'Update password', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Error rules', 'Sign out', 'Change password', 'Update', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
   assert.match(layout, /changePassword/);
   assert.match(layout, /changePasswordForm\.currentPassword/);
   assert.match(layout, /changePasswordForm\.newPassword/);
-  assert.match(layout, /onsubmit=\{changePassword\}/);
+  assert.match(layout, /onsubmit={handleChangePassword}/);
 });
 
 test('primary navigation moves model policy ownership to API keys', () => {
