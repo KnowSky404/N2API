@@ -1,5 +1,6 @@
 <script>
   import { page } from '$app/state';
+  import { X, Plus } from 'lucide-svelte';
   import {
     accountLabel,
     accountTypeLabel,
@@ -71,6 +72,9 @@
   let accountSort = $state({ key: 'priority', direction: 'asc' });
   let bulkRoutingPoolId = $state('0');
   let bulkRoutingPoolPriority = $state('0');
+  let addAccountModalOpen = $state(false);
+  /** @type {'oauth' | 'api_upstream'} */
+  let addAccountModalTab = $state('oauth');
   let providerUsageRequested = $state(false);
   let routingPoolsRequested = $state(false);
   let appliedProviderAccountSearch = $state('');
@@ -559,216 +563,314 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
     </div>
   </div>
 
-  <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(220px,1fr)_140px_minmax(180px,1fr)_minmax(170px,auto)_auto]"
-    onsubmit={(event) => {
-event.preventDefault();
-connectProvider();
-    }}
-  >
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Account name
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="text"
-  placeholder="Work Codex"
-  bind:value={providerConnectForm.name}
-/>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Priority
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="number"
-  min="0"
-  step="1"
-  bind:value={providerConnectForm.priority}
-/>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Fingerprint profile
-<select
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  bind:value={providerConnectForm.fingerprintProfileId}
->
-  <option value="0">No fingerprint profile</option>
-  {#each fingerprintProfiles.items as fp}
-    <option value={String(fp.id)}>{fp.name}</option>
-  {/each}
-</select>
-    </label>
-    <label class="inline-flex h-10 self-end whitespace-nowrap items-center gap-2 text-sm font-medium text-[#3c3c3c]">
-<input
-  class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
-  type="checkbox"
-  bind:checked={providerConnectForm.enabled}
-/>
-Enable after login
-    </label>
-    <button
-class="self-end rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-type="submit"
-      disabled={provider.loading || !provider.data?.configured || provider.connecting}
-    >
-{provider.connecting ? 'Generating link' : 'Add OAuth account'}
-    </button>
-  </form>
-
-  <form
-    class="mt-5 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,1fr)_minmax(240px,1.3fr)_minmax(180px,1fr)_minmax(220px,1fr)_120px_120px_minmax(180px,1fr)_auto]"
-    onsubmit={(event) => {
-      event.preventDefault();
-      createAPIUpstreamAccount();
-    }}
-  >
-    <div class="lg:col-span-8">
-      <h3 class="text-base font-semibold text-[#0d0d0d]">API upstream</h3>
-      <p class="mt-1 text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
-    </div>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Name
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="text"
-  placeholder="OpenAI API"
-  bind:value={apiUpstreamForm.name}
-  required
-/>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Base URL
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="url"
-  placeholder="https://api.openai.com/v1"
-  bind:value={apiUpstreamForm.baseUrl}
-  required
-/>
-<span class="text-xs font-normal text-[#6e6e6e]">HTTPS is required unless HTTP upstreams are explicitly enabled in the server environment.</span>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-API key
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="password"
-  autocomplete="off"
-  bind:value={apiUpstreamForm.apiKey}
-  required
-/>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Proxy URL
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="url"
-  placeholder="http://proxy.example.test:8080"
-  bind:value={apiUpstreamForm.proxyUrl}
-/>
-<span class="text-xs font-normal text-[#6e6e6e]">Optional HTTP or HTTPS outbound proxy for this account.</span>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Priority
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="number"
-  min="0"
-  step="1"
-  bind:value={apiUpstreamForm.priority}
-/>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Load factor
-<input
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  type="number"
-  min="1"
-  max="100"
-  step="1"
-  bind:value={apiUpstreamForm.loadFactor}
-/>
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-Fingerprint profile
-<select
-  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  bind:value={apiUpstreamForm.fingerprintProfileId}
->
-  <option value="0">No fingerprint profile</option>
-  {#each fingerprintProfiles.items as fp}
-    <option value={String(fp.id)}>{fp.name}</option>
-  {/each}
-</select>
-    </label>
-    <label class="inline-flex h-10 self-end whitespace-nowrap items-center gap-2 text-sm font-medium text-[#3c3c3c]">
-<input
-  class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
-  type="checkbox"
-  bind:checked={apiUpstreamForm.enabled}
-/>
-Enabled
-    </label>
-    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c] lg:col-span-7">
-Manual models
-<textarea
-  class="min-h-20 w-full min-w-0 resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  placeholder={'gpt-4.1\ngpt-4.1-mini'}
-  bind:value={apiUpstreamForm.modelsText}
-></textarea>
-    </label>
-    <button
-class="self-end rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-type="submit"
-disabled={apiUpstreamForm.submitting}
-    >
-{apiUpstreamForm.submitting ? 'Adding' : 'Add API upstream'}
-    </button>
-    {#if apiUpstreamForm.error}
-      <p class="lg:col-span-7 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-        {apiUpstreamForm.error}
-      </p>
-    {/if}
-  </form>
-
-  {#if providerOAuth.authorizationUrl}
-    <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
-<div class="flex flex-wrap items-center justify-between gap-3">
-  <p class="text-sm font-medium text-[#0a7a5e]">OAuth authorization link</p>
   <button
-    class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+    class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60 inline-flex items-center gap-1.5"
     type="button"
-    onclick={copyAuthorizationURL}
+    onclick={() => { addAccountModalOpen = true; }}
   >
-    {providerOAuth.copied ? 'Copied' : 'Copy'}
+    <Plus class="size-4" />
+    Add account
   </button>
-</div>
-<code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]">
-  {providerOAuth.authorizationUrl}
-</code>
-<form
-  class="mt-4 grid gap-3 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto]"
-  onsubmit={(event) => {
-    event.preventDefault();
-    completeProviderCallback();
-  }}
->
-  <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-    Callback URL
-    <input
-      class="w-full min-w-0 rounded-lg border border-[#b7d9cd] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#cbe7dd]"
-      type="url"
-      placeholder="http://localhost:1455/auth/callback?code=...&state=..."
-      bind:value={providerOAuth.callbackUrl}
-      required
-    />
-  </label>
-  <button
-    class="self-end rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-    type="submit"
-    disabled={providerOAuth.completing || !providerOAuth.callbackUrl.trim()}
-  >
-    {providerOAuth.completing ? 'Completing' : 'Complete OAuth'}
-  </button>
-</form>
+
+  <!-- Add account modal -->
+  {#if addAccountModalOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+    <div class="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh] overflow-y-auto" onclick={(e) => e.target === e.currentTarget && (addAccountModalOpen = false)} role="dialog" aria-modal="true" aria-label="Add account">
+      <div class="w-full max-w-xl rounded-xl border border-[#ededed] bg-white shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-[#ededed] px-6 py-4">
+          <h2 class="text-lg font-semibold text-[#0d0d0d]">Add account</h2>
+          <button
+            class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+            type="button"
+            onclick={() => { addAccountModalOpen = false; }}
+            aria-label="Close"
+          >
+            <X class="size-4" />
+          </button>
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-[#ededed]">
+          <button
+            class="flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'oauth' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
+            type="button"
+            onclick={() => { addAccountModalTab = 'oauth'; }}
+          >
+            OAuth account
+          </button>
+          <button
+            class="flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'api_upstream' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
+            type="button"
+            onclick={() => { addAccountModalTab = 'api_upstream'; }}
+          >
+            API upstream
+          </button>
+        </div>
+
+        <!-- OAuth Tab -->
+        {#if addAccountModalTab === 'oauth'}
+          <div class="p-6">
+            <p class="text-sm text-[#6e6e6e]">Generate a Codex OAuth authorization link to connect a new account.</p>
+
+            <form
+              class="mt-4 grid gap-4"
+              onsubmit={(event) => {
+                event.preventDefault();
+                connectProvider();
+              }}
+            >
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Account name
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="text"
+                    placeholder="Work Codex"
+                    bind:value={providerConnectForm.name}
+                  />
+                </label>
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Priority
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="number"
+                    min="0"
+                    step="1"
+                    bind:value={providerConnectForm.priority}
+                  />
+                </label>
+              </div>
+              <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                Fingerprint profile
+                <select
+                  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  bind:value={providerConnectForm.fingerprintProfileId}
+                >
+                  <option value="0">No fingerprint profile</option>
+                  {#each fingerprintProfiles.items as fp}
+                    <option value={String(fp.id)}>{fp.name}</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
+                <input
+                  class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
+                  type="checkbox"
+                  bind:checked={providerConnectForm.enabled}
+                />
+                Enable after login
+              </label>
+
+              <!-- Authorization URL (appears after generation) -->
+              {#if providerOAuth.authorizationUrl}
+                <div class="rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <p class="text-sm font-medium text-[#0a7a5e]">OAuth authorization link</p>
+                    <button
+                      class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                      type="button"
+                      onclick={copyAuthorizationURL}
+                    >
+                      {providerOAuth.copied ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                  <code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] break-all">
+                    {providerOAuth.authorizationUrl}
+                  </code>
+                </div>
+              {/if}
+
+              <div class="flex items-center gap-3">
+                <button
+                  class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  type="submit"
+                  disabled={provider.loading || !provider.data?.configured || provider.connecting}
+                >
+                  {provider.connecting ? 'Generating link' : 'Generate OAuth link'}
+                </button>
+                <button
+                  class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                  type="button"
+                  onclick={() => { addAccountModalOpen = false; }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+
+            <!-- Callback completion (appears after OAuth flow) -->
+            {#if providerOAuth.authorizationUrl}
+              <form
+                class="mt-4 grid gap-3"
+                onsubmit={(event) => {
+                  event.preventDefault();
+                  completeProviderCallback();
+                }}
+              >
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Callback URL
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="url"
+                    placeholder="http://localhost:1455/auth/callback?code=...&state=..."
+                    bind:value={providerOAuth.callbackUrl}
+                    required
+                  />
+                </label>
+                <div class="flex items-center gap-3">
+                  <button
+                    class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    type="submit"
+                    disabled={providerOAuth.completing || !providerOAuth.callbackUrl.trim()}
+                  >
+                    {providerOAuth.completing ? 'Completing' : 'Complete OAuth'}
+                  </button>
+                </div>
+              </form>
+            {/if}
+          </div>
+
+        <!-- API Upstream Tab -->
+        {:else}
+          <div class="p-6">
+            <p class="text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
+
+            <form
+              class="mt-4 grid gap-4"
+              onsubmit={(event) => {
+                event.preventDefault();
+                createAPIUpstreamAccount();
+              }}
+            >
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Name
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="text"
+                    placeholder="OpenAI API"
+                    bind:value={apiUpstreamForm.name}
+                    required
+                  />
+                </label>
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Base URL
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="url"
+                    placeholder="https://api.openai.com/v1"
+                    bind:value={apiUpstreamForm.baseUrl}
+                    required
+                  />
+                </label>
+              </div>
+              <p class="text-xs text-[#6e6e6e] -mt-2">HTTPS is required unless HTTP upstreams are explicitly enabled in the server environment.</p>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  API key
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="password"
+                    autocomplete="off"
+                    bind:value={apiUpstreamForm.apiKey}
+                    required
+                  />
+                </label>
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Proxy URL
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="url"
+                    placeholder="http://proxy.example.test:8080"
+                    bind:value={apiUpstreamForm.proxyUrl}
+                  />
+                </label>
+              </div>
+              <p class="text-xs text-[#6e6e6e] -mt-2">Optional HTTP or HTTPS outbound proxy for this account.</p>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Priority
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="number"
+                    min="0"
+                    step="1"
+                    bind:value={apiUpstreamForm.priority}
+                  />
+                </label>
+                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                  Load factor
+                  <input
+                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                    type="number"
+                    min="1"
+                    max="100"
+                    step="1"
+                    bind:value={apiUpstreamForm.loadFactor}
+                  />
+                </label>
+              </div>
+
+              <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                Fingerprint profile
+                <select
+                  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  bind:value={apiUpstreamForm.fingerprintProfileId}
+                >
+                  <option value="0">No fingerprint profile</option>
+                  {#each fingerprintProfiles.items as fp}
+                    <option value={String(fp.id)}>{fp.name}</option>
+                  {/each}
+                </select>
+              </label>
+
+              <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
+                <input
+                  class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
+                  type="checkbox"
+                  bind:checked={apiUpstreamForm.enabled}
+                />
+                Enabled
+              </label>
+
+              <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+                Manual models
+                <textarea
+                  class="min-h-20 w-full min-w-0 resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  placeholder={'gpt-4.1\ngpt-4.1-mini'}
+                  bind:value={apiUpstreamForm.modelsText}
+                ></textarea>
+              </label>
+
+              {#if apiUpstreamForm.error}
+                <p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {apiUpstreamForm.error}
+                </p>
+              {/if}
+
+              <div class="flex items-center gap-3">
+                <button
+                  class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  type="submit"
+                  disabled={apiUpstreamForm.submitting}
+                >
+                  {apiUpstreamForm.submitting ? 'Adding' : 'Add API upstream'}
+                </button>
+                <button
+                  class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                  type="button"
+                  onclick={() => { addAccountModalOpen = false; }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 
