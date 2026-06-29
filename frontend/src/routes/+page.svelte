@@ -236,7 +236,7 @@
     <article class="rounded-lg border border-[#ededed] bg-white p-6">
       <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Gateway overview</h2>
       <p class="mt-2 text-sm text-[#6e6e6e]">Provider capacity and client access at a glance.</p>
-      <div class="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
+      <div class="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3">
         <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
           <p class="text-sm font-medium text-[#6e6e6e]">Provider accounts</p>
           <p class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : providerAccounts.items.length}</p>
@@ -277,7 +277,7 @@
         {:else if gatewaySettings.loading || !gatewaySettings.data}
           <p class="mt-4 text-sm text-[#6e6e6e]">Loading gateway runtime limits...</p>
         {:else}
-          <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-5">
+          <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-3">
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
               <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Gateway concurrency</dt>
               <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentGatewayRequests)}</dd>
@@ -363,7 +363,7 @@
                     {:else}
                       <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
                     {/if}
-                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] whitespace-nowrap text-right">
+                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] text-right">
                       {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
                     </span>
                   </div>
