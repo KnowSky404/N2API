@@ -11,19 +11,36 @@
     logout,
     session
   } from '$lib/admin-state.svelte.js';
+  import {
+    LayoutDashboard,
+    Shield,
+    Server,
+    Shuffle,
+    Key,
+    ScrollText,
+    Activity,
+    Fingerprint,
+    AlertTriangle,
+    PanelLeftClose,
+    PanelLeftOpen,
+    CircleUser,
+    ChevronDown,
+    Lock,
+    LogOut
+  } from 'lucide-svelte';
 
   let { children } = $props();
 
   const navItems = [
-    { href: '/', label: 'Dashboard' },
-    { href: '/gateway', label: 'Gateway' },
-    { href: '/providers', label: 'Providers' },
-    { href: '/routing-pools', label: 'Routing pools' },
-    { href: '/api-keys', label: 'API Keys' },
-    { href: '/request-logs', label: 'Request Logs' },
-    { href: '/ops', label: 'Ops' },
-    { href: '/fingerprints', label: 'Fingerprints' },
-    { href: '/error-passthrough', label: 'Error rules' }
+    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/gateway', label: 'Gateway', icon: Shield },
+    { href: '/providers', label: 'Providers', icon: Server },
+    { href: '/routing-pools', label: 'Routing pools', icon: Shuffle },
+    { href: '/api-keys', label: 'API Keys', icon: Key },
+    { href: '/request-logs', label: 'Request Logs', icon: ScrollText },
+    { href: '/ops', label: 'Ops', icon: Activity },
+    { href: '/fingerprints', label: 'Fingerprints', icon: Fingerprint },
+    { href: '/error-passthrough', label: 'Error rules', icon: AlertTriangle }
   ];
 
   const activePath = $derived(page.url.pathname);
@@ -35,97 +52,190 @@
     return href === '/' ? activePath === '/' : activePath.startsWith(href);
   }
 
+  let sidebarCollapsed = $state(false);
+  let userDropdownOpen = $state(false);
+  let passwordModalOpen = $state(false);
+  let mobileSidebarOpen = $state(false);
+  let passwordInputEl = $state(/** @type {HTMLInputElement | null} */ (null));
+
+  function toggleSidebar() {
+    sidebarCollapsed = !sidebarCollapsed;
+  }
+
+  function toggleUserDropdown() {
+    userDropdownOpen = !userDropdownOpen;
+  }
+
+  function closeUserDropdown() {
+    userDropdownOpen = false;
+  }
+
+  function openPasswordModal() {
+    userDropdownOpen = false;
+    changePasswordForm.currentPassword = '';
+    changePasswordForm.newPassword = '';
+    changePasswordForm.error = '';
+    changePasswordForm.saved = false;
+    passwordModalOpen = true;
+  }
+
+  function closePasswordModal() {
+    passwordModalOpen = false;
+    changePasswordForm.currentPassword = '';
+    changePasswordForm.newPassword = '';
+    changePasswordForm.error = '';
+    changePasswordForm.saved = false;
+  }
+
+  /** @param {SubmitEvent} event */
+  async function handleChangePassword(event) {
+    await changePassword(event);
+    if (!changePasswordForm.error) {
+      setTimeout(() => closePasswordModal(), 800);
+    }
+  }
+
+  /** @param {KeyboardEvent} e */
+  function handleGlobalKeydown(e) {
+    if (e.key !== 'Escape') return;
+    if (passwordModalOpen) {
+      closePasswordModal();
+      return;
+    }
+    if (userDropdownOpen) {
+      closeUserDropdown();
+      return;
+    }
+    if (mobileSidebarOpen) {
+      mobileSidebarOpen = false;
+      return;
+    }
+  }
+
+  // Focus the password input when modal opens
+  $effect(() => {
+    if (passwordModalOpen && passwordInputEl) {
+      passwordInputEl.focus();
+    }
+  });
+
   onMount(() => {
     initializeAdminState();
   });
 </script>
 
+<svelte:window onkeydown={handleGlobalKeydown} />
+
 <main class="min-h-screen bg-[#fafafa] text-[#0d0d0d]">
   <div class="flex min-h-screen">
     <!-- Desktop sidebar -->
     <aside
-      class="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-[#ededed] bg-white px-3 py-4 lg:flex"
+      class="sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[#ededed] bg-white transition-all duration-200 lg:flex"
+      class:w-56={!sidebarCollapsed}
+      class:w-14={sidebarCollapsed}
     >
-      <div class="px-2">
-        <p class="text-sm font-medium text-[#6e6e6e]">Personal AI Gateway</p>
-        <h1 class="mt-1 text-xl font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+      <!-- Header area -->
+      <div class="flex items-center gap-2 px-3 py-4" class:px-2={sidebarCollapsed}>
+        {#if !sidebarCollapsed}
+          <div class="min-w-0">
+            <p class="text-xs font-medium text-[#6e6e6e]">Personal AI Gateway</p>
+            <h1 class="mt-0.5 text-lg font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+          </div>
+        {/if}
+        <button
+          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+          class:ml-auto={!sidebarCollapsed}
+          class:mx-auto={sidebarCollapsed}
+          onclick={toggleSidebar}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {#if sidebarCollapsed}
+            <PanelLeftOpen class="h-4 w-4" />
+          {:else}
+            <PanelLeftClose class="h-4 w-4" />
+          {/if}
+        </button>
       </div>
 
-      <nav class="mt-6 flex flex-col gap-1">
+      <!-- Navigation -->
+      <nav class="flex flex-col gap-0.5 px-2" class:px-1.5={sidebarCollapsed}>
         {#each navItems as item}
           <a
             class={[
-              'rounded-lg px-3 py-2 text-sm font-medium transition',
+              'group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition',
+              sidebarCollapsed ? 'justify-center px-0' : '',
               isActive(item.href)
                 ? 'bg-[#0d0d0d] text-white'
                 : 'text-[#3c3c3c] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]'
             ]}
             href={item.href}
+            title={sidebarCollapsed ? item.label : undefined}
           >
-            {item.label}
+            <item.icon class="h-4.5 w-4.5 shrink-0" />
+            {#if !sidebarCollapsed}
+              <span>{item.label}</span>
+            {/if}
           </a>
         {/each}
       </nav>
 
-      <div class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-3 text-sm">
-        <div class="flex items-center justify-between gap-3">
-          <span class="font-medium text-[#3c3c3c]">Status</span>
-          <span
-            class={[
-              'rounded-full px-2 py-0.5 text-xs font-medium',
-              health.error ? 'bg-red-50 text-red-700' : 'bg-[#e8f5f0] text-[#0a7a5e]'
-            ]}
-          >
-            {shellStatus}
-          </span>
-        </div>
-        <p class="mt-2 text-xs capitalize text-[#6e6e6e]">Provider: {providerStateLabel}</p>
+      <!-- Status -->
+      <div class="px-2 pt-3" class:px-1.5={sidebarCollapsed}>
+        {#if sidebarCollapsed}
+          <div class="flex justify-center" title="{shellStatus} &middot; Provider: {providerStateLabel}">
+            <span
+              class={[
+                'h-2 w-2 rounded-full',
+                health.error ? 'bg-red-500' : 'bg-[#10a37f]'
+              ]}
+            ></span>
+          </div>
+        {:else}
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-3 text-sm">
+            <div class="flex items-center justify-between gap-3">
+              <span class="font-medium text-[#3c3c3c]">Status</span>
+              <span
+                class={[
+                  'rounded-full px-2 py-0.5 text-xs font-medium',
+                  health.error ? 'bg-red-50 text-red-700' : 'bg-[#e8f5f0] text-[#0a7a5e]'
+                ]}
+              >
+                {shellStatus}
+              </span>
+            </div>
+            <p class="mt-2 text-xs capitalize text-[#6e6e6e]">Provider: {providerStateLabel}</p>
+          </div>
+        {/if}
       </div>
 
-      <div class="mt-auto border-t border-[#ededed] pt-4">
+      <!-- User area -->
+      <div class="mt-auto border-t border-[#ededed] p-2" class:px-1.5={sidebarCollapsed}>
         {#if session.authenticated}
-          <div class="px-2">
-            <p class="truncate text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
-            <p class="text-xs text-[#6e6e6e]">Signed in</p>
-          </div>
-          <form class="mt-3 border-t border-[#ededed] pt-3" onsubmit={changePassword}>
-            <p class="px-2 text-xs font-medium text-[#6e6e6e]">Change password</p>
-            <input
-              class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-              type="password"
-              placeholder="Current password"
-              bind:value={changePasswordForm.currentPassword}
-              autocomplete="current-password"
-            />
-            <input
-              class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-              type="password"
-              placeholder="New password (min 8 chars)"
-              bind:value={changePasswordForm.newPassword}
-              autocomplete="new-password"
-            />
-            {#if changePasswordForm.error}
-              <p class="mt-2 text-xs text-red-700">{changePasswordForm.error}</p>
-            {/if}
-            {#if changePasswordForm.saved}
-              <p class="mt-2 text-xs text-[#0a7a5e]">Password changed.</p>
-            {/if}
-            <button
-              class="mt-2 w-full rounded-md bg-[#0d0d0d] px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={changePasswordForm.submitting}
-            >
-              {changePasswordForm.submitting ? 'Saving...' : 'Update password'}
-            </button>
-          </form>
           <button
-            class="mt-3 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-left text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-            type="button"
-            onclick={logout}
+            class={[
+              'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]',
+              sidebarCollapsed ? 'justify-center px-0' : ''
+            ]}
+            onclick={toggleUserDropdown}
           >
-            Sign out
+            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f5f5f5]">
+              <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
+            </div>
+            {#if !sidebarCollapsed}
+              <span class="truncate text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</span>
+              <span class="ml-auto transition-transform" class:rotate-180={userDropdownOpen}>
+                <ChevronDown class="h-3.5 w-3.5 text-[#9b9b9b]" />
+              </span>
+            {/if}
           </button>
         {:else}
-          <p class="px-2 text-sm text-[#6e6e6e]">Sign in required</p>
+          <div class={sidebarCollapsed ? 'flex justify-center' : 'px-2'}>
+            {#if sidebarCollapsed}
+              <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
+            {:else}
+              <p class="text-sm text-[#6e6e6e]">Sign in required</p>
+            {/if}
+          </div>
         {/if}
       </div>
     </aside>
@@ -136,19 +246,32 @@
       <header
         class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[#ededed] bg-white/95 px-4 py-3 backdrop-blur lg:hidden"
       >
-        <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium text-[#6e6e6e]">Personal AI Gateway</p>
-          <h1 class="text-xl font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+        <div class="flex items-center gap-2 min-w-0">
+          <button
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+            onclick={() => (mobileSidebarOpen = !mobileSidebarOpen)}
+            aria-label="Toggle menu"
+          >
+            {#if mobileSidebarOpen}
+              <PanelLeftClose class="h-4 w-4" />
+            {:else}
+              <PanelLeftOpen class="h-4 w-4" />
+            {/if}
+          </button>
+          <div class="min-w-0 flex-1">
+            <p class="text-sm font-medium text-[#6e6e6e]">Personal AI Gateway</p>
+            <h1 class="text-xl font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+          </div>
         </div>
         <div class="flex shrink-0 items-center gap-2">
           {#if session.authenticated}
-            <span class="hidden sm:inline max-w-[120px] truncate text-xs text-[#6e6e6e]">{session.username || 'admin'}</span>
             <button
-              class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
-              type="button"
-              onclick={logout}
+              class="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              onclick={toggleUserDropdown}
             >
-              Sign out
+              <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
+              <span class="hidden sm:inline max-w-[120px] truncate">{session.username || 'admin'}</span>
+              <ChevronDown class="h-3.5 w-3.5 text-[#9b9b9b]" />
             </button>
           {/if}
         </div>
@@ -157,16 +280,105 @@
           {#each navItems as item}
             <a
               class={[
-                'shrink-0 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium',
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium',
                 isActive(item.href) ? 'bg-[#0d0d0d] text-white' : 'bg-[#f5f5f5] text-[#3c3c3c]'
               ]}
               href={item.href}
             >
+              <item.icon class="h-4 w-4" />
               {item.label}
             </a>
           {/each}
         </nav>
       </header>
+
+      <!-- Mobile sidebar overlay -->
+      {#if mobileSidebarOpen}
+        <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
+        <div class="fixed inset-0 z-20 bg-black/30 lg:hidden" onclick={() => (mobileSidebarOpen = false)}></div>
+        <aside class="fixed left-0 top-0 z-30 flex h-full w-56 flex-col bg-white border-r border-[#ededed] lg:hidden">
+          <div class="flex items-center gap-2 px-3 py-4">
+            <div class="min-w-0">
+              <p class="text-xs font-medium text-[#6e6e6e]">Personal AI Gateway</p>
+              <h1 class="mt-0.5 text-lg font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+            </div>
+            <button
+              class="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+              onclick={() => (mobileSidebarOpen = false)}
+              aria-label="Close menu"
+            >
+              <PanelLeftClose class="h-4 w-4" />
+            </button>
+          </div>
+
+          <nav class="flex flex-col gap-0.5 px-2">
+            {#each navItems as item}
+              <a
+                class={[
+                  'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition',
+                  isActive(item.href)
+                    ? 'bg-[#0d0d0d] text-white'
+                    : 'text-[#3c3c3c] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]'
+                ]}
+                href={item.href}
+                onclick={() => (mobileSidebarOpen = false)}
+              >
+                <item.icon class="h-4.5 w-4.5 shrink-0" />
+                <span>{item.label}</span>
+              </a>
+            {/each}
+          </nav>
+
+          <div class="px-2 pt-3">
+            <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-3 text-sm">
+              <div class="flex items-center justify-between gap-3">
+                <span class="font-medium text-[#3c3c3c]">Status</span>
+                <span
+                  class={[
+                    'rounded-full px-2 py-0.5 text-xs font-medium',
+                    health.error ? 'bg-red-50 text-red-700' : 'bg-[#e8f5f0] text-[#0a7a5e]'
+                  ]}
+                >
+                  {shellStatus}
+                </span>
+              </div>
+              <p class="mt-2 text-xs capitalize text-[#6e6e6e]">Provider: {providerStateLabel}</p>
+            </div>
+          </div>
+
+          <div class="mt-auto border-t border-[#ededed] p-2">
+            {#if session.authenticated}
+              <div class="px-2 py-2">
+                <div class="flex items-center gap-2">
+                  <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f5f5f5]">
+                    <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
+                  </div>
+                  <div>
+                    <p class="text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
+                    <p class="text-xs text-[#6e6e6e]">Signed in</p>
+                  </div>
+                </div>
+              </div>
+              <button
+                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+                onclick={openPasswordModal}
+              >
+                <Lock class="h-4 w-4 text-[#6e6e6e]" />
+                Change password
+              </button>
+              <button
+                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+                onclick={logout}
+              >
+                <LogOut class="h-4 w-4 text-[#6e6e6e]" />
+                Sign out
+              </button>
+            {:else}
+              <p class="px-2 text-sm text-[#6e6e6e]">Sign in required</p>
+            {/if}
+          </div>
+        </aside>
+      {/if}
 
       <!-- Page content container -->
       <div class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
@@ -175,3 +387,81 @@
     </section>
   </div>
 </main>
+
+<!-- User dropdown: rendered at top level so it works on both desktop and mobile -->
+{#if userDropdownOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
+  <div class="fixed inset-0 z-40" onclick={closeUserDropdown}></div>
+  <div class="fixed z-50 min-w-[160px] rounded-lg border border-[#ededed] bg-white py-1 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" style="bottom: 3.5rem; left: 1rem;">
+    <div class="border-b border-[#ededed] px-3 py-2">
+      <p class="text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
+      <p class="text-xs text-[#6e6e6e]">Signed in</p>
+    </div>
+    <button
+      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+      onclick={openPasswordModal}
+    >
+      <Lock class="h-4 w-4 text-[#6e6e6e]" />
+      Change password
+    </button>
+    <button
+      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+      onclick={logout}
+    >
+      <LogOut class="h-4 w-4 text-[#6e6e6e]" />
+      Sign out
+    </button>
+  </div>
+{/if}
+
+<!-- Password change modal -->
+{#if passwordModalOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onclick={(e) => e.target === e.currentTarget && closePasswordModal()}>
+    <div class="w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+      <h2 class="text-lg font-semibold text-[#0d0d0d]">Change password</h2>
+      <form class="mt-4" onsubmit={handleChangePassword}>
+        <label class="block text-xs font-medium text-[#6e6e6e]">
+          Current password
+          <input
+            class="mt-1.5 block w-full rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+            type="password"
+            bind:value={changePasswordForm.currentPassword}
+            bind:this={passwordInputEl}
+            autocomplete="current-password"
+          />
+        </label>
+        <label class="mt-3 block text-xs font-medium text-[#6e6e6e]">
+          New password (min 8 chars)
+          <input
+            class="mt-1.5 block w-full rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+            type="password"
+            bind:value={changePasswordForm.newPassword}
+            autocomplete="new-password"
+          />
+        </label>
+        {#if changePasswordForm.error}
+          <p class="mt-3 text-xs text-red-700">{changePasswordForm.error}</p>
+        {/if}
+        {#if changePasswordForm.saved}
+          <p class="mt-3 text-xs text-[#0a7a5e]">Password changed.</p>
+        {/if}
+        <div class="mt-4 flex gap-2">
+          <button
+            class="flex-1 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            onclick={closePasswordModal}
+          >
+            Cancel
+          </button>
+          <button
+            class="flex-1 rounded-md bg-[#0d0d0d] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={changePasswordForm.submitting}
+          >
+            {changePasswordForm.submitting ? 'Saving...' : 'Update'}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}

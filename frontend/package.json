@@ -19,5 +19,8 @@
     "svelte-check": "^4.3.4",
     "tailwindcss": "^4.1.17",
     "vite": "^7.2.4"
+  },
+  "dependencies": {
+    "lucide-svelte": "^1.0.1"
   }
 }
