@@ -573,7 +573,7 @@
             {#each modelRoutingPreview.result.candidates as account}
               <span
                 class={[
-                  'inline-flex max-w-[300px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
+                  'inline-flex max-w-[400px] flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
                   account.selected
                     ? 'border-[#d8ece5] bg-[#e8f5f0] text-[#0a7a5e]'
                     : account.schedulable === false
@@ -716,7 +716,7 @@
                         {#each visibleModelAccounts(model) as account}
                           <span
                             class={[
-                              'inline-flex max-w-[300px] items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
+                              'inline-flex max-w-[400px] flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
                               account.schedulable
                                 ? 'border-[#ededed] bg-[#fafafa] text-[#3c3c3c]'
                                 : 'border-amber-200 bg-amber-50 text-amber-800'

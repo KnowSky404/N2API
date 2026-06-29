@@ -1195,20 +1195,20 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             {statusLabel(account.status)}
           </span>
           {#if account.rateLimitedUntil}
-            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700">
+            <p class="mt-1 max-w-[16rem] truncate text-xs text-amber-700">
               Rate limited {futureTimeRemainingLabel(account.rateLimitedUntil) || `until ${formatDate(account.rateLimitedUntil)}`}
             </p>
           {:else if account.circuitOpenUntil}
-            <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700">
+            <p class="mt-1 max-w-[16rem] truncate text-xs text-amber-700">
               Circuit {futureTimeRemainingLabel(account.circuitOpenUntil) || `until ${formatDate(account.circuitOpenUntil)}`}
             </p>
           {/if}
           {#if account.lastTestAt}
-            <p class="mt-1 max-w-[11rem] truncate text-xs text-[#6e6e6e]">
+            <p class="mt-1 max-w-[16rem] truncate text-xs text-[#6e6e6e]">
               Test {account.lastTestStatus || 'checked'} {formatDate(account.lastTestAt)}
             </p>
             {#if account.lastTestError}
-              <p class="mt-1 max-w-[11rem] truncate text-xs text-amber-700">{account.lastTestError}</p>
+              <p class="mt-1 max-w-[16rem] truncate text-xs text-amber-700">{account.lastTestError}</p>
             {/if}
           {/if}
         </td>

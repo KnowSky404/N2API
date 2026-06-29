@@ -363,7 +363,7 @@
                     {:else}
                       <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
                     {/if}
-                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] shrink-0">
+                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] whitespace-nowrap text-right">
                       {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens
                     </span>
                   </div>
