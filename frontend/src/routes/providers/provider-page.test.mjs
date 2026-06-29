@@ -609,9 +609,10 @@ test('getGatewayReadinessIssues is clear when gateway can serve traffic', () => 
   );
 });
 
-test('provider page has a single OAuth account creation entry point', () => {
+test('provider page has a unified add account entry point with tabbed modal', () => {
   assert.equal(source.includes('Connect account'), false);
-  assert.match(source, /Add OAuth account/);
+  assert.match(source, /Add account/);
+  assert.match(source, /OAuth account/);
 });
 
 test('provider account state uses unified codex oauth connect endpoint', () => {
