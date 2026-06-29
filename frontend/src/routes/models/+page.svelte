@@ -412,7 +412,7 @@
           {/if}
         </div>
         {#if blockedModels.length > 0}
-          <p class="mt-3 text-sm text-amber-800">
+          <p class="mt-3 text-sm text-amber-800 break-words">
             {blockedModels.map((model) => model.model).join(', ')} cannot receive model-routed traffic yet.
           </p>
         {:else}

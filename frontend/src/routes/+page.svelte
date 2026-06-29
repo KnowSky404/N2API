@@ -517,7 +517,7 @@
           <div class="divide-y divide-[#ededed]">
             {#each requestLogs.items.slice(0, 5) as log}
               <div class="grid gap-1 bg-white p-4 text-sm grid-cols-[minmax(0,1fr)_auto]">
-                <a class="font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline truncate" href={dashboardLogHref(log)}>
+                <a class="font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline truncate block" href={dashboardLogHref(log)}>
                   {log.route}
                 </a>
                 <span class="tabular-nums text-[#6e6e6e] shrink-0">{log.statusCode} · {log.latencyMs}ms</span>
