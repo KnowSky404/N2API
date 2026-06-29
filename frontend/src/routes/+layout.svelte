@@ -270,7 +270,7 @@
               onclick={toggleUserDropdown}
             >
               <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
-              <span class="hidden sm:inline max-w-[120px] truncate">{session.username || 'admin'}</span>
+              <span class="hidden sm:inline-block max-w-[120px] truncate">{session.username || 'admin'}</span>
               <ChevronDown class="h-3.5 w-3.5 text-[#9b9b9b]" />
             </button>
           {/if}

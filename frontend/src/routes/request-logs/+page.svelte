@@ -491,7 +491,7 @@
             <tr>
               <td class="px-4 py-3 font-medium text-[#0d0d0d]">
                 {#if usageRowHref(row)}
-                  <a class="max-w-[260px] truncate underline-offset-2 hover:underline" href={usageRowHref(row)}>
+                  <a class="max-w-[260px] truncate inline-block underline-offset-2 hover:underline" href={usageRowHref(row)}>
                     {row.label || row.id}
                   </a>
                 {:else}
