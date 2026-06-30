@@ -62,6 +62,8 @@
 
   let accountSearch = $state('');
   let accountStatusFilter = $state('all');
+  let accountTypeFilter = $state('all');
+  let accountEnabledFilter = $state('all');
   let accountSort = $state({ key: 'priority', direction: 'asc' });
   let bulkRoutingPoolId = $state('0');
   let bulkRoutingPoolPriority = $state('0');
@@ -76,14 +78,16 @@
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
       providerAccounts.items.filter((account) => {
+        if (!accountMatchesTypeFilter(account, accountTypeFilter)) return false;
         if (!accountMatchesStatusFilter(account, accountStatusFilter)) return false;
+        if (!accountMatchesEnabledFilter(account, accountEnabledFilter)) return false;
         const query = accountSearch.trim().toLowerCase();
         if (!query) return true;
         if (/^id:[1-9]\d*$/.test(query)) {
           const idQuery = query.slice(3);
           return String(account.id) === idQuery;
         }
-        return accountSearchText(account).includes(query);
+        return (account.name ?? '').toLowerCase().includes(query);
       })
     )
   );
@@ -93,13 +97,29 @@
     const params = new URLSearchParams(search);
     const providerAccountId = params.get('providerAccountId') ?? '';
     const status = params.get('status') ?? '';
+    const type = params.get('type') ?? '';
+    const enabled = params.get('enabled') ?? '';
     accountSearch = '';
     accountStatusFilter = 'all';
+    accountTypeFilter = 'all';
+    accountEnabledFilter = 'all';
     if (/^[1-9]\d*$/.test(providerAccountId)) {
       accountSearch = `id:${providerAccountId}`;
     }
-    if (['all', 'active', 'disabled', 'blocked', 'rate_limited', 'circuit_open', 'expired', 'api_upstream', 'codex_oauth'].includes(status)) {
+    if (['all', 'active', 'blocked', 'rate_limited', 'circuit_open', 'expired'].includes(status)) {
       accountStatusFilter = status;
+    }
+    // backward compat: old combined status values map to new independent filters
+    if (!type || type === 'all') {
+      if (status === 'disabled') { accountEnabledFilter = 'disabled'; accountStatusFilter = 'all'; }
+      if (status === 'api_upstream') { accountTypeFilter = 'api_upstream'; accountStatusFilter = 'all'; }
+      if (status === 'codex_oauth') { accountTypeFilter = 'codex_oauth'; accountStatusFilter = 'all'; }
+    }
+    if (['all', 'api_upstream', 'codex_oauth'].includes(type)) {
+      accountTypeFilter = type;
+    }
+    if (['all', 'enabled', 'disabled'].includes(enabled)) {
+      accountEnabledFilter = enabled;
     }
   }
 
@@ -133,22 +153,7 @@
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountSearchText(account) {
-    return [
-      account.name,
-      account.displayName,
-      account.subject,
-      account.baseUrl,
-      account.proxyUrlSummary,
-      account.provider,
-      accountTypeLabel(account),
-      accountRoutingPools(account.id).map((pool) => pool.name).join(' '),
-      statusLabel(account.status),
-      account.statusReason,
-      account.lastError
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
+    return (account.name ?? '').toLowerCase();
   }
 
   /**
@@ -156,14 +161,31 @@
    * @param {string} filter
    */
   function accountMatchesStatusFilter(account, filter) {
-    if (filter === 'active') return account.enabled && account.status === 'active';
-    if (filter === 'disabled') return !account.enabled;
-    if (filter === 'blocked') return !account.enabled || account.status !== 'active';
+    if (filter === 'active') return account.status === 'active';
+    if (filter === 'blocked') return account.status !== 'active';
     if (filter === 'rate_limited') return account.status === 'rate_limited';
     if (filter === 'circuit_open') return account.status === 'circuit_open';
     if (filter === 'expired') return account.status === 'expired';
+    return true;
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {string} filter
+   */
+  function accountMatchesTypeFilter(account, filter) {
     if (filter === 'api_upstream') return account.accountType === 'api_upstream';
     if (filter === 'codex_oauth') return isCodexOAuthAccount(account);
+    return true;
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {string} filter
+   */
+  function accountMatchesEnabledFilter(account, filter) {
+    if (filter === 'enabled') return account.enabled;
+    if (filter === 'disabled') return !account.enabled;
     return true;
   }
 
@@ -755,31 +777,50 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   {/if}
 
   <div class="mt-6 flex flex-wrap items-end justify-between gap-3">
-    <div class="grid flex-1 gap-3 sm:grid-cols-[minmax(240px,1fr)_220px]">
-      <label class="grid min-w-[240px] gap-1 text-sm font-medium text-[#3c3c3c]">
+    <div class="grid flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
 Search
 <input
   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
   type="search"
-  placeholder="Search accounts"
+  placeholder="Account name"
   bind:value={accountSearch}
 />
       </label>
-      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
-Status filter
+      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Type
+<select
+  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  bind:value={accountTypeFilter}
+>
+  <option value="all">All types</option>
+  <option value="codex_oauth">Codex OAuth</option>
+  <option value="api_upstream">API upstream</option>
+</select>
+      </label>
+      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Status
 <select
   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
   bind:value={accountStatusFilter}
 >
-  <option value="all">All accounts</option>
-  <option value="active">Active accounts</option>
-  <option value="disabled">Disabled accounts</option>
-  <option value="blocked">Blocked accounts</option>
-  <option value="rate_limited">Rate limited accounts</option>
-  <option value="circuit_open">Circuit open accounts</option>
-  <option value="expired">Expired accounts</option>
-  <option value="api_upstream">API upstream accounts</option>
-  <option value="codex_oauth">Codex OAuth accounts</option>
+  <option value="all">All statuses</option>
+  <option value="active">Active</option>
+  <option value="blocked">Blocked</option>
+  <option value="rate_limited">Rate limited</option>
+  <option value="circuit_open">Circuit open</option>
+  <option value="expired">Expired</option>
+</select>
+      </label>
+      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+Enabled
+<select
+  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+  bind:value={accountEnabledFilter}
+>
+  <option value="all">All</option>
+  <option value="enabled">Enabled</option>
+  <option value="disabled">Disabled</option>
 </select>
       </label>
     </div>

@@ -668,13 +668,16 @@ test('provider account state uses unified codex oauth callback endpoint', () => 
 });
 
 test('provider account table supports search, sorting, and a pinned actions column', () => {
-  assert.match(source, /placeholder="Search accounts"/);
-  assert.match(source, /Status filter/);
+  assert.match(source, /placeholder="Account name"/);
   assert.match(source, /bind:value=\{accountStatusFilter\}/);
-  for (const label of ['All accounts', 'Active accounts', 'Disabled accounts', 'Blocked accounts', 'Rate limited accounts', 'Circuit open accounts', 'Expired accounts', 'API upstream accounts', 'Codex OAuth accounts']) {
+  assert.match(source, /bind:value=\{accountTypeFilter\}/);
+  assert.match(source, /bind:value=\{accountEnabledFilter\}/);
+  for (const label of ['All types', 'Codex OAuth', 'API upstream', 'All statuses', 'Active', 'Blocked', 'Rate limited', 'Circuit open', 'Expired', 'All', 'Enabled', 'Disabled']) {
     assert.match(source, new RegExp(label));
   }
   assert.match(source, /accountMatchesStatusFilter\(account, accountStatusFilter\)/);
+  assert.match(source, /accountMatchesTypeFilter\(account, accountTypeFilter\)/);
+  assert.match(source, /accountMatchesEnabledFilter\(account, accountEnabledFilter\)/);
   assert.match(source, /aria-sort=/);
   assert.match(source, /sortProviderAccounts/);
   assert.match(source, /loadFactor/);
