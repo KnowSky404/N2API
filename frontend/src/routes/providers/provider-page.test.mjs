@@ -666,6 +666,10 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /testAllProviderAccounts/);
   assert.match(source, />\s*Test all accounts\s*</);
   assert.match(source, /sticky right-0/);
+  assert.match(source, /colspan="6"/);
+  assert.doesNotMatch(source, /setProviderAccountSort\('priority'\)/);
+  assert.doesNotMatch(source, /setProviderAccountSort\('loadFactor'\)/);
+  assert.doesNotMatch(source, /setProviderAccountSort\('expires'\)/);
 });
 
 test('provider account table exposes per-row selection checkboxes', () => {
@@ -675,6 +679,17 @@ test('provider account table exposes per-row selection checkboxes', () => {
 });
 
 test('provider account rows use compact controls and hover details', () => {
+  assert.match(source, /function accountEmailLabel/);
+  assert.match(source, /accountEmailLabel\(account\)/);
+  assert.match(source, /function accountHoverDetail/);
+  assert.match(source, /\[accountLabel\(account\), accountEmailLabel\(account\)\]/);
+  assert.match(source, /editingProviderAccountId === account\.id/);
+  assert.match(source, /toggleAccountEditor\(account\)/);
+  assert.match(source, /title="Edit account"/);
+  assert.match(source, /title=\{deletingProviderAccountId === account\.id \? 'Confirm delete account' : 'Delete account'\}/);
+  assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
+  assert.match(source, /deletingProviderAccountId !== account\.id/);
+  assert.match(source, /Confirm/);
   assert.match(source, /role="switch"/);
   assert.match(source, /Load factor/);
   assert.match(source, /Max concurrency/);
@@ -687,19 +702,17 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /provider-account-max-concurrency/);
   assert.match(source, /testProviderAccount/);
   assert.match(source, /href=\{`\/request-logs\?providerAccountId=\$\{account\.id\}`\}/);
-  assert.match(source, /View request logs/);
-  assert.match(source, /sr-only">Test account/);
+  assert.match(source, /Request logs/);
   assert.match(source, /pauseProviderAccount/);
-  assert.match(source, /sr-only">Pause scheduling/);
-  assert.match(source, /sr-only">Refresh account/);
+  assert.match(source, />Pause</);
+  assert.match(source, />Refresh</);
   assert.match(source, /disconnectProviderAccount/);
-  assert.match(source, /sr-only">Disconnect account/);
+  assert.match(source, /Delete account/);
   assert.match(source, /title=\{accountHoverDetail\(account\)\}/);
   assert.match(source, /title=\{statusHoverDetail\(account\)\}/);
-  assert.match(source, /account\.lastTestAt/);
-  assert.match(source, /account\.lastTestStatus/);
-  assert.match(source, /account\.lastTestError/);
-  assert.match(source, /account\.provider\s*\|\|\s*'unknown'/);
+  assert.doesNotMatch(source, /account\.lastTestAt/);
+  assert.doesNotMatch(source, /account\.lastTestStatus/);
+  assert.doesNotMatch(source, /account\.lastTestError/);
   assert.doesNotMatch(source, /account\.subject\s*\|\|\s*account\.provider/);
   assert.doesNotMatch(source, />\s*\{account\.lastError\}\s*</);
 });
@@ -713,17 +726,19 @@ test('provider account state can disconnect a single account', () => {
 });
 
 test('provider account rows show remaining scheduling block windows', () => {
-  assert.match(source, /futureTimeRemainingLabel/);
-  assert.match(source, /futureTimeRemainingLabel\(account\.rateLimitedUntil\)/);
-  assert.match(source, /futureTimeRemainingLabel\(account\.circuitOpenUntil\)/);
-  assert.match(source, /Rate limited \{futureTimeRemainingLabel\(account\.rateLimitedUntil\)/);
-  assert.match(source, /Circuit \{futureTimeRemainingLabel\(account\.circuitOpenUntil\)/);
+  assert.match(source, /function statusHoverDetail/);
+  assert.match(source, /account\.status === 'rate_limited' && account\.rateLimitedUntil/);
+  assert.match(source, /Rate limited until \$\{formatDate\(account\.rateLimitedUntil\)\}/);
+  assert.match(source, /title=\{statusHoverDetail\(account\)\}/);
+  assert.doesNotMatch(source, /futureTimeRemainingLabel/);
+  assert.doesNotMatch(source, /Rate limited \{futureTimeRemainingLabel/);
 });
 
 test('provider account rows expose expandable test history', () => {
   assert.match(source, /toggleAccountTestHistory\(account\.id\)/);
   assert.match(source, /getAccountTestResultsState\(account\.id\)/);
-  assert.match(source, /sr-only">Test history/);
+  assert.match(source, />History</);
+  assert.match(source, /editingProviderAccountId === account\.id && historyState\.expanded/);
   assert.match(source, /Loading test history/);
   assert.match(source, /No test history recorded yet/);
   assert.match(source, /historyState\.items/);
@@ -744,16 +759,12 @@ test('provider account rows expose manual model controls and routing warning', (
   assert.match(source, /providerAccountId=\$\{encodeURIComponent\(String\(account\.id\)\)\}/);
 });
 
-test('provider account rows show routing pool memberships', () => {
-  assert.match(source, /loadRoutingPools/);
-  assert.match(source, /routingPools/);
-  assert.match(source, /accountRoutingPools\(account\.id\)/);
-  assert.match(source, /accountRoutingPoolPriority\(pool,\s*account\.id\)/);
-  assert.match(source, /\.sort\(\(left,\s*right\)/);
-  assert.match(source, /accountRoutingPoolPriority\(left,\s*accountId\)\s*-\s*accountRoutingPoolPriority\(right,\s*accountId\)/);
-  assert.match(source, /Routing pools/);
-  assert.match(source, /p\{accountRoutingPoolPriority\(pool,\s*account\.id\)\}/);
-  assert.match(source, /href=\{`\/routing-pools\?routingPoolId=\$\{pool\.id\}`\}/);
+test('provider account rows hide routing pool memberships from the compact table', () => {
+  assert.doesNotMatch(source, /loadRoutingPools/);
+  assert.doesNotMatch(source, /accountRoutingPools\(account\.id\)/);
+  assert.doesNotMatch(source, /accountRoutingPoolPriority\(pool,\s*account\.id\)/);
+  assert.doesNotMatch(source, /Routing pools/);
+  assert.doesNotMatch(source, /href=\{`\/routing-pools\?routingPoolId=\$\{pool\.id\}`\}/);
   assert.match(routingPoolsSource, /routingPoolId = params\.get\('routingPoolId'\)/);
 });
 
@@ -778,7 +789,8 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /account\.rateLimitedUntil/);
   assert.match(source, /account\.circuitOpenUntil/);
   assert.match(source, /disconnectProviderAccount\(account\)/);
-  assert.match(source, /disabled=\{providerAccounts\.saving\}\s+onclick=\{\(\) => disconnectProviderAccount\(account\)\}/);
+  assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
+  assert.match(source, /deletingProviderAccountId = account\.id/);
 });
 
 test('admin state can reset provider account local status', () => {
