@@ -57,7 +57,8 @@
 - Keep generated dependencies and build outputs out of git.
 - Use `.env.example` for documented configuration and never commit real secrets.
 - Before editing files, inspect existing contents and preserve unrelated user changes.
-- After each completed change, create an atomic git commit unless the user explicitly asks not to commit.
-- Each commit should contain one coherent change only: for example, one feature, one fix, one refactor, one docs update, or one test update.
+- After each atomic change (each feature, fix, refactor, docs update, or test update), you MUST create an atomic git commit. Never accumulate multiple unrelated changes into one commit, and never leave a change uncommitted after it is complete unless the user explicitly asks otherwise.
+- Each commit MUST contain exactly one coherent change: for example, one feature, one fix, one refactor, one docs update, or one test update.
 - Use Conventional Commits for commit messages, such as `feat: add provider health check`, `fix: preserve streaming response headers`, `docs: update deployment guide`, `test: cover token refresh`, or `chore: update tooling`.
 - Do not commit generated build artifacts, dependency directories, local caches, or real environment files.
+- After every conversation turn that involves code or functionality changes, rebuild and refresh the local Docker Compose dev stack so the user can test and verify. Use the `n2api-refresh-docker` skill for the exact commands. If no code or functionality was changed during the turn, skip this step.
