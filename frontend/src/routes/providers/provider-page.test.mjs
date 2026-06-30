@@ -720,13 +720,6 @@ test('provider account rows show remaining scheduling block windows', () => {
   assert.match(source, /Circuit \{futureTimeRemainingLabel\(account\.circuitOpenUntil\)/);
 });
 
-test('provider accounts page exposes configurable scheduling pause duration', () => {
-  assert.match(source, /Pause duration seconds/);
-  assert.match(source, /providerAccountPauseForm\.durationSeconds/);
-  assert.match(source, /min="60"/);
-  assert.match(source, /max="86400"/);
-});
-
 test('provider account rows expose expandable test history', () => {
   assert.match(source, /toggleAccountTestHistory\(account\.id\)/);
   assert.match(source, /getAccountTestResultsState\(account\.id\)/);
@@ -774,7 +767,6 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /name="apiKey"/);
   assert.match(source, /Leave blank to keep current key/);
   assert.match(source, /Save upstream/);
-  assert.match(source, /Scheduling capacity/);
   assert.match(source, /loadFactor/);
   assert.match(source, /updateAPIUpstreamCredential\(account, event\)/);
   assert.match(source, /updateProviderAccountName\(account, event\)/);

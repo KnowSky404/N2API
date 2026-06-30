@@ -4,17 +4,11 @@
   import {
     accountLabel,
     accountTypeLabel,
-    addSelectedProviderAccountsToRoutingPool,
-    bulkReplaceSelectedProviderAccountModels,
-    bulkUpdateSelectedProviderAccountScheduling,
-    bulkUpdateSelectedProviderAccounts,
-    clearProviderAccountSelection,
     completeProviderCallback,
     connectProvider,
     copyAuthorizationURL,
     createAPIUpstreamAccount,
     disconnectProviderAccount,
-    disconnectSelectedProviderAccounts,
     formatDate,
     futureTimeRemainingLabel,
     getAccountModelsState,
@@ -27,18 +21,12 @@
     apiUpstreamForm,
     provider,
     providerAccounts,
-    providerAccountBulkModelsForm,
-    providerAccountBulkSchedulingForm,
     providerConnectForm,
     providerOAuth,
     pauseProviderAccount,
-    pauseSelectedProviderAccounts,
     refreshProviderAccount,
-    refreshSelectedProviderAccounts,
     removeAccountModel,
-    removeSelectedProviderAccountsFromRoutingPool,
     resetProviderAccountStatus,
-    resetSelectedProviderAccountStatus,
     saveAccountModels,
     session,
     selectedProviderAccountIds,
@@ -46,7 +34,6 @@
     statusLabel,
     testAllProviderAccounts,
     testProviderAccount,
-    testSelectedProviderAccounts,
     toggleAccountTestHistory,
     toggleProviderAccountSelection,
     updateProviderAccount,
@@ -65,8 +52,6 @@
   let accountTypeFilter = $state('all');
   let accountEnabledFilter = $state('all');
   let accountSort = $state({ key: 'priority', direction: 'asc' });
-  let bulkRoutingPoolId = $state('0');
-  let bulkRoutingPoolPriority = $state('0');
   let addAccountModalOpen = $state(false);
   /** @type {'oauth' | 'api_upstream'} */
   let addAccountModalTab = $state('oauth');
@@ -150,11 +135,6 @@
       void loadFingerprintProfiles();
     }
   });
-
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
-  function accountSearchText(account) {
-    return (account.name ?? '').toLowerCase();
-  }
 
   /**
    * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account

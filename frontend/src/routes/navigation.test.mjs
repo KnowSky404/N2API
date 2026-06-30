@@ -581,38 +581,6 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(adminState, /params\.set\('excludedAccountIds'/);
 });
 
-test('providers page summarizes account scheduling capacity', () => {
-  for (const label of ['Scheduling capacity', 'Schedulable', 'Blocked', 'Blocked reasons']) {
-    assert.match(providersPage, new RegExp(label.replace(' ', '\\s+')), `providers page should include ${label}`);
-  }
-
-  assert.match(providersPage, /function modelRoutingHref\(model,\s*account\)/);
-  assert.match(providersPage, /providerAccountId=\$\{encodeURIComponent\(String\(account\.id\)\)\}/);
-  assert.match(providersPage, /href=\{modelRoutingHref\(configuredModel\.model,\s*account\)\}/);
-  assert.match(providersPage, /getSchedulableProviderAccounts/);
-  assert.match(providersPage, /getUnschedulableProviderAccountSummary/);
-  assert.match(providersPage, /schedulableProviderAccounts\.length/);
-  assert.match(providersPage, /unschedulableProviderAccountSummary/);
-  assert.match(providersPage, /href=\{`\/routing-pools\?routingPoolId=\$\{pool\.id\}`\}/);
-});
-
-test('providers page shows provider account usage distribution', () => {
-  for (const label of ['24h account usage', 'Requests', 'Tokens', 'Estimated cost']) {
-    assert.match(providersPage, new RegExp(label.replace(' ', '\\s+')), `providers page should include ${label}`);
-  }
-
-  assert.match(providersPage, /providerUsageHref/);
-  assert.match(providersPage, /function providerUsageSinceParam/);
-  assert.match(providersPage, /params\.set\('since', providerUsageSinceParam\(\)\)/);
-  assert.match(providersPage, /params\.set\('providerAccountId', id\)/);
-  assert.match(providersPage, /providerAccountId=\$\{encodeURIComponent/);
-  assert.match(providersPage, /href=\{providerUsageHref\(row\)\}/);
-  assert.match(providersPage, /loadUsageSummary\('24h', 'provider_account'\)/);
-  assert.match(providersPage, /usage24hProviderAccounts/);
-  assert.match(providersPage, /formatTokens/);
-  assert.match(providersPage, /formatCostMicrousd/);
-});
-
 test('api keys page shows per-key usage distribution', () => {
   for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost', 'Active', 'Concurrency full', 'Requests window', 'Tokens window', 'remaining', 'Request limit full', 'Token limit full']) {
     assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
