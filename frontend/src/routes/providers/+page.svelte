@@ -188,7 +188,9 @@
    */
   function accountSortValue(account, key) {
     if (key === 'account') return accountLabel(account);
+    if (key === 'type') return accountTypeLabel(account);
     if (key === 'status') return statusLabel(account.status);
+    if (key === 'enabled') return account.enabled ? 0 : 1;
     if (key === 'refresh') return Date.parse(account.lastRefreshAt ?? '') || 0;
     if (key === 'used') return Date.parse(account.lastUsedAt ?? '') || 0;
     return '';
@@ -769,7 +771,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
   </p>
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[980px] text-left text-sm">
+    <table class="w-full min-w-[1180px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="w-12 px-4 py-3 font-medium">Select</th>
@@ -778,9 +780,19 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         Account<span class="text-[11px]">{sortIndicator('account')}</span>
       </button>
     </th>
+    <th class="w-36 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('type')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('type')}>
+        Type<span class="text-[11px]">{sortIndicator('type')}</span>
+      </button>
+    </th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('status')}>
       <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('status')}>
         Status<span class="text-[11px]">{sortIndicator('status')}</span>
+      </button>
+    </th>
+    <th class="w-32 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('enabled')}>
+      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('enabled')}>
+        Enabled<span class="text-[11px]">{sortIndicator('enabled')}</span>
       </button>
     </th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('refresh')}>
@@ -799,15 +811,15 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">Loading provider accounts...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No provider accounts connected yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No accounts match your search.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No accounts match your search.</td>
     </tr>
   {:else}
     {#each filteredProviderAccounts as account}
@@ -833,6 +845,11 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             <p class="mt-1 max-w-[22rem] truncate text-[#6e6e6e]">{accountEmailLabel(account)}</p>
           {/if}
         </td>
+        <td class="px-4 py-3 align-middle">
+          <span class="inline-flex whitespace-nowrap rounded-full bg-[#f5f5f5] px-2.5 py-1 text-xs font-medium text-[#3c3c3c]">
+            {accountTypeLabel(account)}
+          </span>
+        </td>
         <td class="px-4 py-3 align-middle" title={statusHoverDetail(account)}>
           <span
             class={[
@@ -845,6 +862,16 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
             ]}
           >
             {statusLabel(account.status)}
+          </span>
+        </td>
+        <td class="px-4 py-3 align-middle">
+          <span
+            class={[
+              'inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium',
+              account.enabled ? 'bg-[#e8f5f0] text-[#0a7a5e]' : 'bg-[#f5f5f5] text-[#6e6e6e]'
+            ]}
+          >
+            {account.enabled ? 'Enabled' : 'Disabled'}
           </span>
         </td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
@@ -887,7 +914,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       </tr>
       {#if editingProviderAccountId === account.id}
         <tr class="bg-[#fafafa]">
-          <td class="px-4 py-4" colspan="6">
+          <td class="px-4 py-4" colspan="8">
             <div class="grid gap-5 rounded-lg border border-[#ededed] bg-white p-4">
               <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
                 <div class="grid gap-3">
@@ -1090,7 +1117,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       {/if}
       {#if editingProviderAccountId === account.id && historyState.expanded}
         <tr class="bg-[#fafafa]">
-          <td class="px-4 py-4" colspan="6">
+          <td class="px-4 py-4" colspan="8">
             <div class="rounded-lg border border-[#ededed] bg-white p-4">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <h3 class="text-sm font-semibold text-[#0d0d0d]">Recent test history</h3>

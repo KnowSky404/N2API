@@ -662,11 +662,15 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /accountMatchesEnabledFilter\(account, accountEnabledFilter\)/);
   assert.match(source, /aria-sort=/);
   assert.match(source, /sortProviderAccounts/);
+  assert.match(source, /setProviderAccountSort\('type'\)/);
+  assert.match(source, /setProviderAccountSort\('enabled'\)/);
+  assert.match(source, /accountTypeLabel\(account\)/);
+  assert.match(source, /account\.enabled \? 'Enabled' : 'Disabled'/);
   assert.match(source, /loadFactor/);
   assert.match(source, /testAllProviderAccounts/);
   assert.match(source, />\s*Test all accounts\s*</);
   assert.match(source, /sticky right-0/);
-  assert.match(source, /colspan="6"/);
+  assert.match(source, /colspan="8"/);
   assert.doesNotMatch(source, /setProviderAccountSort\('priority'\)/);
   assert.doesNotMatch(source, /setProviderAccountSort\('loadFactor'\)/);
   assert.doesNotMatch(source, /setProviderAccountSort\('expires'\)/);
