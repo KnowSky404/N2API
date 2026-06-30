@@ -665,7 +665,8 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /setProviderAccountSort\('type'\)/);
   assert.match(source, /setProviderAccountSort\('enabled'\)/);
   assert.match(source, /accountTypeLabel\(account\)/);
-  assert.match(source, /account\.enabled \? 'Enabled' : 'Disabled'/);
+  assert.match(source, /role="switch"/);
+  assert.match(source, /updateProviderAccount\(account,\s*\{\s*enabled: event\.currentTarget\.checked\s*\}\)/);
   assert.match(source, /loadFactor/);
   assert.match(source, /testAllProviderAccounts/);
   assert.match(source, />\s*Test all accounts\s*</);
@@ -674,6 +675,20 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.doesNotMatch(source, /setProviderAccountSort\('priority'\)/);
   assert.doesNotMatch(source, /setProviderAccountSort\('loadFactor'\)/);
   assert.doesNotMatch(source, /setProviderAccountSort\('expires'\)/);
+});
+
+test('provider account table paginates rows and shows summary controls below the table', () => {
+  assert.match(source, /let accountPage = \$state\(1\)/);
+  assert.match(source, /let accountPageSize = \$state\(10\)/);
+  assert.match(source, /const accountPageCount = \$derived/);
+  assert.match(source, /const paginatedProviderAccounts = \$derived/);
+  assert.match(source, /const providerAccountPageSummary = \$derived/);
+  assert.match(source, /#each paginatedProviderAccounts as account/);
+  assert.match(source, /Showing \{providerAccountPageSummary\} of \{filteredProviderAccounts\.length\}/);
+  assert.match(source, /bind:value=\{accountPageSize\}/);
+  assert.match(source, /onclick=\{\(\) => goToProviderAccountPage\(accountPage - 1\)\}/);
+  assert.match(source, /onclick=\{\(\) => goToProviderAccountPage\(accountPage \+ 1\)\}/);
+  assert.doesNotMatch(source, /<p class="mt-3 text-sm text-\[#6e6e6e\]">\s*Showing \{filteredProviderAccounts\.length\} of \{providerAccounts\.items\.length\}/);
 });
 
 test('provider account table exposes per-row selection checkboxes', () => {

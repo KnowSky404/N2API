@@ -49,6 +49,8 @@
   let accountTypeFilter = $state('all');
   let accountEnabledFilter = $state('all');
   let accountSort = $state({ key: 'account', direction: 'asc' });
+  let accountPage = $state(1);
+  let accountPageSize = $state(10);
   let addAccountModalOpen = $state(false);
   /** @type {'oauth' | 'api_upstream'} */
   let addAccountModalTab = $state('oauth');
@@ -77,6 +79,16 @@
         return (account.name ?? '').toLowerCase().includes(query);
       })
     )
+  );
+  const accountPageCount = $derived(Math.max(1, Math.ceil(filteredProviderAccounts.length / accountPageSize)));
+  const normalizedAccountPage = $derived(Math.min(Math.max(accountPage, 1), accountPageCount));
+  const paginatedProviderAccounts = $derived(
+    filteredProviderAccounts.slice((normalizedAccountPage - 1) * accountPageSize, normalizedAccountPage * accountPageSize)
+  );
+  const providerAccountPageSummary = $derived(
+    filteredProviderAccounts.length === 0
+      ? '0'
+      : `${(normalizedAccountPage - 1) * accountPageSize + 1}-${(normalizedAccountPage - 1) * accountPageSize + paginatedProviderAccounts.length}`
   );
 
   /** @param {string} search */
@@ -134,6 +146,14 @@
     if (!fingerprintProfilesRequested) {
       fingerprintProfilesRequested = true;
       void loadFingerprintProfiles();
+    }
+  });
+
+  $effect(() => {
+    if (accountPage > accountPageCount) {
+      accountPage = accountPageCount;
+    } else if (accountPage < 1) {
+      accountPage = 1;
     }
   });
 
@@ -205,6 +225,12 @@
       accountSort.key === key
         ? { key, direction: accountSort.direction === 'asc' ? 'desc' : 'asc' }
         : { key, direction: 'asc' };
+    accountPage = 1;
+  }
+
+  /** @param {number} page */
+  function goToProviderAccountPage(page) {
+    accountPage = Math.min(Math.max(page, 1), accountPageCount);
   }
 
   /** @param {string} key */
@@ -770,12 +796,6 @@ Enabled
 </select>
     </label>
   </div>
-  <p class="mt-3 text-sm text-[#6e6e6e]">
-Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
-    {#if selectedProviderAccountCount > 0}
-      · {selectedProviderAccountCount} selected
-    {/if}
-  </p>
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
     <table class="w-full min-w-[1180px] text-left text-sm">
@@ -829,7 +849,7 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
       <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No accounts match your search.</td>
     </tr>
   {:else}
-    {#each filteredProviderAccounts as account}
+    {#each paginatedProviderAccounts as account}
       {@const modelState = getAccountModelsState(account.id)}
       {@const historyState = getAccountTestResultsState(account.id)}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
@@ -872,14 +892,22 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
           </span>
         </td>
         <td class="px-4 py-3 align-middle">
-          <span
-            class={[
-              'inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium',
-              account.enabled ? 'bg-[#e8f5f0] text-[#0a7a5e]' : 'bg-[#f5f5f5] text-[#6e6e6e]'
-            ]}
-          >
-            {account.enabled ? 'Enabled' : 'Disabled'}
-          </span>
+          <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={account.enabled ? 'Enabled' : 'Disabled'}>
+            <input
+              class="peer sr-only"
+              type="checkbox"
+              role="switch"
+              checked={account.enabled}
+              disabled={providerAccounts.saving}
+              aria-label={`Set ${accountLabel(account)} ${account.enabled ? 'disabled' : 'enabled'}`}
+              onchange={(event) =>
+                updateProviderAccount(account, {
+                  enabled: event.currentTarget.checked
+                })}
+            />
+            <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
+            <span class="text-xs text-[#6e6e6e]">{account.enabled ? 'Enabled' : 'Disabled'}</span>
+          </label>
         </td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
@@ -939,6 +967,50 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
   {/if}
 </tbody>
     </table>
+  </div>
+  <div class="mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
+    <p>
+      Showing {providerAccountPageSummary} of {filteredProviderAccounts.length}
+      {#if providerAccounts.items.length !== filteredProviderAccounts.length}
+        filtered from {providerAccounts.items.length}
+      {/if}
+      {#if selectedProviderAccountCount > 0}
+        · {selectedProviderAccountCount} selected
+      {/if}
+    </p>
+    <div class="flex flex-wrap items-center gap-2">
+      <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
+        Rows
+        <select
+          class="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={accountPageSize}
+          onchange={() => {
+            accountPage = 1;
+          }}
+        >
+          <option value={10}>10</option>
+          <option value={25}>25</option>
+          <option value={50}>50</option>
+        </select>
+      </label>
+      <span class="text-xs tabular-nums text-[#6e6e6e]">Page {normalizedAccountPage} of {accountPageCount}</span>
+      <button
+        class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={normalizedAccountPage <= 1}
+        onclick={() => goToProviderAccountPage(accountPage - 1)}
+      >
+        Previous
+      </button>
+      <button
+        class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={normalizedAccountPage >= accountPageCount}
+        onclick={() => goToProviderAccountPage(accountPage + 1)}
+      >
+        Next
+      </button>
+    </div>
   </div>
 </section>
 
