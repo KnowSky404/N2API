@@ -687,13 +687,16 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /accountEmailLabel\(account\)/);
   assert.match(source, /function accountHoverDetail/);
   assert.match(source, /\[accountLabel\(account\), accountEmailLabel\(account\)\]/);
-  assert.match(source, /editingProviderAccountId === account\.id/);
-  assert.match(source, /toggleAccountEditor\(account\)/);
+  assert.match(source, /const editingProviderAccount = \$derived/);
+  assert.match(source, /openAccountEditor\(account\)/);
+  assert.match(source, /closeAccountEditor/);
+  assert.match(source, /role="dialog" aria-modal="true" aria-label=\{`Edit \$\{accountLabel\(account\)\}`\}/);
   assert.match(source, /title="Edit account"/);
-  assert.match(source, /title=\{deletingProviderAccountId === account\.id \? 'Confirm delete account' : 'Delete account'\}/);
+  assert.match(source, /toggleDeleteConfirmation\(account\)/);
+  assert.match(source, /Delete this account\?/);
+  assert.match(source, /role="dialog" aria-label=\{`Confirm deleting \$\{accountLabel\(account\)\}`\}/);
   assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
-  assert.match(source, /deletingProviderAccountId !== account\.id/);
-  assert.match(source, /Confirm/);
+  assert.match(source, /deletingProviderAccountId === account\.id/);
   assert.match(source, /role="switch"/);
   assert.match(source, /Load factor/);
   assert.match(source, /Max concurrency/);
@@ -742,7 +745,7 @@ test('provider account rows expose expandable test history', () => {
   assert.match(source, /toggleAccountTestHistory\(account\.id\)/);
   assert.match(source, /getAccountTestResultsState\(account\.id\)/);
   assert.match(source, />History</);
-  assert.match(source, /editingProviderAccountId === account\.id && historyState\.expanded/);
+  assert.match(source, /\{#if historyState\.expanded\}/);
   assert.match(source, /Loading test history/);
   assert.match(source, /No test history recorded yet/);
   assert.match(source, /historyState\.items/);
@@ -794,7 +797,7 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /account\.circuitOpenUntil/);
   assert.match(source, /disconnectProviderAccount\(account\)/);
   assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
-  assert.match(source, /deletingProviderAccountId = account\.id/);
+  assert.match(source, /toggleDeleteConfirmation\(account\)/);
 });
 
 test('admin state can reset provider account local status', () => {

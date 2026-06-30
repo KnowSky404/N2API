@@ -59,6 +59,9 @@
 
   const providerStateLabel = $derived(getProviderStateLabel());
   const selectedProviderAccountCount = $derived(Object.keys(selectedProviderAccountIds).length);
+  const editingProviderAccount = $derived(
+    providerAccounts.items.find((account) => account.id === editingProviderAccountId) ?? null
+  );
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
       providerAccounts.items.filter((account) => {
@@ -239,18 +242,22 @@
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
-  function toggleAccountEditor(account) {
-    editingProviderAccountId = editingProviderAccountId === account.id ? 0 : account.id;
+  function openAccountEditor(account) {
+    editingProviderAccountId = account.id;
     deletingProviderAccountId = 0;
+  }
+
+  function closeAccountEditor() {
+    editingProviderAccountId = 0;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function toggleDeleteConfirmation(account) {
+    deletingProviderAccountId = deletingProviderAccountId === account.id ? 0 : account.id;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   async function confirmDisconnectProviderAccount(account) {
-    if (deletingProviderAccountId !== account.id) {
-      deletingProviderAccountId = account.id;
-      editingProviderAccountId = 0;
-      return;
-    }
     await disconnectProviderAccount(account);
     deletingProviderAccountId = 0;
   }
@@ -877,12 +884,12 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
         <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
-          <div class="flex justify-end gap-2 whitespace-nowrap">
+          <div class="relative flex justify-end gap-2 whitespace-nowrap">
             <button
               class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={providerAccounts.saving}
-              onclick={() => toggleAccountEditor(account)}
+              onclick={() => openAccountEditor(account)}
               title="Edit account"
               aria-label="Edit account"
             >
@@ -890,282 +897,314 @@ Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
               <span class="sr-only">Edit account</span>
             </button>
             <button
-              class={[
-                'inline-flex items-center justify-center rounded-md border bg-white font-medium hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]',
-                deletingProviderAccountId === account.id
-                  ? 'h-8 px-2.5 text-xs text-red-700 border-red-200'
-                  : 'size-8 text-red-700 border-red-200'
-              ]}
+              class="inline-flex size-8 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={providerAccounts.saving}
-              onclick={() => confirmDisconnectProviderAccount(account)}
-              title={deletingProviderAccountId === account.id ? 'Confirm delete account' : 'Delete account'}
-              aria-label={deletingProviderAccountId === account.id ? 'Confirm delete account' : 'Delete account'}
+              onclick={() => toggleDeleteConfirmation(account)}
+              title="Delete account"
+              aria-label="Delete account"
             >
-              {#if deletingProviderAccountId === account.id}
-                Confirm
-              {:else}
-                <Trash2 class="size-4" aria-hidden="true" />
-                <span class="sr-only">Delete account</span>
-              {/if}
+              <Trash2 class="size-4" aria-hidden="true" />
+              <span class="sr-only">Delete account</span>
             </button>
+            {#if deletingProviderAccountId === account.id}
+              <div class="absolute right-0 top-10 z-30 w-56 rounded-lg border border-[#e5e5e5] bg-white p-3 text-left shadow-lg" role="dialog" aria-label={`Confirm deleting ${accountLabel(account)}`}>
+                <p class="text-sm font-medium text-[#0d0d0d]">Delete this account?</p>
+                <p class="mt-1 text-xs leading-5 text-[#6e6e6e]">{accountLabel(account)}</p>
+                <div class="mt-3 flex justify-end gap-2">
+                  <button
+                    class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                    type="button"
+                    onclick={() => {
+                      deletingProviderAccountId = 0;
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    class="rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                    type="button"
+                    disabled={providerAccounts.saving}
+                    onclick={() => confirmDisconnectProviderAccount(account)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            {/if}
           </div>
         </td>
       </tr>
-      {#if editingProviderAccountId === account.id}
-        <tr class="bg-[#fafafa]">
-          <td class="px-4 py-4" colspan="8">
-            <div class="grid gap-5 rounded-lg border border-[#ededed] bg-white p-4">
-              <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
-                <div class="grid gap-3">
-                  <h3 class="text-sm font-semibold text-[#0d0d0d]">Account settings</h3>
-                  <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-name-${account.id}`}>
-                    Name
-                    <input
-                      id={`provider-account-name-${account.id}`}
-                      class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                      value={accountLabel(account)}
-                      disabled={providerAccounts.saving}
-                      aria-label={`Rename ${accountLabel(account)}`}
-                      onchange={(event) => updateProviderAccountName(account, event)}
-                    />
-                  </label>
-                  <div class="grid gap-3 sm:grid-cols-3">
-                    <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={account.enabled ? 'Enabled' : 'Disabled'}>
-                      <input
-                        class="peer sr-only"
-                        type="checkbox"
-                        role="switch"
-                        checked={account.enabled}
-                        disabled={providerAccounts.saving}
-                        aria-label={`Set ${accountLabel(account)} ${account.enabled ? 'disabled' : 'enabled'}`}
-                        onchange={(event) =>
-                          updateProviderAccount(account, {
-                            enabled: event.currentTarget.checked
-                          })}
-                      />
-                      <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
-                      <span class="text-xs text-[#6e6e6e]">{account.enabled ? 'Enabled' : 'Disabled'}</span>
-                    </label>
-                    <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-priority-${account.id}`}>
-                      Priority
-                      <input
-                        id={`provider-account-priority-${account.id}`}
-                        class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={account.priority}
-                        disabled={providerAccounts.saving}
-                        onchange={(event) => updateProviderAccountPriority(account, event)}
-                      />
-                    </label>
-                    <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-load-factor-${account.id}`}>
-                      Load factor
-                      <input
-                        id={`provider-account-load-factor-${account.id}`}
-                        class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                        type="number"
-                        min="1"
-                        max="100"
-                        step="1"
-                        value={account.loadFactor || 1}
-                        disabled={providerAccounts.saving}
-                        onchange={(event) => updateProviderAccountLoadFactor(account, event)}
-                      />
-                    </label>
-                  </div>
-                  <div class="grid gap-3 sm:grid-cols-2">
-                    <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-max-concurrency-${account.id}`}>
-                      Max concurrency
-                      <input
-                        id={`provider-account-max-concurrency-${account.id}`}
-                        class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                        type="number"
-                        min="0"
-                        step="1"
-                        value={account.maxConcurrentRequests || 0}
-                        disabled={providerAccounts.saving}
-                        onchange={(event) => updateProviderAccountMaxConcurrentRequests(account, event)}
-                      />
-                      <span class="text-xs text-[#6e6e6e]">Active {account.currentConcurrentRequests || 0} / {concurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}</span>
-                    </label>
-                    <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
-                      Fingerprint profile
-                      <select
-                        class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5]"
-                        disabled={providerAccounts.saving}
-                        value={account.fingerprintProfileId ?? 0}
-                        onchange={(event) => {
-                          const target = /** @type {HTMLSelectElement} */ (event.target);
-                          updateProviderAccountFingerprintProfile(account, target.value);
-                        }}
-                      >
-                        <option value="0">None</option>
-                        {#each fingerprintProfiles.items as fp}
-                          <option value={fp.id}>{fp.name}</option>
-                        {/each}
-                      </select>
-                    </label>
-                  </div>
-                </div>
-                <div class="grid content-start gap-3">
-                  <h3 class="text-sm font-semibold text-[#0d0d0d]">Account actions</h3>
-                  <div class="flex flex-wrap gap-2">
-                    <a
-                      class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                      href={`/request-logs?providerAccountId=${account.id}`}
-                    >
-                      Request logs
-                    </a>
-                    <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => testProviderAccount(account)}>Test</button>
-                    <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
-                    <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => pauseProviderAccount(account)}>Pause</button>
-                    <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => refreshProviderAccount(account)}>Refresh</button>
-                    <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => resetProviderAccountStatus(account)}>Reset local status</button>
-                    <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => connectProvider(account)}>Reauthorize</button>
-                  </div>
-                  <dl class="grid gap-2 text-xs text-[#6e6e6e]">
-                    <div><dt class="font-medium text-[#3c3c3c]">Type</dt><dd>{accountTypeLabel(account)}</dd></div>
-                    <div><dt class="font-medium text-[#3c3c3c]">Token expiry</dt><dd>{formatDate(account.accessTokenExpiresAt)}</dd></div>
-                  </dl>
-                </div>
-              </div>
-              <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-                {#if account.accountType === 'api_upstream'}
-                  <form class="grid gap-2" onsubmit={(event) => updateAPIUpstreamCredential(account, event)}>
-                    <h3 class="text-sm font-semibold text-[#0d0d0d]">Upstream credential</h3>
-                    <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
-                      Base URL
-                      <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="baseUrl" type="url" value={account.baseUrl || ''} placeholder="https://api.openai.com/v1" disabled={providerAccounts.saving} />
-                    </label>
-                    <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
-                      Proxy URL
-                      <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" value={account.proxyUrlSummary || ''} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
-                    </label>
-                    <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                      <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
-                        API key
-                        <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="apiKey" type="password" autocomplete="off" placeholder="Leave blank to keep current key" disabled={providerAccounts.saving} />
-                      </label>
-                      <button class="self-end rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save upstream</button>
-                    </div>
-                  </form>
-                {:else}
-                  <form class="grid content-start gap-2" onsubmit={(event) => updateAPIUpstreamCredential(account, event)}>
-                    <h3 class="text-sm font-semibold text-[#0d0d0d]">Proxy</h3>
-                    <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
-                      Proxy URL
-                      <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" value={account.proxyUrlSummary || ''} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
-                    </label>
-                    <button class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save proxy</button>
-                  </form>
-                {/if}
-                <form
-                  class="grid gap-2"
-                  onsubmit={(event) => {
-                    event.preventDefault();
-                    saveAccountModels(account.id, modelState.text);
-                  }}
-                >
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    <h3 class="text-sm font-semibold text-[#0d0d0d]">Manual models</h3>
-                    <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={modelState.loading || modelState.saving}>
-                      {modelState.saving ? 'Saving' : 'Save'}
-                    </button>
-                  </div>
-                  <p class="text-xs text-[#6e6e6e]">{modelState.loading ? 'Loading models' : `${enabledModels} enabled model${enabledModels === 1 ? '' : 's'}`}</p>
-                  <label class="sr-only" for={`provider-account-models-${account.id}`}>Manual models for {accountLabel(account)}</label>
-                  <textarea id={`provider-account-models-${account.id}`} class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" placeholder={'gpt-4.1\ngpt-4.1-mini'} bind:value={modelState.text} disabled={modelState.loading || modelState.saving}></textarea>
-                  {#if modelState.items.length > 0}
-                    <div class="grid max-h-44 gap-1 overflow-y-auto rounded-lg border border-[#ededed] bg-[#fafafa] p-2">
-                      {#each modelState.items as configuredModel (configuredModel.model)}
-                        <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
-                          <label class="inline-flex min-w-0 items-center gap-2 text-xs text-[#3c3c3c]">
-                            <input
-                              class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
-                              type="checkbox"
-                              checked={configuredModel.enabled}
-                              disabled={modelState.loading || modelState.saving}
-                              aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
-                              onchange={(event) => {
-                                modelState.items = setAccountModelEnabled(modelState.items, configuredModel.model, event.currentTarget.checked);
-                                modelState.saved = false;
-                              }}
-                            />
-                            <a class="truncate font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline" href={modelRoutingHref(configuredModel.model, account)}>{configuredModel.model}</a>
-                          </label>
-                          <span class="w-12 text-xs text-[#6e6e6e]">{configuredModel.enabled ? 'On' : 'Off'}</span>
-                          <button class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={modelState.loading || modelState.saving} onclick={() => {
-                            modelState.items = removeAccountModel(modelState.items, configuredModel.model);
-                            modelState.saved = false;
-                          }}>Remove</button>
-                        </div>
-                      {/each}
-                    </div>
-                  {/if}
-                  {#if !modelState.loading && enabledModels === 0}
-                    <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">This account cannot receive model-routed POST traffic until at least one enabled model is saved.</p>
-                  {/if}
-                  {#if modelState.saved}<p class="text-xs text-[#0a7a5e]">Saved.</p>{/if}
-                  {#if modelState.error}<p class="text-xs text-red-700">{modelState.error}</p>{/if}
-                </form>
-              </div>
-            </div>
-          </td>
-        </tr>
-      {/if}
-      {#if editingProviderAccountId === account.id && historyState.expanded}
-        <tr class="bg-[#fafafa]">
-          <td class="px-4 py-4" colspan="8">
-            <div class="rounded-lg border border-[#ededed] bg-white p-4">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <h3 class="text-sm font-semibold text-[#0d0d0d]">Recent test history</h3>
-                {#if historyState.loading}
-                  <span class="text-xs text-[#6e6e6e]">Loading test history...</span>
-                {/if}
-              </div>
-              {#if historyState.error}
-                <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{historyState.error}</p>
-              {:else if !historyState.loading && historyState.items.length === 0}
-                <p class="mt-3 text-sm text-[#6e6e6e]">No test history recorded yet.</p>
-              {:else if historyState.items.length > 0}
-                <div class="mt-3 overflow-x-auto rounded-lg border border-[#ededed]">
-                  <table class="w-full min-w-[560px] text-left text-sm">
-                    <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
-                      <tr>
-                        <th class="px-3 py-2 font-medium">Checked</th>
-                        <th class="px-3 py-2 font-medium">Status</th>
-                        <th class="px-3 py-2 font-medium">Message</th>
-                        <th class="px-3 py-2 font-medium">Recorded</th>
-                      </tr>
-                    </thead>
-                    <tbody class="divide-y divide-[#ededed]">
-                      {#each historyState.items as result (result.id)}
-                        <tr>
-                          <td class="whitespace-nowrap px-3 py-2 text-[#3c3c3c]">{formatDate(result.checkedAt)}</td>
-                          <td class="px-3 py-2">
-                            <span class={['inline-flex rounded-full px-2 py-0.5 text-xs font-medium', testResultStatusClass(result.status)]}>
-                              {result.status || 'unknown'}
-                            </span>
-                          </td>
-                          <td class="max-w-[28rem] px-3 py-2 text-[#3c3c3c]">{result.message || 'No message'}</td>
-                          <td class="whitespace-nowrap px-3 py-2 text-[#6e6e6e]">{formatDate(result.createdAt)}</td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
-              {/if}
-            </div>
-          </td>
-        </tr>
-      {/if}
     {/each}
   {/if}
 </tbody>
     </table>
   </div>
 </section>
+
+{#if editingProviderAccount}
+  {@const account = editingProviderAccount}
+  {@const modelState = getAccountModelsState(account.id)}
+  {@const historyState = getAccountTestResultsState(account.id)}
+  {@const enabledModels = enabledAccountModelCount(modelState.items)}
+  <div
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
+    role="presentation"
+    onclick={(event) => event.target === event.currentTarget && closeAccountEditor()}
+  >
+    <div class="grid w-full max-w-5xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${accountLabel(account)}`}>
+      <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
+        <div class="min-w-0">
+          <h2 class="truncate text-lg font-semibold text-[#0d0d0d]">Edit account</h2>
+          <p class="mt-1 truncate text-sm text-[#6e6e6e]">{accountLabel(account)}</p>
+        </div>
+        <button
+          class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+          type="button"
+          onclick={closeAccountEditor}
+          aria-label="Close edit account modal"
+          title="Close"
+        >
+          <X class="size-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+        <div class="grid gap-3">
+          <h3 class="text-sm font-semibold text-[#0d0d0d]">Account settings</h3>
+          <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-name-${account.id}`}>
+            Name
+            <input
+              id={`provider-account-name-${account.id}`}
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              value={accountLabel(account)}
+              disabled={providerAccounts.saving}
+              aria-label={`Rename ${accountLabel(account)}`}
+              onchange={(event) => updateProviderAccountName(account, event)}
+            />
+          </label>
+          <div class="grid gap-3 sm:grid-cols-3">
+            <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={account.enabled ? 'Enabled' : 'Disabled'}>
+              <input
+                class="peer sr-only"
+                type="checkbox"
+                role="switch"
+                checked={account.enabled}
+                disabled={providerAccounts.saving}
+                aria-label={`Set ${accountLabel(account)} ${account.enabled ? 'disabled' : 'enabled'}`}
+                onchange={(event) =>
+                  updateProviderAccount(account, {
+                    enabled: event.currentTarget.checked
+                  })}
+              />
+              <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
+              <span class="text-xs text-[#6e6e6e]">{account.enabled ? 'Enabled' : 'Disabled'}</span>
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-priority-${account.id}`}>
+              Priority
+              <input
+                id={`provider-account-priority-${account.id}`}
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={account.priority}
+                disabled={providerAccounts.saving}
+                onchange={(event) => updateProviderAccountPriority(account, event)}
+              />
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-load-factor-${account.id}`}>
+              Load factor
+              <input
+                id={`provider-account-load-factor-${account.id}`}
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="1"
+                max="100"
+                step="1"
+                value={account.loadFactor || 1}
+                disabled={providerAccounts.saving}
+                onchange={(event) => updateProviderAccountLoadFactor(account, event)}
+              />
+            </label>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-max-concurrency-${account.id}`}>
+              Max concurrency
+              <input
+                id={`provider-account-max-concurrency-${account.id}`}
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={account.maxConcurrentRequests || 0}
+                disabled={providerAccounts.saving}
+                onchange={(event) => updateProviderAccountMaxConcurrentRequests(account, event)}
+              />
+              <span class="text-xs text-[#6e6e6e]">Active {account.currentConcurrentRequests || 0} / {concurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}</span>
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
+              Fingerprint profile
+              <select
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5]"
+                disabled={providerAccounts.saving}
+                value={account.fingerprintProfileId ?? 0}
+                onchange={(event) => {
+                  const target = /** @type {HTMLSelectElement} */ (event.target);
+                  updateProviderAccountFingerprintProfile(account, target.value);
+                }}
+              >
+                <option value="0">None</option>
+                {#each fingerprintProfiles.items as fp}
+                  <option value={fp.id}>{fp.name}</option>
+                {/each}
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="grid content-start gap-3">
+          <h3 class="text-sm font-semibold text-[#0d0d0d]">Account actions</h3>
+          <div class="flex flex-wrap gap-2">
+            <a class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href={`/request-logs?providerAccountId=${account.id}`}>Request logs</a>
+            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => testProviderAccount(account)}>Test</button>
+            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
+            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => pauseProviderAccount(account)}>Pause</button>
+            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => refreshProviderAccount(account)}>Refresh</button>
+            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => resetProviderAccountStatus(account)}>Reset local status</button>
+            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => connectProvider(account)}>Reauthorize</button>
+          </div>
+          <dl class="grid gap-2 text-xs text-[#6e6e6e]">
+            <div><dt class="font-medium text-[#3c3c3c]">Type</dt><dd>{accountTypeLabel(account)}</dd></div>
+            <div><dt class="font-medium text-[#3c3c3c]">Token expiry</dt><dd>{formatDate(account.accessTokenExpiresAt)}</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+        {#if account.accountType === 'api_upstream'}
+          <form class="grid gap-2" onsubmit={(event) => updateAPIUpstreamCredential(account, event)}>
+            <h3 class="text-sm font-semibold text-[#0d0d0d]">Upstream credential</h3>
+            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
+              Base URL
+              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="baseUrl" type="url" value={account.baseUrl || ''} placeholder="https://api.openai.com/v1" disabled={providerAccounts.saving} />
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
+              Proxy URL
+              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" value={account.proxyUrlSummary || ''} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
+            </label>
+            <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+              <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
+                API key
+                <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="apiKey" type="password" autocomplete="off" placeholder="Leave blank to keep current key" disabled={providerAccounts.saving} />
+              </label>
+              <button class="self-end rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save upstream</button>
+            </div>
+          </form>
+        {:else}
+          <form class="grid content-start gap-2" onsubmit={(event) => updateAPIUpstreamCredential(account, event)}>
+            <h3 class="text-sm font-semibold text-[#0d0d0d]">Proxy</h3>
+            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
+              Proxy URL
+              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" value={account.proxyUrlSummary || ''} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
+            </label>
+            <button class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save proxy</button>
+          </form>
+        {/if}
+        <form
+          class="grid gap-2"
+          onsubmit={(event) => {
+            event.preventDefault();
+            saveAccountModels(account.id, modelState.text);
+          }}
+        >
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="text-sm font-semibold text-[#0d0d0d]">Manual models</h3>
+            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={modelState.loading || modelState.saving}>
+              {modelState.saving ? 'Saving' : 'Save'}
+            </button>
+          </div>
+          <p class="text-xs text-[#6e6e6e]">{modelState.loading ? 'Loading models' : `${enabledModels} enabled model${enabledModels === 1 ? '' : 's'}`}</p>
+          <label class="sr-only" for={`provider-account-models-${account.id}`}>Manual models for {accountLabel(account)}</label>
+          <textarea id={`provider-account-models-${account.id}`} class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" placeholder={'gpt-4.1\ngpt-4.1-mini'} bind:value={modelState.text} disabled={modelState.loading || modelState.saving}></textarea>
+          {#if modelState.items.length > 0}
+            <div class="grid max-h-44 gap-1 overflow-y-auto rounded-lg border border-[#ededed] bg-[#fafafa] p-2">
+              {#each modelState.items as configuredModel (configuredModel.model)}
+                <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                  <label class="inline-flex min-w-0 items-center gap-2 text-xs text-[#3c3c3c]">
+                    <input
+                      class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
+                      type="checkbox"
+                      checked={configuredModel.enabled}
+                      disabled={modelState.loading || modelState.saving}
+                      aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
+                      onchange={(event) => {
+                        modelState.items = setAccountModelEnabled(modelState.items, configuredModel.model, event.currentTarget.checked);
+                        modelState.saved = false;
+                      }}
+                    />
+                    <a class="truncate font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline" href={modelRoutingHref(configuredModel.model, account)}>{configuredModel.model}</a>
+                  </label>
+                  <span class="w-12 text-xs text-[#6e6e6e]">{configuredModel.enabled ? 'On' : 'Off'}</span>
+                  <button class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={modelState.loading || modelState.saving} onclick={() => {
+                    modelState.items = removeAccountModel(modelState.items, configuredModel.model);
+                    modelState.saved = false;
+                  }}>Remove</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          {#if !modelState.loading && enabledModels === 0}
+            <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">This account cannot receive model-routed POST traffic until at least one enabled model is saved.</p>
+          {/if}
+          {#if modelState.saved}<p class="text-xs text-[#0a7a5e]">Saved.</p>{/if}
+          {#if modelState.error}<p class="text-xs text-red-700">{modelState.error}</p>{/if}
+        </form>
+      </div>
+
+      {#if historyState.expanded}
+        <div class="rounded-lg border border-[#ededed] bg-white p-4">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h3 class="text-sm font-semibold text-[#0d0d0d]">Recent test history</h3>
+            {#if historyState.loading}
+              <span class="text-xs text-[#6e6e6e]">Loading test history...</span>
+            {/if}
+          </div>
+          {#if historyState.error}
+            <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{historyState.error}</p>
+          {:else if !historyState.loading && historyState.items.length === 0}
+            <p class="mt-3 text-sm text-[#6e6e6e]">No test history recorded yet.</p>
+          {:else if historyState.items.length > 0}
+            <div class="mt-3 overflow-x-auto rounded-lg border border-[#ededed]">
+              <table class="w-full min-w-[560px] text-left text-sm">
+                <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+                  <tr>
+                    <th class="px-3 py-2 font-medium">Checked</th>
+                    <th class="px-3 py-2 font-medium">Status</th>
+                    <th class="px-3 py-2 font-medium">Message</th>
+                    <th class="px-3 py-2 font-medium">Recorded</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-[#ededed]">
+                  {#each historyState.items as result (result.id)}
+                    <tr>
+                      <td class="whitespace-nowrap px-3 py-2 text-[#3c3c3c]">{formatDate(result.checkedAt)}</td>
+                      <td class="px-3 py-2">
+                        <span class={['inline-flex rounded-full px-2 py-0.5 text-xs font-medium', testResultStatusClass(result.status)]}>
+                          {result.status || 'unknown'}
+                        </span>
+                      </td>
+                      <td class="max-w-[28rem] px-3 py-2 text-[#3c3c3c]">{result.message || 'No message'}</td>
+                      <td class="whitespace-nowrap px-3 py-2 text-[#6e6e6e]">{formatDate(result.createdAt)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 {/if}
