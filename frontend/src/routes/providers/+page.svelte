@@ -15,18 +15,13 @@
     createAPIUpstreamAccount,
     disconnectProviderAccount,
     disconnectSelectedProviderAccounts,
-    formatCostMicrousd,
     formatDate,
-    formatTokens,
     futureTimeRemainingLabel,
     getAccountModelsState,
     getAccountTestResultsState,
     getProviderStateLabel,
-    getSchedulableProviderAccounts,
-    getUnschedulableProviderAccountSummary,
     loadProviderAccounts,
     loadRoutingPools,
-    loadUsageSummary,
     login,
     loginForm,
     apiUpstreamForm,
@@ -34,7 +29,6 @@
     providerAccounts,
     providerAccountBulkModelsForm,
     providerAccountBulkSchedulingForm,
-    providerAccountPauseForm,
     providerConnectForm,
     providerOAuth,
     pauseProviderAccount,
@@ -63,8 +57,7 @@
     updateProviderAccountFingerprintProfile,
     fingerprintProfiles,
     loadFingerprintProfiles,
-    routingPools,
-    usage
+    routingPools
   } from '$lib/admin-state.svelte.js';
 
   let accountSearch = $state('');
@@ -75,14 +68,10 @@
   let addAccountModalOpen = $state(false);
   /** @type {'oauth' | 'api_upstream'} */
   let addAccountModalTab = $state('oauth');
-  let providerUsageRequested = $state(false);
   let routingPoolsRequested = $state(false);
   let appliedProviderAccountSearch = $state('');
 
   const providerStateLabel = $derived(getProviderStateLabel());
-  const schedulableProviderAccounts = $derived(getSchedulableProviderAccounts());
-  const unschedulableProviderAccountSummary = $derived(getUnschedulableProviderAccountSummary());
-  const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
   const selectedProviderAccountCount = $derived(Object.keys(selectedProviderAccountIds).length);
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
@@ -114,19 +103,6 @@
     }
   }
 
-  function providerUsageSinceParam() {
-    return String(Math.max(0, Math.floor(Date.now() / 1000) - 86400));
-  }
-
-  /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
-  function providerUsageHref(row) {
-    const id = String(row.id ?? '').split('/').pop() ?? '';
-    if (!/^[1-9]\d*$/.test(id)) return '';
-    const params = new URLSearchParams();
-    params.set('providerAccountId', id);
-    params.set('since', providerUsageSinceParam());
-    return `/request-logs?${params.toString()}`;
-  }
 
   /**
    * @param {string | null | undefined} model
@@ -140,7 +116,6 @@
 
   $effect(() => {
     if (!session.authenticated) {
-      providerUsageRequested = false;
       routingPoolsRequested = false;
       appliedProviderAccountSearch = '';
       return;
@@ -148,10 +123,6 @@
     if (appliedProviderAccountSearch !== page.url.search) {
       appliedProviderAccountSearch = page.url.search;
       applyProviderAccountURLFilters(page.url.search);
-    }
-    if (!providerUsageRequested) {
-      providerUsageRequested = true;
-      void loadUsageSummary('24h', 'provider_account');
     }
     if (!routingPoolsRequested) {
       routingPoolsRequested = true;
@@ -435,109 +406,6 @@ class={[
 {provider.loading ? 'Checking' : providerStateLabel}
     </span>
   </div>
-
-  <div class="mt-5 grid gap-4 md:grid-cols-3">
-    <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-<p class="text-sm font-medium text-[#6e6e6e]">Configuration</p>
-<p class="mt-2 text-base font-semibold text-[#0d0d0d]">
-  {provider.data?.configured ? 'Ready' : 'Missing'}
-</p>
-    </article>
-    <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-<p class="text-sm font-medium text-[#6e6e6e]">Accounts</p>
-<p class="mt-2 text-base font-semibold text-[#0d0d0d]">
-  {providerAccounts.loading ? 'Loading' : providerAccounts.items.length}
-</p>
-    </article>
-    <article class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-<p class="text-sm font-medium text-[#6e6e6e]">Enabled</p>
-<p class="mt-2 text-base font-semibold text-[#0d0d0d]">
-  {providerAccounts.items.filter((account) => account.enabled).length}
-</p>
-    </article>
-  </div>
-
-  <section class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-    <h3 class="text-base font-semibold text-[#0d0d0d]">Scheduling capacity</h3>
-    <div class="mt-3 grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_16rem]">
-      <article class="rounded-md border border-[#ededed] bg-white p-3">
-        <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Schedulable</p>
-        <p class="mt-2 text-lg font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulableProviderAccounts.length}</p>
-      </article>
-      <article class="rounded-md border border-[#ededed] bg-white p-3">
-        <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Blocked</p>
-        <p class="mt-2 text-lg font-semibold text-[#0d0d0d]">
-          {providerAccounts.loading ? 'Loading' : providerAccounts.items.length - schedulableProviderAccounts.length}
-        </p>
-        {#if !providerAccounts.loading && unschedulableProviderAccountSummary.length > 0}
-          <p class="mt-3 text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Blocked reasons</p>
-          <p class="mt-2 text-xs text-[#6e6e6e]">
-            {unschedulableProviderAccountSummary.map((item) => `${item.reasonLabel}: ${item.count}`).join(' · ')}
-          </p>
-        {/if}
-      </article>
-      <label class="rounded-md border border-[#ededed] bg-white p-3 text-sm font-medium text-[#3c3c3c] sm:col-span-2 xl:col-span-1">
-        Pause duration seconds
-        <input
-          class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          type="number"
-          min="60"
-          max="86400"
-          step="1"
-          bind:value={providerAccountPauseForm.durationSeconds}
-        />
-        <span class="mt-1 block text-xs font-normal text-[#6e6e6e]">Used by each Pause scheduling action.</span>
-      </label>
-    </div>
-  </section>
-
-  <section class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h3 class="text-base font-semibold text-[#0d0d0d]">24h account usage</h3>
-        <p class="mt-1 text-sm text-[#6e6e6e]">Gateway traffic distribution by provider account.</p>
-      </div>
-      {#if usage.loading}
-        <span class="text-sm text-[#6e6e6e]">Loading...</span>
-      {/if}
-    </div>
-    {#if usage.error}
-      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
-    {:else if !usage24hProviderAccounts?.rows?.length}
-      <p class="mt-4 text-sm text-[#6e6e6e]">No provider account usage in the last 24h.</p>
-    {:else}
-      <div class="mt-4 overflow-x-auto rounded-lg border border-[#ededed] bg-white">
-        <table class="w-full min-w-[640px] text-left text-sm">
-          <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
-            <tr>
-              <th class="px-4 py-3 font-medium">Provider account</th>
-              <th class="px-4 py-3 font-medium">Requests</th>
-              <th class="px-4 py-3 font-medium">Tokens</th>
-              <th class="px-4 py-3 font-medium">Estimated cost</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-[#ededed]">
-            {#each usage24hProviderAccounts.rows.slice(0, 8) as row}
-              <tr>
-                <td class="px-4 py-3 font-medium text-[#0d0d0d]">
-                  {#if providerUsageHref(row)}
-                    <a class="inline-block max-w-[260px] truncate underline-offset-2 hover:underline" href={providerUsageHref(row)}>
-                      {row.label || row.id}
-                    </a>
-                  {:else}
-                    {row.label || row.id}
-                  {/if}
-                </td>
-                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
-                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
-                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-  </section>
 
   <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
     <p class="text-sm text-[#6e6e6e]">
