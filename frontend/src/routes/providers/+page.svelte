@@ -776,9 +776,8 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
     </p>
   {/if}
 
-  <div class="mt-6 flex flex-wrap items-end justify-between gap-3">
-    <div class="grid flex-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+  <div class="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
 Search
 <input
   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -786,8 +785,8 @@ Search
   placeholder="Account name"
   bind:value={accountSearch}
 />
-      </label>
-      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
 Type
 <select
   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -797,8 +796,8 @@ Type
   <option value="codex_oauth">Codex OAuth</option>
   <option value="api_upstream">API upstream</option>
 </select>
-      </label>
-      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
 Status
 <select
   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -811,8 +810,8 @@ Status
   <option value="circuit_open">Circuit open</option>
   <option value="expired">Expired</option>
 </select>
-      </label>
-      <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
+    </label>
+    <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
 Enabled
 <select
   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
@@ -822,180 +821,14 @@ Enabled
   <option value="enabled">Enabled</option>
   <option value="disabled">Disabled</option>
 </select>
-      </label>
-    </div>
-    <div class="flex flex-wrap items-center justify-end gap-2 pb-1">
-      <p class="mr-2 text-sm text-[#6e6e6e]">
-Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
-        {#if selectedProviderAccountCount > 0}
-          · {selectedProviderAccountCount} selected
-        {/if}
-      </p>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={testSelectedProviderAccounts}
-      >
-        Test selected
-      </button>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={refreshSelectedProviderAccounts}
-      >
-        Refresh selected
-      </button>
-      <button
-        class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={disconnectSelectedProviderAccounts}
-      >
-        Disconnect selected
-      </button>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={pauseSelectedProviderAccounts}
-      >
-        Pause selected
-      </button>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={resetSelectedProviderAccountStatus}
-      >
-        Reset selected
-      </button>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={() => bulkUpdateSelectedProviderAccounts(true)}
-      >
-        Enable selected
-      </button>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={() => bulkUpdateSelectedProviderAccounts(false)}
-      >
-        Disable selected
-      </button>
-      <label class="grid w-28 gap-1 text-xs font-medium text-[#3c3c3c]">
-        Bulk priority
-        <input
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-          type="number"
-          min="0"
-          step="1"
-          bind:value={providerAccountBulkSchedulingForm.priority}
-          disabled={providerAccounts.saving}
-        />
-      </label>
-      <label class="grid w-32 gap-1 text-xs font-medium text-[#3c3c3c]">
-        Bulk load factor
-        <input
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-          type="number"
-          min="1"
-          max="100"
-          step="1"
-          bind:value={providerAccountBulkSchedulingForm.loadFactor}
-          disabled={providerAccounts.saving}
-        />
-      </label>
-      <label class="grid w-40 gap-1 text-xs font-medium text-[#3c3c3c]">
-        Bulk max concurrency
-        <input
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-          type="number"
-          min="0"
-          step="1"
-          bind:value={providerAccountBulkSchedulingForm.maxConcurrentRequests}
-          disabled={providerAccounts.saving}
-        />
-      </label>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={bulkUpdateSelectedProviderAccountScheduling}
-      >
-        Apply scheduling
-      </button>
-      <label class="grid min-w-44 gap-1 text-xs font-medium text-[#3c3c3c]">
-        Bulk routing pool
-        <select
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-          bind:value={bulkRoutingPoolId}
-          disabled={providerAccounts.saving || routingPools.loading}
-        >
-          <option value="0">Select pool</option>
-          {#each routingPools.items as pool}
-            <option value={String(pool.id)}>{pool.name}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="grid w-28 gap-1 text-xs font-medium text-[#3c3c3c]">
-        Pool priority
-        <input
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-          type="number"
-          min="0"
-          step="1"
-          bind:value={bulkRoutingPoolPriority}
-          disabled={providerAccounts.saving}
-        />
-      </label>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving || bulkRoutingPoolId === '0'}
-        onclick={() => addSelectedProviderAccountsToRoutingPool(bulkRoutingPoolId, bulkRoutingPoolPriority)}
-      >
-        Apply pool
-      </button>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving || bulkRoutingPoolId === '0'}
-        onclick={() => removeSelectedProviderAccountsFromRoutingPool(bulkRoutingPoolId)}
-      >
-        Remove pool
-      </button>
-      <label class="grid min-w-48 flex-1 gap-1 text-xs font-medium text-[#3c3c3c]">
-        Bulk models
-        <textarea
-          class="min-h-20 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-          placeholder={'gpt-5\ngpt-5-mini'}
-          bind:value={providerAccountBulkModelsForm.text}
-          disabled={providerAccounts.saving}
-        ></textarea>
-      </label>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={bulkReplaceSelectedProviderAccountModels}
-      >
-        Apply models
-      </button>
-      <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={selectedProviderAccountCount === 0 || providerAccounts.saving}
-        onclick={clearProviderAccountSelection}
-      >
-        Clear selection
-      </button>
-    </div>
+    </label>
   </div>
+  <p class="mt-3 text-sm text-[#6e6e6e]">
+Showing {filteredProviderAccounts.length} of {providerAccounts.items.length}
+    {#if selectedProviderAccountCount > 0}
+      · {selectedProviderAccountCount} selected
+    {/if}
+  </p>
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
     <table class="w-full min-w-[1420px] text-left text-sm">

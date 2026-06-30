@@ -490,24 +490,6 @@ test('provider account state can remove selected accounts from a routing pool', 
   assert.deepEqual(routingPools.items[0].accountIds, [7]);
 });
 
-test('provider account page exposes bulk model replacement controls', () => {
-  assert.match(source, /providerAccountBulkModelsForm/);
-  assert.match(source, /bulkReplaceSelectedProviderAccountModels/);
-  assert.match(source, /Bulk models/);
-  assert.match(source, /Apply models/);
-});
-
-test('provider account page exposes bulk routing pool assignment controls', () => {
-  assert.match(source, /bulkRoutingPoolId/);
-  assert.match(source, /bulkRoutingPoolPriority/);
-  assert.match(source, /addSelectedProviderAccountsToRoutingPool/);
-  assert.match(source, /removeSelectedProviderAccountsFromRoutingPool/);
-  assert.match(source, /Bulk routing pool/);
-  assert.match(source, /Pool priority/);
-  assert.match(source, /Apply pool/);
-  assert.match(source, /Remove pool/);
-});
-
 test('apiKeyModelWarnings reports selected models without schedulable accounts', () => {
   const warnings = apiKeyModelWarnings(
     {
@@ -686,31 +668,9 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /sticky right-0/);
 });
 
-test('provider account table exposes bulk selection controls', () => {
+test('provider account table exposes per-row selection checkboxes', () => {
   assert.match(source, /selectedProviderAccountIds/);
   assert.match(source, /toggleProviderAccountSelection/);
-  assert.match(source, /bulkUpdateSelectedProviderAccounts\(true\)/);
-  assert.match(source, /bulkUpdateSelectedProviderAccounts\(false\)/);
-  assert.match(source, /bulkUpdateSelectedProviderAccountScheduling/);
-  assert.match(source, /providerAccountBulkSchedulingForm/);
-  assert.match(source, /testSelectedProviderAccounts/);
-  assert.match(source, /refreshSelectedProviderAccounts/);
-  assert.match(source, /disconnectSelectedProviderAccounts/);
-  assert.match(source, /pauseSelectedProviderAccounts/);
-  assert.match(source, /resetSelectedProviderAccountStatus/);
-  assert.match(source, /clearProviderAccountSelection/);
-  assert.match(source, />\s*Test selected\s*</);
-  assert.match(source, />\s*Refresh selected\s*</);
-  assert.match(source, />\s*Disconnect selected\s*</);
-  assert.match(source, />\s*Pause selected\s*</);
-  assert.match(source, />\s*Reset selected\s*</);
-  assert.match(source, />\s*Enable selected\s*</);
-  assert.match(source, />\s*Disable selected\s*</);
-  assert.match(source, />\s*Apply scheduling\s*</);
-  assert.match(source, /Bulk priority/);
-  assert.match(source, /Bulk load factor/);
-  assert.match(source, /Bulk max concurrency/);
-  assert.match(source, />\s*Clear selection\s*</);
   assert.match(source, /Select \{accountLabel\(account\)\}/);
 });
 
