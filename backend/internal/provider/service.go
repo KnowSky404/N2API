@@ -486,6 +486,7 @@ type Service struct {
 	cfg          Config
 	refreshMu    sync.Mutex
 	refreshLocks map[int64]*sync.Mutex
+	httpClient   *HTTPClient
 }
 
 func NewHTTPClient(client *http.Client) *HTTPClient {
@@ -556,6 +557,7 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		client:       client,
 		prober:       prober,
 		cfg:          cfg,
+		httpClient:   NewHTTPClient(nil),
 		refreshLocks: make(map[int64]*sync.Mutex),
 	}
 }
@@ -1097,6 +1099,80 @@ func (s *Service) ReplaceAccountModels(ctx context.Context, accountID int64, mod
 	}
 	return s.repo.ReplaceAccountModels(ctx, s.cfg.Provider, accountID, normalized)
 }
+
+// SyncUpstreamAccountModels fetches the OpenAI-compatible /v1/models list from an
+// API-upstream account and persists the result via repo.SyncAccountModels.
+func (s *Service) SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]AccountModel, AccountModelSyncSummary, error) {
+	if accountID <= 0 {
+		return nil, AccountModelSyncSummary{}, ErrInvalidInput
+	}
+	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	if account.AccountType != AccountTypeAPIUpstream {
+		return nil, AccountModelSyncSummary{}, ErrInvalidInput
+	}
+	selected, err := s.selectedAccount(ctx, account)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	targetURL := strings.TrimRight(selected.BaseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.httpClient.clientForProxy(selected.ProxyURL).Do(req)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, AccountModelSyncSummary{}, fmt.Errorf("upstream returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+
+	var parsed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	if parsed.Data == nil {
+		return nil, AccountModelSyncSummary{}, errors.New("upstream response missing data array")
+	}
+
+	models := make([]AccountModelInput, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		mid := strings.TrimSpace(m.ID)
+		if mid == "" {
+			continue
+		}
+		models = append(models, AccountModelInput{Model: mid, Enabled: true})
+	}
+	if len(models) == 0 {
+		return nil, AccountModelSyncSummary{}, errors.New("no models found in upstream response")
+	}
+
+	normalized, err := normalizeAccountModelInputs(models)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+
+	return s.repo.SyncAccountModels(ctx, s.cfg.Provider, accountID, normalized, time.Now().UTC())
+}
+
+
 
 func (s *Service) ListExposedModels(ctx context.Context, allowedModels []string) ([]ExposedModel, error) {
 	return s.repo.ListExposedModels(ctx, s.cfg.Provider, allowedModels)

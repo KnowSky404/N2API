@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"sort"
@@ -3054,6 +3055,141 @@ func TestCreateAPIUpstreamAccountAllowsHTTPBaseURLWhenConfigured(t *testing.T) {
 	}
 	if account.Credential.BaseURL != "http://127.0.0.1:8080" {
 		t.Fatalf("BaseURL = %q, want normalized HTTP upstream", account.Credential.BaseURL)
+	}
+}
+
+func TestSyncUpstreamAccountModelsFetchesAndSyncs(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/models" {
+			t.Errorf("path = %s, want /models", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer sk-upstream-key" {
+			t.Errorf("Authorization = %q, want Bearer sk-upstream-key", auth)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-4-turbo"},{"id":"gpt-4"},{"id":"  "},{"id":"gpt-5"}]}`))
+	}))
+	defer ts.Close()
+
+	repo := newMemoryRepo()
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:              "openai",
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		RedirectURL:           "http://localhost/oauth/openai/callback",
+		AuthURL:               "https://auth.example.test/authorize",
+		TokenURL:              "https://auth.example.test/token",
+		Secret:                "encryption-secret",
+		AllowHTTPAPIUpstreams: true,
+	})
+
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:    "Test Upstream",
+		BaseURL: ts.URL + "/v1",
+		APIKey:  "sk-upstream-key",
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+
+	models, summary, err := service.SyncUpstreamAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("SyncUpstreamAccountModels returned error: %v", err)
+	}
+	if summary.Total != 3 {
+		t.Fatalf("summary.Total = %d, want 3 (deduped)", summary.Total)
+	}
+	if summary.New != 3 {
+		t.Fatalf("summary.New = %d, want 3", summary.New)
+	}
+	if len(models) != 3 {
+		t.Fatalf("len(models) = %d, want 3", len(models))
+	}
+	names := make([]string, 0, len(models))
+	for _, m := range models {
+		names = append(names, m.Model)
+	}
+	got := strings.Join(names, ",")
+	if got != "gpt-4,gpt-4-turbo,gpt-5" {
+		t.Fatalf("models = %s, want gpt-4,gpt-4-turbo,gpt-5", got)
+	}
+	// New synced rows should be disabled by default.
+	for _, m := range models {
+		if m.Enabled {
+			t.Fatalf("model %s is enabled, want disabled for new upstream sync rows", m.Model)
+		}
+	}
+	// Second sync should preserve existing rows.
+	models2, summary2, err := service.SyncUpstreamAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("second SyncUpstreamAccountModels returned error: %v", err)
+	}
+	if summary2.New != 0 || summary2.Preserved != 3 {
+		t.Fatalf("second summary: new=%d preserved=%d, want new=0 preserved=3", summary2.New, summary2.Preserved)
+	}
+	for _, m := range models2 {
+		if m.Enabled {
+			t.Fatalf("model %s is enabled on second sync, want preserved as disabled", m.Model)
+		}
+	}
+}
+
+func TestSyncUpstreamAccountModelsRejectsNonAPIUpstream(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 5, true, 1, "oauth-token")
+	account.AccountType = AccountTypeCodexOAuth
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	_, _, err := service.SyncUpstreamAccountModels(context.Background(), 5)
+	if err != ErrInvalidInput {
+		t.Fatalf("err = %v, want ErrInvalidInput for non-api_upstream account", err)
+	}
+}
+
+func TestSyncUpstreamAccountModelsNon2xxDoesNotUpdateRows(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	repo := newMemoryRepo()
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:              "openai",
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		RedirectURL:           "http://localhost/oauth/openai/callback",
+		AuthURL:               "https://auth.example.test/authorize",
+		TokenURL:              "https://auth.example.test/token",
+		Secret:                "encryption-secret",
+		AllowHTTPAPIUpstreams: true,
+	})
+
+	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
+		Name:    "Bad Upstream",
+		BaseURL: ts.URL + "/v1",
+		APIKey:  "sk-bad",
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
+	}
+
+	_, _, err = service.SyncUpstreamAccountModels(context.Background(), account.ID)
+	if err == nil {
+		t.Fatal("expected error for non-2xx response")
+	}
+
+	// Verify no models were synced.
+	models, err := service.ListAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountModels returned error: %v", err)
+	}
+	if len(models) != 0 {
+		t.Fatalf("len(models) = %d, want 0 (no rows synced after non-2xx)", len(models))
 	}
 }
 
