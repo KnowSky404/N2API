@@ -88,7 +88,8 @@ const (
 )
 
 const (
-	AccountModelSourceManual = "manual"
+	AccountModelSourceManual   = "manual"
+	AccountModelSourceUpstream = "upstream"
 
 	maxAccountModels = 100
 	maxModelNameLen  = 128
@@ -285,6 +286,14 @@ type AccountModelInput struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// AccountModelSyncSummary describes what happened during a sync operation.
+type AccountModelSyncSummary struct {
+	Total         int `json:"total"`
+	New           int `json:"new"`
+	Preserved     int `json:"preserved"`
+	SkippedManual int `json:"skippedManual"`
+}
+
 type APIUpstreamInput struct {
 	Name                 string   `json:"name"`
 	BaseURL              string   `json:"baseUrl"`
@@ -428,6 +437,7 @@ type Repository interface {
 	ListAccountTestResults(ctx context.Context, provider string, accountID int64, limit int) ([]AccountTestResult, error)
 	ListAccountModels(ctx context.Context, provider string, accountID int64) ([]AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
+	SyncAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
 	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
 	ListExposedModelsForRoutingPools(ctx context.Context, provider string, poolIDs []int64, allowedModels []string) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)

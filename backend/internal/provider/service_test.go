@@ -3582,6 +3582,71 @@ func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName stri
 	return r.ListAccountModels(ctx, providerName, accountID)
 }
 
+func (r *memoryRepo) SyncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error) {
+	normalized, err := normalizeAccountModelInputs(inputs)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	if _, err := r.FindAccountByID(ctx, providerName, accountID); err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	existing := r.accountModels[accountID]
+	upstreamEnabled := map[string]bool{}
+	manual := map[string]bool{}
+	for _, row := range existing {
+		if row.Source == AccountModelSourceUpstream {
+			upstreamEnabled[row.Model] = row.Enabled
+		}
+		if row.Source == AccountModelSourceManual || row.Source == "" {
+			manual[row.Model] = true
+		}
+	}
+
+	now := time.Now()
+	if seenAt.IsZero() {
+		seenAt = now
+	}
+	seenAtUTC := seenAt.UTC()
+
+	summary := AccountModelSyncSummary{Total: len(normalized)}
+	merged := make([]AccountModel, 0, len(normalized)+len(manual))
+	// First carry forward manual rows.
+	for _, row := range existing {
+		if row.Source == AccountModelSourceManual || row.Source == "" {
+			merged = append(merged, row)
+		}
+	}
+	// Process synced inputs.
+	for _, input := range normalized {
+		if manual[input.Model] {
+			summary.SkippedManual++
+			continue
+		}
+		enabled, ok := upstreamEnabled[input.Model]
+		if ok {
+			summary.Preserved++
+		} else {
+			enabled = false
+			summary.New++
+		}
+		merged = append(merged, AccountModel{
+			ID:         int64(len(merged) + 1),
+			AccountID:  accountID,
+			Provider:   providerName,
+			Model:      input.Model,
+			Enabled:    enabled,
+			Source:     AccountModelSourceUpstream,
+			LastSeenAt: &seenAtUTC,
+			Metadata:   map[string]string{},
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		})
+	}
+	r.accountModels[accountID] = merged
+	listed, err := r.ListAccountModels(ctx, providerName, accountID)
+	return listed, summary, err
+}
+
 func (r *memoryRepo) ListExposedModels(ctx context.Context, providerName string, allowedModels []string) ([]ExposedModel, error) {
 	available := map[string]bool{}
 	now := time.Now()

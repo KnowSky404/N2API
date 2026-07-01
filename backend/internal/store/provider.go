@@ -1026,6 +1026,132 @@ func (r *ProviderRepository) ListAccountTestResults(ctx context.Context, provide
 	return results, rows.Err()
 }
 
+func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput, seenAt time.Time) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	models, err := normalizeAccountModelInputs(inputs)
+	if err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	if seenAt.IsZero() {
+		seenAt = time.Now().UTC()
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var existingID int64
+	err = tx.QueryRow(ctx, `
+		SELECT id
+		FROM provider_accounts
+		WHERE provider = $1
+			AND id = $2
+		FOR UPDATE
+	`, providerName, accountID).Scan(&existingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, provider.AccountModelSyncSummary{}, provider.ErrNotConnected
+	}
+	if err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+
+	// Collect existing upstream enabled state and manual model names.
+	upstreamEnabled := map[string]bool{}
+	manualModels := map[string]bool{}
+	rows, err := tx.Query(ctx, `
+		SELECT model, enabled, source
+		FROM provider_account_models
+		WHERE provider = $1
+			AND account_id = $2
+	`, providerName, accountID)
+	if err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	for rows.Next() {
+		var model string
+		var enabled bool
+		var source string
+		if err := rows.Scan(&model, &enabled, &source); err != nil {
+			rows.Close()
+			return nil, provider.AccountModelSyncSummary{}, err
+		}
+		if source == provider.AccountModelSourceUpstream {
+			upstreamEnabled[model] = enabled
+		}
+		if source == provider.AccountModelSourceManual || source == "" {
+			manualModels[model] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	rows.Close()
+
+	// Delete existing upstream rows; manual rows are preserved.
+	_, err = tx.Exec(ctx, `
+		DELETE FROM provider_account_models
+		WHERE provider = $1
+			AND account_id = $2
+			AND source = $3
+	`, providerName, accountID, provider.AccountModelSourceUpstream)
+	if err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+
+	summary := provider.AccountModelSyncSummary{Total: len(models)}
+	for _, model := range models {
+		if manualModels[model.Model] {
+			summary.SkippedManual++
+			continue
+		}
+		enabled, ok := upstreamEnabled[model.Model]
+		if ok {
+			summary.Preserved++
+		} else {
+			enabled = false
+			summary.New++
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO provider_account_models (
+				account_id, provider, model, enabled, source, last_seen_at, metadata, updated_at
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, now())
+		`, accountID, providerName, model.Model, enabled, provider.AccountModelSourceUpstream, seenAt)
+		if err != nil {
+			return nil, provider.AccountModelSyncSummary{}, err
+		}
+	}
+
+	rows, err = tx.Query(ctx, `
+		SELECT `+providerAccountModelColumns+`
+		FROM provider_account_models
+		WHERE provider = $1
+			AND account_id = $2
+		ORDER BY model ASC
+	`, providerName, accountID)
+	if err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	defer rows.Close()
+
+	saved := []provider.AccountModel{}
+	for rows.Next() {
+		model, err := scanProviderAccountModel(rows)
+		if err != nil {
+			return nil, provider.AccountModelSyncSummary{}, err
+		}
+		saved = append(saved, model)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	return saved, summary, nil
+}
+
 func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName string, accountID int64) ([]provider.AccountModel, error) {
 	var exists int
 	err := r.pool.QueryRow(ctx, `

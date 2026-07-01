@@ -706,6 +706,150 @@ func TestListAccountModelsDistinguishesMissingAccountFromNoModels(t *testing.T) 
 	}
 }
 
+func TestSyncAccountModelsPreservesManualRowsAndDisablesNewUpstreamRows(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Subject:               "sync-account",
+		DisplayName:           "Sync Account",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "active",
+	})
+
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{
+		{Model: "manual-only", Enabled: true},
+		{Model: "shared-model", Enabled: true},
+	}); err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+
+	models, summary, err := repo.SyncAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{
+		{Model: " upstream-new ", Enabled: true},
+		{Model: "shared-model", Enabled: true},
+	}, time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("SyncAccountModels returned error: %v", err)
+	}
+
+	if summary.Total != 2 || summary.New != 1 || summary.Preserved != 0 || summary.SkippedManual != 1 {
+		t.Fatalf("summary = %+v, want total=2 new=1 preserved=0 skippedManual=1", summary)
+	}
+	assertAccountModelRows(t, models, []accountModelWant{
+		{Model: "manual-only", Enabled: true},
+		{Model: "shared-model", Enabled: true},
+		{Model: "upstream-new", Enabled: false},
+	})
+	for _, model := range models {
+		if model.Model == "upstream-new" {
+			if model.Source != provider.AccountModelSourceUpstream || model.LastSeenAt == nil {
+				t.Fatalf("upstream model = %+v, want upstream source with last seen", model)
+			}
+		}
+		if model.Model == "shared-model" && model.Source != provider.AccountModelSourceManual {
+			t.Fatalf("shared model source = %q, want manual", model.Source)
+		}
+	}
+}
+
+func TestSyncAccountModelsPreservesExistingUpstreamEnabledAndRemovesStaleRows(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Subject:               "sync-account-2",
+		DisplayName:           "Sync Account 2",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "",
+		Enabled:               true,
+		Priority:              10,
+		Status:                "active",
+	})
+
+	// Add upstream rows via direct ReplaceAccountModels (manual source), then sync first batch.
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{
+		{Model: "manual-stable", Enabled: true},
+	}); err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+
+	// First sync creates upstream rows: "alpha", "beta", "gamma"
+	_, firstSummary, err := repo.SyncAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{
+		{Model: "alpha", Enabled: false},
+		{Model: "beta", Enabled: true},
+		{Model: "gamma", Enabled: true},
+	}, time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("first SyncAccountModels returned error: %v", err)
+	}
+	if firstSummary.New != 3 || firstSummary.Total != 3 {
+		t.Fatalf("first sync summary = %+v, want new=3 total=3", firstSummary)
+	}
+
+	// Enable beta in the database between syncs, simulating user toggle.
+	// The first sync stores all new upstream rows as disabled; the second sync
+	// must preserve the user's enabled=true choice from the database.
+	if _, err := repo.pool.Exec(ctx, `
+		UPDATE provider_account_models
+		SET enabled = true
+		WHERE provider = $1 AND account_id = $2 AND model = $3
+	`, "openai", account.ID, "beta"); err != nil {
+		t.Fatalf("enabling beta between syncs returned error: %v", err)
+	}
+	// Second sync removes "gamma" (stale), preserves "alpha" and "beta" enabled state.
+	models, summary, err := repo.SyncAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{
+		{Model: "alpha", Enabled: false},
+		{Model: "beta", Enabled: true},
+	}, time.Date(2026, 7, 2, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("second SyncAccountModels returned error: %v", err)
+	}
+
+	if summary.Total != 2 || summary.Preserved != 2 || summary.New != 0 || summary.SkippedManual != 0 {
+		t.Fatalf("second sync summary = %+v, want preserved=2", summary)
+	}
+	assertAccountModelRows(t, models, []accountModelWant{
+		{Model: "alpha", Enabled: false},
+		{Model: "beta", Enabled: true},
+		{Model: "manual-stable", Enabled: true},
+	})
+	for _, model := range models {
+		if model.Model == "alpha" || model.Model == "beta" {
+			if model.Source != provider.AccountModelSourceUpstream {
+				t.Fatalf("%s source = %q, want upstream", model.Model, model.Source)
+			}
+		}
+	}
+	// "gamma" must be gone
+	for _, model := range models {
+		if model.Model == "gamma" {
+			t.Fatal("gamma should have been deleted as stale")
+		}
+	}
+}
+
+func TestSyncAccountModelsRejectsMissingAccount(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, _, err := repo.SyncAccountModels(ctx, "openai", 999999, []provider.AccountModelInput{
+		{Model: "gpt-5", Enabled: true},
+	}, time.Now())
+	if !errors.Is(err, provider.ErrNotConnected) {
+		t.Fatalf("SyncAccountModels missing account error = %v, want ErrNotConnected", err)
+	}
+}
+
 func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
