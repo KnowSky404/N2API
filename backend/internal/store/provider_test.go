@@ -574,6 +574,25 @@ func TestUpdateAccountCanClearFingerprintProfileColumn(t *testing.T) {
 	}
 }
 
+func TestProviderAccountSaveAndScanIncludeFingerprintProfileID(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"a.fingerprint_profile_id",
+		"&account.FingerprintProfileID",
+		"fingerprint_profile_id = $19",
+		"fingerprint_profile_id, updated_at",
+		"account.FingerprintProfileID",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("provider store source missing %q", want)
+		}
+	}
+}
+
 func TestUpdateAccountCanSetLocalAccountNameColumn(t *testing.T) {
 	source, err := os.ReadFile("provider.go")
 	if err != nil {

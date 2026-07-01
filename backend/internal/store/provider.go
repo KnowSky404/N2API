@@ -24,7 +24,7 @@ const providerAccountColumns = `
 	a.id, a.provider, a.account_type, a.subject, a.name, a.display_name, a.enabled, a.priority,
 	a.load_factor, a.max_concurrent_requests, a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
 	a.user_agent_hash, a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until,
-	a.last_test_at, a.last_test_status, a.last_test_error, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
+	a.last_test_at, a.last_test_status, a.last_test_error, a.fingerprint_profile_id, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
 	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
 	c.encrypted_proxy_url, c.base_url, c.metadata
@@ -34,7 +34,7 @@ const routingPoolProviderAccountColumns = `
 	a.id, a.provider, a.account_type, a.subject, a.name, a.display_name, a.enabled, rpa.priority,
 	a.load_factor, a.max_concurrent_requests, a.last_used_at, a.last_error, a.last_error_at, a.status, a.status_reason, a.fingerprint_hash,
 	a.user_agent_hash, a.ip_hash, a.failure_count, a.circuit_open_until, a.rate_limited_until,
-	a.last_test_at, a.last_test_status, a.last_test_error, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
+	a.last_test_at, a.last_test_status, a.last_test_error, a.fingerprint_profile_id, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
 	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
 	c.encrypted_proxy_url, c.base_url, c.metadata
@@ -71,6 +71,7 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.LastTestAt,
 		&account.LastTestStatus,
 		&account.LastTestError,
+		&account.FingerprintProfileID,
 		&account.CreatedAt,
 		&account.UpdatedAt,
 		&account.Credential.CredentialType,
@@ -625,6 +626,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 				failure_count = $14,
 				circuit_open_until = $15,
 				rate_limited_until = $16,
+				fingerprint_profile_id = $19,
 				updated_at = now()
 			WHERE provider = $1
 				AND id = $2
@@ -647,6 +649,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			account.RateLimitedUntil,
 			account.LoadFactor,
 			account.MaxConcurrentRequests,
+			account.FingerprintProfileID,
 		).Scan(&updatedID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return provider.Account{}, provider.ErrNotConnected
@@ -672,7 +675,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 		INSERT INTO provider_accounts (
 			provider, account_type, subject, name, display_name, enabled, priority, load_factor, max_concurrent_requests, last_error,
 			status, status_reason, fingerprint_hash, user_agent_hash, ip_hash, failure_count,
-			circuit_open_until, rate_limited_until, updated_at
+			circuit_open_until, rate_limited_until, fingerprint_profile_id, updated_at
 		)
 		VALUES (
 			$1, $2, $3, $4, $5,
@@ -681,7 +684,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			CASE WHEN $8 = 0 THEN 1 ELSE $8 END,
 			$9,
 			'', COALESCE(NULLIF($10, ''), 'active'), $11, $12, $13, $14, $15,
-			$16, $17, now()
+			$16, $17, $18, now()
 		)
 		ON CONFLICT (provider, account_type, subject) WHERE subject <> ''
 		DO UPDATE SET
@@ -717,6 +720,7 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 		account.FailureCount,
 		account.CircuitOpenUntil,
 		account.RateLimitedUntil,
+		account.FingerprintProfileID,
 	).Scan(&savedID)
 	if err != nil {
 		return provider.Account{}, err
