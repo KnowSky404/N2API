@@ -65,29 +65,41 @@
 
 ## DeepSeek Delegation Workflow (Applies to the Main Agent Session)
 
-These rules bind the main agent (gpt-5.5) when working on N2API. They ensure all code-changing and
-test-running work is delegated to DeepSeek workers while the main agent focuses on architecture,
-review, and coordination.
+These rules bind the main agent (gpt-5.5) when working on N2API. They keep code-changing work
+worker-first while preserving the main agent's responsibility for Superpowers workflow control,
+review, commits, final verification, and Docker refresh.
 
-1. **Architect/reviewer only.** The main agent's role is limited to requirements clarification,
+1. **Architect/reviewer/coordinator.** The main agent's role is focused on requirements clarification,
    architecture, spec/plan, task decomposition, worker coordination, diff/result review,
-   acceptance, and final user communication.
+   acceptance, final user communication, and project-policy closure.
 
-2. **All implementation goes to DeepSeek.** Code/config/document edits, bug fixes, mechanical
-   refactors, and all command/test execution must be delegated to `deepseek-worker`
-   (implementation) or `deepseek-flash` (read-only scans, logs, diagnostics).
+2. **Implementation is worker-first.** Code/config/document edits, bug fixes, mechanical
+   refactors, and routine task-level tests should be delegated to DeepSeek whenever bounded:
+   `deepseek-worker` for implementation and `deepseek-flash` for read-only scans, logs,
+   and diagnostics.
 
-3. **No direct edits by the main agent.** If a worker result is wrong, send a correction task
-   back to DeepSeek instead of manually patching.
+3. **Avoid direct implementation patches.** If a worker result is wrong, prefer sending a
+   correction task back to DeepSeek instead of manually patching. The main agent may make tiny
+   control-plane or documentation adjustments when delegation would be disproportionate or when
+   needed to unblock orchestration.
 
-4. **Tests and verification run on DeepSeek workers.** The main agent only reviews worker-reported
-   outputs, diffs, and acceptance checklist results. If stronger acceptance is needed, request
-   DeepSeek to rerun or expand verification.
+4. **Control-plane commands are allowed.** The main agent may run commands needed to orchestrate
+   and close work: `codex exec` worker dispatch, reading diffs/status/logs, applying accepted
+   worker output, git add/commit/push, final smoke checks, CI inspection, and Docker Compose
+   refresh required by this project.
 
-5. **Main agent still owns coordination.** Writing specs, plans, acceptance criteria, review
-   findings, and coordinating commits is the main agent's job - but only after accepting worker
-   results.
+5. **Verification is worker-first, not worker-only.** Ask DeepSeek workers to run task-level tests
+   and report outputs. The main agent remains responsible for final acceptance and may run or rerun
+   narrow verification commands when needed to validate integration, satisfy Superpowers/project
+   policy, or diagnose worker/tool failure.
 
 6. **Existing N2API constraints preserved.** All project-specific language, technical baseline,
    workflow, and hygiene rules (Chinese communication + English code, Go/Bun/PostgreSQL baseline,
    DESIGN.md UI rules, atomic commits, Docker Compose refresh) remain in full effect.
+
+7. **Current API/Superpowers fallback.** When the active `spawn_agent` tool cannot select the
+   named custom agents or DeepSeek model IDs directly, preserve the Superpowers control flow in
+   the main session and delegate bounded execution through `codex exec`:
+   `codex exec --sandbox workspace-write --cd /root/Clouds/N2API -m deepseek/deepseek-v4-pro -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"max"' "<task prompt>"`.
+   For read-only scans use:
+   `codex exec --sandbox read-only --cd /root/Clouds/N2API -m deepseek/deepseek-v4-flash -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"high"' "<task prompt>"`.
