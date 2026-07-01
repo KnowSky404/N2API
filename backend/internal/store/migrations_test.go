@@ -134,6 +134,23 @@ func TestOAuthStateFingerprintProfileMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestFingerprintProfileSystemKeyMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00032_fingerprint_profile_system_key.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE fingerprint_profiles ADD COLUMN IF NOT EXISTS system_key TEXT NOT NULL DEFAULT ''",
+		"CREATE UNIQUE INDEX IF NOT EXISTS fingerprint_profiles_system_key_unique_idx",
+		"ON fingerprint_profiles (system_key)",
+		"WHERE system_key <> ''",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountModelsMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00007_oauth_account_models.sql")
 	if err != nil {
