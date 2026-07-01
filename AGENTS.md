@@ -62,3 +62,32 @@
 - Use Conventional Commits for commit messages, such as `feat: add provider health check`, `fix: preserve streaming response headers`, `docs: update deployment guide`, `test: cover token refresh`, or `chore: update tooling`.
 - Do not commit generated build artifacts, dependency directories, local caches, or real environment files.
 - After every conversation turn that involves code or functionality changes, rebuild and refresh the local Docker Compose dev stack so the user can test and verify. Use the `n2api-refresh-docker` skill for the exact commands. If no code or functionality was changed during the turn, skip this step.
+
+## DeepSeek Delegation Workflow (Applies to the Main Agent Session)
+
+These rules bind the main agent (gpt-5.5) when working on N2API. They ensure all code-changing and
+test-running work is delegated to DeepSeek workers while the main agent focuses on architecture,
+review, and coordination.
+
+1. **Architect/reviewer only.** The main agent's role is limited to requirements clarification,
+   architecture, spec/plan, task decomposition, worker coordination, diff/result review,
+   acceptance, and final user communication.
+
+2. **All implementation goes to DeepSeek.** Code/config/document edits, bug fixes, mechanical
+   refactors, and all command/test execution must be delegated to `deepseek-worker`
+   (implementation) or `deepseek-flash` (read-only scans, logs, diagnostics).
+
+3. **No direct edits by the main agent.** If a worker result is wrong, send a correction task
+   back to DeepSeek instead of manually patching.
+
+4. **Tests and verification run on DeepSeek workers.** The main agent only reviews worker-reported
+   outputs, diffs, and acceptance checklist results. If stronger acceptance is needed, request
+   DeepSeek to rerun or expand verification.
+
+5. **Main agent still owns coordination.** Writing specs, plans, acceptance criteria, review
+   findings, and coordinating commits is the main agent's job - but only after accepting worker
+   results.
+
+6. **Existing N2API constraints preserved.** All project-specific language, technical baseline,
+   workflow, and hygiene rules (Chinese communication + English code, Go/Bun/PostgreSQL baseline,
+   DESIGN.md UI rules, atomic commits, Docker Compose refresh) remain in full effect.
