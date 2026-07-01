@@ -588,10 +588,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 31 {
-		t.Fatalf("migration sources = %d, want 31", len(sources))
+	if len(sources) != 32 {
+		t.Fatalf("migration sources = %d, want 32", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[30].Path != "00031_client_api_key_cost_budgets.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[31].Path != "00032_fingerprint_profile_system_key.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
