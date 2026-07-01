@@ -1946,7 +1946,24 @@ func TestUnifiedProviderAccountCodexOAuthConnectDelegatesToProviderConnect(t *te
 		t.Fatalf("connectOptions = %+v", providers.connectOptions)
 	}
 }
+func TestAdminProviderConnectTreatsZeroFingerprintProfileAsDefaultSentinel(t *testing.T) {
+	providers := newFakeProviderService()
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", strings.NewReader("{\"name\":\"Zero FP\",\"fingerprintProfileId\":0}"))
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
 
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if providers.connectOptions.FingerprintProfileID != nil {
+		t.Fatalf("fingerprintProfileId = %v, want nil (resolved to default sentinel)", *providers.connectOptions.FingerprintProfileID)
+	}
+}
 func TestProviderConnectReturnsConflictWhenUnconfigured(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.status.Configured = false
