@@ -290,7 +290,8 @@ test('provider account state sends fingerprint profile on new account creation',
   };
 
   await connectProvider();
-  await createAPIUpstreamAccount();
+  const created = await createAPIUpstreamAccount();
+  assert.equal(created, true);
 
   const oauthRequest = requests.find((request) => request.path === '/api/admin/provider-accounts/codex-oauth/connect');
   const upstreamRequest = requests.find((request) => request.path === '/api/admin/provider-accounts/api-upstream');
@@ -730,10 +731,16 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /role="dialog" aria-modal="true" aria-label=\{`Edit \$\{accountLabel\(account\)\}`\}/);
   assert.match(source, /title="Edit account"/);
   assert.match(source, /toggleDeleteConfirmation\(account\)/);
+  assert.match(source, /async.*await.*createAPIUpstreamAccount/s);
+  assert.match(source, /addAccountModalOpen = false/);
   assert.match(source, /Delete this account\?/);
-  assert.match(source, /role="dialog" aria-label=\{`Confirm deleting \$\{accountLabel\(account\)\}`\}/);
+  assert.match(source, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-label=\{`Confirm deleting \$\{accountLabel\(account\)\}`\}/);
   assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
-  assert.match(source, /deletingProviderAccountId === account\.id/);
+  assert.match(source, /\{#if deletingProviderAccount\}/);
+  assert.match(source, /const deletingProviderAccount = \$derived/);
+  assert.match(source, /fixed inset-0 z-50/);
+  assert.match(source, /bg-black\/30/);
+  assert.doesNotMatch(source, /absolute right-0 top-10 z-30 w-56/);
   assert.match(source, /role="switch"/);
   assert.match(source, /Load factor/);
   assert.match(source, /Max concurrency/);
@@ -835,6 +842,8 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /disconnectProviderAccount\(account\)/);
   assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
   assert.match(source, /toggleDeleteConfirmation\(account\)/);
+  assert.match(source, /async.*await.*createAPIUpstreamAccount/s);
+  assert.match(source, /addAccountModalOpen = false/);
 });
 
 test('admin state can reset provider account local status', () => {

@@ -64,6 +64,9 @@
   const editingProviderAccount = $derived(
     providerAccounts.items.find((account) => account.id === editingProviderAccountId) ?? null
   );
+  const deletingProviderAccount = $derived(
+    providerAccounts.items.find((account) => account.id === deletingProviderAccountId) ?? null
+  );
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
       providerAccounts.items.filter((account) => {
@@ -279,6 +282,7 @@
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function toggleDeleteConfirmation(account) {
+    editingProviderAccountId = 0;
     deletingProviderAccountId = deletingProviderAccountId === account.id ? 0 : account.id;
   }
 
@@ -601,9 +605,11 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
 
             <form
               class="mt-4 grid gap-4"
-              onsubmit={(event) => {
+              onsubmit={async (event) => {
                 event.preventDefault();
-                createAPIUpstreamAccount();
+                if (await createAPIUpstreamAccount()) {
+                  addAccountModalOpen = false;
+                }
               }}
             >
               <div class="grid gap-4 sm:grid-cols-2">
@@ -935,31 +941,6 @@ Enabled
               <Trash2 class="size-4" aria-hidden="true" />
               <span class="sr-only">Delete account</span>
             </button>
-            {#if deletingProviderAccountId === account.id}
-              <div class="absolute right-0 top-10 z-30 w-56 rounded-lg border border-[#e5e5e5] bg-white p-3 text-left shadow-lg" role="dialog" aria-label={`Confirm deleting ${accountLabel(account)}`}>
-                <p class="text-sm font-medium text-[#0d0d0d]">Delete this account?</p>
-                <p class="mt-1 text-xs leading-5 text-[#6e6e6e]">{accountLabel(account)}</p>
-                <div class="mt-3 flex justify-end gap-2">
-                  <button
-                    class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                    type="button"
-                    onclick={() => {
-                      deletingProviderAccountId = 0;
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    class="rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-                    type="button"
-                    disabled={providerAccounts.saving}
-                    onclick={() => confirmDisconnectProviderAccount(account)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            {/if}
           </div>
         </td>
       </tr>
@@ -968,6 +949,7 @@ Enabled
 </tbody>
     </table>
   </div>
+
   <div class="mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
     <p>
       Showing {providerAccountPageSummary} of {filteredProviderAccounts.length}
@@ -1013,6 +995,40 @@ Enabled
     </div>
   </div>
 </section>
+
+  {#if deletingProviderAccount}
+    {@const account = deletingProviderAccount}
+    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      onclick={() => { deletingProviderAccountId = 0; }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Confirm deleting ${accountLabel(account)}`}
+    >
+      <div class="w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" onclick={(e) => e.stopPropagation()}>
+        <p class="text-sm font-medium text-[#0d0d0d]">Delete this account?</p>
+        <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{accountLabel(account)}</p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            onclick={() => { deletingProviderAccountId = 0; }}
+          >
+            Cancel
+          </button>
+          <button
+            class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={providerAccounts.saving}
+            onclick={() => confirmDisconnectProviderAccount(account)}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
 {#if editingProviderAccount}
   {@const account = editingProviderAccount}

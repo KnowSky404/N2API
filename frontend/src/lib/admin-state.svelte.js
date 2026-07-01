@@ -1854,7 +1854,7 @@ export async function updateProviderAccountName(account, event) {
 
 export async function createAPIUpstreamAccount() {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   apiUpstreamForm.submitting = true;
   apiUpstreamForm.error = '';
@@ -1875,13 +1875,15 @@ export async function createAPIUpstreamAccount() {
         models: parseModelLines(apiUpstreamForm.modelsText)
       })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     resetAPIUpstreamForm();
     await loadProviderAccounts();
     await loadModelRouting();
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiUpstreamForm.error = error instanceof Error ? error.message : 'API upstream account create failed';
+    return false;
   } finally {
     if (isCurrentAuthenticated(version)) apiUpstreamForm.submitting = false;
   }
