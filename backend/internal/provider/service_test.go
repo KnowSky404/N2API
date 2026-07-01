@@ -169,10 +169,163 @@ func TestStartConnectStoresPendingAccountOptionsAndFingerprintHashes(t *testing.
 	if state.FingerprintHash == "" || state.UserAgentHash == "" || state.IPHash == "" {
 		t.Fatalf("state fingerprint hashes incomplete: %+v", state)
 	}
+	if repo.ensureDefaultFingerprintProfileCalls != 0 {
+		t.Fatalf("EnsureDefaultCodexFingerprintProfile called %d times, want 0 (explicit profile provided)", repo.ensureDefaultFingerprintProfileCalls)
+	}
 	for _, cleartext := range []string{"browser-fingerprint", "Mozilla/5.0", "203.0.113.10"} {
 		if strings.Contains(state.FingerprintHash+state.UserAgentHash+state.IPHash, cleartext) {
 			t.Fatalf("fingerprint hash leaked cleartext %q", cleartext)
 		}
+	}
+}
+
+func TestStartConnectStoresDefaultFingerprintProfileWhenUnset(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	result, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	if mustQuery(t, result.AuthorizationURL, "state") == "" {
+		t.Fatal("authorization URL missing state")
+	}
+	state := repo.states[0]
+	if state.PendingFingerprintProfileID == nil {
+		t.Fatal("PendingFingerprintProfileID is nil, want default Codex fingerprint profile ID")
+	}
+	if *state.PendingFingerprintProfileID != repo.defaultFingerprintProfileID {
+		t.Fatalf("PendingFingerprintProfileID = %d, want default %d", *state.PendingFingerprintProfileID, repo.defaultFingerprintProfileID)
+	}
+	if repo.ensureDefaultFingerprintProfileCalls != 1 {
+		t.Fatalf("EnsureDefaultCodexFingerprintProfile called %d times, want 1", repo.ensureDefaultFingerprintProfileCalls)
+	}
+}
+
+func TestStartConnectPreservesExplicitFingerprintProfile(t *testing.T) {
+	repo := newMemoryRepo()
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	customProfileID := int64(42)
+	repo.fingerprintProfiles[customProfileID] = FingerprintProfileData{UserAgent: "custom-agent"}
+
+	result, err := service.StartConnect(context.Background(), ConnectOptions{
+		RedirectAfter:        "/",
+		FingerprintProfileID: &customProfileID,
+	})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	if mustQuery(t, result.AuthorizationURL, "state") == "" {
+		t.Fatal("authorization URL missing state")
+	}
+	state := repo.states[0]
+	if state.PendingFingerprintProfileID == nil || *state.PendingFingerprintProfileID != customProfileID {
+		t.Fatalf("PendingFingerprintProfileID = %+v, want %d", state.PendingFingerprintProfileID, customProfileID)
+	}
+	if repo.ensureDefaultFingerprintProfileCalls != 0 {
+		t.Fatalf("EnsureDefaultCodexFingerprintProfile called %d times, want 0", repo.ensureDefaultFingerprintProfileCalls)
+	}
+}
+
+func TestCompleteCallbackPreservesExistingFingerprintOnReconnect(t *testing.T) {
+	repo := newMemoryRepo()
+	existingProfileID := int64(7)
+	repo.fingerprintProfiles[existingProfileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
+	existing, err := repo.SaveAccount(context.Background(), Account{
+		Provider:              "openai",
+		Subject:               "acct_same",
+		Name:                  "Existing",
+		DisplayName:           "same@example.com",
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		Enabled:               true,
+		Priority:              12,
+		FingerprintProfileID:  &existingProfileID,
+		Status:                AccountStatusActive,
+		Metadata:              map[string]string{"chatgpt_account_id": "acct_same"},
+	})
+	if err != nil {
+		t.Fatalf("SaveAccount returned error: %v", err)
+	}
+	client := fakeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+			AccountID:    "acct_same",
+			Email:        "same@example.com",
+		},
+	}
+	service := NewService(repo, client, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
+	if err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if account.ID != existing.ID {
+		t.Fatalf("account ID = %d, want existing %d", account.ID, existing.ID)
+	}
+	if account.FingerprintProfileID == nil || *account.FingerprintProfileID != existingProfileID {
+		t.Fatalf("account FingerprintProfileID = %+v, want existing %d", account.FingerprintProfileID, existingProfileID)
+	}
+}
+
+func TestCompleteCallbackReauthorizationUpdatesFingerprintProfile(t *testing.T) {
+	repo := newMemoryRepo()
+	existing, err := repo.SaveAccount(context.Background(), Account{
+		Provider:              "openai",
+		Subject:               "acct_old",
+		Name:                  "Old Account",
+		DisplayName:           "old@example.com",
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		Enabled:               true,
+		Priority:              30,
+		Status:                AccountStatusActive,
+		Metadata:              map[string]string{"chatgpt_account_id": "acct_old"},
+	})
+	if err != nil {
+		t.Fatalf("SaveAccount returned error: %v", err)
+	}
+	client := fakeOAuthClient{
+		exchange: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+			AccountID:    "acct_new",
+			Email:        "new@example.com",
+		},
+	}
+	service := NewService(repo, client, Config{
+		Provider:    "openai",
+		RedirectURL: "http://localhost:3000/oauth/openai/callback",
+		Secret:      "encryption-secret",
+	})
+
+	started, err := service.StartConnect(context.Background(), ConnectOptions{
+		RedirectAfter:   "/",
+		TargetAccountID: existing.ID,
+	})
+	if err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
+	if err != nil {
+		t.Fatalf("CompleteCallback returned error: %v", err)
+	}
+	if account.ID != existing.ID {
+		t.Fatalf("account ID = %d, want target %d", account.ID, existing.ID)
+	}
+	if account.FingerprintProfileID == nil || *account.FingerprintProfileID != repo.defaultFingerprintProfileID {
+		t.Fatalf("account FingerprintProfileID = %+v, want default Codex profile %d", account.FingerprintProfileID, repo.defaultFingerprintProfileID)
 	}
 }
 

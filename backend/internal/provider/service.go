@@ -734,6 +734,12 @@ func (s *Service) StartConnect(ctx context.Context, options ConnectOptions) (Con
 		if _, err := s.repo.FindFingerprintProfileByID(ctx, *options.FingerprintProfileID); err != nil {
 			return ConnectResult{}, ErrInvalidInput
 		}
+	} else {
+		defaultID, err := s.repo.EnsureDefaultCodexFingerprintProfile(ctx)
+		if err != nil {
+			return ConnectResult{}, fmt.Errorf("ensure default fingerprint profile: %w", err)
+		}
+		options.FingerprintProfileID = &defaultID
 	}
 
 	state, err := secret.GenerateToken("oauth_state")
@@ -2602,6 +2608,7 @@ func applyOAuthStateToAccount(account *Account, state OAuthState, previous *Acco
 		account.FingerprintHash = previous.FingerprintHash
 		account.UserAgentHash = previous.UserAgentHash
 		account.IPHash = previous.IPHash
+		account.FingerprintProfileID = previous.FingerprintProfileID
 	}
 	if strings.TrimSpace(state.PendingAccountName) != "" && (previous == nil || state.TargetAccountID > 0) {
 		account.Name = strings.TrimSpace(state.PendingAccountName)
