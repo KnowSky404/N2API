@@ -141,8 +141,11 @@ type fakeProviderService struct {
 	resetStatusAccountIDs  []int64
 	disconnectedAccountID  int64
 	disconnectedAccountIDs []int64
-}
 
+	syncModelsResult  []provider.AccountModel
+	syncModelsSummary provider.AccountModelSyncSummary
+	syncModelsErr     error
+}
 type fakeGatewayHandler struct {
 	called             bool
 	accountConcurrency map[int64]int
@@ -875,6 +878,13 @@ func (s *fakeProviderService) DisconnectAccount(_ context.Context, id int64) err
 func (s *fakeProviderService) Disconnect(_ context.Context) error {
 	s.disconnected = true
 	return nil
+}
+
+func (s *fakeProviderService) SyncUpstreamAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	if s.syncModelsErr != nil {
+		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
+	}
+	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
 }
 
 func TestHealthzReturnsOK(t *testing.T) {
@@ -3550,6 +3560,76 @@ func TestAccountModelsMapProviderErrors(t *testing.T) {
 			}
 			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 			req := httptest.NewRequest(tc.method, "/api/admin/providers/openai/accounts/7/models", strings.NewReader(`{"models":[{"model":"gpt-5","enabled":true}]}`))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.want)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != tc.code {
+				t.Fatalf("error = %q, want %s", body["error"], tc.code)
+			}
+		})
+	}
+}
+
+func TestSyncProviderAccountModelsReturnsModelsAndSummary(t *testing.T) {
+	providers := newFakeProviderService()
+	now := time.Now()
+	providers.syncModelsResult = []provider.AccountModel{
+		{ID: 1, AccountID: 7, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceUpstream, LastSeenAt: &now, CreatedAt: now, UpdatedAt: now},
+	}
+	providers.syncModelsSummary = provider.AccountModelSyncSummary{Total: 1, New: 1, Preserved: 0, SkippedManual: 0}
+
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/models/sync", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Models []provider.AccountModel          `json:"models"`
+		Synced provider.AccountModelSyncSummary `json:"synced"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 1 || body.Models[0].Model != "gpt-5" {
+		t.Fatalf("models = %+v", body.Models)
+	}
+	if body.Models[0].Source != provider.AccountModelSourceUpstream {
+		t.Fatalf("source = %q, want %q", body.Models[0].Source, provider.AccountModelSourceUpstream)
+	}
+	if body.Synced.New != 1 {
+		t.Fatalf("synced.new = %d, want 1", body.Synced.New)
+	}
+}
+
+func TestSyncProviderAccountModelsMapsProviderErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+		code string
+	}{
+		{name: "invalid input", err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "not found", err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.syncModelsErr = tc.err
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/models/sync", nil)
 			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 			recorder := httptest.NewRecorder()
 

@@ -85,6 +85,7 @@ type ProviderService interface {
 	UpdateAccount(ctx context.Context, id int64, update provider.AccountUpdate) (provider.Account, error)
 	ListAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
+	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
 	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
@@ -1247,6 +1248,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleReplaceProviderAccountModels(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/models/sync", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleSyncProviderAccountModels(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleRefreshProviderAccount(w, r, providers)
 	}))
@@ -2159,6 +2164,25 @@ func handleReplaceProviderAccountModels(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string][]provider.AccountModel{"models": models})
+}
+
+func handleSyncProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	models, summary, err := providers.SyncUpstreamAccountModels(r.Context(), id)
+	if err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": models, "synced": summary})
 }
 
 func handleRefreshProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
