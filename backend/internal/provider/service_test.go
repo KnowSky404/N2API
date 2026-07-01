@@ -2990,12 +2990,14 @@ type memoryRepo struct {
 	fingerprintProfiles map[int64]FingerprintProfileData
 	states              []OAuthState
 
-	saveCount           int
-	nextID              int64
-	markAccountErrorErr error
-	markAccountUsedErr  error
-	replaceModelsErr    error
-	lastSavedAccount    Account
+	saveCount                            int
+	nextID                               int64
+	defaultFingerprintProfileID          int64
+	ensureDefaultFingerprintProfileCalls int
+	markAccountErrorErr                  error
+	markAccountUsedErr                   error
+	replaceModelsErr                     error
+	lastSavedAccount                     Account
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -3263,6 +3265,21 @@ func (r *memoryRepo) FindFingerprintProfileByID(_ context.Context, id int64) (Fi
 		return FingerprintProfileData{}, ErrNotConnected
 	}
 	return profile, nil
+}
+
+func (r *memoryRepo) EnsureDefaultCodexFingerprintProfile(_ context.Context) (int64, error) {
+	r.ensureDefaultFingerprintProfileCalls++
+	if r.defaultFingerprintProfileID == 0 {
+		r.defaultFingerprintProfileID = 9001
+	}
+	if r.fingerprintProfiles == nil {
+		r.fingerprintProfiles = make(map[int64]FingerprintProfileData)
+	}
+	r.fingerprintProfiles[r.defaultFingerprintProfileID] = FingerprintProfileData{
+		UserAgent: DefaultCodexFingerprintUserAgent,
+		Headers:   DefaultCodexFingerprintHeaders(),
+	}
+	return r.defaultFingerprintProfileID, nil
 }
 
 func (r *memoryRepo) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {

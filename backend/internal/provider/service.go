@@ -45,6 +45,20 @@ const (
 )
 
 const (
+	DefaultCodexFingerprintSystemKey   = "codex_cli_default"
+	DefaultCodexFingerprintName        = "Default Codex CLI"
+	DefaultCodexFingerprintDescription = "Built-in Codex CLI-style outbound identity for OAuth accounts."
+	DefaultCodexFingerprintUserAgent   = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	DefaultCodexFingerprintTLS         = ""
+)
+
+func DefaultCodexFingerprintHeaders() map[string]string {
+	return map[string]string{
+		"originator": "codex_cli_rs",
+	}
+}
+
+const (
 	RoutingPoolErrorDisabled    = "routing_pool_disabled"
 	RoutingPoolErrorUnavailable = "routing_pool_unavailable"
 	RoutingPoolErrorEmpty       = "routing_pool_empty"
@@ -404,6 +418,7 @@ type Repository interface {
 	UpdateAccount(ctx context.Context, provider string, id int64, update AccountUpdate) (Account, error)
 	DeleteAccount(ctx context.Context, provider string, id int64) error
 	DeleteAccounts(ctx context.Context, provider string) error
+	EnsureDefaultCodexFingerprintProfile(ctx context.Context) (int64, error)
 	FindFingerprintProfileByID(ctx context.Context, id int64) (FingerprintProfileData, error)
 	MarkAccountUsed(ctx context.Context, provider string, id int64, usedAt time.Time) error
 	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error

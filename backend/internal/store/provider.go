@@ -1407,3 +1407,32 @@ func (r *ProviderRepository) FindFingerprintProfileByID(ctx context.Context, id 
 	}
 	return data, nil
 }
+
+func (r *ProviderRepository) EnsureDefaultCodexFingerprintProfile(ctx context.Context) (int64, error) {
+	headersJSON, err := json.Marshal(provider.DefaultCodexFingerprintHeaders())
+	if err != nil {
+		return 0, err
+	}
+
+	var id int64
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO fingerprint_profiles (
+			system_key, name, description, user_agent, tls_fingerprint, headers_json, enabled
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, true)
+		ON CONFLICT (system_key) WHERE system_key <> ''
+		DO UPDATE SET enabled = true, updated_at = now()
+		RETURNING id
+	`,
+		provider.DefaultCodexFingerprintSystemKey,
+		provider.DefaultCodexFingerprintName,
+		provider.DefaultCodexFingerprintDescription,
+		provider.DefaultCodexFingerprintUserAgent,
+		provider.DefaultCodexFingerprintTLS,
+		headersJSON,
+	).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}

@@ -139,6 +139,25 @@ func TestFindFingerprintProfileByIDOnlyReturnsEnabledProfiles(t *testing.T) {
 	}
 }
 
+func TestEnsureDefaultCodexFingerprintProfileUsesSystemKey(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"func (r *ProviderRepository) EnsureDefaultCodexFingerprintProfile",
+		"provider.DefaultCodexFingerprintSystemKey",
+		"ON CONFLICT (system_key) WHERE system_key <> ''",
+		"DO UPDATE SET enabled = true",
+		"RETURNING id",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("provider store source missing %q", want)
+		}
+	}
+}
+
 func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
