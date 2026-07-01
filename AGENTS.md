@@ -103,3 +103,7 @@ review, commits, final verification, and Docker refresh.
    `codex exec --sandbox workspace-write --cd /root/Clouds/N2API -m deepseek/deepseek-v4-pro -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"max"' "<task prompt>"`.
    For read-only scans use:
    `codex exec --sandbox read-only --cd /root/Clouds/N2API -m deepseek/deepseek-v4-flash -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"high"' "<task prompt>"`.
+   If DeepSeek delegation is unavailable, rejected, misconfigured, or repeatedly fails for
+   tooling/provider reasons, stop and ask the user how to proceed. Do not automatically switch to
+   another fallback model or run equivalent worker-scale implementation/verification with another
+   model, because that can create unexpected API costs.
