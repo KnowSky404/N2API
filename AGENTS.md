@@ -103,6 +103,12 @@ review, commits, final verification, and Docker refresh.
    `codex exec --sandbox workspace-write --cd /root/Clouds/N2API -m deepseek/deepseek-v4-pro -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"max"' "<task prompt>"`.
    For read-only scans use:
    `codex exec --sandbox read-only --cd /root/Clouds/N2API -m deepseek/deepseek-v4-flash -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"high"' "<task prompt>"`.
+   Split DeepSeek work into short, bounded runs by default: read-only scan/diagnosis first,
+   one implementation slice second, and focused verification/test execution third. Avoid
+   bundling scan, implementation, and broad verification into one long DeepSeek run. Each worker
+   prompt should name the concrete files or task slice, expected outputs, and verification command
+   scope. If a worker session reports a smaller `model_context_window` than requested, surface that
+   discrepancy instead of assuming the 1M window took effect.
    If DeepSeek delegation is unavailable, rejected, misconfigured, or repeatedly fails for
    tooling/provider reasons, stop and ask the user how to proceed. Do not automatically switch to
    another fallback model or run equivalent worker-scale implementation/verification with another
