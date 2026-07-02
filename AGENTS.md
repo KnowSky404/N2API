@@ -65,23 +65,24 @@
 
 ## DeepSeek Delegation Workflow (Applies to the Main Agent Session)
 
-These rules bind the main agent (gpt-5.5) when working on N2API. They keep code-changing work
-worker-first while preserving the main agent's responsibility for Superpowers workflow control,
+These rules bind the main agent (gpt-5.5) when working on N2API. They keep bounded code-changing
+work worker-first while preserving the main agent's responsibility for Superpowers workflow control,
 review, commits, final verification, and Docker refresh.
 
 1. **Architect/reviewer/coordinator.** The main agent's role is focused on requirements clarification,
    architecture, spec/plan, task decomposition, worker coordination, diff/result review,
    acceptance, final user communication, and project-policy closure.
 
-2. **Implementation is worker-first.** Code/config/document edits, bug fixes, mechanical
-   refactors, and routine task-level tests should be delegated to DeepSeek whenever bounded:
+2. **Implementation is worker-first when bounded.** Code/config/document edits, bug fixes,
+   mechanical refactors, and routine task-level tests should be delegated to DeepSeek whenever
+   the task is bounded enough and does not require an immediate parent-session decision:
    `deepseek-worker` for implementation and `deepseek-flash` for read-only scans, logs,
-   and diagnostics.
+   diagnostics, and test-output triage.
 
 3. **Avoid direct implementation patches.** If a worker result is wrong, prefer sending a
    correction task back to DeepSeek instead of manually patching. The main agent may make tiny
-   control-plane or documentation adjustments when delegation would be disproportionate or when
-   needed to unblock orchestration.
+   control-plane or documentation adjustments, simple local checks, or one-off command probes when
+   delegation would be disproportionate or when needed to unblock orchestration.
 
 4. **Control-plane commands are allowed.** The main agent may run commands needed to orchestrate
    and close work: native subagent dispatch, reading diffs/status/logs, applying accepted
@@ -102,13 +103,17 @@ review, commits, final verification, and Docker refresh.
    In the current Codex API surface, `multi_agent_v1.spawn_agent` exposes `deepseek-worker` and
    `deepseek-flash` directly; use those native roles instead of nested `codex exec`.
    Use `agent_type="deepseek-worker"` for implementation and bounded test/update tasks, and
-   `agent_type="deepseek-flash"` for read-only scans, diagnostics, and summaries.
+   `agent_type="deepseek-flash"` for read-only scans, diagnostics, test-output triage, and summaries.
    Split DeepSeek work into short, bounded runs by default: read-only scan/diagnosis first,
    one implementation slice second, and focused verification/test execution third. Avoid
    bundling scan, implementation, and broad verification into one long DeepSeek run. Each worker
-   prompt should name the concrete files or task slice, expected outputs, and verification command
-   scope. If a worker session reports a smaller `model_context_window` than requested, surface that
-   discrepancy instead of assuming the 1M window took effect.
+   prompt should name the concrete files or task slice, disjoint write set if files may be edited,
+   acceptance criteria, expected outputs, and verification command scope. Worker final outputs
+   should include `status`, `changed files`, `commands run`, `results`, `blockers`, and `assumptions`.
+   If multiple workers edit in parallel, their write sets must not overlap unless the parent session
+   is intentionally sequencing follow-up fixes. If a worker session reports a smaller
+   `model_context_window` than requested, surface that discrepancy instead of assuming the 1M window
+   took effect.
    Use nested `codex exec` only if the native DeepSeek subagent roles are unavailable and the user
    explicitly approves that fallback for the specific turn, because nested CLI runs can inherit a
    different proxy/MCP environment than the parent session.
