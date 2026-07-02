@@ -10,7 +10,9 @@ const {
   apiUpstreamForm,
   apiKeys,
   apiKeyModelWarnings,
+  accountModelSummary,
   accountModelsText,
+  getAccountModelsState,
   futureTimeRemainingLabel,
   getAccountTestResultsState,
   connectProvider,
@@ -38,6 +40,8 @@ const {
   setAccountModelEnabled,
   shouldApplyAccountModelsResponse,
   shouldApplyAccountTestResultsResponse,
+  sourceBadgeLabel,
+  syncAccountModels,
   toggleProviderAccountSelection,
   updateAPIKeyRoutingPool,
   updateAPIKeyLimits,
@@ -1118,4 +1122,129 @@ test('routing pool state sends fallback configuration', () => {
   assert.match(adminStateSource, /fallbackPoolId/);
   assert.match(adminStateSource, /fallbackPoolName/);
   assert.match(adminStateSource, /fallbackPoolId: fallbackPoolId > 0 \? fallbackPoolId : null/);
+});
+
+test('accountModelSummary counts synced, manual, and enabled rows', () => {
+  const summary = accountModelSummary([
+    { model: 'gpt-5', enabled: true, source: 'upstream' },
+    { model: 'gpt-5-mini', enabled: false, source: 'upstream' },
+    { model: 'codex-mini', enabled: true, source: '' },
+    { model: 'o1', enabled: true, source: null }
+  ]);
+  assert.equal(summary.total, 4);
+  assert.equal(summary.synced, 2);
+  assert.equal(summary.manual, 2);
+  assert.equal(summary.enabled, 3);
+});
+
+test('sourceBadgeLabel maps account model sources', () => {
+  assert.equal(sourceBadgeLabel({ source: 'upstream' }), 'Synced');
+  assert.equal(sourceBadgeLabel({ source: '' }), 'Manual');
+  assert.equal(sourceBadgeLabel({ source: null }), 'Manual');
+  assert.equal(sourceBadgeLabel({ source: 'manual' }), 'Manual');
+});
+
+test('syncAccountModels calls sync endpoint and refreshes routing state', async () => {
+  session.authenticated = true;
+  const state = getAccountModelsState(7);
+  state.error = 'old error';
+  state.syncing = false;
+  state.syncError = '';
+  state.syncMessage = '';
+  state.syncSummary = null;
+  state.items = [];
+  state.text = '';
+  state.saved = true;
+
+  const requests = [];
+  globalThis.fetch = async (path, options) => {
+    requests.push({ path, method: options?.method ?? 'GET' });
+    if (path === '/api/admin/provider-accounts/7/models/sync') {
+      return new Response(
+        JSON.stringify({
+          models: [
+            { model: 'gpt-5', enabled: false, source: 'upstream' },
+            { model: 'gpt-5-mini', enabled: false, source: 'upstream' }
+          ],
+          synced: { total: 2, new: 1, preserved: 1, skippedManual: 0 }
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (path === '/api/admin/model-routing') {
+      return new Response(
+        JSON.stringify({ defaultModel: '', allowedModels: [], models: [], warnings: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    throw new Error(`unexpected request ${path}`);
+  };
+
+  await syncAccountModels(7);
+
+  const syncRequest = requests.find((r) => r.path === '/api/admin/provider-accounts/7/models/sync');
+  assert.ok(syncRequest, 'sync endpoint was called');
+  assert.equal(syncRequest.method, 'POST');
+
+  const routingRequest = requests.find((r) => r.path === '/api/admin/model-routing');
+  assert.ok(routingRequest, 'model routing was refreshed');
+
+  assert.equal(state.items.length, 2);
+  assert.equal(state.items[0].model, 'gpt-5');
+  assert.equal(state.items[0].source, 'upstream');
+  assert.equal(state.error, '');
+  assert.equal(state.saved, false);
+  assert.equal(state.syncing, false);
+  assert.equal(state.syncError, '');
+  assert.equal(state.syncMessage, 'Synced 2 models. 1 new model was added disabled.');
+  assert.deepEqual(state.syncSummary, { total: 2, new: 1, preserved: 1, skippedManual: 0 });
+  assert.equal(state.text, '');
+});
+
+test('syncAccountModels stale response does not overwrite newer result', async () => {
+  session.authenticated = true;
+  const state = getAccountModelsState(8);
+
+  const syncResolvers = [];
+  let syncCallIndex = 0;
+
+  globalThis.fetch = async (path, options) => {
+    if (path === '/api/admin/provider-accounts/8/models/sync') {
+      syncCallIndex++;
+      const index = syncCallIndex;
+      return new Promise((resolve) => {
+        syncResolvers.push(() => {
+          const modelName = index === 1 ? 'first-model' : 'second-model';
+          resolve(new Response(JSON.stringify({
+            models: [{ model: modelName, enabled: false, source: 'upstream' }],
+            synced: { total: 1, new: 1, preserved: 0, skippedManual: 0 }
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+        });
+      });
+    }
+    if (path === '/api/admin/model-routing') {
+      return new Response(JSON.stringify({ defaultModel: '', allowedModels: [], models: [], warnings: [] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    throw new Error(`unexpected request ${path}`);
+  };
+
+  // Start both syncs concurrently
+  const promise1 = syncAccountModels(8);
+  const promise2 = syncAccountModels(8);
+
+  // Resolve second response first
+  syncResolvers[1]();
+  await promise2;
+
+  // Now resolve first response (should be rejected as stale)
+  syncResolvers[0]();
+  await promise1;
+
+  assert.equal(state.items.length, 1);
+  assert.equal(state.items[0].model, 'second-model');
+  assert.equal(state.syncMessage, 'Synced 1 models. 1 new model was added disabled.');
+  assert.equal(state.syncing, false);
+  assert.equal(state.syncError, '');
 });

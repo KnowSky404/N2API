@@ -558,7 +558,7 @@ export function setAccountModelEnabled(models, modelName, enabled) {
  * @param {string} modelName
  */
 export function removeAccountModel(models, modelName) {
-  return models.filter((item) => item.model !== modelName);
+  return models.filter((item) => item.source === 'upstream' || item.model !== modelName);
 }
 
 /**
@@ -1299,6 +1299,10 @@ function ensureAccountModelsState(accountId) {
       loading: false,
       saving: false,
       error: '',
+      syncing: false,
+      syncError: '',
+      syncMessage: '',
+      syncSummary: null,
       saved: false,
       text: '',
       items: [],
@@ -1325,7 +1329,7 @@ function ensureAccountTestResultsState(accountId) {
 
 /** @param {AccountModel[]} models */
 export function accountModelsText(models) {
-  return modelListText(models.map((item) => item.model));
+  return modelListText(models.filter((item) => item.source !== 'upstream').map((item) => item.model));
 }
 
 /** @param {number} accountId */
@@ -1336,6 +1340,28 @@ export function getAccountModelsState(accountId) {
 /** @param {number} accountId */
 export function getAccountTestResultsState(accountId) {
   return ensureAccountTestResultsState(accountId);
+}
+
+/**
+ * @param {{ model: string; enabled: boolean; source?: string | null }[]} models
+ */
+export function accountModelSummary(models) {
+  let total = 0;
+  let synced = 0;
+  let manual = 0;
+  let enabled = 0;
+  for (const m of models) {
+    total++;
+    if (m.source === 'upstream') synced++;
+    else manual++;
+    if (m.enabled) enabled++;
+  }
+  return { total, synced, manual, enabled };
+}
+
+/** @param {{ source?: string | null }} model */
+export function sourceBadgeLabel(model) {
+  return model.source === 'upstream' ? 'Synced' : 'Manual';
 }
 
 /** @param {number} accountId */
@@ -1453,6 +1479,48 @@ export async function saveAccountModels(accountId, text) {
   } finally {
     if (isCurrentAuthenticated(version) && shouldApplyAccountModelsResponse(state, requestSeq)) {
       state.saving = false;
+    }
+  }
+}
+
+/** @param {number} accountId */
+export async function syncAccountModels(accountId) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+  const state = ensureAccountModelsState(accountId);
+  state.requestSeq += 1;
+  const requestSeq = state.requestSeq;
+  state.syncing = true;
+  state.error = '';
+  state.syncError = '';
+  state.syncMessage = '';
+  state.syncSummary = null;
+  state.saved = false;
+  try {
+    const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models/sync`, {
+      method: 'POST'
+    });
+    if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
+    const models = payload.models ?? [];
+    state.items = models;
+    state.text = accountModelsText(models);
+    state.syncSummary = payload.synced ?? null;
+    const added = Number(payload.synced?.new ?? 0);
+    const total = Number(payload.synced?.total ?? models.length);
+    if (added > 0) {
+      state.syncMessage = `Synced ${total} models. ${added} new model${added === 1 ? ' was' : 's were'} added disabled.`;
+    } else {
+      state.syncMessage = `Synced ${total} models.`;
+    }
+    await loadModelRouting();
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
+    state.syncError = error instanceof Error ? error.message : 'Account model sync failed';
+  } finally {
+    if (isCurrentAuthenticated(version) && shouldApplyAccountModelsResponse(state, requestSeq)) {
+      state.syncing = false;
     }
   }
 }
