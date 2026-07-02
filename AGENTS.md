@@ -98,17 +98,20 @@ review, commits, final verification, and Docker refresh.
    DESIGN.md UI rules, atomic commits, Docker Compose refresh) remain in full effect.
 
 7. **Current API/Superpowers fallback.** When the active `spawn_agent` tool cannot select the
-   named custom agents or DeepSeek model IDs directly, preserve the Superpowers control flow in
-   the main session and delegate bounded execution through `codex exec`:
-   `codex exec --sandbox workspace-write --cd /root/Clouds/N2API -m deepseek/deepseek-v4-pro -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"max"' "<task prompt>"`.
-   For read-only scans use:
-   `codex exec --sandbox read-only --cd /root/Clouds/N2API -m deepseek/deepseek-v4-flash -c model_context_window=1000000 -c model_auto_compact_token_limit=900000 -c model_reasoning_effort='"high"' "<task prompt>"`.
+   named custom agents or DeepSeek model IDs directly, first discover native multi-agent tools.
+   In the current Codex API surface, `multi_agent_v1.spawn_agent` exposes `deepseek-worker` and
+   `deepseek-flash` directly; use those native roles instead of nested `codex exec`.
+   Use `agent_type="deepseek-worker"` for implementation and bounded test/update tasks, and
+   `agent_type="deepseek-flash"` for read-only scans, diagnostics, and summaries.
    Split DeepSeek work into short, bounded runs by default: read-only scan/diagnosis first,
    one implementation slice second, and focused verification/test execution third. Avoid
    bundling scan, implementation, and broad verification into one long DeepSeek run. Each worker
    prompt should name the concrete files or task slice, expected outputs, and verification command
    scope. If a worker session reports a smaller `model_context_window` than requested, surface that
    discrepancy instead of assuming the 1M window took effect.
+   Use nested `codex exec` only if the native DeepSeek subagent roles are unavailable and the user
+   explicitly approves that fallback for the specific turn, because nested CLI runs can inherit a
+   different proxy/MCP environment than the parent session.
    If DeepSeek delegation is unavailable, rejected, misconfigured, or repeatedly fails for
    tooling/provider reasons, stop and ask the user how to proceed. Do not automatically switch to
    another fallback model or run equivalent worker-scale implementation/verification with another
