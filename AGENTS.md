@@ -84,7 +84,7 @@ review, commits, final verification, and Docker refresh.
    needed to unblock orchestration.
 
 4. **Control-plane commands are allowed.** The main agent may run commands needed to orchestrate
-   and close work: `codex exec` worker dispatch, reading diffs/status/logs, applying accepted
+   and close work: native subagent dispatch, reading diffs/status/logs, applying accepted
    worker output, git add/commit/push, final smoke checks, CI inspection, and Docker Compose
    refresh required by this project.
 
