@@ -201,10 +201,22 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} AccountModelSyncSummary
+ * @property {number} total
+ * @property {number} new
+ * @property {number} preserved
+ * @property {number} skippedManual
+ */
+
+/**
  * @typedef {object} AccountModelsState
  * @property {boolean} loading
  * @property {boolean} saving
  * @property {string} error
+ * @property {boolean} syncing
+ * @property {string} syncError
+ * @property {string} syncMessage
+ * @property {AccountModelSyncSummary | null} syncSummary
  * @property {boolean} saved
  * @property {string} text
  * @property {AccountModel[]} items
