@@ -26,8 +26,11 @@
     removeAccountModel,
     resetProviderAccountStatus,
     saveAccountModels,
+    accountModelSummary,
     session,
     selectedProviderAccountIds,
+    sourceBadgeLabel,
+    syncAccountModels,
     setAccountModelEnabled,
     statusLabel,
     testAllProviderAccounts,
@@ -1035,6 +1038,7 @@ Enabled
   {@const modelState = getAccountModelsState(account.id)}
   {@const historyState = getAccountTestResultsState(account.id)}
   {@const enabledModels = enabledAccountModelCount(modelState.items)}
+  {@const modelSummary = accountModelSummary(modelState.items)}
   <div
     class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
     role="presentation"
@@ -1206,24 +1210,44 @@ Enabled
           }}
         >
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <h3 class="text-sm font-semibold text-[#0d0d0d]">Manual models</h3>
-            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={modelState.loading || modelState.saving}>
-              {modelState.saving ? 'Saving' : 'Save'}
-            </button>
+            <h3 class="text-sm font-semibold text-[#0d0d0d]">Models</h3>
+            <div class="flex flex-wrap items-center gap-2">
+              {#if account.accountType === 'api_upstream'}
+                <button
+                  class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                  type="button"
+                  disabled={modelState.loading || modelState.saving || modelState.syncing}
+                  onclick={() => syncAccountModels(account.id)}
+                >{modelState.syncing ? 'Syncing' : 'Sync from upstream'}</button>
+              {/if}
+              <button
+                class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                type="submit"
+                disabled={modelState.loading || modelState.saving || modelState.syncing}
+              >{modelState.saving ? 'Saving' : 'Save manual'}</button>
+            </div>
           </div>
-          <p class="text-xs text-[#6e6e6e]">{modelState.loading ? 'Loading models' : `${enabledModels} enabled model${enabledModels === 1 ? '' : 's'}`}</p>
-          <label class="sr-only" for={`provider-account-models-${account.id}`}>Manual models for {accountLabel(account)}</label>
-          <textarea id={`provider-account-models-${account.id}`} class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" placeholder={'gpt-4.1\ngpt-4.1-mini'} bind:value={modelState.text} disabled={modelState.loading || modelState.saving}></textarea>
+          <p class="text-xs text-[#6e6e6e]">{modelSummary.total} total &middot; {modelSummary.synced} synced &middot; {modelSummary.manual} manual &middot; {modelSummary.enabled} enabled</p>
+          <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-models-${account.id}`}>
+            Manual models
+            <textarea
+              id={`provider-account-models-${account.id}`}
+              class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              placeholder={'gpt-4.1\ngpt-4.1-mini'}
+              bind:value={modelState.text}
+              disabled={modelState.loading || modelState.saving || modelState.syncing}
+            ></textarea>
+          </label>
           {#if modelState.items.length > 0}
             <div class="grid max-h-44 gap-1 overflow-y-auto rounded-lg border border-[#ededed] bg-[#fafafa] p-2">
               {#each modelState.items as configuredModel (configuredModel.model)}
-                <div class="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2">
+                <div class="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2">
                   <label class="inline-flex min-w-0 items-center gap-2 text-xs text-[#3c3c3c]">
                     <input
                       class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
                       type="checkbox"
                       checked={configuredModel.enabled}
-                      disabled={modelState.loading || modelState.saving}
+                      disabled={modelState.loading || modelState.saving || modelState.syncing}
                       aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
                       onchange={(event) => {
                         modelState.items = setAccountModelEnabled(modelState.items, configuredModel.model, event.currentTarget.checked);
@@ -1232,11 +1256,21 @@ Enabled
                     />
                     <a class="truncate font-mono text-[13px] text-[#0d0d0d] underline-offset-2 hover:underline" href={modelRoutingHref(configuredModel.model, account)}>{configuredModel.model}</a>
                   </label>
-                  <span class="w-12 text-xs text-[#6e6e6e]">{configuredModel.enabled ? 'On' : 'Off'}</span>
-                  <button class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={modelState.loading || modelState.saving} onclick={() => {
-                    modelState.items = removeAccountModel(modelState.items, configuredModel.model);
-                    modelState.saved = false;
-                  }}>Remove</button>
+                  <span class="text-xs text-[#6e6e6e]">{configuredModel.enabled ? 'On' : 'Off'}</span>
+                  <span class="inline-flex items-center rounded-full border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#6e6e6e]">{sourceBadgeLabel(configuredModel)}</span>
+                  {#if configuredModel.source !== 'upstream'}
+                    <button
+                      class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                      type="button"
+                      disabled={modelState.loading || modelState.saving || modelState.syncing}
+                      onclick={() => {
+                        modelState.items = removeAccountModel(modelState.items, configuredModel.model);
+                        modelState.saved = false;
+                      }}
+                    >Remove</button>
+                  {:else}
+                    <span class="w-[4.5rem]" aria-hidden="true"></span>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -1246,6 +1280,8 @@ Enabled
           {/if}
           {#if modelState.saved}<p class="text-xs text-[#0a7a5e]">Saved.</p>{/if}
           {#if modelState.error}<p class="text-xs text-red-700">{modelState.error}</p>{/if}
+          {#if modelState.syncMessage}<p class="text-xs text-[#0a7a5e]">{modelState.syncMessage}</p>{/if}
+          {#if modelState.syncError}<p class="text-xs text-red-700">{modelState.syncError}</p>{/if}
         </form>
       </div>
 

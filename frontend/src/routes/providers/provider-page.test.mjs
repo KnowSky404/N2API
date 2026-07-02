@@ -812,6 +812,7 @@ test('provider account rows expose manual model controls and routing warning', (
   assert.match(source, /href=\{modelRoutingHref\(configuredModel\.model,\s*account\)\}/);
   assert.match(source, /model=\$\{encodeURIComponent/);
   assert.match(source, /providerAccountId=\$\{encodeURIComponent\(String\(account\.id\)\)\}/);
+  assert.match(source, /<h3[^>]*>Models<\/h3>/);
 });
 
 test('provider account rows hide routing pool memberships from the compact table', () => {
@@ -1247,4 +1248,16 @@ test('syncAccountModels stale response does not overwrite newer result', async (
   assert.equal(state.syncMessage, 'Synced 1 models. 1 new model was added disabled.');
   assert.equal(state.syncing, false);
   assert.equal(state.syncError, '');
+});
+test('provider account edit modal exposes account model sync controls', () => {
+  assert.match(source, /Sync from upstream/);
+  assert.match(source, /Save manual/);
+  assert.match(source, /accountModelSummary/);
+  assert.match(source, /syncAccountModels\(account\.id\)/);
+  assert.match(source, /sourceBadgeLabel\(configuredModel\)/);
+});
+
+test('provider account model list only offers remove for manual models', () => {
+  assert.match(source, /configuredModel\.source !== 'upstream'/);
+  assert.match(source, /Manual models/);
 });
