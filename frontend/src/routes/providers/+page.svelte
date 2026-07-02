@@ -1247,7 +1247,7 @@ Enabled
                       class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
                       type="checkbox"
                       checked={configuredModel.enabled}
-                      disabled={modelState.loading || modelState.saving || modelState.syncing}
+                      disabled={modelState.loading || modelState.saving || modelState.syncing || configuredModel.source === 'upstream'}
                       aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
                       onchange={(event) => {
                         modelState.items = setAccountModelEnabled(modelState.items, configuredModel.model, event.currentTarget.checked);

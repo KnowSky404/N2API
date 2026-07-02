@@ -3063,8 +3063,8 @@ func TestSyncUpstreamAccountModelsFetchesAndSyncs(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("method = %s, want GET", r.Method)
 		}
-		if r.URL.Path != "/models" {
-			t.Errorf("path = %s, want /models", r.URL.Path)
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("path = %s, want /v1/models", r.URL.Path)
 		}
 		if auth := r.Header.Get("Authorization"); auth != "Bearer sk-upstream-key" {
 			t.Errorf("Authorization = %q, want Bearer sk-upstream-key", auth)
@@ -3135,6 +3135,53 @@ func TestSyncUpstreamAccountModelsFetchesAndSyncs(t *testing.T) {
 		if m.Enabled {
 			t.Fatalf("model %s is enabled on second sync, want preserved as disabled", m.Model)
 		}
+	}
+}
+
+func TestSyncUpstreamAccountModelsDoesNotDoubleV1BaseURL(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Errorf("path = %s, want /v1/models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"data":[{"id":"gpt-4"}]}`))
+	}))
+	defer ts.Close()
+
+	repo := newMemoryRepo()
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:              "openai",
+		ClientID:              "client-id",
+		ClientSecret:          "client-secret",
+		RedirectURL:           "http://localhost/oauth/openai/callback",
+		AuthURL:               "https://auth.example.test/authorize",
+		TokenURL:              "https://auth.example.test/token",
+		Secret:                "encryption-secret",
+		AllowHTTPAPIUpstreams: true,
+	})
+
+	account, err := repo.SaveAccount(context.Background(), Account{
+		Provider:    "openai",
+		AccountType: AccountTypeAPIUpstream,
+		Name:        "Legacy upstream",
+		DisplayName: "Legacy upstream",
+		Enabled:     true,
+		Priority:    100,
+		LoadFactor:  1,
+		Status:      AccountStatusActive,
+		Credential: AccountCredential{
+			CredentialType:  CredentialTypeAPIKey,
+			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-upstream-key"),
+			BaseURL:         ts.URL + "/v1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveAccount returned error: %v", err)
+	}
+
+	if _, _, err := service.SyncUpstreamAccountModels(context.Background(), account.ID); err != nil {
+		t.Fatalf("SyncUpstreamAccountModels returned error: %v", err)
 	}
 }
 

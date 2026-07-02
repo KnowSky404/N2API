@@ -1473,9 +1473,10 @@ export async function saveAccountModels(accountId, text) {
   state.error = '';
   state.saved = false;
   try {
+    const manualItems = state.items.filter((item) => item.source !== 'upstream');
     const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models`, {
       method: 'PUT',
-      body: JSON.stringify({ models: mergeAccountModelChanges(state.items, text) })
+      body: JSON.stringify({ models: mergeAccountModelChanges(manualItems, text) })
     });
     if (!isCurrentAuthenticated(version)) return;
     if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;

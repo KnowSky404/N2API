@@ -36,6 +36,7 @@ const {
   selectedProviderAccountIds,
   deleteRoutingPool,
   removeAccountModel,
+  saveAccountModels,
   session,
   setAccountModelEnabled,
   shouldApplyAccountModelsResponse,
@@ -1145,6 +1146,52 @@ test('sourceBadgeLabel maps account model sources', () => {
   assert.equal(sourceBadgeLabel({ source: 'manual' }), 'Manual');
 });
 
+test('saveAccountModels excludes synced rows from manual save payload', async () => {
+  session.authenticated = true;
+  const state = getAccountModelsState(9);
+  state.error = '';
+  state.items = [
+    { model: 'gpt-5', enabled: true, source: 'upstream' },
+    { model: 'gpt-4.1', enabled: false, source: 'manual' }
+  ];
+  state.text = 'gpt-4.1\ncodex-mini';
+  state.saved = false;
+
+  const requests = [];
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({ path, options });
+    if (path === '/api/admin/provider-accounts/9/models') {
+      return new Response(
+        JSON.stringify({
+          models: [
+            { model: 'gpt-4.1', enabled: false, source: 'manual' },
+            { model: 'codex-mini', enabled: true, source: 'manual' }
+          ]
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    if (path === '/api/admin/model-routing') {
+      return new Response(JSON.stringify({ defaultModel: '', allowedModels: [], models: [], warnings: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    throw new Error(`unexpected request ${path}`);
+  };
+
+  await saveAccountModels(9, state.text);
+
+  const saveRequest = requests.find((request) => request.path === '/api/admin/provider-accounts/9/models');
+  assert.ok(saveRequest);
+  assert.deepEqual(JSON.parse(saveRequest.options.body), {
+    models: [
+      { model: 'gpt-4.1', enabled: false },
+      { model: 'codex-mini', enabled: true }
+    ]
+  });
+});
+
 test('syncAccountModels calls sync endpoint and refreshes routing state', async () => {
   session.authenticated = true;
   const state = getAccountModelsState(7);
@@ -1260,4 +1307,11 @@ test('provider account edit modal exposes account model sync controls', () => {
 test('provider account model list only offers remove for manual models', () => {
   assert.match(source, /configuredModel\.source !== 'upstream'/);
   assert.match(source, /Manual models/);
+});
+
+test('provider account model list disables synced row toggles', () => {
+  const toggleLabelIndex = source.indexOf("aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}");
+  assert.notEqual(toggleLabelIndex, -1);
+  const checkboxSource = source.slice(Math.max(0, toggleLabelIndex - 500), toggleLabelIndex + 200);
+  assert.match(checkboxSource, /configuredModel\.source === 'upstream'/);
 });

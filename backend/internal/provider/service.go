@@ -1117,7 +1117,7 @@ func (s *Service) SyncUpstreamAccountModels(ctx context.Context, accountID int64
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
 	}
-	targetURL := strings.TrimRight(selected.BaseURL, "/") + "/models"
+	targetURL := upstreamModelsURL(selected.BaseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
@@ -1172,7 +1172,13 @@ func (s *Service) SyncUpstreamAccountModels(ctx context.Context, accountID int64
 	return s.repo.SyncAccountModels(ctx, s.cfg.Provider, accountID, normalized, time.Now().UTC())
 }
 
-
+func upstreamModelsURL(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(trimmed, "/v1") {
+		return trimmed + "/models"
+	}
+	return trimmed + "/v1/models"
+}
 
 func (s *Service) ListExposedModels(ctx context.Context, allowedModels []string) ([]ExposedModel, error) {
 	return s.repo.ListExposedModels(ctx, s.cfg.Provider, allowedModels)
