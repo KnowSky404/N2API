@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 const expectedFiles = [
+  'src/lib/AuthGate.svelte',
   'src/lib/admin-state.svelte.js',
   'src/routes/+layout.svelte',
   'src/routes/+page.svelte',
@@ -25,6 +26,7 @@ const apiKeysPage = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
 const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
 const opsPage = readFileSync('src/routes/ops/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+const authGate = readFileSync('src/lib/AuthGate.svelte', 'utf8');
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {
   for (const file of expectedFiles) {
@@ -831,4 +833,44 @@ test('admin state derives schedulable gateway capacity', () => {
   assert.match(adminState, /circuitOpenUntil/);
   assert.match(adminState, /export function getRoutableModelCount/);
   assert.match(adminState, /enabledCount/);
+});
+
+test('shared AuthGate component owns loading and sign-in shell', () => {
+  assert.equal(existsSync('src/lib/AuthGate.svelte'), true, 'AuthGate.svelte should exist');
+  const authGateSrc = readFileSync('src/lib/AuthGate.svelte', 'utf8');
+  assert.match(authGateSrc, /import.*login.*loginForm.*session.*from.*admin-state/);
+  assert.match(authGateSrc, /session\.loading/);
+  assert.match(authGateSrc, /!session\.authenticated/);
+  assert.match(authGateSrc, /Loading/);
+  assert.match(authGateSrc, /N2API/);
+  assert.match(authGateSrc, /Sign in to manage this personal gateway/);
+  assert.match(authGateSrc, /session\.error/);
+  assert.match(authGateSrc, /loginForm\.username/);
+  assert.match(authGateSrc, /loginForm\.password/);
+  assert.match(authGateSrc, /loginForm\.error/);
+  assert.match(authGateSrc, /loginForm\.submitting/);
+  assert.match(authGateSrc, /onsubmit=\{login\}/);
+  assert.match(authGateSrc, /Signing in/);
+  assert.match(authGateSrc, /\{@render children\(\)\}/);
+});
+
+test('route pages use shared AuthGate instead of duplicate login forms', () => {
+  const pages = [
+    { name: 'dashboard', path: 'src/routes/+page.svelte' },
+    { name: 'gateway', path: 'src/routes/gateway/+page.svelte' },
+    { name: 'providers', path: 'src/routes/providers/+page.svelte' },
+    { name: 'routing-pools', path: 'src/routes/routing-pools/+page.svelte' },
+    { name: 'models', path: 'src/routes/models/+page.svelte' },
+    { name: 'api-keys', path: 'src/routes/api-keys/+page.svelte' },
+    { name: 'request-logs', path: 'src/routes/request-logs/+page.svelte' },
+    { name: 'ops', path: 'src/routes/ops/+page.svelte' },
+    { name: 'fingerprints', path: 'src/routes/fingerprints/+page.svelte' },
+    { name: 'error-passthrough', path: 'src/routes/error-passthrough/+page.svelte' },
+  ];
+  for (const page of pages) {
+    const src = readFileSync(page.path, 'utf8');
+    assert.match(src, /AuthGate/, `${page.name} page should import AuthGate`);
+    assert.doesNotMatch(src, /Admin access/, `${page.name} page should not repeat 'Admin access' heading`);
+    assert.doesNotMatch(src, /Admin sign in/, `${page.name} page should not repeat 'Admin sign in' heading`);
+  }
 });

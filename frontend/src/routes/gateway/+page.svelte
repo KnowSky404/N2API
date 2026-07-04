@@ -17,8 +17,6 @@
     loadModelRouting,
     loadProviderAccounts,
     loadUsageSummary,
-    login,
-    loginForm,
     modelRouting,
     providerAccounts,
     session,
@@ -26,6 +24,7 @@
     usage
   } from '$lib/admin-state.svelte.js';
 
+  import AuthGate from '$lib/AuthGate.svelte';
   let gatewayRequested = $state(false);
 
   const activeKeys = $derived(getActiveKeys());
@@ -155,43 +154,7 @@
   <title>N2API Gateway</title>
 </svelte:head>
 
-{#if session.loading}
-  <section class="rounded-lg border border-[#ededed] bg-white p-6 text-sm text-[#6e6e6e]">
-    Loading admin session...
-  </section>
-{:else if !session.authenticated}
-  <section class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-    <div class="rounded-lg border border-[#ededed] bg-white p-6">
-      <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Admin access</h2>
-      <p class="mt-3 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
-        Sign in to manage this personal gateway.
-      </p>
-      {#if session.error}
-        <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {session.error}
-        </p>
-      {/if}
-    </div>
-
-    <form class="rounded-lg border border-[#ededed] bg-white p-6" onsubmit={login}>
-      <h2 class="text-lg font-semibold text-[#0d0d0d]">Admin sign in</h2>
-      <label class="mt-5 block text-sm font-medium text-[#3c3c3c]">
-        Username
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={loginForm.username} autocomplete="username" required />
-      </label>
-      <label class="mt-4 block text-sm font-medium text-[#3c3c3c]">
-        Password
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="password" bind:value={loginForm.password} autocomplete="current-password" required />
-      </label>
-      {#if loginForm.error}
-        <p class="mt-3 text-sm text-red-700">{loginForm.error}</p>
-      {/if}
-      <button class="mt-5 rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={loginForm.submitting}>
-        {loginForm.submitting ? 'Signing in' : 'Sign in'}
-      </button>
-    </form>
-  </section>
-{:else}
+<AuthGate>
   <div class="space-y-6">
     <!-- Gateway management header -->
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
@@ -342,42 +305,42 @@
         <form class="mt-4" onsubmit={(event) => { event.preventDefault(); updateGatewaySettings(); }}>
           <dl class="grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Gateway concurrency</dt>
+              <dt class="text-xs font-medium text-[#6e6e6e]">Gateway concurrency</dt>
               <dd class="mt-2">
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.maxConcurrentGatewayRequests} />
                 <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentGatewayRequests)}</span>
               </dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per account concurrency</dt>
+              <dt class="text-xs font-medium text-[#6e6e6e]">Per account concurrency</dt>
               <dd class="mt-2">
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.maxConcurrentRequestsPerAccount} />
                 <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerAccount)}</span>
               </dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per key concurrency</dt>
+              <dt class="text-xs font-medium text-[#6e6e6e]">Per key concurrency</dt>
               <dd class="mt-2">
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.maxConcurrentRequestsPerKey} />
                 <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerKey)}</span>
               </dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Requests per minute</dt>
+              <dt class="text-xs font-medium text-[#6e6e6e]">Requests per minute</dt>
               <dd class="mt-2">
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.requestsPerMinutePerKey} />
                 <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.requestsPerMinutePerKey)}</span>
               </dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Tokens per minute</dt>
+              <dt class="text-xs font-medium text-[#6e6e6e]">Tokens per minute</dt>
               <dd class="mt-2">
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.tokensPerMinutePerKey} />
                 <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewayLimitLabel(gatewaySettings.data.tokensPerMinutePerKey)}</span>
               </dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Request log retention</dt>
+              <dt class="text-xs font-medium text-[#6e6e6e]">Request log retention</dt>
               <dd class="mt-2">
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.requestLogRetentionDays} />
                 <span class="mt-1 block text-xs text-[#6e6e6e]">{gatewaySettings.data.requestLogRetentionDays > 0 ? `${gatewaySettings.data.requestLogRetentionDays} days` : 'Disabled'}</span>
@@ -401,19 +364,19 @@
             </div>
             <div class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-4">
               <div class="rounded-md border border-[#ededed] bg-white p-3">
-                <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Auto-test status</p>
+                <p class="text-xs font-medium text-[#6e6e6e]">Auto-test status</p>
                 <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.providerAccountAutoTestStatus.running ? 'Running' : 'Idle'}</p>
               </div>
               <div class="rounded-md border border-[#ededed] bg-white p-3">
-                <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Last finished</p>
+                <p class="text-xs font-medium text-[#6e6e6e]">Last finished</p>
                 <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.providerAccountAutoTestStatus.lastFinishedAt ? formatDate(gatewaySettings.data.providerAccountAutoTestStatus.lastFinishedAt) : 'Not run yet'}</p>
               </div>
               <div class="rounded-md border border-[#ededed] bg-white p-3">
-                <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Accounts tested</p>
+                <p class="text-xs font-medium text-[#6e6e6e]">Accounts tested</p>
                 <p class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.providerAccountAutoTestStatus.lastAccountCount}</p>
               </div>
               <div class="rounded-md border border-[#ededed] bg-white p-3">
-                <p class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Last error</p>
+                <p class="text-xs font-medium text-[#6e6e6e]">Last error</p>
                 <p class={gatewaySettings.data.providerAccountAutoTestStatus.lastError ? 'mt-2 min-w-0 break-words text-sm font-semibold text-red-700' : 'mt-2 text-sm font-semibold text-[#0d0d0d]'}>
                   {gatewaySettings.data.providerAccountAutoTestStatus.lastError || 'None'}
                 </p>
@@ -487,4 +450,4 @@
       </div>
     </section>
   </div>
-{/if}
+</AuthGate>

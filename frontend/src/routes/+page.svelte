@@ -23,8 +23,6 @@
     loadOpsDashboard,
     loadProviderAccounts,
     loadRequestLogs,
-    login,
-    loginForm,
     logout,
     modelSettings,
     modelRouting,
@@ -44,6 +42,7 @@
     usage
   } from '$lib/admin-state.svelte.js';
 
+  import AuthGate from '$lib/AuthGate.svelte';
   const statusItems = $derived(getStatusItems());
   const activeKeys = $derived(getActiveKeys());
   const schedulableAccounts = $derived(getSchedulableProviderAccounts());
@@ -176,51 +175,14 @@
 <svelte:head>
   <title>N2API Dashboard</title>
 </svelte:head>
-
-{#if session.loading}
-  <section class="rounded-lg border border-[#ededed] bg-white p-6 text-sm text-[#6e6e6e]">
-    Loading admin session...
-  </section>
-{:else if !session.authenticated}
-  <section class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-    <div class="rounded-lg border border-[#ededed] bg-white p-6">
-      <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Admin access</h2>
-      <p class="mt-3 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
-        Sign in to manage this personal gateway.
-      </p>
-      {#if session.error}
-        <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          {session.error}
-        </p>
-      {/if}
-    </div>
-
-    <form class="rounded-lg border border-[#ededed] bg-white p-6" onsubmit={login}>
-      <h2 class="text-lg font-semibold text-[#0d0d0d]">Admin sign in</h2>
-      <label class="mt-5 block text-sm font-medium text-[#3c3c3c]">
-        Username
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={loginForm.username} autocomplete="username" required />
-      </label>
-      <label class="mt-4 block text-sm font-medium text-[#3c3c3c]">
-        Password
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="password" bind:value={loginForm.password} autocomplete="current-password" required />
-      </label>
-      {#if loginForm.error}
-        <p class="mt-3 text-sm text-red-700">{loginForm.error}</p>
-      {/if}
-      <button class="mt-5 rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={loginForm.submitting}>
-        {loginForm.submitting ? 'Signing in' : 'Sign in'}
-      </button>
-    </form>
-  </section>
-{:else}
-  <!-- Status cards row -->
-  <div class="grid gap-4 grid-cols-2 sm:grid-cols-3">
+<AuthGate>
+  <!-- Status row -->
+  <div class="flex flex-wrap gap-6">
     {#each statusItems as item}
-      <article class="rounded-lg border border-[#ededed] bg-white p-5">
+      <div>
         <p class="text-sm font-medium text-[#6e6e6e]">{item.label}</p>
-        <p class="mt-2 text-lg font-semibold capitalize text-[#0d0d0d]">{item.value}</p>
-      </article>
+        <p class="mt-1 text-lg font-semibold capitalize text-[#0d0d0d]">{item.value}</p>
+      </div>
     {/each}
   </div>
 
@@ -279,23 +241,23 @@
         {:else}
           <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-3">
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Gateway concurrency</dt>
+              <dt class="text-sm font-medium text-[#6e6e6e]">Gateway concurrency</dt>
               <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentGatewayRequests)}</dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per account concurrency</dt>
+              <dt class="text-sm font-medium text-[#6e6e6e]">Per account concurrency</dt>
               <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerAccount)}</dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Per key concurrency</dt>
+              <dt class="text-sm font-medium text-[#6e6e6e]">Per key concurrency</dt>
               <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerKey)}</dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Requests per minute</dt>
+              <dt class="text-sm font-medium text-[#6e6e6e]">Requests per minute</dt>
               <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.requestsPerMinutePerKey)}</dd>
             </div>
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-              <dt class="text-xs font-medium uppercase tracking-wide text-[#6e6e6e]">Tokens per minute</dt>
+              <dt class="text-sm font-medium text-[#6e6e6e]">Tokens per minute</dt>
               <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.tokensPerMinutePerKey)}</dd>
             </div>
           </dl>
@@ -460,7 +422,7 @@
             </div>
             <div class="grid gap-0 lg:grid-cols-3">
               <div class="border-b border-[#ededed] p-4 lg:border-b-0 lg:border-r">
-                <h4 class="text-xs font-semibold uppercase text-[#6e6e6e]">Top cost models</h4>
+                <h4 class="text-sm font-semibold text-[#6e6e6e]">Top cost models</h4>
                 <div class="mt-3 space-y-2">
                   {#each (opsMonitor.costBreakdown.topModels ?? []).slice(0, 3) as bucket}
                     <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-sm">
@@ -473,7 +435,7 @@
                 </div>
               </div>
               <div class="border-b border-[#ededed] p-4 lg:border-b-0 lg:border-r">
-                <h4 class="text-xs font-semibold uppercase text-[#6e6e6e]">Top cost provider accounts</h4>
+                <h4 class="text-sm font-semibold text-[#6e6e6e]">Top cost provider accounts</h4>
                 <div class="mt-3 space-y-2">
                   {#each (opsMonitor.costBreakdown.topProviderAccounts ?? []).slice(0, 3) as bucket}
                     <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-sm">
@@ -486,7 +448,7 @@
                 </div>
               </div>
               <div class="p-4">
-                <h4 class="text-xs font-semibold uppercase text-[#6e6e6e]">Top cost API keys</h4>
+                <h4 class="text-sm font-semibold text-[#6e6e6e]">Top cost API keys</h4>
                 <div class="mt-3 space-y-2">
                   {#each (opsMonitor.costBreakdown.topClientKeys ?? []).slice(0, 3) as bucket}
                     <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-sm">
@@ -528,4 +490,4 @@
       </div>
     </article>
   </section>
-{/if}
+</AuthGate>

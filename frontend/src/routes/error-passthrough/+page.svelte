@@ -5,12 +5,11 @@
     errorPassthroughRules,
     formatDate,
     loadErrorPassthroughRules,
-    login,
-    loginForm,
     session,
     updateErrorPassthroughRule,
   } from '$lib/admin-state.svelte.js';
 
+  import AuthGate from '$lib/AuthGate.svelte';
   let requested = $state(false);
   let showForm = $state(false);
   let editingId = $state(/** @type {number|null} */ null);
@@ -72,25 +71,7 @@ async function handleDelete(id, pattern) {
   <title>N2API Error Passthrough</title>
 </svelte:head>
 
-{#if session.loading}
-  <section class="rounded-lg border border-[#ededed] bg-white p-6 text-sm text-[#6e6e6e]">Loading...</section>
-{:else if !session.authenticated}
-  <section class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-    <div class="rounded-lg border border-[#ededed] bg-white p-6">
-      <h2 class="text-2xl font-semibold text-[#0d0d0d]">Admin access</h2>
-    </div>
-    <form class="rounded-lg border border-[#ededed] bg-white p-6" onsubmit={login}>
-      <h2 class="text-lg font-semibold text-[#0d0d0d]">Admin sign in</h2>
-      <label class="mt-5 block text-sm font-medium text-[#3c3c3c]">Username
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={loginForm.username} autocomplete="username" required />
-      </label>
-      <label class="mt-4 block text-sm font-medium text-[#3c3c3c]">Password
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="password" bind:value={loginForm.password} autocomplete="current-password" required />
-      </label>
-      <button class="mt-5 rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white" disabled={loginForm.submitting}>{loginForm.submitting ? 'Signing in' : 'Sign in'}</button>
-    </form>
-  </section>
-{:else}
+<AuthGate>
   <div class="space-y-6">
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
       <div class="flex flex-wrap items-start justify-between gap-4">
@@ -148,7 +129,7 @@ async function handleDelete(id, pattern) {
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
-              <tr class="border-b border-[#ededed] text-left text-xs font-medium uppercase text-[#6e6e6e]">
+              <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                 <th class="px-4 py-3">Pattern</th>
                 <th class="px-4 py-3">Match type</th>
                 <th class="px-4 py-3">Description</th>
@@ -179,4 +160,4 @@ async function handleDelete(id, pattern) {
       {/if}
     </section>
   </div>
-{/if}
+</AuthGate>

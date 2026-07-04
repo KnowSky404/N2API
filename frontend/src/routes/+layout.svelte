@@ -26,7 +26,8 @@
     CircleUser,
     ChevronDown,
     Lock,
-    LogOut
+    LogOut,
+    Menu
   } from 'lucide-svelte';
 
   let { children } = $props();
@@ -126,24 +127,23 @@
 
 <svelte:window onkeydown={handleGlobalKeydown} />
 
-<main class="min-h-screen bg-[#fafafa] text-[#0d0d0d]">
+<main class="min-h-screen bg-white text-[#0d0d0d]">
   <div class="flex min-h-screen">
     <!-- Desktop sidebar -->
     <aside
-      class="sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[#ededed] bg-white transition-all duration-200 lg:flex"
+      class="sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[#ededed] bg-[#f9f9f9] transition-all duration-200 lg:flex"
       class:w-56={!sidebarCollapsed}
       class:w-14={sidebarCollapsed}
     >
       <!-- Header area -->
-      <div class="flex items-center gap-2 px-3 py-4" class:px-2={sidebarCollapsed}>
+      <div class="flex items-center gap-2 px-3 py-3" class:px-2={sidebarCollapsed}>
         {#if !sidebarCollapsed}
           <div class="min-w-0">
-            <p class="text-xs font-medium text-[#6e6e6e]">Personal AI Gateway</p>
-            <h1 class="mt-0.5 text-lg font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+            <p class="text-sm font-semibold text-[#6e6e6e]">N2API</p>
           </div>
         {/if}
         <button
-          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#8e8e8e] hover:bg-[#e8e8e8] hover:text-[#3c3c3c]"
           class:ml-auto={!sidebarCollapsed}
           class:mx-auto={sidebarCollapsed}
           onclick={toggleSidebar}
@@ -165,8 +165,8 @@
               'group flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition',
               sidebarCollapsed ? 'justify-center px-0' : '',
               isActive(item.href)
-                ? 'bg-[#0d0d0d] text-white'
-                : 'text-[#3c3c3c] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]'
+                ? 'bg-[#f0f0f0] text-[#0d0d0d]'
+                : 'text-[#8e8e8e] hover:bg-[#f0f0f0] hover:text-[#3c3c3c]'
             ]}
             href={item.href}
             title={sidebarCollapsed ? item.label : undefined}
@@ -179,8 +179,8 @@
         {/each}
       </nav>
 
-      <!-- Status -->
-      <div class="px-2 pt-3" class:px-1.5={sidebarCollapsed}>
+      <!-- Status (collapsed: green dot only) -->
+      <div class="mt-4 px-3" class:px-2={sidebarCollapsed}>
         {#if sidebarCollapsed}
           <div class="flex justify-center" title="{shellStatus} &middot; Provider: {providerStateLabel}">
             <span
@@ -191,19 +191,16 @@
             ></span>
           </div>
         {:else}
-          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-3 text-sm">
-            <div class="flex items-center justify-between gap-3">
-              <span class="font-medium text-[#3c3c3c]">Status</span>
+          <div class="rounded-lg px-2 py-1.5 text-xs">
+            <div class="flex items-center gap-2">
               <span
                 class={[
-                  'rounded-full px-2 py-0.5 text-xs font-medium',
-                  health.error ? 'bg-red-50 text-red-700' : 'bg-[#e8f5f0] text-[#0a7a5e]'
+                  'h-1.5 w-1.5 rounded-full shrink-0',
+                  health.error ? 'bg-red-500' : 'bg-[#10a37f]'
                 ]}
-              >
-                {shellStatus}
-              </span>
+              ></span>
+              <span class="text-[#8e8e8e]">{shellStatus}</span>
             </div>
-            <p class="mt-2 text-xs capitalize text-[#6e6e6e]">Provider: {providerStateLabel}</p>
           </div>
         {/if}
       </div>
@@ -213,27 +210,27 @@
         {#if session.authenticated}
           <button
             class={[
-              'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]',
+              'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-[#f0f0f0]',
               sidebarCollapsed ? 'justify-center px-0' : ''
             ]}
             onclick={toggleUserDropdown}
           >
-            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f5f5f5]">
+            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#e8e8e8]">
               <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
             </div>
             {#if !sidebarCollapsed}
-              <span class="truncate text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</span>
+              <span class="truncate text-sm font-medium text-[#3c3c3c]">{session.username || 'admin'}</span>
               <span class="ml-auto transition-transform" class:rotate-180={userDropdownOpen}>
-                <ChevronDown class="h-3.5 w-3.5 text-[#9b9b9b]" />
+                <ChevronDown class="h-3.5 w-3.5 text-[#8e8e8e]" />
               </span>
             {/if}
           </button>
         {:else}
           <div class={sidebarCollapsed ? 'flex justify-center' : 'px-2'}>
             {#if sidebarCollapsed}
-              <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
+              <CircleUser class="h-4 w-4 text-[#8e8e8e]" />
             {:else}
-              <p class="text-sm text-[#6e6e6e]">Sign in required</p>
+              <p class="text-sm text-[#8e8e8e]">Sign in required</p>
             {/if}
           </div>
         {/if}
@@ -244,7 +241,7 @@
     <section class="min-w-0 flex-1">
       <!-- Mobile header bar -->
       <header
-        class="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 border-b border-[#ededed] bg-white/95 px-4 py-3 backdrop-blur lg:hidden"
+        class="sticky top-0 z-10 flex items-center justify-between border-b border-[#ededed] bg-white/95 px-4 py-3 backdrop-blur lg:hidden"
       >
         <div class="flex items-center gap-2 min-w-0">
           <button
@@ -255,55 +252,37 @@
             {#if mobileSidebarOpen}
               <PanelLeftClose class="h-4 w-4" />
             {:else}
-              <PanelLeftOpen class="h-4 w-4" />
+              <Menu class="h-4 w-4" />
             {/if}
           </button>
-          <div class="min-w-0 flex-1">
-            <p class="text-sm font-medium text-[#6e6e6e]">Personal AI Gateway</p>
-            <h1 class="text-xl font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+          <div class="min-w-0">
+            <p class="text-sm font-semibold text-[#6e6e6e]">N2API</p>
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-2">
           {#if session.authenticated}
             <button
-              class="flex items-center gap-1.5 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[#3c3c3c] hover:bg-[#f5f5f5]"
               onclick={toggleUserDropdown}
             >
               <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
               <span class="hidden sm:inline-block max-w-[120px] truncate">{session.username || 'admin'}</span>
-              <ChevronDown class="h-3.5 w-3.5 text-[#9b9b9b]" />
             </button>
           {/if}
         </div>
-        <!-- Mobile nav scroll -->
-        <nav class="flex w-full gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none">
-          {#each navItems as item}
-            <a
-              class={[
-                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium',
-                isActive(item.href) ? 'bg-[#0d0d0d] text-white' : 'bg-[#f5f5f5] text-[#3c3c3c]'
-              ]}
-              href={item.href}
-            >
-              <item.icon class="h-4 w-4" />
-              {item.label}
-            </a>
-          {/each}
-        </nav>
       </header>
 
       <!-- Mobile sidebar overlay -->
       {#if mobileSidebarOpen}
         <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
         <div class="fixed inset-0 z-20 bg-black/30 lg:hidden" onclick={() => (mobileSidebarOpen = false)}></div>
-        <aside class="fixed left-0 top-0 z-30 flex h-full w-56 flex-col bg-white border-r border-[#ededed] lg:hidden">
-          <div class="flex items-center gap-2 px-3 py-4">
+        <aside class="fixed left-0 top-0 z-30 flex h-full w-56 flex-col bg-[#f9f9f9] border-r border-[#ededed] lg:hidden">
+          <div class="flex items-center gap-2 px-3 py-3">
             <div class="min-w-0">
-              <p class="text-xs font-medium text-[#6e6e6e]">Personal AI Gateway</p>
-              <h1 class="mt-0.5 text-lg font-semibold leading-tight tracking-normal text-[#0d0d0d]">N2API</h1>
+              <p class="text-sm font-semibold text-[#6e6e6e]">N2API</p>
             </div>
             <button
-              class="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+              class="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#8e8e8e] hover:bg-[#e8e8e8] hover:text-[#3c3c3c]"
               onclick={() => (mobileSidebarOpen = false)}
               aria-label="Close menu"
             >
@@ -317,8 +296,8 @@
                 class={[
                   'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition',
                   isActive(item.href)
-                    ? 'bg-[#0d0d0d] text-white'
-                    : 'text-[#3c3c3c] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]'
+                    ? 'bg-[#f0f0f0] text-[#0d0d0d]'
+                    : 'text-[#8e8e8e] hover:bg-[#f0f0f0] hover:text-[#3c3c3c]'
                 ]}
                 href={item.href}
                 onclick={() => (mobileSidebarOpen = false)}
@@ -329,20 +308,15 @@
             {/each}
           </nav>
 
-          <div class="px-2 pt-3">
-            <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-3 text-sm">
-              <div class="flex items-center justify-between gap-3">
-                <span class="font-medium text-[#3c3c3c]">Status</span>
-                <span
-                  class={[
-                    'rounded-full px-2 py-0.5 text-xs font-medium',
-                    health.error ? 'bg-red-50 text-red-700' : 'bg-[#e8f5f0] text-[#0a7a5e]'
-                  ]}
-                >
-                  {shellStatus}
-                </span>
-              </div>
-              <p class="mt-2 text-xs capitalize text-[#6e6e6e]">Provider: {providerStateLabel}</p>
+          <div class="px-3 pt-3">
+            <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs">
+              <span
+                class={[
+                  'h-1.5 w-1.5 rounded-full shrink-0',
+                  health.error ? 'bg-red-500' : 'bg-[#10a37f]'
+                ]}
+              ></span>
+              <span class="text-[#8e8e8e]">{shellStatus}</span>
             </div>
           </div>
 
@@ -350,31 +324,31 @@
             {#if session.authenticated}
               <div class="px-2 py-2">
                 <div class="flex items-center gap-2">
-                  <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f5f5f5]">
+                  <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#e8e8e8]">
                     <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
-                    <p class="text-xs text-[#6e6e6e]">Signed in</p>
+                    <p class="text-sm font-medium text-[#3c3c3c]">{session.username || 'admin'}</p>
+                    <p class="text-xs text-[#8e8e8e]">Signed in</p>
                   </div>
                 </div>
               </div>
               <button
-                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
                 onclick={openPasswordModal}
               >
-                <Lock class="h-4 w-4 text-[#6e6e6e]" />
+                <Lock class="h-4 w-4 text-[#8e8e8e]" />
                 Change password
               </button>
               <button
-                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
                 onclick={logout}
               >
-                <LogOut class="h-4 w-4 text-[#6e6e6e]" />
+                <LogOut class="h-4 w-4 text-[#8e8e8e]" />
                 Sign out
               </button>
             {:else}
-              <p class="px-2 text-sm text-[#6e6e6e]">Sign in required</p>
+              <p class="px-2 text-sm text-[#8e8e8e]">Sign in required</p>
             {/if}
           </div>
         </aside>
@@ -395,7 +369,7 @@
   <div class="fixed z-50 min-w-[160px] rounded-lg border border-[#ededed] bg-white py-1 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" style="bottom: 3.5rem; left: 1rem;">
     <div class="border-b border-[#ededed] px-3 py-2">
       <p class="text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
-      <p class="text-xs text-[#6e6e6e]">Signed in</p>
+      <p class="text-xs text-[#8e8e8e]">Signed in</p>
     </div>
     <button
       class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"

@@ -3,13 +3,12 @@
     formatCostMicrousd,
     formatDate,
     formatTokens,
-    login,
-    loginForm,
     opsMonitor,
     loadOpsDashboard,
     session,
   } from '$lib/admin-state.svelte.js';
 
+  import AuthGate from '$lib/AuthGate.svelte';
   let range = $state('24h');
   const maxLatCount = $derived(opsMonitor.latency?.buckets?.length ? Math.max(...opsMonitor.latency.buckets.map((/** @type {{count: number}} */ b) => b.count), 1) : 0);
 
@@ -129,37 +128,7 @@
   <title>N2API Ops Monitor</title>
 </svelte:head>
 
-{#if session.loading}
-  <section class="rounded-lg border border-[#ededed] bg-white p-6 text-sm text-[#6e6e6e]">
-    Loading admin session...
-  </section>
-{:else if !session.authenticated}
-  <section class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-    <div class="rounded-lg border border-[#ededed] bg-white p-6">
-      <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Admin access</h2>
-      <p class="mt-3 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
-        Sign in to access ops monitoring.
-      </p>
-    </div>
-    <form class="rounded-lg border border-[#ededed] bg-white p-6" onsubmit={login}>
-      <h2 class="text-lg font-semibold text-[#0d0d0d]">Admin sign in</h2>
-      <label class="mt-5 block text-sm font-medium text-[#3c3c3c]">
-        Username
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={loginForm.username} autocomplete="username" required />
-      </label>
-      <label class="mt-4 block text-sm font-medium text-[#3c3c3c]">
-        Password
-        <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="password" bind:value={loginForm.password} autocomplete="current-password" required />
-      </label>
-      {#if loginForm.error}
-        <p class="mt-3 text-sm text-red-700">{loginForm.error}</p>
-      {/if}
-      <button class="mt-5 rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={loginForm.submitting}>
-        {loginForm.submitting ? 'Signing in' : 'Sign in'}
-      </button>
-    </form>
-  </section>
-{:else}
+<AuthGate>
   <div class="space-y-6">
     <!-- Header -->
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
@@ -486,7 +455,7 @@
             <div class="mt-4 overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
-                  <tr class="border-b border-[#ededed] text-left text-xs font-medium uppercase text-[#6e6e6e]">
+                  <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                     <th class="py-2 pr-4">Checked</th>
                     <th class="py-2 pr-4">Account</th>
                     <th class="py-2 pr-4">Type</th>
@@ -530,7 +499,7 @@
           <div class="mt-4 overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
-                <tr class="border-b border-[#ededed] text-left text-xs font-medium uppercase text-[#6e6e6e]">
+                <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                   <th class="py-2 pr-4">Time</th>
                   <th class="py-2 pr-4 text-right">Requests</th>
                   <th class="py-2 pr-4 text-right">Tokens</th>
@@ -564,7 +533,7 @@
           <div class="mt-4 overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
-                <tr class="border-b border-[#ededed] text-left text-xs font-medium uppercase text-[#6e6e6e]">
+                <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                   <th class="py-2 pr-4">Time</th>
                   <th class="py-2 pr-4 text-right">Total</th>
                   <th class="py-2 pr-4 text-right">4xx</th>
@@ -614,4 +583,4 @@
       {/if}
     {/if}
   </div>
-{/if}
+</AuthGate>
