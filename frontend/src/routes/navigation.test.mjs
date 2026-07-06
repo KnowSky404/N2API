@@ -760,7 +760,7 @@ test('api keys page keeps budget exceeded diagnostics reachable', () => {
 });
 
 test('api keys page filters key list locally', () => {
-  for (const label of ['Search keys', 'Status filter', 'All keys', 'Active keys', 'Disabled keys', 'Revoked keys']) {
+  for (const label of ['Search keys', 'Status filter', 'All keys', 'Active keys', 'Disabled keys', 'Deleted keys']) {
     assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
   }
 
