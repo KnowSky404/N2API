@@ -1,5 +1,6 @@
 <script>
   import { page } from '$app/state';
+  import { X } from 'lucide-svelte';
   import {
     apiKeys,
     createRoutingPool,
@@ -23,6 +24,7 @@
   let routingPoolSearch = $state('');
   let routingPoolStatusFilter = $state('all');
   let showCreateModal = $state(false);
+  let editingRoutingPoolId = $state(0);
   const visibleRoutingPools = $derived(
     routingPools.items.filter((pool) => {
       if (selectedRoutingPoolId !== 'all' && String(pool.id) !== selectedRoutingPoolId) return false;
@@ -31,6 +33,10 @@
       if (!query) return true;
       return poolSearchText(pool).includes(query);
     })
+  );
+
+  const editingRoutingPool = $derived(
+    routingPools.items.find((pool) => pool.id === editingRoutingPoolId) ?? null
   );
 
   /** @param {string} search */
@@ -69,6 +75,20 @@
     if (!routingPools.error) {
       showCreateModal = false;
     }
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function routingPoolLabel(pool) {
+    return pool.name || `Pool ${pool.id}`;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function openRoutingPoolEditor(pool) {
+    editingRoutingPoolId = pool.id;
+  }
+
+  function closeRoutingPoolEditor() {
+    editingRoutingPoolId = 0;
   }
 
   /**
@@ -398,178 +418,320 @@
         No routing pool matches this link.
       </p>
     {:else}
-      <div class="mt-6 grid gap-4">
-        {#each visibleRoutingPools as pool (pool.id)}
-          <article id={`routing-pool-${pool.id}`} class="scroll-mt-6 rounded-lg border border-[#ededed] bg-white p-4">
-            <div class="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,260px)_minmax(0,1fr)_auto]">
-              <label class="text-sm font-medium text-[#3c3c3c]">
-                Name
-                <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={pool.name} />
-              </label>
-              <label class="text-sm font-medium text-[#3c3c3c]">
-                Description
-                <input class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={pool.description} />
-              </label>
-              <label class="text-sm font-medium text-[#3c3c3c]">
-                Fallback pool
-                <select
-                  class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-                  bind:value={pool.fallbackPoolId}
-                >
-                  <option value={0}>No fallback</option>
-                  {#each routingPools.items as candidate}
-                    <option value={candidate.id} disabled={pool.id === candidate.id}>{candidate.name}</option>
-                  {/each}
-                </select>
-                {#if fallbackPoolHref(pool)}
-                  <a
-                    class="mt-2 inline-flex text-xs font-medium text-[#0a7a5e] underline-offset-2 hover:underline"
-                    href={fallbackPoolHref(pool)}
-                  >
-                    Open fallback pool
-                  </a>
-                {/if}
-                {#if fallbackWarning(pool)}
-                  <span class="mt-2 block rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">{fallbackWarning(pool)}</span>
-                {/if}
-              </label>
-              <div class="flex items-end gap-2">
-                <label class="flex items-center gap-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#3c3c3c]">
-                  <input type="checkbox" bind:checked={pool.enabled} />
-                  Enabled
-                </label>
-                <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => updateRoutingPool(pool)}>
-                  Save
-                </button>
-                <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => deleteRoutingPool(pool.id)}>
-                  Delete
-                </button>
-              </div>
-            </div>
-
-            <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#ededed] pt-4">
-              <div>
-                <h3 class="text-base font-semibold text-[#0d0d0d]">Pool accounts</h3>
-                <p class="mt-1 text-sm text-[#6e6e6e]">Created {formatDate(pool.createdAt)}. Pool priority overrides account priority inside this pool.</p>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <a
-                  class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                  href={`/request-logs?routingPoolId=${pool.id}`}
-                  title="View request logs"
-                  aria-label="View request logs"
-                >
-                  Logs
-                </a>
-                {#if routingPoolFallbackChainLogsHref(pool)}
-                  <a
-                    class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                    href={routingPoolFallbackChainLogsHref(pool)}
-                    title="View fallback chain logs"
-                    aria-label="View fallback chain logs"
-                  >
-                    Chain logs
-                  </a>
-                {/if}
-                <a
-                  class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                  href={`/api-keys?routingPoolId=${pool.id}`}
-                  title="View API keys"
-                  aria-label="View API keys"
-                >
-                  API keys
-                </a>
-                <a
-                  class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                  href={routingPoolDiagnosticsHref(pool)}
-                  title="View routing diagnostics"
-                  aria-label="View routing diagnostics"
-                >
-                  Diagnostics
-                </a>
-                <button class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
-                  Save membership
-                </button>
-              </div>
-            </div>
-
-            <dl class="mt-4 grid gap-3 sm:grid-cols-3">
-              <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-                <dt class="text-xs font-medium text-[#6e6e6e]">Pool members</dt>
-                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{(pool.accounts ?? []).length}</dd>
-              </div>
-              <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-                <dt class="text-xs font-medium text-[#6e6e6e]">Schedulable members</dt>
-                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : schedulablePoolMemberCount(pool)}</dd>
-              </div>
-              <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-                <dt class="text-xs font-medium text-[#6e6e6e]">Bound API keys</dt>
-                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{apiKeys.loading ? 'Loading' : boundAPIKeyCount(pool)}</dd>
-              </div>
-            </dl>
-
-            {#if providerAccounts.loading}
-              <p class="mt-4 text-sm text-[#6e6e6e]">Loading provider accounts...</p>
-            {:else if providerAccounts.items.length === 0}
-              <p class="mt-4 text-sm text-[#6e6e6e]">No provider accounts available.</p>
-            {:else}
-              <div class="mt-4 overflow-x-auto">
-                <table class="min-w-full divide-y divide-[#ededed] text-left text-sm">
-                  <thead class="text-xs text-[#6e6e6e]">
-                    <tr>
-                      <th class="py-2 pr-3 font-medium">Include</th>
-                      <th class="px-3 py-2 font-medium">Account</th>
-                      <th class="px-3 py-2 font-medium">Type</th>
-                      <th class="px-3 py-2 font-medium">Status</th>
-                      <th class="px-3 py-2 font-medium">Pool priority</th>
-                      <th class="px-3 py-2 text-right font-medium">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-[#f3f3f3]">
-                    {#each poolAccountRows(pool) as account (account.id)}
-                      <tr>
-                        <td class="py-2 pr-3">
-                          <input
-                            type="checkbox"
-                            checked={poolHasAccount(pool, account.id)}
-                            onchange={(event) => setPoolAccount(pool, account.id, event.currentTarget.checked)}
-                          />
-                        </td>
-                        <td class="px-3 py-2">
-                          <div class="font-medium text-[#0d0d0d]">{accountDisplayName(account)}</div>
-                          <div class="font-mono text-xs text-[#6e6e6e]">#{account.id}</div>
-                        </td>
-                        <td class="px-3 py-2 text-[#3c3c3c]">{account.accountType}</td>
-                        <td class="px-3 py-2 text-[#3c3c3c]">{account.enabled ? account.status : 'disabled'}</td>
-                        <td class="px-3 py-2">
-                          <input
-                            class="w-24 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-sm text-[#0d0d0d]"
-                            type="number"
-                            min="0"
-                            value={poolAccountPriority(pool, account.id)}
-                            disabled={!poolHasAccount(pool, account.id)}
-                            onchange={(event) => setPoolAccountPriority(pool, account.id, event.currentTarget.value)}
-                          />
-                        </td>
-                        <td class="px-3 py-2 text-right">
-                          <a
-                            class="inline-flex rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                            href={`/providers?providerAccountId=${account.id}`}
-                            title="View provider account"
-                            aria-label="View provider account"
-                          >
-                            Provider
-                          </a>
-                        </td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            {/if}
-          </article>
-        {/each}
+      <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+        <table class="w-full min-w-[980px] text-left text-sm">
+          <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+            <tr>
+              <th class="px-4 py-3 font-medium">Pool</th>
+              <th class="px-4 py-3 font-medium">Enabled</th>
+              <th class="px-4 py-3 font-medium">Fallback</th>
+              <th class="px-4 py-3 font-medium">Members</th>
+              <th class="px-4 py-3 font-medium">Schedulable</th>
+              <th class="px-4 py-3 font-medium">Bound keys</th>
+              <th class="px-4 py-3 font-medium">Created</th>
+              <th class="sticky right-0 z-10 bg-[#f5f5f5] px-3 py-3 text-right font-medium shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#ededed]">
+            {#each visibleRoutingPools as pool (pool.id)}
+              <tr class="bg-white align-top">
+                <td class="px-4 py-3 align-middle">
+                  <p class="max-w-[22rem] truncate font-medium text-[#0d0d0d]">{routingPoolLabel(pool)}</p>
+                  {#if pool.description}
+                    <p class="mt-1 max-w-[22rem] truncate text-[#6e6e6e]">{pool.description}</p>
+                  {/if}
+                </td>
+                <td class="px-4 py-3 align-middle">
+                  <label class="inline-flex items-center gap-0 text-sm font-medium text-[#3c3c3c]" title={pool.enabled ? 'Enabled' : 'Disabled'}>
+                    <input
+                      class="peer sr-only"
+                      type="checkbox"
+                      role="switch"
+                      checked={pool.enabled}
+                      disabled={routingPools.saving}
+                      aria-label={`Set ${routingPoolLabel(pool)} ${pool.enabled ? 'disabled' : 'enabled'}`}
+                      onchange={(event) => {
+                        pool.enabled = event.currentTarget.checked;
+                        void updateRoutingPool(pool);
+                      }}
+                    />
+                    <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
+                  </label>
+                </td>
+                <td class="px-4 py-3 align-middle">
+                  {#if pool.fallbackPoolName}
+                    <a
+                      class="text-[#0a7a5e] underline-offset-2 hover:underline"
+                      href={fallbackPoolHref(pool)}
+                    >
+                      {pool.fallbackPoolName}
+                    </a>
+                    {#if fallbackWarning(pool)}
+                      <span class="mt-1 block rounded-md bg-amber-50 p-1 text-xs leading-5 text-amber-700">{fallbackWarning(pool)}</span>
+                    {/if}
+                  {:else}
+                    <span class="text-[#9b9b9b]">—</span>
+                  {/if}
+                </td>
+                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]">{(pool.accounts ?? []).length}</td>
+                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]">{schedulablePoolMemberCount(pool)}</td>
+                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]">{boundAPIKeyCount(pool)}</td>
+                <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(pool.createdAt)}</td>
+                <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+                  <div class="relative flex justify-end gap-2 whitespace-nowrap">
+                    <button
+                      class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                      type="button"
+                      disabled={routingPools.saving}
+                      onclick={() => openRoutingPoolEditor(pool)}
+                      title="Edit pool"
+                      aria-label="Edit pool"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      class="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      type="button"
+                      disabled={routingPools.saving}
+                      onclick={() => deleteRoutingPool(pool.id)}
+                      title="Delete pool"
+                      aria-label="Delete pool"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </div>
     {/if}
   </section>
+
+{#if editingRoutingPool}
+  {@const pool = editingRoutingPool}
+  <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+  <div
+    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
+    role="presentation"
+    onclick={(event) => event.target === event.currentTarget && closeRoutingPoolEditor()}
+  >
+    <div class="grid w-full max-w-4xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${routingPoolLabel(pool)}`}>
+      <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
+        <div class="min-w-0">
+          <h2 class="truncate text-lg font-semibold text-[#0d0d0d]">Edit routing pool</h2>
+          <p class="mt-1 truncate text-sm text-[#6e6e6e]">{routingPoolLabel(pool)}</p>
+        </div>
+        <button
+          class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+          type="button"
+          onclick={closeRoutingPoolEditor}
+          aria-label="Close edit pool modal"
+          title="Close"
+        >
+          <X class="size-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div class="grid gap-5">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`routing-pool-name-${pool.id}`}>
+            Name
+            <input
+              id={`routing-pool-name-${pool.id}`}
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={pool.name}
+            />
+          </label>
+          <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`routing-pool-description-${pool.id}`}>
+            Description
+            <input
+              id={`routing-pool-description-${pool.id}`}
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={pool.description}
+            />
+          </label>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`routing-pool-fallback-${pool.id}`}>
+            Fallback pool
+            <select
+              id={`routing-pool-fallback-${pool.id}`}
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={pool.fallbackPoolId}
+            >
+              <option value={0}>No fallback</option>
+              {#each routingPools.items as candidate}
+                <option value={candidate.id} disabled={pool.id === candidate.id}>{candidate.name}</option>
+              {/each}
+            </select>
+            {#if fallbackPoolHref(pool)}
+              <a
+                class="mt-1 inline-flex text-xs font-medium text-[#0a7a5e] underline-offset-2 hover:underline"
+                href={fallbackPoolHref(pool)}
+              >
+                Open fallback pool
+              </a>
+            {/if}
+            {#if fallbackWarning(pool)}
+              <span class="mt-1 block rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">{fallbackWarning(pool)}</span>
+            {/if}
+          </label>
+          <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={pool.enabled ? 'Enabled' : 'Disabled'}>
+            <input
+              class="peer sr-only"
+              type="checkbox"
+              role="switch"
+              checked={pool.enabled}
+              disabled={routingPools.saving}
+              aria-label={`Set ${routingPoolLabel(pool)} ${pool.enabled ? 'disabled' : 'enabled'}`}
+              onchange={(event) => {
+                pool.enabled = event.currentTarget.checked;
+                void updateRoutingPool(pool);
+              }}
+            />
+            <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
+            <span class="text-xs text-[#6e6e6e]">{pool.enabled ? 'Enabled' : 'Disabled'}</span>
+          </label>
+          <div class="flex items-end gap-2">
+            <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => updateRoutingPool(pool)}>
+              Save
+            </button>
+            <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => { deleteRoutingPool(pool.id); closeRoutingPoolEditor(); }}>
+              Delete
+            </button>
+          </div>
+        </div>
+
+        <dl class="grid gap-3 sm:grid-cols-3">
+          <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+            <dt class="text-xs font-medium text-[#6e6e6e]">Pool members</dt>
+            <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{(pool.accounts ?? []).length}</dd>
+          </div>
+          <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+            <dt class="text-xs font-medium text-[#6e6e6e]">Schedulable members</dt>
+            <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{schedulablePoolMemberCount(pool)}</dd>
+          </div>
+          <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
+            <dt class="text-xs font-medium text-[#6e6e6e]">Bound API keys</dt>
+            <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{boundAPIKeyCount(pool)}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="border-t border-[#ededed] pt-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-base font-semibold text-[#0d0d0d]">Pool accounts</h3>
+            <p class="mt-1 text-sm text-[#6e6e6e]">Created {formatDate(pool.createdAt)}. Pool priority overrides account priority inside this pool.</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <a
+              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              href={`/request-logs?routingPoolId=${pool.id}`}
+              title="View request logs"
+              aria-label="View request logs"
+            >
+              Logs
+            </a>
+            {#if routingPoolFallbackChainLogsHref(pool)}
+              <a
+                class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                href={routingPoolFallbackChainLogsHref(pool)}
+                title="View fallback chain logs"
+                aria-label="View fallback chain logs"
+              >
+                Chain logs
+              </a>
+            {/if}
+            <a
+              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              href={`/api-keys?routingPoolId=${pool.id}`}
+              title="View API keys"
+              aria-label="View API keys"
+            >
+              API keys
+            </a>
+            <a
+              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              href={routingPoolDiagnosticsHref(pool)}
+              title="View routing diagnostics"
+              aria-label="View routing diagnostics"
+            >
+              Diagnostics
+            </a>
+          </div>
+        </div>
+
+        {#if providerAccounts.loading}
+          <p class="mt-4 text-sm text-[#6e6e6e]">Loading provider accounts...</p>
+        {:else if providerAccounts.items.length === 0}
+          <p class="mt-4 text-sm text-[#6e6e6e]">No provider accounts available.</p>
+        {:else}
+          <div class="mt-4 overflow-x-auto">
+            <table class="min-w-full divide-y divide-[#ededed] text-left text-sm">
+              <thead class="text-xs text-[#6e6e6e]">
+                <tr>
+                  <th class="py-2 pr-3 font-medium">Include</th>
+                  <th class="px-3 py-2 font-medium">Account</th>
+                  <th class="px-3 py-2 font-medium">Type</th>
+                  <th class="px-3 py-2 font-medium">Status</th>
+                  <th class="px-3 py-2 font-medium">Pool priority</th>
+                  <th class="px-3 py-2 text-right font-medium">Action</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-[#f3f3f3]">
+                {#each poolAccountRows(pool) as account (account.id)}
+                  <tr>
+                    <td class="py-2 pr-3">
+                      <input
+                        type="checkbox"
+                        checked={poolHasAccount(pool, account.id)}
+                        onchange={(event) => setPoolAccount(pool, account.id, event.currentTarget.checked)}
+                      />
+                    </td>
+                    <td class="px-3 py-2">
+                      <div class="font-medium text-[#0d0d0d]">{accountDisplayName(account)}</div>
+                      <div class="font-mono text-xs text-[#6e6e6e]">#{account.id}</div>
+                    </td>
+                    <td class="px-3 py-2 text-[#3c3c3c]">{account.accountType}</td>
+                    <td class="px-3 py-2 text-[#3c3c3c]">{account.enabled ? account.status : 'disabled'}</td>
+                    <td class="px-3 py-2">
+                      <input
+                        class="w-24 rounded-lg border border-[#e5e5e5] bg-white px-2 py-1 text-sm text-[#0d0d0d]"
+                        type="number"
+                        min="0"
+                        value={poolAccountPriority(pool, account.id)}
+                        disabled={!poolHasAccount(pool, account.id)}
+                        onchange={(event) => setPoolAccountPriority(pool, account.id, event.currentTarget.value)}
+                      />
+                    </td>
+                    <td class="px-3 py-2 text-right">
+                      <a
+                        class="inline-flex rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                        href={`/providers?providerAccountId=${account.id}`}
+                        title="View provider account"
+                        aria-label="View provider account"
+                      >
+                        Provider
+                      </a>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+
+        <div class="mt-4 flex justify-end">
+          <button class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
+            Save membership
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
 </AuthGate>

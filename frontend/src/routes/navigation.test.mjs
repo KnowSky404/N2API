@@ -163,6 +163,38 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /View routing diagnostics/);
   assert.match(poolsPage, /View fallback chain logs/);
   assert.match(poolsPage, /View provider account/);
+  // Edit modal state and helpers
+  assert.match(poolsPage, /editingRoutingPoolId/);
+  assert.match(poolsPage, /const\s+editingRoutingPool\b/);
+  assert.match(poolsPage, /function routingPoolLabel\(pool\)/);
+  assert.match(poolsPage, /function openRoutingPoolEditor\(pool\)/);
+  assert.match(poolsPage, /function closeRoutingPoolEditor/);
+  assert.match(poolsPage, /editingRoutingPoolId\s*=\s*pool\.id/);
+  assert.match(poolsPage, /editingRoutingPoolId = 0/);
+  assert.match(poolsPage, /onclick=\{closeRoutingPoolEditor\}/);
+
+  // Main table has min-w-[980px] for scanning
+  assert.match(poolsPage, /min-w-\[980px\]/);
+
+  // Row inline enabled switch (main table, not edit modal)
+  assert.match(poolsPage, /role="switch"/);
+  assert.match(poolsPage, /pool\.enabled = event\.currentTarget\.checked/);
+  assert.match(poolsPage, /void updateRoutingPool\(pool\)/);
+
+  // Sticky Actions column in main table
+  assert.match(poolsPage, /sticky right-0.*Actions/);
+
+  // Main table row Actions includes Delete that calls deleteRoutingPool(pool.id)
+  assert.match(poolsPage, /deleteRoutingPool\(pool\.id\)/);
+
+  // Edit modal with role="dialog" aria-modal="true"
+  assert.match(poolsPage, /role="dialog"/);
+  const editModalCount = (poolsPage.match(/aria-modal="true"/g) ?? []).length;
+  assert.ok(editModalCount >= 2, `edit and create modals both have aria-modal, found ${editModalCount}`);
+
+  // Save membership inside edit modal (after the modal opening)
+  assert.match(poolsPage, /editingRoutingPool[\s\S]*Save membership/);
+
   assert.match(adminState, /loadRoutingPools/);
   assert.match(adminState, /createRoutingPool/);
   assert.doesNotMatch(adminState, /const fallbackPoolId = 0/);
