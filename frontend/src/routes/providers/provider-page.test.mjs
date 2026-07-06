@@ -885,7 +885,7 @@ test('admin state refreshes model routing after provider account scheduling chan
 });
 
 test('api keys page owns model policy and gateway default model', () => {
-  assert.match(apiKeysSource, /Gateway default model/);
+  // Gateway default model section removed; model access still on the page
   assert.match(apiKeysSource, /Model access/);
   assert.match(apiKeysSource, /All routable models/);
   assert.match(apiKeysSource, /Selected models/);
@@ -901,19 +901,12 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.match(modelRoutingHrefSource, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
 });
 
-test('api keys page surfaces gateway runtime limits', () => {
+test('api keys page loads gateway settings for per-key limit fallback', () => {
   const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
   assert.match(adminStateSource, /gatewaySettings/);
   assert.match(adminStateSource, /\/api\/admin\/gateway-settings/);
-  assert.match(apiKeysSource, /Gateway runtime limits/);
-  assert.match(apiKeysSource, /Gateway concurrency/);
-  assert.match(apiKeysSource, /Per account concurrency/);
-  assert.match(apiKeysSource, /Per key concurrency/);
-  assert.match(apiKeysSource, /Requests per minute/);
-  assert.match(apiKeysSource, /Tokens per minute/);
-  assert.match(apiKeysSource, /Requests window/);
-  assert.match(apiKeysSource, /Tokens window/);
+  // Gateway runtime limits UI section removed; gateway settings still loaded for per-key fallback
   assert.match(apiKeysSource, /loadGatewaySettings/);
 });
 
@@ -1314,4 +1307,32 @@ test('provider account model list disables synced row toggles', () => {
   assert.notEqual(toggleLabelIndex, -1);
   const checkboxSource = source.slice(Math.max(0, toggleLabelIndex - 500), toggleLabelIndex + 200);
   assert.match(checkboxSource, /configuredModel\.source === 'upstream'/);
+});
+
+test('api keys page uses modal to create keys and removes gateway model-settings section', () => {
+  // Modal state and trigger
+  assert.match(apiKeysSource, /createKeyModalOpen/);
+  assert.match(apiKeysSource, /Create key/);
+  assert.match(apiKeysSource, /role="dialog"/);
+  assert.match(apiKeysSource, /aria-modal="true"/);
+  assert.match(apiKeysSource, /Create API key/);
+  assert.match(apiKeysSource, /submitCreateKey/);
+
+  // Removed sections
+  assert.doesNotMatch(apiKeysSource, /Gateway runtime limits/);
+  assert.doesNotMatch(apiKeysSource, /Gateway default model/);
+
+  // Removed imports (must not import modelSettings / saveModelSettings / gatewayLimitLabel)
+  assert.doesNotMatch(apiKeysSource, /\bmodelSettings\b/);
+  assert.doesNotMatch(apiKeysSource, /\bsaveModelSettings\b/);
+  assert.doesNotMatch(apiKeysSource, /\bgatewayLimitLabel\b/);
+
+  // Still loads model routing, gateway settings (for per-key fallback), routing pools, usage summary
+  assert.match(apiKeysSource, /loadModelRouting/);
+  assert.match(apiKeysSource, /loadGatewaySettings/);
+  assert.match(apiKeysSource, /loadRoutingPools/);
+  assert.match(apiKeysSource, /loadUsageSummary/);
+
+  // oneTimeSecret stays on page (not inside modal)
+  assert.match(apiKeysSource, /oneTimeSecret/);
 });

@@ -8,7 +8,6 @@
     formatCostMicrousd,
     formatDate,
     formatTokens,
-    gatewayLimitLabel,
     gatewaySettings,
     getActiveKeys,
     loadGatewaySettings,
@@ -17,10 +16,8 @@
     loadUsageSummary,
     modelListText,
     modelRouting,
-    modelSettings,
     revokeKey,
     routingPools,
-    saveModelSettings,
     session,
     setAPIKeyDisabled,
     updateAPIKeyBudgets,
@@ -37,6 +34,7 @@
   let keySearch = $state('');
   let keyStatusFilter = $state('all');
   let modelRoutingRequested = $state(false);
+  let createKeyModalOpen = $state(false);
   let appliedAPIKeySearch = $state('');
   const filteredAPIKeys = $derived(
     apiKeys.items.filter((key) => {
@@ -99,6 +97,24 @@
     const routingPoolId = Number(key.routingPoolId ?? 0);
     const poolQuery = routingPoolId > 0 ? `&routingPoolId=${encodeURIComponent(String(key.routingPoolId))}` : '';
     return `/models?model=${encodeURIComponent(value)}&status=blocked&clientKeyId=${encodeURIComponent(String(key.id))}${poolQuery}`;
+  }
+
+  function openCreateKeyModal() {
+    apiKeys.error = '';
+    apiKeys.newKeyName = '';
+    createKeyModalOpen = true;
+  }
+
+  function closeCreateKeyModal() {
+    createKeyModalOpen = false;
+    apiKeys.error = '';
+    apiKeys.newKeyName = '';
+  }
+
+  /** @param {SubmitEvent} event */
+  async function submitCreateKey(event) {
+    await createKey(event);
+    if (!apiKeys.error) closeCreateKeyModal();
   }
 
   $effect(() => {
@@ -256,110 +272,16 @@
   {activeKeys.length === 1 ? 'key' : 'keys'}.
 </p>
     </div>
-  </div>
-
-  <form class="mt-6 flex flex-col gap-3 sm:flex-row" onsubmit={createKey}>
-    <label class="min-w-0 flex-1">
-<span class="text-sm font-medium text-[#3c3c3c]">New key name</span>
-<input
-  class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  bind:value={apiKeys.newKeyName}
-  placeholder="Codex workstation"
-  required
-/>
-    </label>
-    <div class="flex items-end">
-<button
-  class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-  disabled={apiKeys.creating}
->
-  {apiKeys.creating ? 'Creating' : 'Create key'}
-</button>
-    </div>
-  </form>
-
-  <section class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h3 class="text-base font-semibold text-[#0d0d0d]">Gateway runtime limits</h3>
-        <p class="mt-1 text-sm text-[#6e6e6e]">Current concurrency and rate guards loaded from the running service.</p>
-      </div>
-    </div>
-    {#if gatewaySettings.error}
-      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-        {gatewaySettings.error}
-      </p>
-    {:else if gatewaySettings.loading || !gatewaySettings.data}
-      <p class="mt-4 text-sm text-[#6e6e6e]">Loading gateway runtime limits...</p>
-    {:else}
-      <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <div class="rounded-md border border-[#ededed] bg-white p-3">
-          <dt class="text-xs font-medium text-[#6e6e6e]">Gateway concurrency</dt>
-          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentGatewayRequests)}</dd>
-        </div>
-        <div class="rounded-md border border-[#ededed] bg-white p-3">
-          <dt class="text-xs font-medium text-[#6e6e6e]">Per account concurrency</dt>
-          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerAccount)}</dd>
-        </div>
-        <div class="rounded-md border border-[#ededed] bg-white p-3">
-          <dt class="text-xs font-medium text-[#6e6e6e]">Per key concurrency</dt>
-          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.maxConcurrentRequestsPerKey)}</dd>
-        </div>
-        <div class="rounded-md border border-[#ededed] bg-white p-3">
-          <dt class="text-xs font-medium text-[#6e6e6e]">Requests per minute</dt>
-          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.requestsPerMinutePerKey)}</dd>
-        </div>
-        <div class="rounded-md border border-[#ededed] bg-white p-3">
-          <dt class="text-xs font-medium text-[#6e6e6e]">Tokens per minute</dt>
-          <dd class="mt-2 font-mono text-lg text-[#0d0d0d]">{gatewayLimitLabel(gatewaySettings.data.tokensPerMinutePerKey)}</dd>
-        </div>
-      </dl>
-    {/if}
-  </section>
-
-  <form class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={saveModelSettings}>
-    <div class="grid gap-4 lg:grid-cols-[minmax(220px,320px)_minmax(0,1fr)]">
-      <label class="block text-sm font-medium text-[#3c3c3c]">
-Gateway default model
-<input
-  class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  bind:value={modelSettings.defaultModel}
-  maxlength="128"
-  placeholder="gpt-4.1"
-  required
-/>
-      </label>
-
-      <label class="block text-sm font-medium text-[#3c3c3c]">
-All routable models
-<textarea
-  class="mt-2 min-h-28 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-  bind:value={modelSettings.allowedModelsText}
-  placeholder={'gpt-4.1\ngpt-4.1-mini'}
-  required
-></textarea>
-      </label>
-    </div>
-    <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
-      <p class="text-sm text-[#6e6e6e]">
-        Client keys can use all routable models or a selected subset from this gateway list.
-      </p>
+    <div>
       <button
-        class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={modelSettings.loading || modelSettings.saving}
+        class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+        type="button"
+        onclick={openCreateKeyModal}
       >
-        {modelSettings.saving ? 'Saving' : 'Save model settings'}
+        Create key
       </button>
     </div>
-    {#if modelSettings.saved}
-      <p class="mt-3 text-sm text-[#0a7a5e]">Model settings saved.</p>
-    {/if}
-    {#if modelSettings.error}
-      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-        {modelSettings.error}
-      </p>
-    {/if}
-  </form>
+  </div>
 
   <section class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
     <div class="flex flex-wrap items-start justify-between gap-3">
@@ -431,10 +353,55 @@ All routable models
     </div>
   {/if}
 
-  {#if apiKeys.error}
+  {#if apiKeys.error && !createKeyModalOpen}
     <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
 {apiKeys.error}
     </p>
+  {/if}
+
+  {#if createKeyModalOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      onclick={(e) => e.target === e.currentTarget && closeCreateKeyModal()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Create API key"
+    >
+      <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="mb-4 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-[#0d0d0d]">Create API key</h3>
+          <button
+            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            type="button"
+            onclick={closeCreateKeyModal}
+          >
+            Cancel
+          </button>
+        </div>
+
+        {#if apiKeys.error}
+          <p class="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {apiKeys.error}
+          </p>
+        {/if}
+
+        <form class="space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={submitCreateKey}>
+          <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
+            New key name
+            <input
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={apiKeys.newKeyName}
+              placeholder="Codex workstation"
+              required
+            />
+          </label>
+          <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={apiKeys.creating}>
+            {apiKeys.creating ? 'Creating' : 'Create key'}
+          </button>
+        </form>
+      </div>
+    </div>
   {/if}
 
   <div class="mt-6 grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end sm:justify-between sm:gap-3">
