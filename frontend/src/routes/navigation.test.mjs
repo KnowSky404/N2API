@@ -58,10 +58,49 @@ test('routing pools page manages account pools', () => {
   const poolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
 
   assert.match(layout, /href:\s*'\/routing-pools'/);
-  for (const label of ['Routing pools', 'Create pool', 'Pool accounts', 'Save membership', 'Enabled', 'Fallback pool', 'No fallback', 'Pool priority', 'Bound API keys', 'Schedulable members', 'Search pools', 'Status filter', 'All pools', 'Enabled pools', 'Disabled pools', 'Pools with fallback', 'Bound key pools', 'Empty pools']) {
+  for (const label of ['Routing pools', 'Enabled', 'Fallback pool', 'No fallback', 'Pool priority', 'Bound API keys', 'Schedulable members', 'Search pools', 'Status filter', 'All pools', 'Enabled pools', 'Disabled pools', 'Pools with fallback', 'Bound key pools', 'Empty pools']) {
     assert.match(poolsPage, new RegExp(label.replace(' ', '\\s+')), `routing pools page should include ${label}`);
   }
   assert.match(poolsPage, /apiKeys/);
+
+  // Modal state exists
+  assert.match(poolsPage, /showCreateModal/);
+
+  // Opener button visible in header (not inside the modal if block)
+  assert.match(poolsPage, /<button[\s\S]*?onclick[\s\S]*?showCreateModal\s*=\s*true/);
+
+  // Cancel button in modal
+  assert.match(poolsPage, new RegExp("Cancel"));
+
+  // Form is guarded by {#if showCreateModal}
+  // Single container dialog with aria-modal="true" (Providers modal pattern)
+  assert.match(poolsPage, /aria-modal="true"/);
+  // Backdrop close uses event target guard
+  assert.match(poolsPage, /e\.target\s*===\s*e\.currentTarget/);
+
+  assert.match(poolsPage, /\{#if\s+showCreateModal\}/);
+
+  // Form fields are inside the if block (after {#if showCreateModal}, before {/if})
+  // Page-level error guard for non-modal state (load/update/delete/save-membership errors)
+  assert.match(poolsPage, /routingPools\.error\s*&&\s*!showCreateModal/);
+
+  // Check that Pool name input with placeholder "Primary Codex" appears after the if
+  assert.match(poolsPage, /showCreateModal\}[\s\S]*Pool\s+name/);
+
+  // Opener button is NOT inside {#if showCreateModal} (it should be before the if block)
+  assert.match(poolsPage, /Create\s+pool[\s\S]*\{#if\s+showCreateModal\}/);
+
+  // On successful create, close modal: showCreateModal = false
+  assert.match(poolsPage, /showCreateModal\s*=\s*false/);
+
+  // submit handler uses await (not void)
+  assert.match(poolsPage, /await\s+createRoutingPool/);
+
+  // Legacy assertions still hold
+  assert.match(poolsPage, /Pool accounts/);
+  assert.match(poolsPage, /Save membership/);
+
+
   assert.match(poolsPage, /loadKeys/);
   assert.match(poolsPage, /boundAPIKeyCount\(pool\)/);
   assert.match(poolsPage, /schedulablePoolMemberCount\(pool\)/);

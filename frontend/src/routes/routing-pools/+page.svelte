@@ -22,6 +22,7 @@
   let selectedRoutingPoolId = $state('all');
   let routingPoolSearch = $state('');
   let routingPoolStatusFilter = $state('all');
+  let showCreateModal = $state(false);
   const visibleRoutingPools = $derived(
     routingPools.items.filter((pool) => {
       if (selectedRoutingPoolId !== 'all' && String(pool.id) !== selectedRoutingPoolId) return false;
@@ -62,9 +63,12 @@
   });
 
   /** @param {SubmitEvent} event */
-  function submitCreatePool(event) {
+  async function submitCreatePool(event) {
     event.preventDefault();
-    void createRoutingPool();
+    await createRoutingPool();
+    if (!routingPools.error) {
+      showCreateModal = false;
+    }
   }
 
   /**
@@ -259,6 +263,13 @@
         </p>
       </div>
       <div class="flex flex-wrap items-center gap-2">
+        <button
+          class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+          type="button"
+          onclick={() => (showCreateModal = true)}
+        >
+          Create pool
+        </button>
         {#if selectedRoutingPoolId !== 'all'}
           <button
             class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
@@ -278,48 +289,79 @@
       </div>
     </div>
 
-    {#if routingPools.error}
+
+    {#if routingPools.error && !showCreateModal}
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
         {routingPools.error}
       </p>
     {/if}
 
-    <form class="mt-6 grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)_minmax(180px,240px)_auto]" onsubmit={submitCreatePool}>
-      <label class="text-sm font-medium text-[#3c3c3c]">
-        Pool name
-        <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={routingPools.newPoolName}
-          placeholder="Primary Codex"
-          required
-        />
-      </label>
-      <label class="text-sm font-medium text-[#3c3c3c]">
-        Description
-        <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={routingPools.newPoolDescription}
-          placeholder="Daily gateway pool"
-        />
-      </label>
-      <label class="text-sm font-medium text-[#3c3c3c]">
-        Fallback pool
-        <select
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={routingPools.newPoolFallbackPoolId}
-        >
-          <option value="0">Create with no fallback</option>
-          {#each routingPools.items as candidate}
-            <option value={String(candidate.id)}>{candidate.name}</option>
-          {/each}
-        </select>
-      </label>
-      <div class="flex items-end">
-        <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving}>
-          {routingPools.saving ? 'Saving' : 'Create pool'}
-        </button>
+    {#if showCreateModal}
+      <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+      <div
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+        onclick={(e) => e.target === e.currentTarget && (showCreateModal = false)}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Create routing pool"
+      >
+        <div class="w-full max-w-2xl rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+          <div class="mb-4 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-[#0d0d0d]">Create routing pool</h3>
+            <button
+              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+              type="button"
+              onclick={() => (showCreateModal = false)}
+            >
+              Cancel
+            </button>
+          </div>
+
+          {#if routingPools.error}
+            <p class="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {routingPools.error}
+            </p>
+          {/if}
+
+          <form class="grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)_minmax(180px,240px)_auto]" onsubmit={submitCreatePool}>
+            <label class="text-sm font-medium text-[#3c3c3c]">
+              Pool name
+              <input
+                class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                bind:value={routingPools.newPoolName}
+                placeholder="Primary Codex"
+                required
+              />
+            </label>
+            <label class="text-sm font-medium text-[#3c3c3c]">
+              Description
+              <input
+                class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                bind:value={routingPools.newPoolDescription}
+                placeholder="Daily gateway pool"
+              />
+            </label>
+            <label class="text-sm font-medium text-[#3c3c3c]">
+              Fallback pool
+              <select
+                class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                bind:value={routingPools.newPoolFallbackPoolId}
+              >
+                <option value="0">Create with no fallback</option>
+                {#each routingPools.items as candidate}
+                  <option value={String(candidate.id)}>{candidate.name}</option>
+                {/each}
+              </select>
+            </label>
+            <div class="flex items-end">
+              <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving}>
+                {routingPools.saving ? "Saving" : "Create pool"}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-    </form>
+    {/if}
 
     <div class="mt-5 grid gap-3 grid-cols-1 sm:grid-cols-[minmax(240px,1fr)_220px]">
       <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
