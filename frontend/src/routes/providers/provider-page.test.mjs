@@ -963,8 +963,8 @@ test('api key state can save per-key budgets', async () => {
 });
 
 test('api keys page edits per-key gateway limits', () => {
-  // Logs link still present in action area
-  assert.match(apiKeysSource, /href=\{`\/request-logs\?clientKeyId=\$\{key\.id\}`\}/);
+  // Logs action stays on the API Keys page.
+  assert.match(apiKeysSource, /openKeyLogsModal\(key\.id\)/);
   assert.match(apiKeysSource, /View request logs/);
 
   // Key limits and budgets still in page source (move to edit modal)

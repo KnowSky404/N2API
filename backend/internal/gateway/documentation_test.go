@@ -151,7 +151,7 @@ func TestGatewayDocumentationMentionsAPIKeyListFiltering(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"API Keys page supports local search and status filtering",
-			"name, prefix, model policy, selected model, active/revoked status, and limiter state",
+			"name, prefix, model policy, selected model, active/disabled/deleted status, and limiter state",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in API key list filtering documentation", path, want)
@@ -186,9 +186,10 @@ func TestGatewayDocumentationMentionsAPIKeyDisable(t *testing.T) {
 		}
 		text := string(content)
 		for _, want := range []string{
-			"API keys can be temporarily disabled and re-enabled",
+			"API keys have three visible states",
 			"disabled keys cannot authenticate gateway requests",
-			"remain visible for configuration and logs",
+			"30 day retention window",
+			"physically removed during API key listing cleanup",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in API key disable documentation", path, want)
