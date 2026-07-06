@@ -78,6 +78,29 @@ test('routing pools page manages account pools', () => {
   // Backdrop close uses event target guard
   assert.match(poolsPage, /e\.target\s*===\s*e\.currentTarget/);
 
+
+  // Create modal form must not use responsive multi-column grid
+  // (scope to the form inside {#if showCreateModal} — other page grids may use sm:grid-cols-2)
+  const _modalFormContent = poolsPage.match(/\{#if\s+showCreateModal\}[\s\S]*?<form[\s\S]*?<\/form>/)?.[0] ?? '';
+  assert.doesNotMatch(_modalFormContent, /sm:grid-cols-2/, 'create modal form must not use sm:grid-cols-2');
+  assert.doesNotMatch(_modalFormContent, /lg:grid-cols-\[/, 'create modal form must not use lg:grid-cols-[...]');
+
+  // Modal form inside {#if showCreateModal} must use vertical single-column layout
+  const _fullModalForm = poolsPage.match(/{#if\s+showCreateModal}[\s\S]*?<form[\s\S]*?<\/form>/)?.[0] ?? '';
+  assert.ok(_fullModalForm, 'create modal form should exist');
+  assert.match(_fullModalForm, /space-y-4/, 'create modal form should use vertical spacing (space-y-4)');
+
+  // Modal labels must be block/grid containers so space-y-4 stacks them vertically
+  // Count: Pool name, Description, Fallback pool = 3 label elements with grid gap-2
+  const _modalLabelGrids = _fullModalForm.match(/class="grid gap-2 text-sm font-medium text-\[#3c3c3c\]"/g) ?? [];
+  assert.equal(_modalLabelGrids.length, 3, 'create modal form labels should use grid gap-2 class (3 fields)');
+
+  // Each label should NOT have leftover mt-2 (grid gap-2 handles spacing)
+  assert.doesNotMatch(_fullModalForm, /label[\s\S]*?mt-2/, 'create modal form labels must not use mt-2 (grid gap-2 replaces it)');
+
+  // Modal panel must have viewport max-height and overflow scroll
+  assert.match(poolsPage, /max-h-\[calc\(100vh/, 'modal panel should have viewport max-height');
+  assert.match(poolsPage, /overflow-y-auto/, 'modal panel should scroll on small screens');
   assert.match(poolsPage, /\{#if\s+showCreateModal\}/);
 
   // Form fields are inside the if block (after {#if showCreateModal}, before {/if})

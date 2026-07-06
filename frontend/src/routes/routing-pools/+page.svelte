@@ -305,7 +305,7 @@
         aria-modal="true"
         aria-label="Create routing pool"
       >
-        <div class="w-full max-w-2xl rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
           <div class="mb-4 flex items-center justify-between">
             <h3 class="text-lg font-semibold text-[#0d0d0d]">Create routing pool</h3>
             <button
@@ -323,28 +323,28 @@
             </p>
           {/if}
 
-          <form class="grid gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)_minmax(180px,240px)_auto]" onsubmit={submitCreatePool}>
-            <label class="text-sm font-medium text-[#3c3c3c]">
+          <form class="space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={submitCreatePool}>
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
               Pool name
               <input
-                class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                 bind:value={routingPools.newPoolName}
                 placeholder="Primary Codex"
                 required
               />
             </label>
-            <label class="text-sm font-medium text-[#3c3c3c]">
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
               Description
               <input
-                class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                 bind:value={routingPools.newPoolDescription}
                 placeholder="Daily gateway pool"
               />
             </label>
-            <label class="text-sm font-medium text-[#3c3c3c]">
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
               Fallback pool
               <select
-                class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                 bind:value={routingPools.newPoolFallbackPoolId}
               >
                 <option value="0">Create with no fallback</option>
@@ -353,11 +353,9 @@
                 {/each}
               </select>
             </label>
-            <div class="flex items-end">
-              <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving}>
-                {routingPools.saving ? "Saving" : "Create pool"}
-              </button>
-            </div>
+            <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving}>
+              {routingPools.saving ? "Saving" : "Create pool"}
+            </button>
           </form>
         </div>
       </div>
