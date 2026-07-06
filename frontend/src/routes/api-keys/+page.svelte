@@ -34,6 +34,8 @@
   let createKeyModalOpen = $state(false);
   let editingKeyId = $state(0);
   const editingKey = $derived(apiKeys.items.find((key) => key.id === editingKeyId) ?? null);
+  let logsKeyId = $state(0);
+  const logsKey = $derived(apiKeys.items.find((key) => key.id === logsKeyId) ?? null);
   let appliedAPIKeySearch = $state('');
   const filteredAPIKeys = $derived(
     apiKeys.items.filter((key) => {
@@ -103,6 +105,29 @@
 
   function closeEditModal() {
     editingKeyId = 0;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function keyStatusLabel(key) {
+    if (key.revokedAt) return 'Deleted';
+    if (key.disabledAt) return 'Disabled';
+    return 'Active';
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function keyPhysicalDeleteTitle(key) {
+    if (!key.revokedAt) return keyStatusLabel(key);
+    const value = key.physicalDeleteAt ? formatDate(key.physicalDeleteAt) : '30 days after deletion';
+    return `Physical delete after ${value}`;
+  }
+
+  /** @param {number} keyId */
+  function openKeyLogsModal(keyId) {
+    logsKeyId = keyId;
+  }
+
+  function closeKeyLogsModal() {
+    logsKeyId = 0;
   }
 
   /** @param {SubmitEvent} event */
@@ -755,6 +780,37 @@
     </div>
   {/if}
 
+  {#if logsKey}
+    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      onclick={(e) => e.target === e.currentTarget && closeKeyLogsModal()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="API key logs"
+    >
+      <div class="w-full max-w-2xl max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <h3 class="truncate text-lg font-semibold text-[#0d0d0d]">Logs · {logsKey.name}</h3>
+            <p class="mt-1 font-mono text-xs text-[#6e6e6e]">{logsKey.prefix}</p>
+          </div>
+          <button
+            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            type="button"
+            onclick={closeKeyLogsModal}
+          >
+            Close
+          </button>
+        </div>
+        <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+          <p class="text-sm font-medium text-[#0d0d0d]">Request log preview</p>
+          <p class="mt-1 text-sm text-[#6e6e6e]">No log entries loaded.</p>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <div class="mt-6 grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end sm:justify-between sm:gap-3">
     <div class="grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end sm:gap-3">
       <label class="block text-sm font-medium text-[#3c3c3c]">
@@ -775,7 +831,7 @@
           <option value="all">All keys</option>
           <option value="active">Active keys</option>
           <option value="disabled">Disabled keys</option>
-          <option value="revoked">Revoked keys</option>
+          <option value="revoked">Deleted keys</option>
         </select>
       </label>
     </div>
@@ -817,18 +873,29 @@
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.createdAt)}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.lastUsedAt)}</td>
         <td class="px-4 py-3">
-          <span
-            class={[
-              'inline-flex rounded-full px-2.5 py-1 text-xs font-medium',
-              key.revokedAt
-                ? 'bg-red-50 text-red-700'
-                : key.disabledAt
-                  ? 'bg-amber-50 text-amber-700'
-                : 'bg-[#e8f5f0] text-[#0a7a5e]'
-            ]}
-          >
-            {key.revokedAt ? 'Revoked' : key.disabledAt ? 'Disabled' : 'Active'}
-          </span>
+          <div class="flex flex-wrap items-center gap-2" title={keyPhysicalDeleteTitle(key)}>
+            <span
+              class={[
+                'inline-flex rounded-full px-2.5 py-1 text-xs font-medium',
+                key.revokedAt
+                  ? 'bg-red-50 text-red-700'
+                  : key.disabledAt
+                    ? 'bg-amber-50 text-amber-700'
+                  : 'bg-[#e8f5f0] text-[#0a7a5e]'
+              ]}
+            >
+              {keyStatusLabel(key)}
+            </span>
+            {#if !key.revokedAt}
+              <button
+                class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                type="button"
+                onclick={() => setAPIKeyDisabled(key.id, !key.disabledAt)}
+              >
+                {key.disabledAt ? 'Enable' : 'Disable'}
+              </button>
+            {/if}
+          </div>
         </td>
         <td class="px-4 py-3 text-right">
           <button
@@ -838,30 +905,22 @@
           >
             Edit
           </button>
-          <a
+          <button
             class="mr-2 inline-flex rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-            href={`/request-logs?clientKeyId=${key.id}`}
+            type="button"
+            onclick={() => openKeyLogsModal(key.id)}
             title="View request logs"
             aria-label="View request logs"
           >
             Logs
-          </a>
-          {#if !key.revokedAt}
-            <button
-              class="mr-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-              type="button"
-              onclick={() => setAPIKeyDisabled(key.id, !key.disabledAt)}
-            >
-              {key.disabledAt ? 'Enable' : 'Disable'}
-            </button>
-          {/if}
+          </button>
           <button
             class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"
             disabled={Boolean(key.revokedAt)}
             onclick={() => revokeKey(key.id)}
           >
-            Revoke
+            Delete
           </button>
         </td>
       </tr>

@@ -1330,6 +1330,17 @@ test('api keys edit modal bundles per-key settings', () => {
   assert.match(apiKeysSource, /revokeKey/);
 });
 
+test('api keys table keeps lifecycle actions in status and action cells', () => {
+  assert.match(apiKeysSource, /physicalDeleteAt/);
+  assert.match(apiKeysSource, /keyPhysicalDeleteTitle/);
+  assert.match(apiKeysSource, /onclick=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
+  assert.match(apiKeysSource, /Delete/);
+  assert.doesNotMatch(apiKeysSource, /Revoke/);
+  assert.doesNotMatch(apiKeysSource, /href=\{`\/request-logs\?clientKeyId=\$\{key\.id\}`\}/);
+  assert.match(apiKeysSource, /openKeyLogsModal\(key\.id\)/);
+  assert.match(apiKeysSource, /aria-label="API key logs"/);
+});
+
 test('api keys page uses modal to create keys and removes gateway model-settings section', () => {
   // Modal state and trigger
   assert.match(apiKeysSource, /createKeyModalOpen/);

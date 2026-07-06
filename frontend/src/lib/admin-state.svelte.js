@@ -11,6 +11,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} createdAt
  * @property {string | null} lastUsedAt
  * @property {string | null} revokedAt
+ * @property {string | null | undefined} physicalDeleteAt
  * @property {string | null} disabledAt
  * @property {number} requestsPerMinute
  * @property {number} tokensPerMinute
