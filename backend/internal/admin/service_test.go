@@ -125,9 +125,9 @@ func TestLogoutRevokesSession(t *testing.T) {
 	}
 }
 
-func TestCreateAPIKeyReturnsSecretOnceAndAuthenticateRejectsRevoked(t *testing.T) {
+func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevoked(t *testing.T) {
 	repo := newMemoryRepo()
-	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionSecret: "test-encryption-secret"})
 	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
@@ -138,6 +138,16 @@ func TestCreateAPIKeyReturnsSecretOnceAndAuthenticateRejectsRevoked(t *testing.T
 	if strings.Contains(repo.keys[result.Key.ID].Hash, result.Secret) {
 		t.Fatal("repository stored cleartext key")
 	}
+	if repo.keys[result.Key.ID].EncryptedSecret == "" || strings.Contains(repo.keys[result.Key.ID].EncryptedSecret, result.Secret) {
+		t.Fatalf("encrypted secret = %q, want encrypted non-plaintext value", repo.keys[result.Key.ID].EncryptedSecret)
+	}
+	revealed, err := service.GetAPIKeySecret(context.Background(), result.Key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKeySecret returned error: %v", err)
+	}
+	if revealed != result.Secret {
+		t.Fatalf("GetAPIKeySecret = %q, want created secret", revealed)
+	}
 	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); err != nil {
 		t.Fatalf("AuthenticateAPIKey returned error: %v", err)
 	}
@@ -146,6 +156,9 @@ func TestCreateAPIKeyReturnsSecretOnceAndAuthenticateRejectsRevoked(t *testing.T
 	}
 	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("AuthenticateAPIKey error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := service.GetAPIKeySecret(context.Background(), result.Key.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetAPIKeySecret revoked error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -1354,7 +1367,8 @@ type memorySession struct {
 
 type memoryAPIKey struct {
 	APIKey
-	Hash string
+	Hash            string
+	EncryptedSecret string
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -1428,17 +1442,26 @@ func (r *memoryRepo) RevokeSession(_ context.Context, tokenHash string) error {
 	return nil
 }
 
-func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix string) (APIKey, error) {
+func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix, encryptedSecret string) (APIKey, error) {
 	key := APIKey{
-		ID:          r.nextAPIKeyID,
-		Name:        name,
-		Prefix:      prefix,
-		CreatedAt:   time.Now(),
-		ModelPolicy: APIKeyModelPolicyAll,
+		ID:              r.nextAPIKeyID,
+		Name:            name,
+		Prefix:          prefix,
+		SecretAvailable: encryptedSecret != "",
+		CreatedAt:       time.Now(),
+		ModelPolicy:     APIKeyModelPolicyAll,
 	}
 	r.nextAPIKeyID++
-	r.keys[key.ID] = memoryAPIKey{APIKey: key, Hash: hash}
+	r.keys[key.ID] = memoryAPIKey{APIKey: key, Hash: hash, EncryptedSecret: encryptedSecret}
 	return key, nil
+}
+
+func (r *memoryRepo) GetAPIKeyEncryptedSecret(_ context.Context, id int64) (string, error) {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt != nil {
+		return "", ErrNotFound
+	}
+	return key.EncryptedSecret, nil
 }
 
 func (r *memoryRepo) ListAPIKeys(_ context.Context) ([]APIKey, error) {

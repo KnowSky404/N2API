@@ -1333,7 +1333,8 @@ test('api keys edit modal bundles per-key settings', () => {
 test('api keys table keeps lifecycle actions in status and action cells', () => {
   assert.match(apiKeysSource, /physicalDeleteAt/);
   assert.match(apiKeysSource, /keyPhysicalDeleteTitle/);
-  assert.match(apiKeysSource, /onclick=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
+  assert.match(apiKeysSource, /role="switch"/);
+  assert.match(apiKeysSource, /onchange=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
   assert.match(apiKeysSource, /Delete/);
   assert.doesNotMatch(apiKeysSource, /Revoke/);
   assert.doesNotMatch(apiKeysSource, /href=\{`\/request-logs\?clientKeyId=\$\{key\.id\}`\}/);

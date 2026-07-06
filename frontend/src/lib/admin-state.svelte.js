@@ -8,6 +8,7 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string[]} allowedModels
  * @property {string | undefined} allowedModelsText
  * @property {string} prefix
+ * @property {boolean} secretAvailable
  * @property {string} createdAt
  * @property {string | null} lastUsedAt
  * @property {string | null} revokedAt
@@ -940,6 +941,27 @@ export async function copySecret() {
   if (!isCurrentAuthenticated(version)) return;
   if (!copied) {
     apiKeys.error = 'Copy failed';
+  }
+}
+
+/** @param {number} id */
+export async function copyAPIKeySecret(id) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  apiKeys.error = '';
+
+  try {
+    const payload = await requestJSON(`/api/admin/keys/${id}/secret`);
+    if (!isCurrentAuthenticated(version)) return;
+    const copied = await copyText(payload.secret);
+    if (!isCurrentAuthenticated(version)) return;
+    if (!copied) {
+      apiKeys.error = 'Copy failed';
+    }
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.error = error instanceof Error ? error.message : 'Failed to copy API key';
   }
 }
 

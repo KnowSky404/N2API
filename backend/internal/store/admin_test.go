@@ -313,7 +313,7 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()
 
-	created, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-model-policy", "n2api_")
+	created, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-model-policy", "n2api_", "encrypted-secret")
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -439,19 +439,19 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 func TestPurgeRevokedAPIKeysRemovesOnlyExpiredRevokedKeys(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestAdminRepository(t)
-	oldKey, err := repo.CreateAPIKey(ctx, "old deleted", "hash-old-deleted", "n2_old")
+	oldKey, err := repo.CreateAPIKey(ctx, "old deleted", "hash-old-deleted", "n2_old", "encrypted-old")
 	if err != nil {
 		t.Fatalf("CreateAPIKey old returned error: %v", err)
 	}
-	recentKey, err := repo.CreateAPIKey(ctx, "recent deleted", "hash-recent-deleted", "n2_recent")
+	recentKey, err := repo.CreateAPIKey(ctx, "recent deleted", "hash-recent-deleted", "n2_recent", "encrypted-recent")
 	if err != nil {
 		t.Fatalf("CreateAPIKey recent returned error: %v", err)
 	}
-	disabledKey, err := repo.CreateAPIKey(ctx, "disabled", "hash-disabled", "n2_disabled")
+	disabledKey, err := repo.CreateAPIKey(ctx, "disabled", "hash-disabled", "n2_disabled", "encrypted-disabled")
 	if err != nil {
 		t.Fatalf("CreateAPIKey disabled returned error: %v", err)
 	}
-	activeKey, err := repo.CreateAPIKey(ctx, "active", "hash-active", "n2_active")
+	activeKey, err := repo.CreateAPIKey(ctx, "active", "hash-active", "n2_active", "encrypted-active")
 	if err != nil {
 		t.Fatalf("CreateAPIKey active returned error: %v", err)
 	}
@@ -494,11 +494,11 @@ func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(20_000, 0).UTC()
 
-	key, err := repo.CreateAPIKey(ctx, "budgeted", "hash-budgeted", "n2api_")
+	key, err := repo.CreateAPIKey(ctx, "budgeted", "hash-budgeted", "n2api_", "encrypted-budgeted")
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
-	other, err := repo.CreateAPIKey(ctx, "other", "hash-other", "n2api_")
+	other, err := repo.CreateAPIKey(ctx, "other", "hash-other", "n2api_", "encrypted-other")
 	if err != nil {
 		t.Fatalf("CreateAPIKey other returned error: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestAdminRepositoryRoutingPools(t *testing.T) {
 		t.Fatalf("pool account ids = %+v, want account id %d", pool.AccountIDs, accountID)
 	}
 
-	key, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-routing-pool", "n2api_")
+	key, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-routing-pool", "n2api_", "encrypted-routing-pool")
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}

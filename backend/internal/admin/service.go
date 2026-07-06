@@ -36,6 +36,7 @@ var (
 
 type Config struct {
 	SessionTTL             time.Duration
+	EncryptionSecret       string
 	DefaultGatewaySettings GatewaySettings
 }
 
@@ -55,6 +56,7 @@ type APIKey struct {
 	ID                    int64      `json:"id"`
 	Name                  string     `json:"name"`
 	Prefix                string     `json:"prefix"`
+	SecretAvailable       bool       `json:"secretAvailable"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	LastUsedAt            *time.Time `json:"lastUsedAt"`
 	RevokedAt             *time.Time `json:"revokedAt"`
@@ -286,10 +288,11 @@ type Repository interface {
 	CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
 	RevokeSession(ctx context.Context, tokenHash string) error
-	CreateAPIKey(ctx context.Context, name, hash, prefix string) (APIKey, error)
+	CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string) (APIKey, error)
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
 	PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error)
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
+	GetAPIKeyEncryptedSecret(ctx context.Context, id int64) (string, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error)
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (APIKey, error)
@@ -334,6 +337,7 @@ type Repository interface {
 type Service struct {
 	repo                   Repository
 	sessionTTL             time.Duration
+	encryptionSecret       string
 	defaultGatewaySettings GatewaySettings
 }
 
@@ -346,6 +350,7 @@ func NewService(repo Repository, cfg Config) *Service {
 	return &Service{
 		repo:                   repo,
 		sessionTTL:             sessionTTL,
+		encryptionSecret:       cfg.EncryptionSecret,
 		defaultGatewaySettings: cfg.DefaultGatewaySettings,
 	}
 }
@@ -475,12 +480,34 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string) (CreatedAPIKey,
 	if err != nil {
 		return CreatedAPIKey{}, fmt.Errorf("generate api key: %w", err)
 	}
-	key, err := s.repo.CreateAPIKey(ctx, name, secret.HashAPIKey(token), secret.TokenPrefix(token))
+	encryptedSecret := ""
+	if s.encryptionSecret != "" {
+		encryptedSecret, err = secret.EncryptString(s.encryptionSecret, token)
+		if err != nil {
+			return CreatedAPIKey{}, fmt.Errorf("encrypt api key: %w", err)
+		}
+	}
+	key, err := s.repo.CreateAPIKey(ctx, name, secret.HashAPIKey(token), secret.TokenPrefix(token), encryptedSecret)
 	if err != nil {
 		return CreatedAPIKey{}, err
 	}
 
 	return CreatedAPIKey{Key: key, Secret: token}, nil
+}
+
+func (s *Service) GetAPIKeySecret(ctx context.Context, id int64) (string, error) {
+	encryptedSecret, err := s.repo.GetAPIKeyEncryptedSecret(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(encryptedSecret) == "" {
+		return "", ErrNotFound
+	}
+	value, err := secret.DecryptString(s.encryptionSecret, encryptedSecret)
+	if err != nil {
+		return "", fmt.Errorf("decrypt api key: %w", err)
+	}
+	return value, nil
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context) ([]APIKey, error) {

@@ -21,7 +21,7 @@ const modelSettingsKey = "model_settings"
 const usagePricingKey = "usage_pricing"
 const gatewaySettingsKey = "gateway_settings"
 const apiKeySelectColumns = `
-	k.id, k.name, k.prefix, k.created_at, k.last_used_at, k.revoked_at, k.disabled_at,
+	k.id, k.name, k.prefix, k.encrypted_secret <> '', k.created_at, k.last_used_at, k.revoked_at, k.disabled_at,
 	k.model_policy, k.requests_per_minute, k.tokens_per_minute,
 	k.request_budget_24h, k.token_budget_24h, k.cost_budget_microusd_24h,
 	k.request_budget_30d, k.token_budget_30d, k.cost_budget_microusd_30d,
@@ -37,6 +37,7 @@ func scanAPIKey(key *admin.APIKey) []any {
 		&key.ID,
 		&key.Name,
 		&key.Prefix,
+		&key.SecretAvailable,
 		&key.CreatedAt,
 		&key.LastUsedAt,
 		&key.RevokedAt,
@@ -193,17 +194,34 @@ func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) e
 	return err
 }
 
-func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix string) (admin.APIKey, error) {
+func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string) (admin.APIKey, error) {
 	var id int64
 	err := r.pool.QueryRow(ctx, `
-		INSERT INTO client_api_keys (name, key_hash, prefix)
-		VALUES ($1, $2, $3)
+		INSERT INTO client_api_keys (name, key_hash, prefix, encrypted_secret)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id
-	`, name, hash, prefix).Scan(&id)
+	`, name, hash, prefix, encryptedSecret).Scan(&id)
 	if err != nil {
 		return admin.APIKey{}, err
 	}
 	return r.loadAPIKey(ctx, id)
+}
+
+func (r *AdminRepository) GetAPIKeyEncryptedSecret(ctx context.Context, id int64) (string, error) {
+	var encryptedSecret string
+	err := r.pool.QueryRow(ctx, `
+		SELECT encrypted_secret
+		FROM client_api_keys
+		WHERE id = $1
+			AND revoked_at IS NULL
+	`, id).Scan(&encryptedSecret)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", admin.ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return encryptedSecret, nil
 }
 
 func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, error) {

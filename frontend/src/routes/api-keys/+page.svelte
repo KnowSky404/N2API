@@ -1,9 +1,10 @@
 <script>
   import { page } from '$app/state';
-  import { Pencil, ScrollText, Trash2 } from 'lucide-svelte';
+  import { Copy, Pencil, ScrollText, Trash2 } from 'lucide-svelte';
   import {
     apiKeys,
     apiKeyModelWarnings,
+    copyAPIKeySecret,
     copySecret,
     createKey,
     formatCostMicrousd,
@@ -306,7 +307,7 @@
     <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
 <div class="flex flex-wrap items-center justify-between gap-3">
   <p class="text-sm font-medium text-[#0a7a5e]">
-    Copy this key now. It will not be shown again.
+    Copy this key now. You can copy it again later from the Prefix column.
   </p>
   <button
     class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
@@ -870,7 +871,24 @@
     {#each filteredAPIKeys as key}
       <tr class="bg-white">
         <td class="px-4 py-3 font-medium text-[#0d0d0d]">{key.name}</td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</td>
+        <td class="px-4 py-3 align-middle">
+          <div class="inline-flex items-center gap-2 whitespace-nowrap">
+            <span class="font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</span>
+            {#if !key.revokedAt}
+              <button
+                class="inline-flex size-7 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                type="button"
+                disabled={!key.secretAvailable}
+                onclick={() => copyAPIKeySecret(key.id)}
+                title={key.secretAvailable ? 'Copy full API key' : 'Full API key is unavailable for legacy keys'}
+                aria-label="Copy full API key"
+              >
+                <Copy class="size-3.5" aria-hidden="true" />
+                <span class="sr-only">Copy full API key</span>
+              </button>
+            {/if}
+          </div>
+        </td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.createdAt)}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.lastUsedAt)}</td>
         <td class="px-4 py-3 align-middle">

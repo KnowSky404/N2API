@@ -151,6 +151,21 @@ func TestFingerprintProfileSystemKeyMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestClientAPIKeyEncryptedSecretMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00033_client_api_key_encrypted_secret.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ALTER TABLE client_api_keys ADD COLUMN IF NOT EXISTS encrypted_secret TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE client_api_keys DROP COLUMN IF EXISTS encrypted_secret",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountModelsMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00007_oauth_account_models.sql")
 	if err != nil {
@@ -588,10 +603,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 32 {
-		t.Fatalf("migration sources = %d, want 32", len(sources))
+	if len(sources) != 33 {
+		t.Fatalf("migration sources = %d, want 33", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[31].Path != "00032_fingerprint_profile_system_key.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[32].Path != "00033_client_api_key_encrypted_secret.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

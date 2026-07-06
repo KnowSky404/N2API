@@ -185,7 +185,7 @@ func newFakeAdminService() *fakeAdminService {
 			{ID: 4, Name: "secondary", Description: "fallback", Enabled: true},
 		},
 		keys: []admin.APIKey{
-			{ID: 7, Name: "codex laptop", Prefix: "n2api_abc", CreatedAt: time.Unix(1000, 0).UTC()},
+			{ID: 7, Name: "codex laptop", Prefix: "n2api_abc", SecretAvailable: true, CreatedAt: time.Unix(1000, 0).UTC()},
 		},
 		logs: []admin.RequestLog{
 			{ID: 3, RequestID: "req_3", ClientKey: "codex laptop (n2api_abc)", Provider: "openai", Route: "/v1/models", Method: http.MethodGet, StatusCode: 200, LatencyMS: 12, GatewayAttemptCount: 2, GatewayFallbackCount: 1, CreatedAt: time.Unix(4000, 0).UTC()},
@@ -236,6 +236,13 @@ func (s *fakeAdminService) CreateAPIKey(_ context.Context, name string) (admin.C
 	}
 	key := admin.APIKey{ID: 9, Name: name, Prefix: "n2api_new", CreatedAt: time.Unix(2000, 0).UTC()}
 	return admin.CreatedAPIKey{Key: key, Secret: "n2api_new_secret"}, nil
+}
+
+func (s *fakeAdminService) GetAPIKeySecret(_ context.Context, id int64) (string, error) {
+	if id == 7 {
+		return "n2api_abc_secret", nil
+	}
+	return "", admin.ErrNotFound
 }
 
 func (s *fakeAdminService) RevokeAPIKey(_ context.Context, id int64) (admin.APIKey, error) {
@@ -1312,6 +1319,29 @@ func TestCreateAPIKeyReturnsOneTimeSecret(t *testing.T) {
 	}
 }
 
+func TestGetAPIKeySecretReturnsReusableSecret(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/keys/7/secret", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Secret string `json:"secret"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Secret != "n2api_abc_secret" {
+		t.Fatalf("secret = %q, want reusable secret", body.Secret)
+	}
+}
+
 func TestRevokeAPIKeyParsesIDAndReturnsRevokedKey(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/keys/7/revoke", nil)
@@ -1407,7 +1437,7 @@ func TestUpdateAPIKeyNameEndpoint(t *testing.T) {
 	if admins.renameKeyID != 7 || admins.renameName != " renamed codex " {
 		t.Fatalf("recorded rename = id:%d name:%q", admins.renameKeyID, admins.renameName)
 	}
-	if strings.Contains(recorder.Body.String(), "secret") {
+	if strings.Contains(recorder.Body.String(), `"secret"`) || strings.Contains(recorder.Body.String(), "n2api_new_secret") {
 		t.Fatalf("response leaked secret: %s", recorder.Body.String())
 	}
 }

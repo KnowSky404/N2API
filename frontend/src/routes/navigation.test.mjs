@@ -723,6 +723,18 @@ test('api keys table has 6 visible columns with correct headers', () => {
   assert.doesNotMatch(apiKeysPage, />Key limits<\/th>/);
 });
 
+test('api keys prefix column can copy reusable secrets', () => {
+  assert.match(apiKeysPage, /copyAPIKeySecret/);
+  assert.match(apiKeysPage, /onclick=\{\(\) => copyAPIKeySecret\(key\.id\)\}/);
+  assert.match(apiKeysPage, /Copy full API key/);
+  assert.match(apiKeysPage, /You can copy it again later from the Prefix column\./);
+  assert.doesNotMatch(apiKeysPage, /It will not be shown again\./);
+
+  assert.match(adminState, /export async function copyAPIKeySecret/);
+  assert.match(adminState, /\/api\/admin\/keys\/\$\{id\}\/secret/);
+  assert.match(adminState, /payload\.secret/);
+});
+
 test('api keys page has an Edit action modal for per-key settings', () => {
   // An edit-specific modal exists (in addition to the create key modal)
   // Page should have at least two role="dialog" elements: create key + edit key

@@ -35,6 +35,7 @@ type AdminService interface {
 	ValidateSession(ctx context.Context, token string) (admin.Admin, error)
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
 	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
+	GetAPIKeySecret(ctx context.Context, id int64) (string, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error)
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error)
@@ -364,6 +365,24 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			"key":    created.Key,
 			"secret": created.Secret,
 		})
+	}))
+
+	mux.HandleFunc("GET /api/admin/keys/{id}/secret", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		secret, err := admins.GetAPIKeySecret(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"secret": secret})
 	}))
 
 	mux.HandleFunc("POST /api/admin/keys/{id}/revoke", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

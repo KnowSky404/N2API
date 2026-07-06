@@ -118,7 +118,9 @@ Routing pools let the admin partition provider accounts into named account pools
 
 The API Keys page supports local search and status filtering by name, prefix, model policy, selected model, active/disabled/deleted status, and limiter state, so a busy or deleted client key can be found without leaving the page.
 
-API key names can be renamed from the API Keys page without rotating or revealing the secret, so labels can be kept in sync with devices, agents, or usage purpose.
+API key names can be renamed from the API Keys page without rotating the secret, so labels can be kept in sync with devices, agents, or usage purpose.
+
+New API keys are stored with an encrypted reusable secret. The Prefix column on the API Keys page can copy the full API key again after creation for active or disabled keys; older keys created before encrypted secret storage may need to be rotated if their full value was not saved.
 
 API keys have three visible states: active, disabled, and deleted. Active and disabled keys can be toggled directly from the API Keys table status column, and disabled keys cannot authenticate gateway requests. Deleting a key performs a logical delete immediately, keeps the row visible during its 30 day retention window, and exposes the scheduled physical deletion time in the deleted status tooltip. Keys past the retention window are physically removed during API key listing cleanup.
 

@@ -209,7 +209,8 @@ func main() {
 
 	adminRepo := store.NewAdminRepository(pool)
 	adminService := admin.NewService(adminRepo, admin.Config{
-		SessionTTL: 7 * 24 * time.Hour,
+		SessionTTL:       7 * 24 * time.Hour,
+		EncryptionSecret: cfg.EncryptionSecret,
 		DefaultGatewaySettings: admin.GatewaySettings{
 			MaxConcurrentGatewayRequests:           cfg.GatewayMaxConcurrentRequests,
 			MaxConcurrentRequestsPerAccount:        cfg.GatewayMaxConcurrentRequestsPerAccount,

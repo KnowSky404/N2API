@@ -169,7 +169,9 @@ func TestGatewayDocumentationMentionsAPIKeyRename(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"API key names can be renamed",
-			"without rotating or revealing the secret",
+			"without rotating the secret",
+			"encrypted reusable secret",
+			"Prefix column on the API Keys page can copy the full API key again after creation",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in API key rename documentation", path, want)
