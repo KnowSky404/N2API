@@ -13,7 +13,6 @@
     loadGatewaySettings,
     loadModelRouting,
     loadRoutingPools,
-    loadUsageSummary,
     modelListText,
     modelRouting,
     revokeKey,
@@ -25,16 +24,16 @@
     updateAPIKeyName,
     updateAPIKeyModelPolicy,
     updateAPIKeyRoutingPool,
-    usage,
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
   const activeKeys = $derived(getActiveKeys());
-  const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   let keySearch = $state('');
   let keyStatusFilter = $state('all');
   let modelRoutingRequested = $state(false);
   let createKeyModalOpen = $state(false);
+  let editingKeyId = $state(0);
+  const editingKey = $derived(apiKeys.items.find((key) => key.id === editingKeyId) ?? null);
   let appliedAPIKeySearch = $state('');
   const filteredAPIKeys = $derived(
     apiKeys.items.filter((key) => {
@@ -73,20 +72,6 @@
     }
   }
 
-  function clientKeyUsageSinceParam() {
-    return String(Math.max(0, Math.floor(Date.now() / 1000) - 86400));
-  }
-
-  /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
-  function clientKeyUsageHref(row) {
-    const id = String(row.id ?? '').split('/').pop() ?? '';
-    if (!/^[1-9]\d*$/.test(id)) return '';
-    const params = new URLSearchParams();
-    params.set('clientKeyId', id);
-    params.set('since', clientKeyUsageSinceParam());
-    return `/request-logs?${params.toString()}`;
-  }
-
   /**
    * @param {string | null | undefined} model
    * @param {import('$lib/admin-state.svelte.js').APIKey} key
@@ -111,6 +96,15 @@
     apiKeys.newKeyName = '';
   }
 
+  /** @param {number} keyId */
+  function openEditModal(keyId) {
+    editingKeyId = keyId;
+  }
+
+  function closeEditModal() {
+    editingKeyId = 0;
+  }
+
   /** @param {SubmitEvent} event */
   async function submitCreateKey(event) {
     await createKey(event);
@@ -133,7 +127,6 @@
       void loadModelRouting();
       void loadGatewaySettings();
       void loadRoutingPools();
-      void loadUsageSummary('24h', 'client_key');
     }
   });
 
@@ -283,54 +276,6 @@
     </div>
   </div>
 
-  <section class="mt-6 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h3 class="text-base font-semibold text-[#0d0d0d]">24h key usage</h3>
-        <p class="mt-1 text-sm text-[#6e6e6e]">Gateway traffic distribution by client API key.</p>
-      </div>
-      {#if usage.loading}
-        <span class="text-sm text-[#6e6e6e]">Loading...</span>
-      {/if}
-    </div>
-    {#if usage.error}
-      <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
-    {:else if !usage24hClientKeys?.rows?.length}
-      <p class="mt-4 text-sm text-[#6e6e6e]">No API key usage in the last 24h.</p>
-    {:else}
-      <div class="mt-4 overflow-x-auto rounded-lg border border-[#ededed] bg-white">
-        <table class="w-full min-w-[640px] text-left text-sm">
-          <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
-            <tr>
-              <th class="px-4 py-3 font-medium">API key</th>
-              <th class="px-4 py-3 font-medium">Requests</th>
-              <th class="px-4 py-3 font-medium">Tokens</th>
-              <th class="px-4 py-3 font-medium">Estimated cost</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-[#ededed]">
-            {#each usage24hClientKeys.rows.slice(0, 8) as row}
-              <tr>
-                <td class="px-4 py-3 font-medium text-[#0d0d0d]">
-                  {#if clientKeyUsageHref(row)}
-                    <a class="inline-block max-w-[260px] truncate underline-offset-2 hover:underline" href={clientKeyUsageHref(row)}>
-                      {row.label || row.id}
-                    </a>
-                  {:else}
-                    {row.label || row.id}
-                  {/if}
-                </td>
-                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
-                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
-                <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-  </section>
-
   {#if apiKeys.oneTimeSecret}
     <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
 <div class="flex flex-wrap items-center justify-between gap-3">
@@ -404,6 +349,412 @@
     </div>
   {/if}
 
+  {#if editingKey}
+    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      onclick={(e) => e.target === e.currentTarget && closeEditModal()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Edit API key"
+    >
+      <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="mb-4 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-[#0d0d0d]">Edit key · {editingKey.name}</h3>
+          <button
+            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            type="button"
+            onclick={closeEditModal}
+          >
+            Close
+          </button>
+        </div>
+
+        <form
+          class="space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4"
+          onsubmit={(event) => {
+            event.preventDefault();
+            updateAPIKeyName(editingKey.id, editingKey.name);
+          }}
+        >
+          <h4 class="text-sm font-semibold text-[#0d0d0d]">Name</h4>
+          <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]" for={`edit-api-key-name-${editingKey.id}`}>
+            Key name
+            <input
+              id={`edit-api-key-name-${editingKey.id}`}
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              bind:value={editingKey.name}
+              disabled={Boolean(editingKey.revokedAt)}
+            />
+          </label>
+          <button
+            class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="submit"
+            disabled={Boolean(editingKey.revokedAt)}
+          >
+            Save name
+          </button>
+        </form>
+
+        <form
+          class="mt-4 space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4"
+          onsubmit={(event) => {
+            event.preventDefault();
+            updateAPIKeyModelPolicy(
+              editingKey.id,
+              editingKey.modelPolicy || 'all',
+              editingKey.allowedModelsText ?? modelListText(editingKey.allowedModels ?? [])
+            );
+          }}
+        >
+          <h4 class="text-sm font-semibold text-[#0d0d0d]">Model access</h4>
+          <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]" for={`edit-api-key-model-policy-${editingKey.id}`}>
+            Model policy
+            <select
+              id={`edit-api-key-model-policy-${editingKey.id}`}
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+              bind:value={editingKey.modelPolicy}
+              disabled={Boolean(editingKey.revokedAt)}
+            >
+              <option value="all">All routable models</option>
+              <option value="selected">Selected models</option>
+            </select>
+          </label>
+          {#if editingKey.modelPolicy === 'selected'}
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]" for={`edit-api-key-selected-models-${editingKey.id}`}>
+              Selected models
+              <textarea
+                id={`edit-api-key-selected-models-${editingKey.id}`}
+                class="min-h-20 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                placeholder={'gpt-4.1\ngpt-4.1-mini'}
+                value={editingKey.allowedModelsText ?? modelListText(editingKey.allowedModels ?? [])}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.allowedModelsText = event.currentTarget.value;
+                }}
+              ></textarea>
+            </label>
+          {/if}
+          {#if unroutableModelsForKey(editingKey).length}
+            <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">
+              No schedulable account:
+              {#each unroutableModelsForKey(editingKey) as model, index}
+                {#if index > 0}, {/if}
+                <a class="font-medium underline-offset-2 hover:underline" href={modelRoutingHref(model, editingKey)}>
+                  {model}
+                </a>
+              {/each}
+            </p>
+          {/if}
+          <button
+            class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="submit"
+            disabled={Boolean(editingKey.revokedAt)}
+          >
+            Save access
+          </button>
+
+          <div class="border-t border-[#ededed] pt-4">
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]" for={`edit-api-key-routing-pool-${editingKey.id}`}>
+              Routing pool
+              <select
+                id={`edit-api-key-routing-pool-${editingKey.id}`}
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                value={editingKey.routingPoolId ?? 0}
+                disabled={Boolean(editingKey.revokedAt) || routingPools.loading}
+                onchange={(event) => updateAPIKeyRoutingPool(editingKey.id, Number(event.currentTarget.value || 0))}
+              >
+                <option value={0}>Global provider account pool</option>
+                {#each routingPools.items as pool}
+                  <option value={pool.id}>{pool.name}</option>
+                {/each}
+              </select>
+            </label>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              {#if apiKeyRoutingPoolHref(editingKey)}
+                <a class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={apiKeyRoutingPoolHref(editingKey)}>
+                  {editingKey.routingPoolName || `Pool ${editingKey.routingPoolId}`}
+                </a>
+              {:else}
+                Global pool
+              {/if}
+              {#if routingPoolFallbackNameForKey(editingKey)}
+                <span>· Fallback </span>
+                {#if apiKeyRoutingPoolFallbackHref(editingKey)}
+                  <a class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={apiKeyRoutingPoolFallbackHref(editingKey)}>
+                    {routingPoolFallbackNameForKey(editingKey)}
+                  </a>
+                {:else}
+                  <span>{routingPoolFallbackNameForKey(editingKey)}</span>
+                {/if}
+                {#if apiKeyRoutingPoolFallbackChainLogsHref(editingKey)}
+                  <span>· </span>
+                  <a
+                    class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                    href={apiKeyRoutingPoolFallbackChainLogsHref(editingKey)}
+                    title="View fallback chain logs"
+                    aria-label="View fallback chain logs"
+                  >
+                    Chain logs
+                  </a>
+                {/if}
+              {/if}
+            </p>
+          </div>
+        </form>
+
+        <form
+          class="mt-4 space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4"
+          onsubmit={(event) => {
+            event.preventDefault();
+            updateAPIKeyLimits(
+              editingKey.id,
+              editingKey.requestsPerMinute ?? 0,
+              editingKey.tokensPerMinute ?? 0
+            );
+          }}
+        >
+          <h4 class="text-sm font-semibold text-[#0d0d0d]">Key limits</h4>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-requests-per-minute-${editingKey.id}`}>
+              Requests /min
+              <input
+                id={`edit-api-key-requests-per-minute-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.requestsPerMinute ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.requestsPerMinute = Number(event.currentTarget.value || 0);
+                }}
+              />
+              <span class="text-[11px] font-normal">
+                {keyLimitLabel(editingKey.requestsPerMinute, gatewaySettings.data?.requestsPerMinutePerKey)}
+              </span>
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-tokens-per-minute-${editingKey.id}`}>
+              Tokens /min
+              <input
+                id={`edit-api-key-tokens-per-minute-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.tokensPerMinute ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.tokensPerMinute = Number(event.currentTarget.value || 0);
+                }}
+              />
+              <span class="text-[11px] font-normal">
+                {keyLimitLabel(editingKey.tokensPerMinute, gatewaySettings.data?.tokensPerMinutePerKey)}
+              </span>
+            </label>
+          </div>
+          <div>
+            <p class="text-xs text-[#6e6e6e]">
+              Active {editingKey.currentConcurrentRequests || 0} / {keyConcurrencyLimitLabel(editingKey.effectiveMaxConcurrentRequests)}
+            </p>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              Requests window {editingKey.currentRequestsThisMinute || 0} / {keyRateWindowLimitLabel(editingKey.effectiveRequestsPerMinute)}
+              {#if editingKey.effectiveRequestsPerMinute > 0}
+                <span>({keyRateRemainingLabel(editingKey.requestRateRemaining)})</span>
+              {/if}
+            </p>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              Tokens window {formatTokens(editingKey.currentTokensThisMinute || 0)} / {keyRateWindowLimitLabel(editingKey.effectiveTokensPerMinute)}
+              {#if editingKey.effectiveTokensPerMinute > 0}
+                <span>({keyRateRemainingLabel(editingKey.tokenRateRemaining)})</span>
+              {/if}
+            </p>
+            {#if editingKey.concurrencyBlocked}
+              <p class="mt-1 text-xs font-medium text-amber-700">Concurrency full</p>
+            {/if}
+            {#if editingKey.requestRateLimited}
+              <p class="mt-1 text-xs font-medium text-amber-700">Request limit full</p>
+            {/if}
+            {#if editingKey.tokenRateLimited}
+              <p class="mt-1 text-xs font-medium text-amber-700">Token limit full</p>
+            {/if}
+          </div>
+          <button
+            class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="submit"
+            disabled={Boolean(editingKey.revokedAt)}
+          >
+            Save limits
+          </button>
+        </form>
+
+        <form
+          class="mt-4 space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4"
+          onsubmit={(event) => {
+            event.preventDefault();
+            updateAPIKeyBudgets(
+              editingKey.id,
+              editingKey.requestBudget24h ?? 0,
+              editingKey.tokenBudget24h ?? 0,
+              editingKey.costBudgetMicrousd24h ?? 0,
+              editingKey.requestBudget30d ?? 0,
+              editingKey.tokenBudget30d ?? 0,
+              editingKey.costBudgetMicrousd30d ?? 0
+            );
+          }}
+        >
+          <h4 class="text-sm font-semibold text-[#0d0d0d]">Key budgets</h4>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-request-budget-24h-${editingKey.id}`}>
+              Requests 24h
+              <input
+                id={`edit-api-key-request-budget-24h-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.requestBudget24h ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.requestBudget24h = Number(event.currentTarget.value || 0);
+                }}
+              />
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-token-budget-24h-${editingKey.id}`}>
+              Tokens 24h
+              <input
+                id={`edit-api-key-token-budget-24h-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.tokenBudget24h ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.tokenBudget24h = Number(event.currentTarget.value || 0);
+                }}
+              />
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-cost-budget-24h-${editingKey.id}`}>
+              Cost 24h
+              <input
+                id={`edit-api-key-cost-budget-24h-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.costBudgetMicrousd24h ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.costBudgetMicrousd24h = Number(event.currentTarget.value || 0);
+                }}
+              />
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-request-budget-30d-${editingKey.id}`}>
+              Requests 30d
+              <input
+                id={`edit-api-key-request-budget-30d-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.requestBudget30d ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.requestBudget30d = Number(event.currentTarget.value || 0);
+                }}
+              />
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-token-budget-30d-${editingKey.id}`}>
+              Tokens 30d
+              <input
+                id={`edit-api-key-token-budget-30d-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.tokenBudget30d ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.tokenBudget30d = Number(event.currentTarget.value || 0);
+                }}
+              />
+            </label>
+            <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-cost-budget-30d-${editingKey.id}`}>
+              Cost 30d
+              <input
+                id={`edit-api-key-cost-budget-30d-${editingKey.id}`}
+                class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                type="number"
+                min="0"
+                step="1"
+                value={editingKey.costBudgetMicrousd30d ?? 0}
+                disabled={Boolean(editingKey.revokedAt)}
+                oninput={(event) => {
+                  editingKey.costBudgetMicrousd30d = Number(event.currentTarget.value || 0);
+                }}
+              />
+            </label>
+          </div>
+          <div>
+            <p class="text-xs text-[#6e6e6e]">
+              Requests 24h {keyBudgetUsageLabel(editingKey.requestsUsed24h, editingKey.requestBudget24h)}
+              {#if editingKey.requestsRemaining24h !== null && editingKey.requestsRemaining24h !== undefined}
+                <span>({editingKey.requestsRemaining24h} remaining)</span>
+              {/if}
+            </p>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              Tokens 24h {formatTokens(editingKey.tokensUsed24h || 0)} / {editingKey.tokenBudget24h > 0 ? formatTokens(editingKey.tokenBudget24h) : 'unlimited'}
+              {#if editingKey.tokensRemaining24h !== null && editingKey.tokensRemaining24h !== undefined}
+                <span>({formatTokens(editingKey.tokensRemaining24h)} remaining)</span>
+              {/if}
+            </p>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              Cost 24h {formatCostMicrousd(editingKey.costMicrousd24h || 0)} / {editingKey.costBudgetMicrousd24h > 0 ? formatCostMicrousd(editingKey.costBudgetMicrousd24h) : 'unlimited'}
+              {#if editingKey.costRemainingMicrousd24h !== null && editingKey.costRemainingMicrousd24h !== undefined}
+                <span>({formatCostMicrousd(editingKey.costRemainingMicrousd24h)} remaining)</span>
+              {/if}
+            </p>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              Requests 30d {keyBudgetUsageLabel(editingKey.requestsUsed30d, editingKey.requestBudget30d)}
+              {#if editingKey.requestsRemaining30d !== null && editingKey.requestsRemaining30d !== undefined}
+                <span>({editingKey.requestsRemaining30d} remaining)</span>
+              {/if}
+            </p>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              Tokens 30d {formatTokens(editingKey.tokensUsed30d || 0)} / {editingKey.tokenBudget30d > 0 ? formatTokens(editingKey.tokenBudget30d) : 'unlimited'}
+              {#if editingKey.tokensRemaining30d !== null && editingKey.tokensRemaining30d !== undefined}
+                <span>({formatTokens(editingKey.tokensRemaining30d)} remaining)</span>
+              {/if}
+            </p>
+            <p class="mt-1 text-xs text-[#6e6e6e]">
+              Cost 30d {formatCostMicrousd(editingKey.costMicrousd30d || 0)} / {editingKey.costBudgetMicrousd30d > 0 ? formatCostMicrousd(editingKey.costBudgetMicrousd30d) : 'unlimited'}
+              {#if editingKey.costRemainingMicrousd30d !== null && editingKey.costRemainingMicrousd30d !== undefined}
+                <span>({formatCostMicrousd(editingKey.costRemainingMicrousd30d)} remaining)</span>
+              {/if}
+            </p>
+            {#if editingKey.requestBudgetExceeded}
+              <p class="mt-1 text-xs font-medium text-amber-700">Request budget exceeded</p>
+            {/if}
+            {#if editingKey.tokenBudgetExceeded}
+              <p class="mt-1 text-xs font-medium text-amber-700">Token budget exceeded</p>
+            {/if}
+            {#if editingKey.costBudgetExceeded}
+              <p class="mt-1 text-xs font-medium text-amber-700">Cost budget exceeded</p>
+            {/if}
+          </div>
+          <button
+            class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="submit"
+            disabled={Boolean(editingKey.revokedAt)}
+          >
+            Save budgets
+          </button>
+        </form>
+      </div>
+    </div>
+  {/if}
+
   <div class="mt-6 grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end sm:justify-between sm:gap-3">
     <div class="grid grid-cols-1 sm:flex sm:flex-wrap sm:items-end sm:gap-3">
       <label class="block text-sm font-medium text-[#3c3c3c]">
@@ -434,13 +785,11 @@
   </div>
 
   <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1280px] text-left text-sm">
+    <table class="w-full min-w-[860px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Name</th>
     <th class="px-4 py-3 font-medium">Prefix</th>
-    <th class="w-80 px-4 py-3 font-medium">Model access</th>
-    <th class="w-72 px-4 py-3 font-medium">Key limits</th>
     <th class="px-4 py-3 font-medium">Created</th>
     <th class="px-4 py-3 font-medium">Last used</th>
     <th class="px-4 py-3 font-medium">Status</th>
@@ -450,394 +799,21 @@
 <tbody class="divide-y divide-[#ededed]">
   {#if apiKeys.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading API keys...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">Loading API keys...</td>
     </tr>
   {:else if apiKeys.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No API keys created yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No API keys created yet.</td>
     </tr>
   {:else if filteredAPIKeys.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No API keys match your filters.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No API keys match your filters.</td>
     </tr>
   {:else}
     {#each filteredAPIKeys as key}
       <tr class="bg-white">
-        <td class="px-4 py-3">
-          <form
-            class="grid gap-2"
-            onsubmit={(event) => {
-              event.preventDefault();
-              updateAPIKeyName(key.id, key.name);
-            }}
-          >
-            <label class="sr-only" for={`api-key-name-${key.id}`}>Name for {key.name}</label>
-            <input
-              id={`api-key-name-${key.id}`}
-              class="w-full min-w-40 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-              bind:value={key.name}
-              disabled={Boolean(key.revokedAt)}
-            />
-            <button
-              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-              type="submit"
-              disabled={Boolean(key.revokedAt)}
-            >
-              Save name
-            </button>
-          </form>
-        </td>
+        <td class="px-4 py-3 font-medium text-[#0d0d0d]">{key.name}</td>
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</td>
-        <td class="px-4 py-3">
-          <form
-            class="grid gap-2"
-            onsubmit={(event) => {
-              event.preventDefault();
-              updateAPIKeyModelPolicy(
-                key.id,
-                key.modelPolicy || 'all',
-                key.allowedModelsText ?? modelListText(key.allowedModels ?? [])
-              );
-            }}
-          >
-            <label class="sr-only" for={`api-key-model-policy-${key.id}`}>Model access for {key.name}</label>
-            <select
-              id={`api-key-model-policy-${key.id}`}
-              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-              bind:value={key.modelPolicy}
-              disabled={Boolean(key.revokedAt)}
-            >
-              <option value="all">All routable models</option>
-              <option value="selected">Selected models</option>
-            </select>
-            {#if key.modelPolicy === 'selected'}
-              <label class="sr-only" for={`api-key-selected-models-${key.id}`}>Selected models for {key.name}</label>
-              <textarea
-                id={`api-key-selected-models-${key.id}`}
-                class="min-h-20 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                placeholder={'gpt-4.1\ngpt-4.1-mini'}
-                value={key.allowedModelsText ?? modelListText(key.allowedModels ?? [])}
-                disabled={Boolean(key.revokedAt)}
-                oninput={(event) => {
-                  key.allowedModelsText = event.currentTarget.value;
-                }}
-              ></textarea>
-            {/if}
-            {#if unroutableModelsForKey(key).length}
-              <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs leading-5 text-amber-800">
-                No schedulable account:
-                {#each unroutableModelsForKey(key) as model, index}
-                  {#if index > 0}, {/if}
-                  <a class="font-medium underline-offset-2 hover:underline" href={modelRoutingHref(model, key)}>
-                    {model}
-                  </a>
-                {/each}
-              </p>
-            {/if}
-            <button
-              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-              type="submit"
-              disabled={Boolean(key.revokedAt)}
-            >
-              Save access
-            </button>
-          </form>
-          <div class="mt-4 border-t border-[#ededed] pt-4">
-            <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-routing-pool-${key.id}`}>
-              Routing pool
-              <select
-                id={`api-key-routing-pool-${key.id}`}
-                class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                value={key.routingPoolId ?? 0}
-                disabled={Boolean(key.revokedAt) || routingPools.loading}
-                onchange={(event) => updateAPIKeyRoutingPool(key.id, Number(event.currentTarget.value || 0))}
-              >
-                <option value={0}>Global provider account pool</option>
-                {#each routingPools.items as pool}
-                  <option value={pool.id}>{pool.name}</option>
-                {/each}
-              </select>
-            </label>
-            <p class="mt-1 text-xs text-[#6e6e6e]">
-              {#if apiKeyRoutingPoolHref(key)}
-                <a class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={apiKeyRoutingPoolHref(key)}>
-                  {key.routingPoolName || `Pool ${key.routingPoolId}`}
-                </a>
-              {:else}
-                Global pool
-              {/if}
-              {#if routingPoolFallbackNameForKey(key)}
-                <span>· Fallback </span>
-                {#if apiKeyRoutingPoolFallbackHref(key)}
-                  <a class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={apiKeyRoutingPoolFallbackHref(key)}>
-                    {routingPoolFallbackNameForKey(key)}
-                  </a>
-                {:else}
-                  <span>{routingPoolFallbackNameForKey(key)}</span>
-                {/if}
-                {#if apiKeyRoutingPoolFallbackChainLogsHref(key)}
-                  <span>· </span>
-                  <a
-                    class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
-                    href={apiKeyRoutingPoolFallbackChainLogsHref(key)}
-                    title="View fallback chain logs"
-                    aria-label="View fallback chain logs"
-                  >
-                    Chain logs
-                  </a>
-                {/if}
-              {/if}
-            </p>
-          </div>
-        </td>
-        <td class="px-4 py-3">
-          <form
-            class="grid gap-2"
-            onsubmit={(event) => {
-              event.preventDefault();
-              updateAPIKeyLimits(
-                key.id,
-                key.requestsPerMinute ?? 0,
-                key.tokensPerMinute ?? 0
-              );
-            }}
-          >
-            <div class="grid gap-2 sm:grid-cols-2">
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-requests-per-minute-${key.id}`}>
-                Requests /min
-                <input
-                  id={`api-key-requests-per-minute-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.requestsPerMinute ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.requestsPerMinute = Number(event.currentTarget.value || 0);
-                  }}
-                />
-                <span class="mt-1 block text-[11px] font-normal text-[#6e6e6e]">
-                  {keyLimitLabel(key.requestsPerMinute, gatewaySettings.data?.requestsPerMinutePerKey)}
-                </span>
-              </label>
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-tokens-per-minute-${key.id}`}>
-                Tokens /min
-                <input
-                  id={`api-key-tokens-per-minute-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.tokensPerMinute ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.tokensPerMinute = Number(event.currentTarget.value || 0);
-                  }}
-                />
-                <span class="mt-1 block text-[11px] font-normal text-[#6e6e6e]">
-                  {keyLimitLabel(key.tokensPerMinute, gatewaySettings.data?.tokensPerMinutePerKey)}
-                </span>
-              </label>
-            </div>
-            <div>
-              <p class="text-xs text-[#6e6e6e]">
-                Active {key.currentConcurrentRequests || 0} / {keyConcurrencyLimitLabel(key.effectiveMaxConcurrentRequests)}
-              </p>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                Requests window {key.currentRequestsThisMinute || 0} / {keyRateWindowLimitLabel(key.effectiveRequestsPerMinute)}
-                {#if key.effectiveRequestsPerMinute > 0}
-                  <span>({keyRateRemainingLabel(key.requestRateRemaining)})</span>
-                {/if}
-              </p>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                Tokens window {formatTokens(key.currentTokensThisMinute || 0)} / {keyRateWindowLimitLabel(key.effectiveTokensPerMinute)}
-                {#if key.effectiveTokensPerMinute > 0}
-                  <span>({keyRateRemainingLabel(key.tokenRateRemaining)})</span>
-                {/if}
-              </p>
-              {#if key.concurrencyBlocked}
-                <p class="mt-1 text-xs font-medium text-amber-700">Concurrency full</p>
-              {/if}
-              {#if key.requestRateLimited}
-                <p class="mt-1 text-xs font-medium text-amber-700">Request limit full</p>
-              {/if}
-              {#if key.tokenRateLimited}
-                <p class="mt-1 text-xs font-medium text-amber-700">Token limit full</p>
-              {/if}
-            </div>
-            <button
-              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-              type="submit"
-              disabled={Boolean(key.revokedAt)}
-            >
-              Save limits
-            </button>
-          </form>
-          <form
-            class="mt-4 grid gap-2 border-t border-[#ededed] pt-4"
-            onsubmit={(event) => {
-              event.preventDefault();
-              updateAPIKeyBudgets(
-                key.id,
-                key.requestBudget24h ?? 0,
-                key.tokenBudget24h ?? 0,
-                key.costBudgetMicrousd24h ?? 0,
-                key.requestBudget30d ?? 0,
-                key.tokenBudget30d ?? 0,
-                key.costBudgetMicrousd30d ?? 0
-              );
-            }}
-          >
-            <h4 class="text-xs font-semibold text-[#0d0d0d]">Key budgets</h4>
-            <div class="grid gap-2 sm:grid-cols-2">
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-request-budget-24h-${key.id}`}>
-                Requests 24h
-                <input
-                  id={`api-key-request-budget-24h-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.requestBudget24h ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.requestBudget24h = Number(event.currentTarget.value || 0);
-                  }}
-                />
-              </label>
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-token-budget-24h-${key.id}`}>
-                Tokens 24h
-                <input
-                  id={`api-key-token-budget-24h-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.tokenBudget24h ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.tokenBudget24h = Number(event.currentTarget.value || 0);
-                  }}
-                />
-              </label>
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-cost-budget-24h-${key.id}`}>
-                Cost 24h
-                <input
-                  id={`api-key-cost-budget-24h-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.costBudgetMicrousd24h ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.costBudgetMicrousd24h = Number(event.currentTarget.value || 0);
-                  }}
-                />
-              </label>
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-request-budget-30d-${key.id}`}>
-                Requests 30d
-                <input
-                  id={`api-key-request-budget-30d-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.requestBudget30d ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.requestBudget30d = Number(event.currentTarget.value || 0);
-                  }}
-                />
-              </label>
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-token-budget-30d-${key.id}`}>
-                Tokens 30d
-                <input
-                  id={`api-key-token-budget-30d-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.tokenBudget30d ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.tokenBudget30d = Number(event.currentTarget.value || 0);
-                  }}
-                />
-              </label>
-              <label class="block text-xs font-medium text-[#6e6e6e]" for={`api-key-cost-budget-30d-${key.id}`}>
-                Cost 30d
-                <input
-                  id={`api-key-cost-budget-30d-${key.id}`}
-                  class="mt-1 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={key.costBudgetMicrousd30d ?? 0}
-                  disabled={Boolean(key.revokedAt)}
-                  oninput={(event) => {
-                    key.costBudgetMicrousd30d = Number(event.currentTarget.value || 0);
-                  }}
-                />
-              </label>
-            </div>
-            <div>
-              <p class="text-xs text-[#6e6e6e]">
-                Requests 24h {keyBudgetUsageLabel(key.requestsUsed24h, key.requestBudget24h)}
-                {#if key.requestsRemaining24h !== null && key.requestsRemaining24h !== undefined}
-                  <span>({key.requestsRemaining24h} remaining)</span>
-                {/if}
-              </p>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                Tokens 24h {formatTokens(key.tokensUsed24h || 0)} / {key.tokenBudget24h > 0 ? formatTokens(key.tokenBudget24h) : 'unlimited'}
-                {#if key.tokensRemaining24h !== null && key.tokensRemaining24h !== undefined}
-                  <span>({formatTokens(key.tokensRemaining24h)} remaining)</span>
-                {/if}
-              </p>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                Cost 24h {formatCostMicrousd(key.costMicrousd24h || 0)} / {key.costBudgetMicrousd24h > 0 ? formatCostMicrousd(key.costBudgetMicrousd24h) : 'unlimited'}
-                {#if key.costRemainingMicrousd24h !== null && key.costRemainingMicrousd24h !== undefined}
-                  <span>({formatCostMicrousd(key.costRemainingMicrousd24h)} remaining)</span>
-                {/if}
-              </p>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                Requests 30d {keyBudgetUsageLabel(key.requestsUsed30d, key.requestBudget30d)}
-                {#if key.requestsRemaining30d !== null && key.requestsRemaining30d !== undefined}
-                  <span>({key.requestsRemaining30d} remaining)</span>
-                {/if}
-              </p>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                Tokens 30d {formatTokens(key.tokensUsed30d || 0)} / {key.tokenBudget30d > 0 ? formatTokens(key.tokenBudget30d) : 'unlimited'}
-                {#if key.tokensRemaining30d !== null && key.tokensRemaining30d !== undefined}
-                  <span>({formatTokens(key.tokensRemaining30d)} remaining)</span>
-                {/if}
-              </p>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                Cost 30d {formatCostMicrousd(key.costMicrousd30d || 0)} / {key.costBudgetMicrousd30d > 0 ? formatCostMicrousd(key.costBudgetMicrousd30d) : 'unlimited'}
-                {#if key.costRemainingMicrousd30d !== null && key.costRemainingMicrousd30d !== undefined}
-                  <span>({formatCostMicrousd(key.costRemainingMicrousd30d)} remaining)</span>
-                {/if}
-              </p>
-              {#if key.requestBudgetExceeded}
-                <p class="mt-1 text-xs font-medium text-amber-700">Request budget exceeded</p>
-              {/if}
-              {#if key.tokenBudgetExceeded}
-                <p class="mt-1 text-xs font-medium text-amber-700">Token budget exceeded</p>
-              {/if}
-              {#if key.costBudgetExceeded}
-                <p class="mt-1 text-xs font-medium text-amber-700">Cost budget exceeded</p>
-              {/if}
-            </div>
-            <button
-              class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-              type="submit"
-              disabled={Boolean(key.revokedAt)}
-            >
-              Save budgets
-            </button>
-          </form>
-        </td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.createdAt)}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.lastUsedAt)}</td>
         <td class="px-4 py-3">
@@ -855,6 +831,13 @@
           </span>
         </td>
         <td class="px-4 py-3 text-right">
+          <button
+            class="mr-2 inline-flex rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            onclick={() => openEditModal(key.id)}
+          >
+            Edit
+          </button>
           <a
             class="mr-2 inline-flex rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             href={`/request-logs?clientKeyId=${key.id}`}

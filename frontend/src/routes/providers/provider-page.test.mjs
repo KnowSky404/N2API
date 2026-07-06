@@ -885,7 +885,7 @@ test('admin state refreshes model routing after provider account scheduling chan
 });
 
 test('api keys page owns model policy and gateway default model', () => {
-  // Gateway default model section removed; model access still on the page
+  // Model access select and routing still on the page (in edit modal)
   assert.match(apiKeysSource, /Model access/);
   assert.match(apiKeysSource, /All routable models/);
   assert.match(apiKeysSource, /Selected models/);
@@ -893,14 +893,16 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.match(apiKeysSource, /apiKeyModelWarnings/);
   assert.match(apiKeysSource, /No schedulable account/);
   assert.match(apiKeysSource, /function modelRoutingHref/);
-  assert.match(apiKeysSource, /href=\{modelRoutingHref\(model,\s*key\)\}/);
+  assert.match(apiKeysSource, /href=\{modelRoutingHref\(model,\s*editingKey\)\}/);
   const modelRoutingHrefSource = apiKeysSource.match(
     /function modelRoutingHref\(model,\s*key\) \{[\s\S]*?\n  \}/
   )?.[0] ?? '';
   assert.match(modelRoutingHrefSource, /model=\$\{encodeURIComponent/);
   assert.match(modelRoutingHrefSource, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
-});
 
+  // Model access must NOT be a main table <th> (moves to edit modal)
+  assert.doesNotMatch(apiKeysSource, />Model access<\/th>/);
+});
 test('api keys page loads gateway settings for per-key limit fallback', () => {
   const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 
@@ -961,21 +963,22 @@ test('api key state can save per-key budgets', async () => {
 });
 
 test('api keys page edits per-key gateway limits', () => {
+  // Logs link still present in action area
   assert.match(apiKeysSource, /href=\{`\/request-logs\?clientKeyId=\$\{key\.id\}`\}/);
   assert.match(apiKeysSource, /View request logs/);
-  assert.match(apiKeysSource, /Key limits/);
+
+  // Key limits and budgets still in page source (move to edit modal)
   assert.match(apiKeysSource, /keyLimitLabel/);
   assert.match(apiKeysSource, /Default/);
   assert.match(apiKeysSource, /requestsPerMinute/);
   assert.match(apiKeysSource, /tokensPerMinute/);
   assert.match(apiKeysSource, /updateAPIKeyLimits/);
   assert.match(apiKeysSource, /updateAPIKeyBudgets/);
-  assert.match(apiKeysSource, /Key budgets/);
-  assert.match(apiKeysSource, /Requests 24h/);
-  assert.match(apiKeysSource, /Tokens 30d/);
   assert.match(apiKeysSource, /requestsRemaining24h/);
   assert.match(apiKeysSource, /tokenBudgetExceeded/);
-  assert.match(apiKeysSource, /\/min/);
+
+  // Key limits must NOT be a main table <th> (moves to edit modal)
+  assert.doesNotMatch(apiKeysSource, />Key limits<\/th>/);
 });
 
 test('models page points model access management to api keys', () => {
@@ -1309,6 +1312,24 @@ test('provider account model list disables synced row toggles', () => {
   assert.match(checkboxSource, /configuredModel\.source === 'upstream'/);
 });
 
+test('api keys edit modal bundles per-key settings', () => {
+  // Edit modal state variable exists
+  assert.match(apiKeysSource, /editKeyModalOpen|editingKey|editingKeyId/);
+
+  // Multiple dialog roles: create key modal + edit key modal
+  const dialogCount = (apiKeysSource.match(/role="dialog"/g) ?? []).length;
+  assert.ok(dialogCount >= 2, `expected >= 2 role="dialog" elements, found ${dialogCount}`);
+
+  // Model access select, routing pool select, key limits, budgets, rename still in page source
+  // (they live inside the edit modal but the source-level assertions remain valid)
+  assert.match(apiKeysSource, /updateAPIKeyRoutingPool/);
+  assert.match(apiKeysSource, /updateAPIKeyLimits/);
+  assert.match(apiKeysSource, /updateAPIKeyBudgets/);
+  assert.match(apiKeysSource, /updateAPIKeyName/);
+  assert.match(apiKeysSource, /setAPIKeyDisabled/);
+  assert.match(apiKeysSource, /revokeKey/);
+});
+
 test('api keys page uses modal to create keys and removes gateway model-settings section', () => {
   // Modal state and trigger
   assert.match(apiKeysSource, /createKeyModalOpen/);
@@ -1331,7 +1352,7 @@ test('api keys page uses modal to create keys and removes gateway model-settings
   assert.match(apiKeysSource, /loadModelRouting/);
   assert.match(apiKeysSource, /loadGatewaySettings/);
   assert.match(apiKeysSource, /loadRoutingPools/);
-  assert.match(apiKeysSource, /loadUsageSummary/);
+  assert.doesNotMatch(apiKeysSource, /loadUsageSummary/);
 
   // oneTimeSecret stays on page (not inside modal)
   assert.match(apiKeysSource, /oneTimeSecret/);

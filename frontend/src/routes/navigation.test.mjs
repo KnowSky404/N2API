@@ -525,7 +525,7 @@ test('api keys page initializes key search from client key URL param', () => {
 test('api keys page links routing pool assignments to pool details', () => {
   assert.match(apiKeysPage, /function modelRoutingHref\(model,\s*key\)/);
   assert.match(apiKeysPage, /routingPoolId=\$\{encodeURIComponent\(String\(key\.routingPoolId\)\)\}/);
-  assert.match(apiKeysPage, /href=\{modelRoutingHref\(model,\s*key\)\}/);
+  assert.match(apiKeysPage, /href=\{modelRoutingHref\(model,\s*editingKey\)\}/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolHref/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackHref/);
   assert.match(apiKeysPage, /function apiKeyRoutingPoolFallbackChainLabel/);
@@ -534,10 +534,10 @@ test('api keys page links routing pool assignments to pool details', () => {
   assert.match(apiKeysPage, /routingPoolId=\$\{encodeURIComponent/);
   assert.match(apiKeysPage, /clientKeyId=\$\{encodeURIComponent\(String\(key\.id\)\)\}/);
   assert.match(apiKeysPage, /routingPoolChain=\$\{encodeURIComponent\(chain\)\}/);
-  assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolHref\(key\)\}/);
-  assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolFallbackHref\(key\)\}/);
-  assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolFallbackChainLogsHref\(key\)\}/);
-  assert.match(apiKeysPage, /routingPoolFallbackNameForKey\(key\)/);
+  assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolHref\(editingKey\)\}/);
+  assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolFallbackHref\(editingKey\)\}/);
+  assert.match(apiKeysPage, /href=\{apiKeyRoutingPoolFallbackChainLogsHref\(editingKey\)\}/);
+  assert.match(apiKeysPage, /routingPoolFallbackNameForKey\(editingKey\)/);
   assert.match(apiKeysPage, /View fallback chain logs/);
 });
 
@@ -677,22 +677,16 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(adminState, /params\.set\('excludedAccountIds'/);
 });
 
-test('api keys page shows per-key usage distribution', () => {
-  for (const label of ['24h key usage', 'Requests', 'Tokens', 'Estimated cost', 'Active', 'Concurrency full', 'Requests window', 'Tokens window', 'remaining', 'Request limit full', 'Token limit full']) {
-    assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
-  }
+test('api keys page does not show top-level 24h key usage section', () => {
+  // 24h key usage section must be removed from the page
+  assert.doesNotMatch(apiKeysPage, /24h key usage/);
+  assert.doesNotMatch(apiKeysPage, /usage24hClientKeys/);
+  assert.doesNotMatch(apiKeysPage, /clientKeyUsageHref/);
+  assert.doesNotMatch(apiKeysPage, /function clientKeyUsageSinceParam/);
+  assert.doesNotMatch(apiKeysPage, /loadUsageSummary\('24h', 'client_key'\)/);
+  assert.doesNotMatch(apiKeysPage, /clientKeyUsageSinceParam\(\)/);
 
-  assert.match(apiKeysPage, /loadUsageSummary\('24h', 'client_key'\)/);
-  assert.match(apiKeysPage, /usage24hClientKeys/);
-  assert.match(apiKeysPage, /clientKeyUsageHref/);
-  assert.match(apiKeysPage, /function clientKeyUsageSinceParam/);
-  assert.match(apiKeysPage, /params\.set\('since', clientKeyUsageSinceParam\(\)\)/);
-  assert.match(apiKeysPage, /params\.set\('clientKeyId', id\)/);
-  assert.match(apiKeysPage, /clientKeyId=\$\{encodeURIComponent/);
-  assert.match(apiKeysPage, /href=\{clientKeyUsageHref\(row\)\}/);
-  assert.match(apiKeysPage, /formatTokens/);
-  assert.match(apiKeysPage, /formatCostMicrousd/);
-  assert.match(apiKeysPage, /keyConcurrencyLimitLabel/);
+  // Admin-state rate/concurrency helpers still exist (may be used in edit modal)
   assert.match(adminState, /currentConcurrentRequests/);
   assert.match(adminState, /effectiveMaxConcurrentRequests/);
   assert.match(adminState, /concurrencyBlocked/);
@@ -704,17 +698,47 @@ test('api keys page shows per-key usage distribution', () => {
   assert.match(adminState, /effectiveTokensPerMinute/);
   assert.match(adminState, /tokenRateRemaining/);
   assert.match(adminState, /tokenRateLimited/);
+
+  // Per-key rate labels still in page source (may move to edit modal)
   assert.match(apiKeysPage, /keyRateWindowLimitLabel/);
   assert.match(apiKeysPage, /keyRateRemainingLabel/);
   assert.match(apiKeysPage, /requestRateRemaining/);
   assert.match(apiKeysPage, /tokenRateRemaining/);
 });
 
-test('api keys page shows budget exceeded diagnostics', () => {
-  for (const label of ['Key budgets', 'Cost 24h', 'Cost 30d', 'Request budget exceeded', 'Token budget exceeded', 'Cost budget exceeded']) {
-    assert.match(apiKeysPage, new RegExp(label.replace(' ', '\\s+')), `api keys page should include ${label}`);
-  }
+test('api keys table has 6 visible columns with correct headers', () => {
+  // Row empty/loading colspan must be 6 (NOT 8)
+  assert.match(apiKeysPage, /colspan="6"/);
 
+  // The 6 expected column headers: Name, Prefix, Created, Last used, Status, Action
+  assert.match(apiKeysPage, />Name</);
+  assert.match(apiKeysPage, />Prefix</);
+  assert.match(apiKeysPage, />Created</);
+  assert.match(apiKeysPage, />Last used</);
+  assert.match(apiKeysPage, />Status</);
+  assert.match(apiKeysPage, />Action</);
+
+  // Old inline table headers must not appear as <th> elements
+  assert.doesNotMatch(apiKeysPage, />Model access<\/th>/);
+  assert.doesNotMatch(apiKeysPage, />Key limits<\/th>/);
+});
+
+test('api keys page has an Edit action modal for per-key settings', () => {
+  // An edit-specific modal exists (in addition to the create key modal)
+  // Page should have at least two role="dialog" elements: create key + edit key
+  const dialogCount = (apiKeysPage.match(/role="dialog"/g) ?? []).length;
+  assert.ok(dialogCount >= 2, `expected >= 2 role="dialog" elements, found ${dialogCount}`);
+
+  // Edit modal state variable exists
+  assert.match(apiKeysPage, /editKeyModalOpen|editingKey|editingKeyId/);
+
+  // aria-modal="true" should appear at least twice (create + edit)
+  const ariaModalCount = (apiKeysPage.match(/aria-modal="true"/g) ?? []).length;
+  assert.ok(ariaModalCount >= 2, `expected >= 2 aria-modal="true" elements, found ${ariaModalCount}`);
+});
+
+test('api keys page keeps budget exceeded diagnostics reachable', () => {
+  // Budget exceeded diagnostic text (may appear in edit modal)
   assert.match(apiKeysPage, /request budget exceeded/);
   assert.match(apiKeysPage, /token budget exceeded/);
   assert.match(apiKeysPage, /cost budget exceeded/);
@@ -723,8 +747,12 @@ test('api keys page shows budget exceeded diagnostics', () => {
   assert.match(apiKeysPage, /key\.costBudgetExceeded/);
   assert.match(apiKeysPage, /costBudgetMicrousd24h/);
   assert.match(apiKeysPage, /costBudgetMicrousd30d/);
+
+  // Must not use old budget "full" language
   assert.doesNotMatch(apiKeysPage, /request budget full/);
   assert.doesNotMatch(apiKeysPage, /token budget full/);
+
+  // Admin-state backend contract: updateAPIKeyBudgets callable
   assert.match(adminState, /export async function updateAPIKeyBudgets/);
   assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}\/budgets/);
   assert.match(adminState, /costBudgetMicrousd24h/);
@@ -764,8 +792,8 @@ test('api keys page disables keys reversibly', () => {
 test('api keys page renames keys without rotating secrets', () => {
   assert.match(apiKeysPage, /updateAPIKeyName/);
   assert.match(apiKeysPage, /Save name/);
-  assert.match(apiKeysPage, /bind:value=\{key\.name\}/);
-  assert.match(apiKeysPage, /updateAPIKeyName\(key\.id, key\.name\)/);
+  assert.match(apiKeysPage, /bind:value=\{editingKey\.name\}/);
+  assert.match(apiKeysPage, /updateAPIKeyName\(editingKey\.id, editingKey\.name\)/);
   assert.match(adminState, /export async function updateAPIKeyName/);
   assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}/);
   assert.match(adminState, /method: 'PATCH'/);
