@@ -1,5 +1,6 @@
 <script>
   import { page } from '$app/state';
+  import { Pencil, ScrollText, Trash2 } from 'lucide-svelte';
   import {
     apiKeys,
     apiKeyModelWarnings,
@@ -872,56 +873,62 @@
         <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.createdAt)}</td>
         <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.lastUsedAt)}</td>
-        <td class="px-4 py-3">
-          <div class="flex flex-wrap items-center gap-2" title={keyPhysicalDeleteTitle(key)}>
-            <span
-              class={[
-                'inline-flex rounded-full px-2.5 py-1 text-xs font-medium',
-                key.revokedAt
-                  ? 'bg-red-50 text-red-700'
-                  : key.disabledAt
-                    ? 'bg-amber-50 text-amber-700'
-                  : 'bg-[#e8f5f0] text-[#0a7a5e]'
-              ]}
-            >
-              {keyStatusLabel(key)}
-            </span>
-            {#if !key.revokedAt}
-              <button
-                class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                type="button"
-                onclick={() => setAPIKeyDisabled(key.id, !key.disabledAt)}
-              >
-                {key.disabledAt ? 'Enable' : 'Disable'}
-              </button>
+        <td class="px-4 py-3 align-middle">
+          <div title={keyPhysicalDeleteTitle(key)}>
+            {#if key.revokedAt}
+              <span class="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                Deleted
+              </span>
+            {:else}
+              <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={key.disabledAt ? 'Disabled' : 'Enabled'}>
+                <input
+                  class="peer sr-only"
+                  type="checkbox"
+                  role="switch"
+                  checked={!key.disabledAt}
+                  aria-label={`Set ${key.name} ${key.disabledAt ? 'enabled' : 'disabled'}`}
+                  onchange={() => setAPIKeyDisabled(key.id, !key.disabledAt)}
+                />
+                <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f]"></span>
+                <span class="text-xs text-[#6e6e6e]">{key.disabledAt ? 'Disabled' : 'Enabled'}</span>
+              </label>
             {/if}
           </div>
         </td>
-        <td class="px-4 py-3 text-right">
-          <button
-            class="mr-2 inline-flex rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-            type="button"
-            onclick={() => openEditModal(key.id)}
-          >
-            Edit
-          </button>
-          <button
-            class="mr-2 inline-flex rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-            type="button"
-            onclick={() => openKeyLogsModal(key.id)}
-            title="View request logs"
-            aria-label="View request logs"
-          >
-            Logs
-          </button>
-          <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-            type="button"
-            disabled={Boolean(key.revokedAt)}
-            onclick={() => revokeKey(key.id)}
-          >
-            Delete
-          </button>
+        <td class="whitespace-nowrap px-4 py-3 align-middle text-right">
+          <div class="inline-flex items-center justify-end gap-1 whitespace-nowrap">
+            <button
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              type="button"
+              onclick={() => openEditModal(key.id)}
+              title="Edit key"
+              aria-label="Edit key"
+            >
+              <Pencil class="size-4" aria-hidden="true" />
+              <span class="sr-only">Edit key</span>
+            </button>
+            <button
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              type="button"
+              onclick={() => openKeyLogsModal(key.id)}
+              title="View request logs"
+              aria-label="View request logs"
+            >
+              <ScrollText class="size-4" aria-hidden="true" />
+              <span class="sr-only">View request logs</span>
+            </button>
+            <button
+              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={Boolean(key.revokedAt)}
+              onclick={() => revokeKey(key.id)}
+              title="Delete key"
+              aria-label="Delete key"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+              <span class="sr-only">Delete key</span>
+            </button>
+          </div>
         </td>
       </tr>
     {/each}

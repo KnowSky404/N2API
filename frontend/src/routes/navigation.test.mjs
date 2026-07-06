@@ -775,18 +775,31 @@ test('api keys page filters key list locally', () => {
 });
 
 test('api keys page disables keys reversibly', () => {
-  for (const label of ['Disabled', 'Disable', 'Enable']) {
+  for (const label of ['Disabled', 'Deleted', 'Enabled']) {
     assert.match(apiKeysPage, new RegExp(label), `api keys page should include ${label}`);
   }
 
   assert.match(apiKeysPage, /setAPIKeyDisabled/);
   assert.match(apiKeysPage, /key\.disabledAt/);
   assert.match(apiKeysPage, /keyStatusFilter === 'disabled'/);
-  assert.match(apiKeysPage, /onclick=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
+  assert.match(apiKeysPage, /role="switch"/);
+  assert.match(apiKeysPage, /checked=\{!key\.disabledAt\}/);
+  assert.match(apiKeysPage, /onchange=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
+  assert.match(apiKeysPage, /\{#if key\.revokedAt\}/);
+  assert.match(apiKeysPage, /\{:else\}/);
   assert.match(adminState, /@property \{string \| null\} disabledAt/);
   assert.match(adminState, /export async function setAPIKeyDisabled/);
   assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}\/disabled/);
   assert.match(adminState, /!key\.revokedAt && !key\.disabledAt/);
+});
+
+test('api keys action buttons stay compact on one row', () => {
+  assert.match(apiKeysPage, /whitespace-nowrap/);
+  assert.match(apiKeysPage, /inline-flex items-center justify-end gap-1/);
+  assert.match(apiKeysPage, /class="inline-flex size-8 items-center justify-center/);
+  assert.match(apiKeysPage, /<Pencil class="size-4"/);
+  assert.match(apiKeysPage, /<ScrollText class="size-4"/);
+  assert.match(apiKeysPage, /<Trash2 class="size-4"/);
 });
 
 test('api keys page renames keys without rotating secrets', () => {
