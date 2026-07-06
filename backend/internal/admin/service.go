@@ -288,6 +288,7 @@ type Repository interface {
 	RevokeSession(ctx context.Context, tokenHash string) error
 	CreateAPIKey(ctx context.Context, name, hash, prefix string) (APIKey, error)
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
+	PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error)
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error)
@@ -483,6 +484,10 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string) (CreatedAPIKey,
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
+	cutoff := time.Now().Add(-APIKeyPhysicalDeleteRetention)
+	if _, err := s.repo.PurgeRevokedAPIKeys(ctx, cutoff); err != nil {
+		return nil, err
+	}
 	return s.repo.ListAPIKeys(ctx)
 }
 

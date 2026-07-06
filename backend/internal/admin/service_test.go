@@ -425,6 +425,54 @@ func TestListAPIKeysReturnsRepositoryKeys(t *testing.T) {
 	}
 }
 
+func TestListAPIKeysPurgesRevokedKeysPastRetention(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	now := time.Now().UTC()
+	oldRevokedAt := now.Add(-31 * 24 * time.Hour)
+	recentRevokedAt := now.Add(-2 * 24 * time.Hour)
+	repo.keys[1] = memoryAPIKey{APIKey: APIKey{
+		ID:        1,
+		Name:      "old deleted",
+		Prefix:    "n2_old",
+		CreatedAt: now.Add(-60 * 24 * time.Hour),
+		RevokedAt: &oldRevokedAt,
+	}}
+	repo.keys[2] = memoryAPIKey{APIKey: APIKey{
+		ID:        2,
+		Name:      "recent deleted",
+		Prefix:    "n2_recent",
+		CreatedAt: now.Add(-2 * 24 * time.Hour),
+		RevokedAt: &recentRevokedAt,
+	}}
+	repo.keys[3] = memoryAPIKey{APIKey: APIKey{
+		ID:        3,
+		Name:      "active",
+		Prefix:    "n2_active",
+		CreatedAt: now.Add(-time.Hour),
+	}}
+
+	keys, err := service.ListAPIKeys(context.Background())
+	if err != nil {
+		t.Fatalf("ListAPIKeys returned error: %v", err)
+	}
+
+	for _, key := range keys {
+		if key.ID == 1 {
+			t.Fatalf("old deleted key remained in ListAPIKeys result: %+v", keys)
+		}
+	}
+	if _, ok := repo.keys[1]; ok {
+		t.Fatalf("old deleted key remained in repository after purge")
+	}
+	if _, ok := repo.keys[2]; !ok {
+		t.Fatalf("recent deleted key was purged")
+	}
+	if _, ok := repo.keys[3]; !ok {
+		t.Fatalf("active key was purged")
+	}
+}
+
 func TestAPIKeyModelPolicyDefaultsToAll(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1402,6 +1450,17 @@ func (r *memoryRepo) ListAPIKeys(_ context.Context) ([]APIKey, error) {
 		return int(a.ID - b.ID)
 	})
 	return keys, nil
+}
+
+func (r *memoryRepo) PurgeRevokedAPIKeys(_ context.Context, cutoff time.Time) (int64, error) {
+	var deleted int64
+	for id, key := range r.keys {
+		if key.RevokedAt != nil && !key.RevokedAt.After(cutoff) {
+			delete(r.keys, id)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 func (r *memoryRepo) RevokeAPIKey(_ context.Context, id int64) (APIKey, error) {

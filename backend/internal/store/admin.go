@@ -253,6 +253,18 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 	return r.loadAPIKey(ctx, updatedID)
 }
 
+func (r *AdminRepository) PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error) {
+	tag, err := r.pool.Exec(ctx, `
+		DELETE FROM client_api_keys
+		WHERE revoked_at IS NOT NULL
+			AND revoked_at <= $1
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ time.Time) (admin.APIKey, error) {
 	var found admin.APIKey
 	err := r.pool.QueryRow(ctx, `

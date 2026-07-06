@@ -436,6 +436,59 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	}
 }
 
+func TestPurgeRevokedAPIKeysRemovesOnlyExpiredRevokedKeys(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAdminRepository(t)
+	oldKey, err := repo.CreateAPIKey(ctx, "old deleted", "hash-old-deleted", "n2_old")
+	if err != nil {
+		t.Fatalf("CreateAPIKey old returned error: %v", err)
+	}
+	recentKey, err := repo.CreateAPIKey(ctx, "recent deleted", "hash-recent-deleted", "n2_recent")
+	if err != nil {
+		t.Fatalf("CreateAPIKey recent returned error: %v", err)
+	}
+	disabledKey, err := repo.CreateAPIKey(ctx, "disabled", "hash-disabled", "n2_disabled")
+	if err != nil {
+		t.Fatalf("CreateAPIKey disabled returned error: %v", err)
+	}
+	activeKey, err := repo.CreateAPIKey(ctx, "active", "hash-active", "n2_active")
+	if err != nil {
+		t.Fatalf("CreateAPIKey active returned error: %v", err)
+	}
+	cutoff := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	if _, err := repo.pool.Exec(ctx, `UPDATE client_api_keys SET revoked_at = $2 WHERE id = $1`, oldKey.ID, cutoff.Add(-time.Second)); err != nil {
+		t.Fatalf("mark old revoked: %v", err)
+	}
+	if _, err := repo.pool.Exec(ctx, `UPDATE client_api_keys SET revoked_at = $2 WHERE id = $1`, recentKey.ID, cutoff.Add(time.Second)); err != nil {
+		t.Fatalf("mark recent revoked: %v", err)
+	}
+	if _, err := repo.SetAPIKeyDisabled(ctx, disabledKey.ID, true); err != nil {
+		t.Fatalf("SetAPIKeyDisabled returned error: %v", err)
+	}
+
+	deleted, err := repo.PurgeRevokedAPIKeys(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("PurgeRevokedAPIKeys returned error: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+	keys, err := repo.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListAPIKeys returned error: %v", err)
+	}
+	ids := map[int64]bool{}
+	for _, key := range keys {
+		ids[key.ID] = true
+	}
+	if ids[oldKey.ID] {
+		t.Fatalf("old revoked key remained after purge")
+	}
+	if !ids[recentKey.ID] || !ids[disabledKey.ID] || !ids[activeKey.ID] {
+		t.Fatalf("remaining keys = %+v, want recent, disabled, and active keys", ids)
+	}
+}
+
 func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()
