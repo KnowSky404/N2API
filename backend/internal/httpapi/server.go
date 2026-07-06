@@ -124,17 +124,18 @@ type gatewaySettingsResponse struct {
 type apiKeyResponse struct {
 	admin.APIKey
 	admin.APIKeyBudgetUsage
-	CurrentConcurrentRequests      int  `json:"currentConcurrentRequests"`
-	EffectiveMaxConcurrentRequests int  `json:"effectiveMaxConcurrentRequests"`
-	ConcurrencyBlocked             bool `json:"concurrencyBlocked"`
-	CurrentRequestsThisMinute      int  `json:"currentRequestsThisMinute"`
-	EffectiveRequestsPerMinute     int  `json:"effectiveRequestsPerMinute"`
-	RequestRateRemaining           int  `json:"requestRateRemaining"`
-	RequestRateLimited             bool `json:"requestRateLimited"`
-	CurrentTokensThisMinute        int  `json:"currentTokensThisMinute"`
-	EffectiveTokensPerMinute       int  `json:"effectiveTokensPerMinute"`
-	TokenRateRemaining             int  `json:"tokenRateRemaining"`
-	TokenRateLimited               bool `json:"tokenRateLimited"`
+	PhysicalDeleteAt               *time.Time `json:"physicalDeleteAt"`
+	CurrentConcurrentRequests      int        `json:"currentConcurrentRequests"`
+	EffectiveMaxConcurrentRequests int        `json:"effectiveMaxConcurrentRequests"`
+	ConcurrencyBlocked             bool       `json:"concurrencyBlocked"`
+	CurrentRequestsThisMinute      int        `json:"currentRequestsThisMinute"`
+	EffectiveRequestsPerMinute     int        `json:"effectiveRequestsPerMinute"`
+	RequestRateRemaining           int        `json:"requestRateRemaining"`
+	RequestRateLimited             bool       `json:"requestRateLimited"`
+	CurrentTokensThisMinute        int        `json:"currentTokensThisMinute"`
+	EffectiveTokensPerMinute       int        `json:"effectiveTokensPerMinute"`
+	TokenRateRemaining             int        `json:"tokenRateRemaining"`
+	TokenRateLimited               bool       `json:"tokenRateLimited"`
 }
 
 type providerAccountResponse struct {
@@ -1432,6 +1433,7 @@ func apiKeyResponses(keys []admin.APIKey, budgetUsage map[int64]admin.APIKeyBudg
 		responses = append(responses, apiKeyResponse{
 			APIKey:                         key,
 			APIKeyBudgetUsage:              budgetUsage[key.ID],
+			PhysicalDeleteAt:               apiKeyPhysicalDeleteAt(key),
 			CurrentConcurrentRequests:      currentConcurrentRequests,
 			EffectiveMaxConcurrentRequests: effectiveMaxConcurrentRequests,
 			ConcurrencyBlocked:             effectiveMaxConcurrentRequests > 0 && currentConcurrentRequests >= effectiveMaxConcurrentRequests,
@@ -1446,6 +1448,14 @@ func apiKeyResponses(keys []admin.APIKey, budgetUsage map[int64]admin.APIKeyBudg
 		})
 	}
 	return responses
+}
+
+func apiKeyPhysicalDeleteAt(key admin.APIKey) *time.Time {
+	if key.RevokedAt == nil {
+		return nil
+	}
+	value := key.RevokedAt.Add(admin.APIKeyPhysicalDeleteRetention)
+	return &value
 }
 
 func effectiveAPIKeyRateLimit(override, fallback int) int {

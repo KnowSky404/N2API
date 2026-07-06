@@ -11,20 +11,21 @@ import (
 )
 
 const (
-	defaultSessionTTL           = 7 * 24 * time.Hour
-	sessionTokenName            = "admin_session"
-	apiKeyTokenName             = "n2api"
-	defaultModel                = "gpt-4.1"
-	defaultUsagePricingModel    = "gpt-5"
-	maxModels                   = 100
-	maxModelNameLen             = 128
-	maxRequestLogQueryLen       = 200
-	APIKeyModelPolicyAll        = "all"
-	APIKeyModelPolicySelected   = "selected"
-	RequestLogStatusAll         = "all"
-	RequestLogStatusSuccess     = "success"
-	RequestLogStatusClientError = "client_error"
-	RequestLogStatusServerError = "server_error"
+	defaultSessionTTL             = 7 * 24 * time.Hour
+	sessionTokenName              = "admin_session"
+	apiKeyTokenName               = "n2api"
+	defaultModel                  = "gpt-4.1"
+	defaultUsagePricingModel      = "gpt-5"
+	maxModels                     = 100
+	maxModelNameLen               = 128
+	maxRequestLogQueryLen         = 200
+	APIKeyModelPolicyAll          = "all"
+	APIKeyModelPolicySelected     = "selected"
+	APIKeyPhysicalDeleteRetention = 30 * 24 * time.Hour
+	RequestLogStatusAll           = "all"
+	RequestLogStatusSuccess       = "success"
+	RequestLogStatusClientError   = "client_error"
+	RequestLogStatusServerError   = "server_error"
 )
 
 var (

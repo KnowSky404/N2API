@@ -1334,6 +1334,55 @@ func TestRevokeAPIKeyParsesIDAndReturnsRevokedKey(t *testing.T) {
 	}
 }
 
+func TestListAPIKeysIncludesPhysicalDeleteAtForRevokedKeys(t *testing.T) {
+	admins := newFakeAdminService()
+	revokedAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	admins.keys = []admin.APIKey{
+		{
+			ID:        7,
+			Name:      "deleted workstation",
+			Prefix:    "n2_test",
+			CreatedAt: revokedAt.Add(-time.Hour),
+			RevokedAt: &revokedAt,
+		},
+		{
+			ID:        8,
+			Name:      "active workstation",
+			Prefix:    "n2_live",
+			CreatedAt: revokedAt.Add(-time.Hour),
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/keys", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Keys []struct {
+			ID               int64      `json:"id"`
+			PhysicalDeleteAt *time.Time `json:"physicalDeleteAt"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Keys) != 2 {
+		t.Fatalf("keys length = %d, want 2", len(body.Keys))
+	}
+	want := revokedAt.Add(30 * 24 * time.Hour)
+	if body.Keys[0].ID != 7 || body.Keys[0].PhysicalDeleteAt == nil || !body.Keys[0].PhysicalDeleteAt.Equal(want) {
+		t.Fatalf("revoked key physicalDeleteAt = %+v, want %s", body.Keys[0], want.Format(time.RFC3339))
+	}
+	if body.Keys[1].ID != 8 || body.Keys[1].PhysicalDeleteAt != nil {
+		t.Fatalf("active key physicalDeleteAt = %+v, want nil", body.Keys[1])
+	}
+}
+
 func TestUpdateAPIKeyNameEndpoint(t *testing.T) {
 	admins := newFakeAdminService()
 	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
