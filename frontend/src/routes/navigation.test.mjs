@@ -778,7 +778,8 @@ test('api keys page filters key list locally', () => {
   assert.match(apiKeysPage, /apiKeySearchText/);
   assert.match(apiKeysPage, /bind:value=\{keySearch\}/);
   assert.match(apiKeysPage, /bind:value=\{keyStatusFilter\}/);
-  assert.match(apiKeysPage, /Showing \{filteredAPIKeys\.length\} of \{apiKeys\.items\.length\}/);
+  // Old top-level summary removed; only bottom pagination summary remains
+  assert.doesNotMatch(apiKeysPage, /Showing \{filteredAPIKeys\.length\} of \{apiKeys\.items\.length\}/);
   assert.match(apiKeysPage, /No API keys match your filters\./);
 });
 
@@ -812,12 +813,53 @@ test('api keys action buttons stay compact on one row', () => {
 
 test('api keys page renames keys without rotating secrets', () => {
   assert.match(apiKeysPage, /updateAPIKeyName/);
-  assert.match(apiKeysPage, /Save name/);
   assert.match(apiKeysPage, /bind:value=\{editingKey\.name\}/);
-  assert.match(apiKeysPage, /updateAPIKeyName\(editingKey\.id, editingKey\.name\)/);
   assert.match(adminState, /export async function updateAPIKeyName/);
   assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}/);
   assert.match(adminState, /method: 'PATCH'/);
+  // Unified edit modal: single confirm button, error display, no per-section save
+  assert.match(apiKeysPage, /Confirm changes/);
+  assert.doesNotMatch(apiKeysPage, /Save name/);
+  assert.doesNotMatch(apiKeysPage, /Save model access/);
+  assert.doesNotMatch(apiKeysPage, /Save routing pool/);
+  assert.doesNotMatch(apiKeysPage, /Save limits/);
+  assert.doesNotMatch(apiKeysPage, /Save budgets/);
+  // Error display in edit modal on failure
+  assert.match(apiKeysPage, /apiKeys\.error/);
+  // Snapshot form values before first await to avoid mutation overwrite
+  assert.match(apiKeysPage, /const snap\s*=\s*\{/);
+  assert.match(apiKeysPage, /snap\.name/);
+  assert.match(apiKeysPage, /snap\.id/);
+  assert.match(apiKeysPage, /snap\.revokedAt/);
+  assert.match(apiKeysPage, /snap\.modelPolicy/);
+  assert.match(apiKeysPage, /snap\.allowedModelsText/);
+  assert.match(apiKeysPage, /snap\.routingPoolId/);
+  assert.match(apiKeysPage, /snap\.requestsPerMinute/);
+  assert.match(apiKeysPage, /snap\.tokensPerMinute/);
+  assert.match(apiKeysPage, /snap\.requestBudget24h/);
+  assert.match(apiKeysPage, /snap\.tokenBudget24h/);
+  assert.match(apiKeysPage, /snap\.costBudgetMicrousd24h/);
+  assert.match(apiKeysPage, /snap\.requestBudget30d/);
+  assert.match(apiKeysPage, /snap\.tokenBudget30d/);
+  assert.match(apiKeysPage, /snap\.costBudgetMicrousd30d/);
+  // Limits section regressions: original labels, state rows, blocked text
+  assert.match(apiKeysPage, /Requests window/);
+  assert.match(apiKeysPage, /Tokens window/);
+  assert.match(apiKeysPage, /Concurrency full/);
+  assert.match(apiKeysPage, /Request limit full/);
+  assert.match(apiKeysPage, /Token limit full/);
+  assert.match(apiKeysPage, /keyConcurrencyLimitLabel/);
+  assert.match(apiKeysPage, /keyRateWindowLimitLabel/);
+  assert.match(apiKeysPage, /keyRateRemainingLabel/);
+  // Routing pool regressions: original option text, fallback/chain link text
+  assert.match(apiKeysPage, /Global provider account pool/);
+  assert.match(apiKeysPage, /Chain logs/);
+  // All API calls use snapshot values, never editingKey.* after first await
+  assert.match(apiKeysPage, /updateAPIKeyName\(snap\.id,\s*snap\.name\)/);
+  assert.match(apiKeysPage, /updateAPIKeyModelPolicy[\s\S]*?snap\.id/);
+  assert.match(apiKeysPage, /updateAPIKeyRoutingPool\(snap\.id/);
+  assert.match(apiKeysPage, /updateAPIKeyLimits[\s\S]*?snap\.id/);
+  assert.match(apiKeysPage, /updateAPIKeyBudgets[\s\S]*?snap\.id/);
 });
 
 test('dashboard shows gateway scheduling capacity', () => {
@@ -1055,6 +1097,29 @@ test('api keys page supports table filters and row selection', () => {
   assert.match(apiKeysPage, /keyRoutingPoolFilter === 'global'/);
   assert.match(apiKeysPage, /keyModelPolicyFilter === 'all_routable'/);
   assert.doesNotMatch(apiKeysPage, /No models/);
+});
+
+test('api keys page supports local table pagination', () => {
+  assert.match(apiKeysPage, /keyPage/);
+  assert.match(apiKeysPage, /keyPageSize/);
+  assert.match(apiKeysPage, /paginatedAPIKeys/);
+  assert.match(apiKeysPage, /keyPageCount/);
+  assert.match(apiKeysPage, /normalizedKeyPage/);
+  assert.match(apiKeysPage, /apiKeyPageSummary/);
+  // Page size options
+  assert.match(apiKeysPage, /value=\{5\}/);
+  assert.match(apiKeysPage, /value=\{10\}/);
+  assert.match(apiKeysPage, /value=\{20\}/);
+  assert.match(apiKeysPage, /value=\{50\}/);
+  // Navigation controls
+  assert.match(apiKeysPage, /Previous/);
+  assert.match(apiKeysPage, /Next/);
+  // Table uses paginatedAPIKeys
+  assert.match(apiKeysPage, /paginatedAPIKeys/);
+  // Selected count summary references filtered total, not page
+  assert.match(apiKeysPage, /selectedAPIKeyCount/);
+  // Search input resets page to 1
+  assert.match(apiKeysPage, /keyPage\s*=\s*1/);
 });
 
 test('api keys page has a bulk edit modal with opt-in sections', () => {
