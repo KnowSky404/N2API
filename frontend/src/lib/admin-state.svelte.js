@@ -391,15 +391,18 @@ export const apiUpstreamForm = $state({
   submitting: false,
   error: ''
 });
-/** @type {{ loading: boolean, creating: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
+/** @type {{ loading: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
 export const apiKeys = $state({
   loading: false,
   creating: false,
+  saving: false,
   error: '',
   items: [],
   newKeyName: '',
   oneTimeSecret: ''
 });
+/** @type {Record<string, boolean>} */
+export const selectedAPIKeyIds = $state({});
 /** @type {{ loading: boolean, saving: boolean, cleanupRunning: boolean, error: string, saved: boolean, cleanupResult: { retentionDays: number, deleted: number, before: string } | null, data: GatewaySettingsData | null }} */
 export const gatewaySettings = $state({
   loading: false,
@@ -983,6 +986,7 @@ function clearAPIKeys() {
   replaceState(apiKeys, {
     loading: false,
     creating: false,
+    saving: false,
     error: '',
     items: [],
     newKeyName: '',
@@ -3222,6 +3226,191 @@ export async function revokeKey(id) {
   }
 }
 
+
+
+/**
+ * @param {number | string} id
+ * @param {boolean} selected
+ */
+export function toggleAPIKeySelection(id, selected) {
+  const key = String(id);
+  if (!key || key === '0') return;
+  if (selected) {
+    selectedAPIKeyIds[key] = true;
+    return;
+  }
+  delete selectedAPIKeyIds[key];
+}
+
+export function clearAPIKeySelection() {
+  for (const id of Object.keys(selectedAPIKeyIds)) {
+    delete selectedAPIKeyIds[id];
+  }
+}
+
+/**
+ * @param {number[]} ids
+ * @param {boolean} selected
+ */
+export function setAPIKeySelection(ids, selected) {
+  for (const id of ids) {
+    toggleAPIKeySelection(id, selected);
+  }
+}
+
+function selectedEditableAPIKeyIDs() {
+  const selected = new Set(Object.keys(selectedAPIKeyIds).map((id) => Number(id)));
+  return apiKeys.items
+    .filter((key) => selected.has(key.id) && !key.revokedAt)
+    .map((key) => key.id);
+}
+
+/**
+ * @param {number[]} ids
+ * @param {(id: number) => Promise<void>} action
+ */
+async function runAPIKeyBatch(ids, action) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  if (ids.length === 0) {
+    apiKeys.error = 'Select at least one active or disabled API key';
+    return false;
+  }
+
+  apiKeys.saving = true;
+  apiKeys.error = '';
+  try {
+    for (const id of ids) {
+      if (!isCurrentAuthenticated(version)) return false;
+      await action(id);
+      if (!isCurrentAuthenticated(version)) return false;
+      if (apiKeys.error) return false;
+      delete selectedAPIKeyIds[String(id)];
+    }
+    return true;
+  } finally {
+    if (isCurrentAuthenticated(version)) {
+      apiKeys.saving = false;
+    }
+  }
+}
+
+/**
+ * @param {boolean} disabled
+ */
+export async function bulkSetSelectedAPIKeysDisabled(disabled) {
+  return runAPIKeyBatch(selectedEditableAPIKeyIDs(), async (id) => {
+    await setAPIKeyDisabled(id, disabled);
+  });
+}
+
+export async function bulkRevokeSelectedAPIKeys() {
+  return runAPIKeyBatch(selectedEditableAPIKeyIDs(), async (id) => {
+    await revokeKey(id);
+  });
+}
+
+/**
+ * @param {{
+ *   applyStatus?: boolean,
+ *   targetDisabled?: boolean,
+ *   applyModelPolicy?: boolean,
+ *   targetModelPolicy?: string,
+ *   targetModelsText?: string,
+ *   applyRoutingPool?: boolean,
+ *   targetRoutingPoolId?: number,
+ *   applyLimits?: boolean,
+ *   targetRequestsPerMinute?: string | number,
+ *   targetTokensPerMinute?: string | number,
+ *   applyBudgets?: boolean,
+ *   targetRequestBudget24h?: string | number,
+ *   targetTokenBudget24h?: string | number,
+ *   targetCostBudgetMicrousd24h?: string | number,
+ *   targetRequestBudget30d?: string | number,
+ *   targetTokenBudget30d?: string | number,
+ *   targetCostBudgetMicrousd30d?: string | number,
+ * }} input
+ */
+export async function bulkUpdateSelectedAPIKeys(input) {
+  const editableIds = selectedEditableAPIKeyIDs();
+  if (editableIds.length === 0) {
+    apiKeys.error = 'Select at least one active or disabled API key';
+    return false;
+  }
+
+  const hasPatch =
+    input.applyStatus === true ||
+    input.applyModelPolicy === true ||
+    input.applyRoutingPool === true ||
+    input.applyLimits === true ||
+    input.applyBudgets === true;
+
+  if (!hasPatch) {
+    apiKeys.error = 'Choose at least one bulk edit section';
+    return false;
+  }
+
+  return runAPIKeyBatch(editableIds, async (id) => {
+    const key = apiKeys.items.find((k) => k.id === id);
+    if (!key || key.revokedAt) {
+      apiKeys.error = 'Selected API key no longer exists';
+      return;
+    }
+    if (input.applyStatus === true) {
+      await setAPIKeyDisabled(id, Boolean(input.targetDisabled));
+      if (apiKeys.error) return;
+    }
+
+    if (input.applyModelPolicy === true) {
+      await updateAPIKeyModelPolicy(
+        id,
+        String(input.targetModelPolicy ?? 'all'),
+        String(input.targetModelsText ?? '')
+      );
+      if (apiKeys.error) return;
+    }
+
+    if (input.applyRoutingPool === true) {
+      await updateAPIKeyRoutingPool(id, input.targetRoutingPoolId ?? null);
+      if (apiKeys.error) return;
+    }
+
+    if (input.applyLimits === true) {
+      const ref = apiKeys.items.find((k) => k.id === id);
+      const rpm = input.targetRequestsPerMinute !== undefined && input.targetRequestsPerMinute !== ''
+        ? Number(input.targetRequestsPerMinute)
+        : Number(ref?.requestsPerMinute ?? 0);
+      const tpm = input.targetTokensPerMinute !== undefined && input.targetTokensPerMinute !== ''
+        ? Number(input.targetTokensPerMinute)
+        : Number(ref?.tokensPerMinute ?? 0);
+      await updateAPIKeyLimits(id, rpm, tpm);
+      if (apiKeys.error) return;
+    }
+
+    if (input.applyBudgets === true) {
+      const ref = apiKeys.items.find((k) => k.id === id) ?? null;
+      const req24 = input.targetRequestBudget24h !== undefined && input.targetRequestBudget24h !== ''
+        ? Number(input.targetRequestBudget24h)
+        : Number(ref?.requestBudget24h ?? 0);
+      const tok24 = input.targetTokenBudget24h !== undefined && input.targetTokenBudget24h !== ''
+        ? Number(input.targetTokenBudget24h)
+        : Number(ref?.tokenBudget24h ?? 0);
+      const cost24 = input.targetCostBudgetMicrousd24h !== undefined && input.targetCostBudgetMicrousd24h !== ''
+        ? Number(input.targetCostBudgetMicrousd24h)
+        : Number(ref?.costBudgetMicrousd24h ?? 0);
+      const req30 = input.targetRequestBudget30d !== undefined && input.targetRequestBudget30d !== ''
+        ? Number(input.targetRequestBudget30d)
+        : Number(ref?.requestBudget30d ?? 0);
+      const tok30 = input.targetTokenBudget30d !== undefined && input.targetTokenBudget30d !== ''
+        ? Number(input.targetTokenBudget30d)
+        : Number(ref?.tokenBudget30d ?? 0);
+      const cost30 = input.targetCostBudgetMicrousd30d !== undefined && input.targetCostBudgetMicrousd30d !== ''
+        ? Number(input.targetCostBudgetMicrousd30d)
+        : Number(ref?.costBudgetMicrousd30d ?? 0);
+      await updateAPIKeyBudgets(id, req24, tok24, cost24, req30, tok30, cost30);
+    }
+  });
+}
 
 export function initializeAdminState() {
   loadHealth();

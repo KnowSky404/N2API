@@ -1,9 +1,13 @@
 <script>
   import { page } from '$app/state';
-  import { Copy, Pencil, ScrollText, Trash2 } from 'lucide-svelte';
+  import { Copy, Pencil, ScrollText, SquareCheckBig, Trash2 } from 'lucide-svelte';
   import {
     apiKeys,
     apiKeyModelWarnings,
+    bulkRevokeSelectedAPIKeys,
+    bulkSetSelectedAPIKeysDisabled,
+    bulkUpdateSelectedAPIKeys,
+    clearAPIKeySelection,
     copyAPIKeySecret,
     copySecret,
     createKey,
@@ -19,8 +23,10 @@
     modelRouting,
     revokeKey,
     routingPools,
+    selectedAPIKeyIds,
     session,
     setAPIKeyDisabled,
+    toggleAPIKeySelection,
     updateAPIKeyBudgets,
     updateAPIKeyLimits,
     updateAPIKeyName,
@@ -32,6 +38,9 @@
   const activeKeys = $derived(getActiveKeys());
   let keySearch = $state('');
   let keyStatusFilter = $state('all');
+  let keyRoutingPoolFilter = $state('all');
+  let keyModelPolicyFilter = $state('all');
+  let keyIssueFilter = $state('all');
   let modelRoutingRequested = $state(false);
   let createKeyModalOpen = $state(false);
   let editingKeyId = $state(0);
@@ -39,11 +48,46 @@
   let logsKeyId = $state(0);
   const logsKey = $derived(apiKeys.items.find((key) => key.id === logsKeyId) ?? null);
   let appliedAPIKeySearch = $state('');
+  let bulkEditModalOpen = $state(false);
+  const bulkEditForm = $state({
+    applyStatus: false,
+    targetDisabled: 'false',
+    applyModelPolicy: false,
+    targetModelPolicy: 'all',
+    targetModelsText: '',
+    applyRoutingPool: false,
+    targetRoutingPoolId: 0,
+    applyLimits: false,
+    targetRequestsPerMinute: '',
+    targetTokensPerMinute: '',
+    applyBudgets: false,
+    targetRequestBudget24h: '',
+    targetTokenBudget24h: '',
+    targetCostBudgetMicrousd24h: '',
+    targetRequestBudget30d: '',
+    targetTokenBudget30d: '',
+    targetCostBudgetMicrousd30d: '',
+  });
   const filteredAPIKeys = $derived(
     apiKeys.items.filter((key) => {
       if (keyStatusFilter === 'active' && (key.revokedAt || key.disabledAt)) return false;
       if (keyStatusFilter === 'disabled' && (!key.disabledAt || key.revokedAt)) return false;
       if (keyStatusFilter === 'revoked' && !key.revokedAt) return false;
+
+      if (keyRoutingPoolFilter === 'global' && Number(key.routingPoolId ?? 0) > 0) return false;
+      if (/^[1-9]\d*$/.test(keyRoutingPoolFilter)) {
+        const poolId = Number(keyRoutingPoolFilter);
+        if (Number(key.routingPoolId ?? 0) !== poolId) return false;
+      }
+
+      if (keyModelPolicyFilter === 'selected' && key.modelPolicy !== 'selected') return false;
+      if (keyModelPolicyFilter === 'all_routable' && key.modelPolicy === 'selected') return false;
+
+      if (keyIssueFilter === 'blocked_or_budget') {
+        const hasIssue = key.concurrencyBlocked || key.requestRateLimited || key.tokenRateLimited
+          || key.requestBudgetExceeded || key.tokenBudgetExceeded || key.costBudgetExceeded;
+        if (!hasIssue) return false;
+      }
 
       const query = keySearch.trim().toLowerCase();
       if (!query) return true;
@@ -58,6 +102,30 @@
       return apiKeySearchText(key).includes(query);
     })
   );
+
+  const selectedAPIKeyCount = $derived(Object.keys(selectedAPIKeyIds).length);
+
+  const selectedEditableAPIKeys = $derived(
+    Object.keys(selectedAPIKeyIds)
+      .map(Number)
+      .filter((id) => {
+        const key = apiKeys.items.find((k) => k.id === id);
+        return key && !key.revokedAt;
+      })
+  );
+
+  const allFilteredAPIKeysSelected = $derived(
+    filteredAPIKeys.length > 0 && filteredAPIKeys.every((key) => Boolean(selectedAPIKeyIds[key.id]))
+  );
+
+  /**
+   * @param {boolean} selected
+   */
+  function toggleFilteredAPIKeySelection(selected) {
+    for (const key of filteredAPIKeys) {
+      toggleAPIKeySelection(key.id, selected);
+    }
+  }
 
   /** @param {string} search */
   function applyAPIKeyURLFilters(search) {
@@ -107,6 +175,96 @@
 
   function closeEditModal() {
     editingKeyId = 0;
+  }
+
+  function openBulkEditModal() {
+    apiKeys.error = '';
+    bulkEditForm.applyStatus = false;
+    bulkEditForm.targetDisabled = 'false';
+    bulkEditForm.applyModelPolicy = false;
+    bulkEditForm.targetModelPolicy = 'all';
+    bulkEditForm.targetModelsText = '';
+    bulkEditForm.applyRoutingPool = false;
+    bulkEditForm.targetRoutingPoolId = 0;
+    bulkEditForm.applyLimits = false;
+    bulkEditForm.targetRequestsPerMinute = '';
+    bulkEditForm.targetTokensPerMinute = '';
+    bulkEditForm.applyBudgets = false;
+    bulkEditForm.targetRequestBudget24h = '';
+    bulkEditForm.targetTokenBudget24h = '';
+    bulkEditForm.targetCostBudgetMicrousd24h = '';
+    bulkEditForm.targetRequestBudget30d = '';
+    bulkEditForm.targetTokenBudget30d = '';
+    bulkEditForm.targetCostBudgetMicrousd30d = '';
+    bulkEditModalOpen = true;
+  }
+
+  function closeBulkEditModal() {
+    bulkEditModalOpen = false;
+  }
+
+  /** @param {SubmitEvent} event */
+  async function submitBulkEdit(event) {
+    event.preventDefault();
+    /** @type {{
+     *   applyStatus?: boolean,
+     *   targetDisabled?: boolean,
+     *   applyModelPolicy?: boolean,
+     *   targetModelPolicy?: string,
+     *   targetModelsText?: string,
+     *   applyRoutingPool?: boolean,
+     *   targetRoutingPoolId?: number,
+     *   applyLimits?: boolean,
+     *   targetRequestsPerMinute?: string | number,
+     *   targetTokensPerMinute?: string | number,
+     *   applyBudgets?: boolean,
+     *   targetRequestBudget24h?: string | number,
+     *   targetTokenBudget24h?: string | number,
+     *   targetCostBudgetMicrousd24h?: string | number,
+     *   targetRequestBudget30d?: string | number,
+     *   targetTokenBudget30d?: string | number,
+     *   targetCostBudgetMicrousd30d?: string | number
+     * }} */
+    const patch = {};
+    if (bulkEditForm.applyStatus) {
+      patch.applyStatus = true;
+      patch.targetDisabled = bulkEditForm.targetDisabled === 'true';
+    }
+    if (bulkEditForm.applyModelPolicy) {
+      patch.applyModelPolicy = true;
+      patch.targetModelPolicy = bulkEditForm.targetModelPolicy;
+      patch.targetModelsText = bulkEditForm.targetModelsText;
+    }
+    if (bulkEditForm.applyRoutingPool) {
+      patch.applyRoutingPool = true;
+      patch.targetRoutingPoolId = bulkEditForm.targetRoutingPoolId;
+    }
+    if (bulkEditForm.applyLimits) {
+      patch.applyLimits = true;
+      patch.targetRequestsPerMinute = bulkEditForm.targetRequestsPerMinute;
+      patch.targetTokensPerMinute = bulkEditForm.targetTokensPerMinute;
+    }
+    if (bulkEditForm.applyBudgets) {
+      patch.applyBudgets = true;
+      patch.targetRequestBudget24h = bulkEditForm.targetRequestBudget24h;
+      patch.targetTokenBudget24h = bulkEditForm.targetTokenBudget24h;
+      patch.targetCostBudgetMicrousd24h = bulkEditForm.targetCostBudgetMicrousd24h;
+      patch.targetRequestBudget30d = bulkEditForm.targetRequestBudget30d;
+      patch.targetTokenBudget30d = bulkEditForm.targetTokenBudget30d;
+      patch.targetCostBudgetMicrousd30d = bulkEditForm.targetCostBudgetMicrousd30d;
+    }
+    const noSections =
+      !patch.applyStatus &&
+      !patch.applyModelPolicy &&
+      !patch.applyRoutingPool &&
+      !patch.applyLimits &&
+      !patch.applyBudgets;
+    if (noSections) {
+      apiKeys.error = 'Select at least one section to apply';
+      return;
+    }
+    await bulkUpdateSelectedAPIKeys(patch);
+    if (!apiKeys.error) closeBulkEditModal();
   }
 
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
@@ -325,7 +483,7 @@
     </div>
   {/if}
 
-  {#if apiKeys.error && !createKeyModalOpen}
+  {#if apiKeys.error && !createKeyModalOpen && !bulkEditModalOpen}
     <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
 {apiKeys.error}
     </p>
@@ -376,6 +534,239 @@
     </div>
   {/if}
 
+  {#if bulkEditModalOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      onclick={(e) => e.target === e.currentTarget && closeBulkEditModal()}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Bulk edit API keys"
+    >
+      <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="mb-4 flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-[#0d0d0d]">Bulk edit API keys</h3>
+          <button
+            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            type="button"
+            onclick={closeBulkEditModal}
+          >
+            Cancel
+          </button>
+        </div>
+
+        <p class="mb-4 text-sm text-[#6e6e6e]">
+          Selected keys: {selectedAPIKeyCount}. Editable: {selectedEditableAPIKeys.length}.
+        </p>
+
+        {#if apiKeys.error}
+          <p class="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {apiKeys.error}
+          </p>
+        {/if}
+
+        <form class="space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={submitBulkEdit}>
+          <label class="flex items-center gap-3 text-sm font-medium text-[#3c3c3c]">
+            <input
+              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+              type="checkbox"
+              bind:checked={bulkEditForm.applyStatus}
+            />
+            <span>Apply status</span>
+          </label>
+          {#if bulkEditForm.applyStatus}
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
+              <select
+                class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                bind:value={bulkEditForm.targetDisabled}
+              >
+                <option value="false">Enabled</option>
+                <option value="true">Disabled</option>
+              </select>
+            </label>
+          {/if}
+
+          <label class="flex items-center gap-3 text-sm font-medium text-[#3c3c3c]">
+            <input
+              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+              type="checkbox"
+              bind:checked={bulkEditForm.applyModelPolicy}
+            />
+            <span>Apply model access</span>
+          </label>
+          {#if bulkEditForm.applyModelPolicy}
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
+              Model policy
+              <select
+                class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                bind:value={bulkEditForm.targetModelPolicy}
+              >
+                <option value="all">All routable models</option>
+                <option value="selected">Selected models</option>
+              </select>
+            </label>
+            {#if bulkEditForm.targetModelPolicy === 'selected'}
+              <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
+                Allowed models (one per line)
+                <textarea
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  rows="4"
+                  bind:value={bulkEditForm.targetModelsText}
+                ></textarea>
+              </label>
+            {/if}
+          {/if}
+
+          <label class="flex items-center gap-3 text-sm font-medium text-[#3c3c3c]">
+            <input
+              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+              type="checkbox"
+              bind:checked={bulkEditForm.applyRoutingPool}
+            />
+            <span>Apply routing pool</span>
+          </label>
+          {#if bulkEditForm.applyRoutingPool}
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
+              Routing pool
+              <select
+                class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                bind:value={bulkEditForm.targetRoutingPoolId}
+              >
+                <option value={0}>Global pool</option>
+                {#each routingPools.items as pool}
+                  <option value={pool.id}>{pool.name}</option>
+                {/each}
+              </select>
+            </label>
+          {/if}
+
+          <label class="flex items-center gap-3 text-sm font-medium text-[#3c3c3c]">
+            <input
+              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+              type="checkbox"
+              bind:checked={bulkEditForm.applyLimits}
+            />
+            <span>Apply limits</span>
+          </label>
+          {#if bulkEditForm.applyLimits}
+            <p class="text-xs text-[#6e6e6e]">Leave unchanged</p>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Requests/min
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetRequestsPerMinute}
+                />
+              </label>
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Tokens/min
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetTokensPerMinute}
+                />
+              </label>
+            </div>
+          {/if}
+
+          <label class="flex items-center gap-3 text-sm font-medium text-[#3c3c3c]">
+            <input
+              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+              type="checkbox"
+              bind:checked={bulkEditForm.applyBudgets}
+            />
+            <span>Apply budgets</span>
+          </label>
+          {#if bulkEditForm.applyBudgets}
+            <p class="text-xs text-[#6e6e6e]">Leave unchanged</p>
+            <div class="grid grid-cols-2 gap-3">
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Req budget 24h
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetRequestBudget24h}
+                />
+              </label>
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Token budget 24h
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetTokenBudget24h}
+                />
+              </label>
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Cost budget 24h (microusd)
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetCostBudgetMicrousd24h}
+                />
+              </label>
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Req budget 30d
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetRequestBudget30d}
+                />
+              </label>
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Token budget 30d
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetTokenBudget30d}
+                />
+              </label>
+              <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
+                Cost budget 30d (microusd)
+                <input
+                  class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="Leave unchanged"
+                  bind:value={bulkEditForm.targetCostBudgetMicrousd30d}
+                />
+              </label>
+            </div>
+          {/if}
+
+          <button
+            class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            type="submit"
+            disabled={apiKeys.saving || selectedEditableAPIKeys.length === 0}
+          >
+            {apiKeys.saving ? 'Applying' : 'Apply changes'}
+          </button>
+        </form>
+      </div>
+    </div>
+  {/if}
   {#if editingKey}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
@@ -836,16 +1227,111 @@
           <option value="revoked">Deleted keys</option>
         </select>
       </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Routing pool filter
+        <select
+          class="mt-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={keyRoutingPoolFilter}
+        >
+          <option value="all">All routing pools</option>
+          <option value="global">Global pool</option>
+          {#each routingPools.items as pool}
+            <option value={String(pool.id)}>{pool.name}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Model policy filter
+        <select
+          class="mt-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={keyModelPolicyFilter}
+        >
+          <option value="all">All model policies</option>
+          <option value="all_routable">All routable models</option>
+          <option value="selected">Selected models</option>
+        </select>
+      </label>
+      <label class="block text-sm font-medium text-[#3c3c3c]">
+        Issue filter
+        <select
+          class="mt-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={keyIssueFilter}
+        >
+          <option value="all">All issue states</option>
+          <option value="blocked_or_budget">Only blocked or budget exceeded</option>
+        </select>
+      </label>
     </div>
     <p class="text-sm text-[#6e6e6e]">
       Showing {filteredAPIKeys.length} of {apiKeys.items.length}
     </p>
   </div>
 
-  <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[860px] text-left text-sm">
+  {#if selectedAPIKeyCount > 0}
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3">
+      <p class="text-sm text-[#3c3c3c]">{selectedAPIKeyCount} selected · {selectedEditableAPIKeys.length} editable</p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+          disabled={apiKeys.saving}
+          onclick={openBulkEditModal}
+        >
+          <SquareCheckBig class="size-3.5" aria-hidden="true" />
+          Edit selected
+        </button>
+        <button
+          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+          disabled={apiKeys.saving}
+          onclick={() => bulkSetSelectedAPIKeysDisabled(false)}
+        >
+          Enable
+        </button>
+        <button
+          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+          disabled={apiKeys.saving}
+          onclick={() => bulkSetSelectedAPIKeysDisabled(true)}
+        >
+          Disable
+        </button>
+        <button
+          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+          disabled={apiKeys.saving}
+          onclick={bulkRevokeSelectedAPIKeys}
+        >
+          Delete
+        </button>
+        <button
+          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+          disabled={apiKeys.saving}
+          onclick={clearAPIKeySelection}
+        >
+          Clear
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <div class="mt-4 overflow-x-auto rounded-lg border border-[#ededed]">
+    <table class="w-full min-w-[980px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
+    <th class="w-12 px-4 py-3 font-medium">
+      <label class="inline-flex items-center">
+        <input
+          class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+          type="checkbox"
+          checked={allFilteredAPIKeysSelected}
+          disabled={apiKeys.loading || filteredAPIKeys.length === 0}
+          onchange={(event) => toggleFilteredAPIKeySelection(event.currentTarget.checked)}
+        />
+        <span class="sr-only">Select</span>
+      </label>
+    </th>
     <th class="px-4 py-3 font-medium">Name</th>
     <th class="px-4 py-3 font-medium">Prefix</th>
     <th class="px-4 py-3 font-medium">Created</th>
@@ -857,19 +1343,31 @@
 <tbody class="divide-y divide-[#ededed]">
   {#if apiKeys.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">Loading API keys...</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading API keys...</td>
     </tr>
   {:else if apiKeys.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No API keys created yet.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys created yet.</td>
     </tr>
   {:else if filteredAPIKeys.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="6">No API keys match your filters.</td>
+      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys match your filters.</td>
     </tr>
   {:else}
     {#each filteredAPIKeys as key}
       <tr class="bg-white">
+        <td class="px-4 py-3 align-middle">
+          <label class="inline-flex items-center">
+            <input
+              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
+              type="checkbox"
+              checked={Boolean(selectedAPIKeyIds[key.id])}
+              disabled={apiKeys.saving}
+              onchange={(event) => toggleAPIKeySelection(key.id, event.currentTarget.checked)}
+            />
+            <span class="sr-only">Select {key.name}</span>
+          </label>
+        </td>
         <td class="px-4 py-3 font-medium text-[#0d0d0d]">{key.name}</td>
         <td class="px-4 py-3 align-middle">
           <div class="inline-flex items-center gap-2 whitespace-nowrap">

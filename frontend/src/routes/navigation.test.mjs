@@ -706,11 +706,11 @@ test('api keys page does not show top-level 24h key usage section', () => {
   assert.match(apiKeysPage, /tokenRateRemaining/);
 });
 
-test('api keys table has 6 visible columns with correct headers', () => {
-  // Row empty/loading colspan must be 6 (NOT 8)
-  assert.match(apiKeysPage, /colspan="6"/);
+test('api keys table has 7 visible columns with correct headers', () => {
+  // Row empty/loading colspan must be 7 (NOT 6 or 8)
+  assert.match(apiKeysPage, /colspan="7"/);
 
-  // The 6 expected column headers: Name, Prefix, Created, Last used, Status, Action
+  // The 7 expected column headers: Select, Name, Prefix, Created, Last used, Status, Action
   assert.match(apiKeysPage, />Name</);
   assert.match(apiKeysPage, />Prefix</);
   assert.match(apiKeysPage, />Created</);
@@ -1020,4 +1020,87 @@ test('route pages use shared AuthGate instead of duplicate login forms', () => {
     assert.doesNotMatch(src, /Admin access/, `${page.name} page should not repeat 'Admin access' heading`);
     assert.doesNotMatch(src, /Admin sign in/, `${page.name} page should not repeat 'Admin sign in' heading`);
   }
+});
+
+test('api keys page supports table filters and row selection', () => {
+  for (const label of [
+    'Routing pool filter',
+    'Model policy filter',
+    'Issue filter',
+    'Global pool',
+    'All model policies',
+    'All routable models',
+    'Selected models',
+    'All issue states',
+    'Only blocked or budget exceeded',
+    'Select',
+    'Edit selected',
+    'Enable',
+    'Disable',
+    'Delete',
+    'Clear'
+  ]) {
+    assert.match(apiKeysPage, new RegExp(label.replaceAll(' ', '\\s+')), `api keys page should include ${label}`);
+  }
+
+  assert.match(apiKeysPage, /selectedAPIKeyIds/);
+  assert.match(apiKeysPage, /selectedAPIKeyCount/);
+  assert.match(apiKeysPage, /selectedEditableAPIKeys/);
+  assert.match(apiKeysPage, /allFilteredAPIKeysSelected/);
+  assert.match(apiKeysPage, /toggleAPIKeySelection/);
+  assert.match(apiKeysPage, /toggleFilteredAPIKeySelection/);
+  assert.match(apiKeysPage, /clearAPIKeySelection/);
+  assert.match(apiKeysPage, /bulkSetSelectedAPIKeysDisabled/);
+  assert.match(apiKeysPage, /bulkRevokeSelectedAPIKeys/);
+  assert.match(apiKeysPage, /openBulkEditModal/);
+  assert.match(apiKeysPage, /bind:value=\{keyRoutingPoolFilter\}/);
+  assert.match(apiKeysPage, /bind:value=\{keyModelPolicyFilter\}/);
+  assert.match(apiKeysPage, /bind:value=\{keyIssueFilter\}/);
+  assert.match(apiKeysPage, /keyRoutingPoolFilter === 'global'/);
+  assert.match(apiKeysPage, /keyModelPolicyFilter === 'all_routable'/);
+  assert.doesNotMatch(apiKeysPage, /No models/);
+});
+
+test('api keys page has a bulk edit modal with opt-in sections', () => {
+  for (const label of [
+    'Bulk edit API keys',
+    'Selected keys',
+    'Apply status',
+    'Apply model access',
+    'Apply routing pool',
+    'Apply limits',
+    'Apply budgets',
+    'Leave unchanged',
+    'Apply changes'
+  ]) {
+    assert.match(apiKeysPage, new RegExp(label.replaceAll(' ', '\\s+')), `bulk edit modal should include ${label}`);
+  }
+
+  assert.match(apiKeysPage, /bulkEditModalOpen/);
+  assert.match(apiKeysPage, /bulkEditForm\.applyStatus/);
+  assert.match(apiKeysPage, /bulkEditForm\.applyModelPolicy/);
+  assert.match(apiKeysPage, /bulkEditForm\.applyRoutingPool/);
+  assert.match(apiKeysPage, /bulkEditForm\.applyLimits/);
+  assert.match(apiKeysPage, /bulkEditForm\.applyBudgets/);
+  assert.match(apiKeysPage, /submitBulkEdit/);
+  assert.match(apiKeysPage, /bulkUpdateSelectedAPIKeys/);
+});
+
+test('api key batch helpers reuse existing per-key endpoints', () => {
+  assert.match(adminState, /selectedAPIKeyIds/);
+  assert.match(adminState, /export function toggleAPIKeySelection/);
+  assert.match(adminState, /export function clearAPIKeySelection/);
+  assert.match(adminState, /export async function bulkSetSelectedAPIKeysDisabled/);
+  assert.match(adminState, /export async function bulkRevokeSelectedAPIKeys/);
+  assert.match(adminState, /export async function bulkUpdateSelectedAPIKeys/);
+  assert.match(adminState, /await setAPIKeyDisabled\(id,\s*disabled\)/);
+  assert.match(adminState, /await revokeKey\(id\)/);
+  assert.match(adminState, /await updateAPIKeyModelPolicy/);
+  assert.match(adminState, /await updateAPIKeyLimits/);
+  assert.match(adminState, /await updateAPIKeyBudgets/);
+  assert.match(adminState, /await updateAPIKeyRoutingPool/);
+  assert.match(adminState, /saving: false,[\s\S]*?items: \[\]/);
+  assert.match(adminState, /delete selectedAPIKeyIds\[String\(id\)\]/);
+  assert.match(adminState, /Select at least one active or disabled API key/);
+  assert.doesNotMatch(adminState, /\/api\/admin\/keys\/bulk/);
 });
