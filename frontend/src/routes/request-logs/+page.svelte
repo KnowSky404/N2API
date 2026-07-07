@@ -19,6 +19,7 @@
     routingPools,
     saveUsagePricing,
     session,
+    syncOfficialUsagePricing,
     usage,
     usagePricing,
   } from '$lib/admin-state.svelte.js';
@@ -493,6 +494,14 @@
           {usagePricing.loading ? 'Loading' : 'Reload pricing'}
         </button>
         <button
+          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+          type="button"
+          disabled={usagePricing.loading || usagePricing.saving || usagePricing.syncing}
+          onclick={syncOfficialUsagePricing}
+        >
+          {usagePricing.syncing ? 'Syncing' : 'Sync official'}
+        </button>
+        <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
           onclick={addPricingRow}
@@ -507,6 +516,8 @@
 
     {#if usagePricing.error}
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usagePricing.error}</p>
+    {:else if usagePricing.syncMessage}
+      <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">{usagePricing.syncMessage}</p>
     {:else if usagePricing.saved}
       <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">Pricing saved.</p>
     {/if}

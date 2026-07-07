@@ -15,7 +15,6 @@ const (
 	sessionTokenName              = "admin_session"
 	apiKeyTokenName               = "n2api"
 	defaultModel                  = "gpt-4.1"
-	defaultUsagePricingModel      = "gpt-5"
 	maxModels                     = 100
 	maxModelNameLen               = 128
 	maxRequestLogQueryLen         = 200
@@ -339,6 +338,7 @@ type Service struct {
 	sessionTTL             time.Duration
 	encryptionSecret       string
 	defaultGatewaySettings GatewaySettings
+	pricingFetcher         PricingFetcher
 }
 
 func NewService(repo Repository, cfg Config) *Service {
@@ -352,6 +352,7 @@ func NewService(repo Repository, cfg Config) *Service {
 		sessionTTL:             sessionTTL,
 		encryptionSecret:       cfg.EncryptionSecret,
 		defaultGatewaySettings: cfg.DefaultGatewaySettings,
+		pricingFetcher:         NewHTTPPricingFetcher(30 * time.Second),
 	}
 }
 
@@ -984,18 +985,6 @@ func (s *Service) IsModelAllowed(ctx context.Context, model string) (bool, error
 		}
 	}
 	return false, nil
-}
-
-func defaultUsagePricing() UsagePricing {
-	return UsagePricing{
-		Version:   1,
-		Currency:  "USD",
-		Unit:      "1M_tokens",
-		UpdatedAt: time.Now().UTC(),
-		Models: map[string]UsagePrice{
-			defaultUsagePricingModel: {},
-		},
-	}
 }
 
 func normalizeUsagePricing(pricing UsagePricing) (UsagePricing, error) {

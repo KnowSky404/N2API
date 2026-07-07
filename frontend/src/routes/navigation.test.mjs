@@ -379,6 +379,10 @@ test('request logs page includes usage accounting UI', () => {
   assert.match(adminState, /totalCachedInputTokens/);
   assert.match(adminState, /totalReasoningTokens/);
   assert.match(requestLogsPage, /href=\{usageRowHref\(row\)\}/);
+  assert.match(requestLogsPage, /Sync official/);
+  assert.match(requestLogsPage, /Syncing/);
+  assert.match(requestLogsPage, /syncMessage/);
+  assert.match(requestLogsPage, /syncOfficialUsagePricing/);
 });
 
 test('request logs export links request explicit formats', () => {
@@ -1164,4 +1168,15 @@ test('api key batch helpers reuse existing per-key endpoints', () => {
   assert.match(adminState, /delete selectedAPIKeyIds\[String\(id\)\]/);
   assert.match(adminState, /Select at least one active or disabled API key/);
   assert.doesNotMatch(adminState, /\/api\/admin\/keys\/bulk/);
+});
+
+
+test('usage pricing supports official OpenAI sync', () => {
+  assert.match(adminState, /syncOfficialUsagePricing/);
+  assert.match(adminState, /\/api\/admin\/usage-pricing\/sync-official/);
+  assert.match(adminState, /syncing/);
+  assert.match(adminState, /syncMessage/);
+  assert.match(adminState, /Synced official pricing for/);
+  assert.match(requestLogsPage, /disabled=\{usagePricing\.loading \|\| usagePricing\.saving \|\| usagePricing\.syncing\}/);
+  assert.match(requestLogsPage, /onclick=\{syncOfficialUsagePricing\}/);
 });

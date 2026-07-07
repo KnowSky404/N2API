@@ -462,12 +462,14 @@ export const usage = $state({
   summaries: {},
   current: null
 });
-/** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, version: number, currency: string, unit: string, rows: UsagePricingRow[] }} */
+/** @type {{ loading: boolean, saving: boolean, syncing: boolean, error: string, saved: boolean, syncMessage: string, version: number, currency: string, unit: string, rows: UsagePricingRow[] }} */
 export const usagePricing = $state({
   loading: false,
   saving: false,
+  syncing: false,
   error: '',
   saved: false,
+  syncMessage: '',
   version: 1,
   currency: 'USD',
   unit: '1M_tokens',
@@ -1038,8 +1040,10 @@ function clearUsage() {
   replaceState(usagePricing, {
     loading: false,
     saving: false,
+    syncing: false,
     error: '',
     saved: false,
+    syncMessage: '',
     version: 1,
     currency: 'USD',
     unit: '1M_tokens',
@@ -3176,6 +3180,46 @@ export async function saveUsagePricing(event) {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     usagePricing.saving = false;
+  }
+}
+
+/**
+ * Sync official OpenAI pricing into the usage pricing table.
+ * On success replaces current pricing rows; on failure sets error without clearing edits.
+ * @returns {Promise<boolean>}
+ */
+export async function syncOfficialUsagePricing() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+
+  usagePricing.syncing = true;
+  usagePricing.error = '';
+  usagePricing.saved = false;
+  usagePricing.syncMessage = '';
+
+  try {
+    const payload = await requestJSON('/api/admin/usage-pricing/sync-official', { method: 'POST' });
+    if (!isCurrentAuthenticated(version)) return false;
+    usagePricing.version = payload.pricing?.version ?? 1;
+    usagePricing.currency = payload.pricing?.currency ?? 'USD';
+    usagePricing.unit = payload.pricing?.unit ?? '1M_tokens';
+    usagePricing.rows = Object.entries(payload.pricing?.models ?? {}).map(([model, price]) => ({
+      model,
+      inputMicrousdPerMillion: Number(price?.inputMicrousdPerMillion ?? 0),
+      cachedInputMicrousdPerMillion: Number(price?.cachedInputMicrousdPerMillion ?? 0),
+      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0)
+    }));
+    const total = payload.synced?.total ?? 0;
+    usagePricing.syncMessage = `Synced official pricing for ${total} models.`;
+    await loadUsageSummary(usage.range, usage.groupBy);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    usagePricing.error = error instanceof Error ? error.message : 'Failed to sync official pricing';
+    return false;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return false;
+    usagePricing.syncing = false;
   }
 }
 

@@ -54,6 +54,7 @@ type AdminService interface {
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (admin.UsagePricing, error)
 	UpdateUsagePricing(ctx context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error)
+	SyncOfficialUsagePricing(ctx context.Context) (admin.UsagePricing, admin.UsagePricingSyncSummary, error)
 	GetModelSettings(ctx context.Context) (admin.ModelSettings, error)
 	UpdateModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error)
 	GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error)
@@ -877,6 +878,22 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, pricing)
+	}))
+
+	mux.HandleFunc("POST /api/admin/usage-pricing/sync-official", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		pricing, summary, err := admins.SyncOfficialUsagePricing(r.Context())
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"pricing": pricing,
+			"synced":  summary,
+		})
 	}))
 
 	mux.HandleFunc("GET /api/admin/ops/error-stats", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

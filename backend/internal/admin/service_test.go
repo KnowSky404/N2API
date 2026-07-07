@@ -1829,3 +1829,229 @@ func (r *memoryRepo) UpdateErrorPassthroughRule(_ context.Context, _ int64, _ Er
 func (r *memoryRepo) DeleteErrorPassthroughRule(_ context.Context, _ int64) error {
 	return nil
 }
+func TestDefaultUsagePricingHasNonZeroOfficialPrices(t *testing.T) {
+	pricing := defaultUsagePricing()
+
+	if pricing.Version != 1 {
+		t.Fatalf("version = %d, want 1", pricing.Version)
+	}
+	if pricing.Currency != "USD" {
+		t.Fatalf("currency = %s, want USD", pricing.Currency)
+	}
+	if pricing.Unit != "1M_tokens" {
+		t.Fatalf("unit = %s, want 1M_tokens", pricing.Unit)
+	}
+
+	requiredModels := map[string]UsagePrice{
+		"gpt-5.5":             {InputMicrousdPerMillion: 5_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 30_000_000},
+		"gpt-5.4":             {InputMicrousdPerMillion: 2_500_000, CachedInputMicrousdPerMillion: 250_000, OutputMicrousdPerMillion: 15_000_000},
+		"gpt-5.4-mini":        {InputMicrousdPerMillion: 750_000, CachedInputMicrousdPerMillion: 75_000, OutputMicrousdPerMillion: 4_500_000},
+		"gpt-5.4-nano":        {InputMicrousdPerMillion: 200_000, CachedInputMicrousdPerMillion: 20_000, OutputMicrousdPerMillion: 1_250_000},
+		"gpt-5.2":             {InputMicrousdPerMillion: 1_750_000, CachedInputMicrousdPerMillion: 175_000, OutputMicrousdPerMillion: 14_000_000},
+		"gpt-5.1":             {InputMicrousdPerMillion: 1_250_000, CachedInputMicrousdPerMillion: 125_000, OutputMicrousdPerMillion: 10_000_000},
+		"gpt-5":               {InputMicrousdPerMillion: 1_250_000, CachedInputMicrousdPerMillion: 125_000, OutputMicrousdPerMillion: 10_000_000},
+		"gpt-5-mini":          {InputMicrousdPerMillion: 250_000, CachedInputMicrousdPerMillion: 25_000, OutputMicrousdPerMillion: 2_000_000},
+		"gpt-5-nano":          {InputMicrousdPerMillion: 50_000, CachedInputMicrousdPerMillion: 5_000, OutputMicrousdPerMillion: 400_000},
+		"gpt-5-pro":           {InputMicrousdPerMillion: 15_000_000, CachedInputMicrousdPerMillion: 0, OutputMicrousdPerMillion: 120_000_000},
+		"gpt-4.1":             {InputMicrousdPerMillion: 2_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 8_000_000},
+		"gpt-4.1-mini":        {InputMicrousdPerMillion: 400_000, CachedInputMicrousdPerMillion: 100_000, OutputMicrousdPerMillion: 1_600_000},
+		"gpt-4.1-nano":        {InputMicrousdPerMillion: 100_000, CachedInputMicrousdPerMillion: 25_000, OutputMicrousdPerMillion: 400_000},
+		"gpt-4o":              {InputMicrousdPerMillion: 2_500_000, CachedInputMicrousdPerMillion: 1_250_000, OutputMicrousdPerMillion: 10_000_000},
+		"gpt-4o-mini":         {InputMicrousdPerMillion: 150_000, CachedInputMicrousdPerMillion: 75_000, OutputMicrousdPerMillion: 600_000},
+		"gpt-5.3-chat-latest": {InputMicrousdPerMillion: 1_750_000, CachedInputMicrousdPerMillion: 175_000, OutputMicrousdPerMillion: 14_000_000},
+		"chat-latest":         {InputMicrousdPerMillion: 5_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 30_000_000},
+		"gpt-5.3-codex":       {InputMicrousdPerMillion: 1_750_000, CachedInputMicrousdPerMillion: 175_000, OutputMicrousdPerMillion: 14_000_000},
+	}
+
+	for model, want := range requiredModels {
+		got, ok := pricing.Models[model]
+		if !ok {
+			t.Fatalf("default pricing missing model %q", model)
+		}
+		if got.InputMicrousdPerMillion != want.InputMicrousdPerMillion {
+			t.Errorf("model %q input = %d, want %d", model, got.InputMicrousdPerMillion, want.InputMicrousdPerMillion)
+		}
+		if got.CachedInputMicrousdPerMillion != want.CachedInputMicrousdPerMillion {
+			t.Errorf("model %q cached input = %d, want %d", model, got.CachedInputMicrousdPerMillion, want.CachedInputMicrousdPerMillion)
+		}
+		if got.OutputMicrousdPerMillion != want.OutputMicrousdPerMillion {
+			t.Errorf("model %q output = %d, want %d", model, got.OutputMicrousdPerMillion, want.OutputMicrousdPerMillion)
+		}
+	}
+}
+
+func TestParseOfficialStandardPricingExtractsStandardRows(t *testing.T) {
+	body := `[1,[[0,"gpt-5.5 (<272K context length)"],[0,5],[0,0.5],[0,30]]],[1,[[0,"gpt-5.4-mini"],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,"gpt-5-nano"],[0,0.05],[0,0.005],[0,0.4]]],[1,[[0,"gpt-5-pro"],[0,15],[0,null],[0,120]]],[1,[[0,"gpt-4.1"],[0,2],[0,0.5],[0,8]]],[1,[[0,"chatgpt-4o-latest"],[0,5],[0,"-"],[0,15]]]`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+
+	if got, want := len(models), 6; got != want {
+		t.Fatalf("model count = %d, want %d", got, want)
+	}
+
+	// Context annotation stripped.
+	gpt55, ok := models["gpt-5.5"]
+	if !ok {
+		t.Fatal("missing gpt-5.5 (context annotation stripping failed)")
+	}
+	if gpt55.InputMicrousdPerMillion != 5_000_000 {
+		t.Errorf("gpt-5.5 input = %d, want 5000000", gpt55.InputMicrousdPerMillion)
+	}
+	if gpt55.CachedInputMicrousdPerMillion != 500_000 {
+		t.Errorf("gpt-5.5 cached = %d, want 500000", gpt55.CachedInputMicrousdPerMillion)
+	}
+	if gpt55.OutputMicrousdPerMillion != 30_000_000 {
+		t.Errorf("gpt-5.5 output = %d, want 30000000", gpt55.OutputMicrousdPerMillion)
+	}
+
+	// gpt-5-nano: tiny prices.
+	nano, ok := models["gpt-5-nano"]
+	if !ok {
+		t.Fatal("missing gpt-5-nano")
+	}
+	if nano.InputMicrousdPerMillion != 50_000 {
+		t.Errorf("gpt-5-nano input = %d, want 50000", nano.InputMicrousdPerMillion)
+	}
+	if nano.CachedInputMicrousdPerMillion != 5_000 {
+		t.Errorf("gpt-5-nano cached = %d, want 5000", nano.CachedInputMicrousdPerMillion)
+	}
+
+	// gpt-5-pro: null cached input → 0.
+	pro, ok := models["gpt-5-pro"]
+	if !ok {
+		t.Fatal("missing gpt-5-pro")
+	}
+	if pro.InputMicrousdPerMillion != 15_000_000 {
+		t.Errorf("gpt-5-pro input = %d, want 15000000", pro.InputMicrousdPerMillion)
+	}
+	if pro.CachedInputMicrousdPerMillion != 0 {
+		t.Errorf("gpt-5-pro cached = %d, want 0 (null cached)", pro.CachedInputMicrousdPerMillion)
+	}
+
+	// chatgpt-4o-latest: "-" cached → 0, but input is 5 and output is 15, so it should be parsed.
+	chat, ok := models["chatgpt-4o-latest"]
+	if !ok {
+		t.Fatal("missing chatgpt-4o-latest")
+	}
+	if chat.CachedInputMicrousdPerMillion != 0 {
+		t.Errorf("chatgpt-4o-latest cached = %d, want 0", chat.CachedInputMicrousdPerMillion)
+	}
+}
+
+func TestParseOfficialStandardPricingSkipsNonNumericRows(t *testing.T) {
+	// Row with __pricingHtml output (not a plain number) should be skipped.
+	body := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]]`
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	if _, ok := models["gpt-5.5"]; !ok {
+		t.Fatal("valid row should be parsed")
+	}
+}
+
+func TestParseOfficialStandardPricingReturnsErrInvalidInputOnEmptyResult(t *testing.T) {
+	_, err := parseOfficialStandardPricing("no model data here")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestParseOfficialStandardPricingDeduplicatesByFirstRow(t *testing.T) {
+	// Two rows for same model: keep first.
+	body := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]],[1,[[0,"gpt-5.5"],[0,1],[0,0.1],[0,5]]]`
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("model count = %d, want 1 (deduplicated)", len(models))
+	}
+	gpt55 := models["gpt-5.5"]
+	if gpt55.InputMicrousdPerMillion != 5_000_000 {
+		t.Errorf("dedup kept wrong row: input = %d, want 5000000", gpt55.InputMicrousdPerMillion)
+	}
+}
+
+func TestParseOfficialStandardPricingExtractsCurrentPageShape(t *testing.T) {
+	body := `<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.5 (&lt;272K context length)&quot;],[0,5],[0,0.5],[0,30]]],[1,[[0,&quot;gpt-5.4-mini&quot;],[0,0.75],[0,0.075],[0,4.5]]]]]}"></astro-island>
+<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;batch&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;batch-only&quot;],[0,1],[0,0.1],[0,2]]]]]}"></astro-island>
+<astro-island component-export="GroupedPricingTable" props="{&quot;headings&quot;:[1,[[0,&quot;Category&quot;],[0,&quot;Model&quot;],[0,&quot;Input&quot;],[0,&quot;Cached input&quot;],[0,&quot;Output&quot;]]],&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;ChatGPT&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;chat-latest&quot;],[0,5],[0,0.5],[0,30]]]]]}],[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-codex&quot;],[0,1.75],[0,0.175],[0,14]]]]]}]]]}"></astro-island>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	for _, model := range []string{"gpt-5.5", "gpt-5.4-mini", "chat-latest", "gpt-5.3-codex"} {
+		if _, ok := models[model]; !ok {
+			t.Fatalf("missing parsed model %q from current page shape: %+v", model, models)
+		}
+	}
+	if _, ok := models["batch-only"]; ok {
+		t.Fatal("batch-only model was parsed from non-standard tier")
+	}
+	if models["chat-latest"].CachedInputMicrousdPerMillion != 500_000 || models["chat-latest"].OutputMicrousdPerMillion != 30_000_000 {
+		t.Fatalf("chat-latest pricing = %+v, want 5/0.5/30", models["chat-latest"])
+	}
+}
+
+type fakePricingFetcher struct {
+	body []byte
+	err  error
+}
+
+func (f *fakePricingFetcher) Fetch(_ context.Context) ([]byte, error) {
+	return f.body, f.err
+}
+
+func TestSyncOfficialUsagePricingSavesAndReturnsSummary(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	fixture := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]],[1,[[0,"gpt-5.4-mini"],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,"gpt-5"],[0,1.25],[0,0.125],[0,10]]]`
+	service.SetPricingFetcher(&fakePricingFetcher{body: []byte(fixture)})
+
+	pricing, summary, err := service.SyncOfficialUsagePricing(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOfficialUsagePricing: %v", err)
+	}
+
+	if summary.Total != 3 {
+		t.Errorf("summary.Total = %d, want 3", summary.Total)
+	}
+	if summary.Source == "" {
+		t.Error("summary.Source is empty")
+	}
+	if len(pricing.Models) != 3 {
+		t.Errorf("len(pricing.Models) = %d, want 3", len(pricing.Models))
+	}
+
+	// Verify the values were saved through the repo.
+	saved, _ := repo.GetUsagePricing(context.Background())
+	if saved.Models["gpt-5.5"].InputMicrousdPerMillion != 5_000_000 {
+		t.Errorf("saved gpt-5.5 input = %d, want 5000000", saved.Models["gpt-5.5"].InputMicrousdPerMillion)
+	}
+}
+
+func TestSyncOfficialUsagePricingInvalidSourceReturnsErrInvalidInput(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetPricingFetcher(&fakePricingFetcher{body: []byte("no model data here")})
+
+	_, _, err := service.SyncOfficialUsagePricing(context.Background())
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestSyncOfficialUsagePricingWithoutFetcherUsesDefaultFetcher(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	if service.pricingFetcher == nil {
+		t.Fatal("pricingFetcher is nil, want default HTTP fetcher")
+	}
+}

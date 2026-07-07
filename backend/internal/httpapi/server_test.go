@@ -94,6 +94,10 @@ type fakeAdminService struct {
 	errorRuleInput       admin.ErrorPassthroughRuleInput
 	errorRuleID          int64
 	errorRuleErr         error
+
+	syncOfficialPricing admin.UsagePricing
+	syncOfficialSummary admin.UsagePricingSyncSummary
+	syncOfficialErr     error
 }
 
 type fakeProviderService struct {
@@ -471,6 +475,10 @@ func (s *fakeAdminService) UpdateUsagePricing(_ context.Context, pricing admin.U
 	}
 	s.usagePricing = pricing
 	return pricing, nil
+}
+
+func (s *fakeAdminService) SyncOfficialUsagePricing(_ context.Context) (admin.UsagePricing, admin.UsagePricingSyncSummary, error) {
+	return s.syncOfficialPricing, s.syncOfficialSummary, s.syncOfficialErr
 }
 
 func (s *fakeAdminService) GetModelSettings(_ context.Context) (admin.ModelSettings, error) {
@@ -5679,4 +5687,77 @@ func (s *fakeAdminService) UpdateErrorPassthroughRule(_ context.Context, id int6
 func (s *fakeAdminService) DeleteErrorPassthroughRule(_ context.Context, id int64) error {
 	s.errorRuleID = id
 	return s.errorRuleErr
+}
+
+func TestAdminSyncOfficialUsagePricingRequiresAuth(t *testing.T) {
+	admins := newFakeAdminService()
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/sync-official", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminSyncOfficialUsagePricingReturnsPricingAndSummary(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.syncOfficialPricing = admin.UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]admin.UsagePrice{
+			"gpt-5.5": {InputMicrousdPerMillion: 5_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 30_000_000},
+		},
+	}
+	admins.syncOfficialSummary = admin.UsagePricingSyncSummary{Total: 1, Source: "https://developers.openai.com/api/docs/pricing"}
+
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/sync-official", nil)
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Pricing admin.UsagePricing            `json:"pricing"`
+		Synced  admin.UsagePricingSyncSummary `json:"synced"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Pricing.Models["gpt-5.5"].InputMicrousdPerMillion != 5_000_000 {
+		t.Errorf("pricing.gpt-5.5.input = %d", body.Pricing.Models["gpt-5.5"].InputMicrousdPerMillion)
+	}
+	if body.Synced.Total != 1 {
+		t.Errorf("synced.total = %d, want 1", body.Synced.Total)
+	}
+	if body.Synced.Source == "" {
+		t.Error("synced.source is empty")
+	}
+}
+
+func TestAdminSyncOfficialUsagePricingMapsInvalidInputTo400(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.syncOfficialErr = admin.ErrInvalidInput
+
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/sync-official", nil)
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var body map[string]any
+	json.NewDecoder(rec.Body).Decode(&body)
+	if v, _ := body["error"].(string); v != "invalid_input" {
+		t.Errorf("error = %q, want invalid_input", v)
+	}
 }
