@@ -156,32 +156,6 @@
 
 <AuthGate>
   <div class="space-y-6">
-    <!-- Gateway management header -->
-    <section class="rounded-lg border border-[#ededed] bg-white p-6">
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Gateway management</h2>
-          <p class="mt-2 max-w-3xl text-sm leading-6 text-[#3c3c3c]">
-            Runtime guardrails and short-window traffic distribution for the personal API gateway.
-          </p>
-        </div>
-        <div class="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:w-[28rem]">
-          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] text-center" href="/providers">Provider accounts</a>
-          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] text-center" href="/api-keys">API keys</a>
-          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] text-center" href="/models">Routing diagnostics</a>
-          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] text-center" href="/request-logs">Request logs</a>
-          <a class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] text-center" href="/request-logs?gatewayFallbacks=1">Fallback logs</a>
-        </div>
-      </div>
-      <div class="mt-5 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-        <h3 class="text-sm font-semibold text-[#0d0d0d]">Gateway actions</h3>
-        <p class="mt-1 text-sm text-[#6e6e6e]">
-          Use these links to adjust account capacity, client key access, routing candidates, and recent gateway traffic.
-        </p>
-      </div>
-    </section>
-
-    <!-- Gateway readiness -->
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
       <div>
         <h3 class="text-base font-semibold text-[#0d0d0d]">Gateway readiness</h3>

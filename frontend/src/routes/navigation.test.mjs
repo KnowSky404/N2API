@@ -203,11 +203,8 @@ test('routing pools page manages account pools', () => {
 
 test('gateway page manages runtime limits and usage visibility', () => {
   for (const label of [
-    'Gateway management',
-    'Gateway actions',
     'Gateway readiness',
     'Provider accounts',
-    'Routing diagnostics',
     'Schedulable accounts',
     'Routable models',
     'Active API keys',
@@ -241,15 +238,14 @@ test('gateway page manages runtime limits and usage visibility', () => {
     assert.match(gatewayPage, new RegExp(label.replace(' ', '\\s+')), `gateway page should include ${label}`);
   }
 
-  for (const href of ['/providers', '/api-keys', '/request-logs', '/models']) {
-    assert.match(gatewayPage, new RegExp(`href="${href}"`), `gateway page should link to ${href}`);
-  }
   assert.match(gatewayPage, /href="\/providers\?status=active"/);
+  assert.doesNotMatch(gatewayPage, /Gateway management/, "gateway page should not include removed Gateway management heading");
+  assert.doesNotMatch(gatewayPage, /Gateway actions/, "gateway page should not include removed Gateway actions heading");
+  assert.doesNotMatch(gatewayPage, /Runtime guardrails/, "gateway page should not include removed intro paragraph");
   assert.match(gatewayPage, /href="\/providers\?status=blocked"/);
   assert.match(gatewayPage, /href="\/providers\?status=all"/);
   assert.match(gatewayPage, /href="\/models\?status=routable"/);
   assert.match(gatewayPage, /href="\/api-keys\?status=active"/);
-  assert.match(gatewayPage, /href="\/request-logs\?gatewayFallbacks=1"/);
   assert.match(gatewayPage, /function gatewayUsageSinceParam/);
   assert.match(gatewayPage, /function gatewayUsageHrefWithSince/);
   assert.match(gatewayPage, /params\.set\('since', gatewayUsageSinceParam\(\)\)/);
