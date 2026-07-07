@@ -336,7 +336,10 @@
         model: '',
         inputMicrousdPerMillion: 0,
         cachedInputMicrousdPerMillion: 0,
-        outputMicrousdPerMillion: 0
+        outputMicrousdPerMillion: 0,
+        longInputMicrousdPerMillion: 0,
+        longCachedInputMicrousdPerMillion: 0,
+        longOutputMicrousdPerMillion: 0
       }
     ];
   }
@@ -344,6 +347,35 @@
   /** @param {number} index */
   function removePricingRow(index) {
     usagePricing.rows = usagePricing.rows.filter((_, rowIndex) => rowIndex !== index);
+  }
+
+  let showSyncConfirmModal = $state(false);
+  let pricingSearch = $state('');
+
+  const filteredPricingRows = $derived(
+    (usagePricing.rows || []).filter((row) => {
+      const query = pricingSearch.trim().toLowerCase();
+      if (!query) return true;
+      const searchText = [
+        row.model,
+        String(row.inputMicrousdPerMillion ?? 0),
+        String(row.cachedInputMicrousdPerMillion ?? 0),
+        String(row.outputMicrousdPerMillion ?? 0),
+        String(row.longInputMicrousdPerMillion ?? 0),
+        String(row.longCachedInputMicrousdPerMillion ?? 0),
+        String(row.longOutputMicrousdPerMillion ?? 0)
+      ].join(' ').toLowerCase();
+      return searchText.includes(query);
+    })
+  );
+
+  function openSyncConfirmModal() {
+    showSyncConfirmModal = true;
+  }
+
+  function confirmSyncOfficial() {
+    showSyncConfirmModal = false;
+    syncOfficialUsagePricing();
   }
 </script>
 
@@ -482,7 +514,7 @@
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Pricing</h2>
-        <p class="mt-1 text-sm text-[#6e6e6e]">USD micro-prices per 1M tokens for historical estimates.</p>
+        <p class="mt-1 text-sm text-[#6e6e6e]">Official OpenAI Standard pricing — USD micro-prices per 1M tokens for historical estimates.</p>
       </div>
       <div class="flex flex-wrap items-center gap-3">
         <button
@@ -497,7 +529,7 @@
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
           disabled={usagePricing.loading || usagePricing.saving || usagePricing.syncing}
-          onclick={syncOfficialUsagePricing}
+          onclick={openSyncConfirmModal}
         >
           {usagePricing.syncing ? 'Syncing' : 'Sync official'}
         </button>
@@ -522,24 +554,51 @@
       <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">Pricing saved.</p>
     {/if}
 
+    <div class="mt-5 grid gap-3" style="grid-template-columns: 1fr auto">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Search pricing rows
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          type="search"
+          placeholder="Search model name or prices"
+          bind:value={pricingSearch}
+        />
+      </label>
+      <div class="flex items-end">
+        <p class="text-sm text-[#6e6e6e] tabular-nums">
+          {filteredPricingRows.length} / {(usagePricing.rows || []).length} rows
+          {#if pricingSearch.trim()}
+            matching
+          {/if}
+        </p>
+      </div>
+    </div>
+
     <div class="mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
-      <table class="w-full min-w-[980px] text-left text-sm">
+      <table class="w-full min-w-[1280px] text-left text-sm">
         <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
           <tr>
             <th class="px-4 py-3 font-medium">Model</th>
-            <th class="px-4 py-3 font-medium">Input tokens</th>
-            <th class="px-4 py-3 font-medium">Cached input</th>
-            <th class="px-4 py-3 font-medium">Output tokens</th>
+            <th class="px-4 py-3 font-medium">Input µ$/M</th>
+            <th class="px-4 py-3 font-medium">Cached input µ$/M</th>
+            <th class="px-4 py-3 font-medium">Output µ$/M</th>
+            <th class="px-4 py-3 font-medium">Long input µ$/M</th>
+            <th class="px-4 py-3 font-medium">Long cached input µ$/M</th>
+            <th class="px-4 py-3 font-medium">Long output µ$/M</th>
             <th class="px-4 py-3 font-medium">Action</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-[#ededed]">
           {#if !usagePricing.rows?.length}
             <tr>
-              <td class="px-4 py-5 text-[#6e6e6e]" colspan="5">No pricing rows configured.</td>
+              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows configured. Add a model or sync official OpenAI Standard pricing.</td>
+            </tr>
+          {:else if filteredPricingRows.length === 0}
+            <tr>
+              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows match your search.</td>
             </tr>
           {:else}
-            {#each usagePricing.rows as row, index}
+            {#each filteredPricingRows as row, index (row.model + '-' + (usagePricing.rows || []).indexOf(row))}
               <tr>
                 <td class="px-4 py-3">
                   <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={row.model} placeholder="gpt-5" />
@@ -554,7 +613,16 @@
                   <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.outputMicrousdPerMillion} />
                 </td>
                 <td class="px-4 py-3">
-                  <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => removePricingRow(index)}>Remove</button>
+                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longInputMicrousdPerMillion} />
+                </td>
+                <td class="px-4 py-3">
+                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longCachedInputMicrousdPerMillion} />
+                </td>
+                <td class="px-4 py-3">
+                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longOutputMicrousdPerMillion} />
+                </td>
+                <td class="px-4 py-3">
+                  <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => removePricingRow((usagePricing.rows || []).indexOf(row))}>Remove</button>
                 </td>
               </tr>
             {/each}
@@ -563,6 +631,38 @@
       </table>
     </div>
   </form>
+
+  {#if showSyncConfirmModal}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => { if (e.target === e.currentTarget) showSyncConfirmModal = false; }} onkeydown={(e) => { if (e.key === 'Escape') showSyncConfirmModal = false; }}>
+      <div class="mx-4 w-full max-w-md rounded-xl border border-[#ededed] bg-white p-6 shadow-lg">
+        <h3 class="text-lg font-semibold text-[#0d0d0d]">Sync official OpenAI pricing</h3>
+        <p class="mt-3 text-sm text-[#3c3c3c]">
+          This will sync official OpenAI Standard pricing. It replaces all current pricing rows with the latest official data.
+        </p>
+        <p class="mt-2 text-sm text-[#6e6e6e]">
+          Source: <a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">https://developers.openai.com/api/docs/pricing</a>
+        </p>
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            onclick={() => showSyncConfirmModal = false}
+          >
+            Cancel
+          </button>
+          <button
+            class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#3c3c3c]"
+            type="button"
+            onclick={confirmSyncOfficial}
+          >
+            Confirm sync
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </section>
 
 <section class="rounded-lg border border-[#ededed] bg-white p-6">

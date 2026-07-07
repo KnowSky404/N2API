@@ -182,6 +182,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} inputMicrousdPerMillion
  * @property {number} cachedInputMicrousdPerMillion
  * @property {number} outputMicrousdPerMillion
+ * @property {number} longInputMicrousdPerMillion
+ * @property {number} longCachedInputMicrousdPerMillion
+ * @property {number} longOutputMicrousdPerMillion
  */
 
 /**
@@ -3119,7 +3122,10 @@ export async function loadUsagePricing() {
       model,
       inputMicrousdPerMillion: Number(price?.inputMicrousdPerMillion ?? 0),
       cachedInputMicrousdPerMillion: Number(price?.cachedInputMicrousdPerMillion ?? 0),
-      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0)
+      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0),
+      longInputMicrousdPerMillion: Number(price?.longInputMicrousdPerMillion ?? 0),
+      longCachedInputMicrousdPerMillion: Number(price?.longCachedInputMicrousdPerMillion ?? 0),
+      longOutputMicrousdPerMillion: Number(price?.longOutputMicrousdPerMillion ?? 0)
     }));
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
@@ -3148,7 +3154,10 @@ export async function saveUsagePricing(event) {
     models[model] = {
       inputMicrousdPerMillion: Number(row.inputMicrousdPerMillion) || 0,
       cachedInputMicrousdPerMillion: Number(row.cachedInputMicrousdPerMillion) || 0,
-      outputMicrousdPerMillion: Number(row.outputMicrousdPerMillion) || 0
+      outputMicrousdPerMillion: Number(row.outputMicrousdPerMillion) || 0,
+      longInputMicrousdPerMillion: Number(row.longInputMicrousdPerMillion) || 0,
+      longCachedInputMicrousdPerMillion: Number(row.longCachedInputMicrousdPerMillion) || 0,
+      longOutputMicrousdPerMillion: Number(row.longOutputMicrousdPerMillion) || 0
     };
   }
 
@@ -3170,7 +3179,10 @@ export async function saveUsagePricing(event) {
       model,
       inputMicrousdPerMillion: Number(price?.inputMicrousdPerMillion ?? 0),
       cachedInputMicrousdPerMillion: Number(price?.cachedInputMicrousdPerMillion ?? 0),
-      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0)
+      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0),
+      longInputMicrousdPerMillion: Number(price?.longInputMicrousdPerMillion ?? 0),
+      longCachedInputMicrousdPerMillion: Number(price?.longCachedInputMicrousdPerMillion ?? 0),
+      longOutputMicrousdPerMillion: Number(price?.longOutputMicrousdPerMillion ?? 0)
     }));
     usagePricing.saved = true;
     await loadUsageSummary(usage.range, usage.groupBy);
@@ -3207,10 +3219,13 @@ export async function syncOfficialUsagePricing() {
       model,
       inputMicrousdPerMillion: Number(price?.inputMicrousdPerMillion ?? 0),
       cachedInputMicrousdPerMillion: Number(price?.cachedInputMicrousdPerMillion ?? 0),
-      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0)
+      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0),
+      longInputMicrousdPerMillion: Number(price?.longInputMicrousdPerMillion ?? 0),
+      longCachedInputMicrousdPerMillion: Number(price?.longCachedInputMicrousdPerMillion ?? 0),
+      longOutputMicrousdPerMillion: Number(price?.longOutputMicrousdPerMillion ?? 0)
     }));
     const total = payload.synced?.total ?? 0;
-    usagePricing.syncMessage = `Synced official pricing for ${total} models.`;
+    usagePricing.syncMessage = `Synced official OpenAI Standard pricing for ${total} models.`;
     await loadUsageSummary(usage.range, usage.groupBy);
     return true;
   } catch (error) {

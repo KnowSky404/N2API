@@ -197,9 +197,12 @@ type UsagePricing struct {
 }
 
 type UsagePrice struct {
-	InputMicrousdPerMillion       int64 `json:"inputMicrousdPerMillion"`
-	CachedInputMicrousdPerMillion int64 `json:"cachedInputMicrousdPerMillion"`
-	OutputMicrousdPerMillion      int64 `json:"outputMicrousdPerMillion"`
+	InputMicrousdPerMillion           int64 `json:"inputMicrousdPerMillion"`
+	CachedInputMicrousdPerMillion     int64 `json:"cachedInputMicrousdPerMillion"`
+	OutputMicrousdPerMillion          int64 `json:"outputMicrousdPerMillion"`
+	LongInputMicrousdPerMillion       int64 `json:"longInputMicrousdPerMillion"`
+	LongCachedInputMicrousdPerMillion int64 `json:"longCachedInputMicrousdPerMillion"`
+	LongOutputMicrousdPerMillion      int64 `json:"longOutputMicrousdPerMillion"`
 }
 
 type UsageCostInput struct {
@@ -897,6 +900,11 @@ func (s *Service) EstimateUsageCost(ctx context.Context, usage UsageCostInput) (
 	snapshot["inputMicrousdPerMillion"] = price.InputMicrousdPerMillion
 	snapshot["cachedInputMicrousdPerMillion"] = price.CachedInputMicrousdPerMillion
 	snapshot["outputMicrousdPerMillion"] = price.OutputMicrousdPerMillion
+	if price.LongInputMicrousdPerMillion != 0 || price.LongCachedInputMicrousdPerMillion != 0 || price.LongOutputMicrousdPerMillion != 0 {
+		snapshot["longInputMicrousdPerMillion"] = price.LongInputMicrousdPerMillion
+		snapshot["longCachedInputMicrousdPerMillion"] = price.LongCachedInputMicrousdPerMillion
+		snapshot["longOutputMicrousdPerMillion"] = price.LongOutputMicrousdPerMillion
+	}
 	return UsageCostEstimate{
 		Matched:      true,
 		CostMicrousd: estimateCostMicrousd(usage, price),
@@ -1010,7 +1018,8 @@ func normalizeUsagePricing(pricing UsagePricing) (UsagePricing, error) {
 		if model == "" || len(model) > maxModelNameLen {
 			return UsagePricing{}, ErrInvalidInput
 		}
-		if price.InputMicrousdPerMillion < 0 || price.CachedInputMicrousdPerMillion < 0 || price.OutputMicrousdPerMillion < 0 {
+		if price.InputMicrousdPerMillion < 0 || price.CachedInputMicrousdPerMillion < 0 || price.OutputMicrousdPerMillion < 0 ||
+			price.LongInputMicrousdPerMillion < 0 || price.LongCachedInputMicrousdPerMillion < 0 || price.LongOutputMicrousdPerMillion < 0 {
 			return UsagePricing{}, ErrInvalidInput
 		}
 		models[model] = price

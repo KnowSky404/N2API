@@ -1176,7 +1176,24 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(adminState, /\/api\/admin\/usage-pricing\/sync-official/);
   assert.match(adminState, /syncing/);
   assert.match(adminState, /syncMessage/);
-  assert.match(adminState, /Synced official pricing for/);
-  assert.match(requestLogsPage, /disabled=\{usagePricing\.loading \|\| usagePricing\.saving \|\| usagePricing\.syncing\}/);
-  assert.match(requestLogsPage, /onclick=\{syncOfficialUsagePricing\}/);
+  assert.match(adminState, /Synced official OpenAI Standard pricing for/);
+  assert.match(adminState, /longInputMicrousdPerMillion/);
+  assert.match(adminState, /longCachedInputMicrousdPerMillion/);
+  assert.match(adminState, /longOutputMicrousdPerMillion/);
+  // Sync official now opens a confirmation modal; the button should not wire directly to syncOfficialUsagePricing
+  assert.doesNotMatch(requestLogsPage, /onclick=\{syncOfficialUsagePricing\}/);
+  // Confirmation modal state
+  assert.match(requestLogsPage, /showSyncConfirmModal/);
+  // Official source URL in modal
+  assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/pricing/);
+  // Search state for pricing rows
+  assert.match(requestLogsPage, /pricingSearch/);
+  assert.match(requestLogsPage, /filteredPricingRows/);
+  // Long context field headers or inputs
+  assert.match(requestLogsPage, /longInputMicrousdPerMillion/);
+  assert.match(requestLogsPage, /longCachedInputMicrousdPerMillion/);
+  assert.match(requestLogsPage, /longOutputMicrousdPerMillion/);
+  // Zero rows vs zero search matches
+  assert.match(requestLogsPage, /No pricing rows/);
+  assert.match(requestLogsPage, /No pricing rows match/);
 });

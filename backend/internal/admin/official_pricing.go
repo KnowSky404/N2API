@@ -71,8 +71,8 @@ func defaultUsagePricing() UsagePricing {
 		UpdatedAt: time.Now().UTC(),
 		Models: map[string]UsagePrice{
 			// Flagship standard models.
-			"gpt-5.5":      {InputMicrousdPerMillion: 5_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 30_000_000},
-			"gpt-5.4":      {InputMicrousdPerMillion: 2_500_000, CachedInputMicrousdPerMillion: 250_000, OutputMicrousdPerMillion: 15_000_000},
+			"gpt-5.5":      {InputMicrousdPerMillion: 5_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 30_000_000, LongInputMicrousdPerMillion: 10_000_000, LongCachedInputMicrousdPerMillion: 1_000_000, LongOutputMicrousdPerMillion: 45_000_000},
+			"gpt-5.4":      {InputMicrousdPerMillion: 2_500_000, CachedInputMicrousdPerMillion: 250_000, OutputMicrousdPerMillion: 15_000_000, LongInputMicrousdPerMillion: 5_000_000, LongCachedInputMicrousdPerMillion: 500_000, LongOutputMicrousdPerMillion: 22_500_000},
 			"gpt-5.4-mini": {InputMicrousdPerMillion: 750_000, CachedInputMicrousdPerMillion: 75_000, OutputMicrousdPerMillion: 4_500_000},
 			"gpt-5.4-nano": {InputMicrousdPerMillion: 200_000, CachedInputMicrousdPerMillion: 20_000, OutputMicrousdPerMillion: 1_250_000},
 			"gpt-5.2":      {InputMicrousdPerMillion: 1_750_000, CachedInputMicrousdPerMillion: 175_000, OutputMicrousdPerMillion: 14_000_000},
@@ -80,12 +80,15 @@ func defaultUsagePricing() UsagePricing {
 			"gpt-5":        {InputMicrousdPerMillion: 1_250_000, CachedInputMicrousdPerMillion: 125_000, OutputMicrousdPerMillion: 10_000_000},
 			"gpt-5-mini":   {InputMicrousdPerMillion: 250_000, CachedInputMicrousdPerMillion: 25_000, OutputMicrousdPerMillion: 2_000_000},
 			"gpt-5-nano":   {InputMicrousdPerMillion: 50_000, CachedInputMicrousdPerMillion: 5_000, OutputMicrousdPerMillion: 400_000},
-			"gpt-5-pro":    {InputMicrousdPerMillion: 15_000_000, CachedInputMicrousdPerMillion: 0, OutputMicrousdPerMillion: 120_000_000},
+			"gpt-5-pro":    {InputMicrousdPerMillion: 15_000_000, CachedInputMicrousdPerMillion: 0, OutputMicrousdPerMillion: 120_000_000, LongInputMicrousdPerMillion: 30_000_000, LongCachedInputMicrousdPerMillion: 0, LongOutputMicrousdPerMillion: 240_000_000},
 			"gpt-4.1":      {InputMicrousdPerMillion: 2_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 8_000_000},
 			"gpt-4.1-mini": {InputMicrousdPerMillion: 400_000, CachedInputMicrousdPerMillion: 100_000, OutputMicrousdPerMillion: 1_600_000},
 			"gpt-4.1-nano": {InputMicrousdPerMillion: 100_000, CachedInputMicrousdPerMillion: 25_000, OutputMicrousdPerMillion: 400_000},
 			"gpt-4o":       {InputMicrousdPerMillion: 2_500_000, CachedInputMicrousdPerMillion: 1_250_000, OutputMicrousdPerMillion: 10_000_000},
 			"gpt-4o-mini":  {InputMicrousdPerMillion: 150_000, CachedInputMicrousdPerMillion: 75_000, OutputMicrousdPerMillion: 600_000},
+
+			"gpt-5.5-pro": {InputMicrousdPerMillion: 30_000_000, CachedInputMicrousdPerMillion: 0, OutputMicrousdPerMillion: 180_000_000, LongInputMicrousdPerMillion: 60_000_000, LongCachedInputMicrousdPerMillion: 0, LongOutputMicrousdPerMillion: 270_000_000},
+			"gpt-5.4-pro": {InputMicrousdPerMillion: 30_000_000, CachedInputMicrousdPerMillion: 0, OutputMicrousdPerMillion: 180_000_000, LongInputMicrousdPerMillion: 60_000_000, LongCachedInputMicrousdPerMillion: 0, LongOutputMicrousdPerMillion: 270_000_000},
 
 			// Specialized – ChatGPT.
 			"gpt-5.3-chat-latest": {InputMicrousdPerMillion: 1_750_000, CachedInputMicrousdPerMillion: 175_000, OutputMicrousdPerMillion: 14_000_000},
@@ -108,7 +111,20 @@ var contextAnnotationRe = regexp.MustCompile(`\s*\(<\d+[KM] context length\)\s*$
 // Each price field may be a number, null, "", or "-".
 var pricingRowRe = regexp.MustCompile(`\[1,\[\[0,"([^"]+)"\],\[0,([^\]]+)\],\[0,([^\]]+)\],\[0,([^\]]+)\]\]`)
 var standardTextTokenPropsRe = regexp.MustCompile(`TextTokenPricingTables"[^>]*props="([^"]*&quot;tier&quot;:\[0,&quot;standard&quot;][^"]*)"`)
-var standardGroupedPropsRe = regexp.MustCompile(`GroupedPricingTable"[^>]*props="([^"]*&quot;headings&quot;:\[1,\[\[0,&quot;Category&quot;],\[0,&quot;Model&quot;],\[0,&quot;Input&quot;],\[0,&quot;Cached input&quot;],\[0,&quot;Output&quot;]][^"]*)"`)
+
+// ssrStandardPaneRe isolates the rendered Standard content-switcher pane.
+// The captured content stops at the next pane div or at end-of-string,
+// so it works whether Standard is the last pane or not.
+var ssrStandardPaneRe = regexp.MustCompile(`(?s)<div[^>]*\bdata-content-switcher-pane="true"[^>]*\bdata-value="standard"[^>]*>(.*?)(?:<div[^>]*\bdata-content-switcher-pane="true"|\z)`)
+
+// ssrTrRe matches <tr>...</tr> elements.
+var ssrTrRe = regexp.MustCompile(`(?s)<tr[^>]*>(.*?)</tr>`)
+
+// ssrTdRe matches <td>...</td> cells.
+var ssrTdRe = regexp.MustCompile(`(?s)<td[^>]*>(.*?)</td>`)
+
+// htmlTagRe strips HTML tags from extracted cell text.
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 
 // parseOfficialStandardPricing extracts compatible Standard token-pricing rows
 // from the official pricing page HTML body.
@@ -122,6 +138,9 @@ func parseOfficialStandardPricing(body string) (map[string]UsagePrice, error) {
 	for _, section := range sections {
 		parsePricingRowsInto(models, section)
 	}
+
+	// Parse SSR-rendered Short/Long context rows from the Standard pane.
+	parseSSRShortLongInto(models, body)
 
 	if len(models) == 0 {
 		return nil, ErrInvalidInput
@@ -137,12 +156,74 @@ func officialStandardPricingSections(body string) []string {
 			sections = append(sections, html.UnescapeString(match[1]))
 		}
 	}
-	for _, match := range standardGroupedPropsRe.FindAllStringSubmatch(body, -1) {
-		if len(match) > 1 {
-			sections = append(sections, html.UnescapeString(match[1]))
+	return sections
+}
+
+// parseSSRShortLongInto isolates the standard content-switcher pane and
+// parses SSR-rendered Short/Long context pricing rows (7 <td> cells each).
+// Long-context fields are merged into models already populated by 4-value
+// props parsing; new entries are created for first-time models.
+func parseSSRShortLongInto(models map[string]UsagePrice, body string) {
+	for _, match := range ssrStandardPaneRe.FindAllStringSubmatch(body, -1) {
+		if len(match) <= 1 {
+			continue
+		}
+		pane := match[1]
+		trs := ssrTrRe.FindAllStringSubmatch(pane, -1)
+		for _, tr := range trs {
+			if len(tr) <= 1 {
+				continue
+			}
+			cells := ssrTdRe.FindAllStringSubmatch(tr[1], -1)
+			if len(cells) != 7 {
+				continue
+			}
+			rawModel := htmlTagRe.ReplaceAllString(cells[0][1], "")
+			rawModel = strings.TrimSpace(rawModel)
+
+			model := contextAnnotationRe.ReplaceAllString(rawModel, "")
+			model = strings.TrimSpace(model)
+			if model == "" || len(model) > maxModelNameLen {
+				continue
+			}
+
+			cleanCell := func(i int) string {
+				s := htmlTagRe.ReplaceAllString(cells[i][1], "")
+				return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(s), "$"))
+			}
+
+			sInput, ok := parseDollarPrice(cleanCell(1))
+			if !ok {
+				continue
+			}
+			sOutput, ok := parseDollarPrice(cleanCell(3))
+			if !ok {
+				continue
+			}
+			sCached, _ := parseDollarPrice(cleanCell(2))
+
+			lInput, _ := parseDollarPrice(cleanCell(4))
+			lCached, _ := parseDollarPrice(cleanCell(5))
+			lOutput, _ := parseDollarPrice(cleanCell(6))
+
+			if existing, exists := models[model]; exists {
+				// Merge: keep existing short fields, update long fields.
+				existing.LongInputMicrousdPerMillion = lInput
+				existing.LongCachedInputMicrousdPerMillion = lCached
+				existing.LongOutputMicrousdPerMillion = lOutput
+				models[model] = existing
+			} else {
+				models[model] = UsagePrice{
+					InputMicrousdPerMillion:           sInput,
+					CachedInputMicrousdPerMillion:     sCached,
+					OutputMicrousdPerMillion:          sOutput,
+					LongInputMicrousdPerMillion:       lInput,
+					LongCachedInputMicrousdPerMillion: lCached,
+					LongOutputMicrousdPerMillion:      lOutput,
+				}
+			}
 		}
 	}
-	return sections
 }
 
 func parsePricingRowsInto(models map[string]UsagePrice, body string) {

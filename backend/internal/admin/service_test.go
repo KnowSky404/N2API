@@ -1880,6 +1880,300 @@ func TestDefaultUsagePricingHasNonZeroOfficialPrices(t *testing.T) {
 	}
 }
 
+func TestNormalizeUsagePricingRejectsNegativeLongFields(t *testing.T) {
+	pricing := UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5.5": {
+				InputMicrousdPerMillion:           5_000_000,
+				CachedInputMicrousdPerMillion:     500_000,
+				OutputMicrousdPerMillion:          30_000_000,
+				LongInputMicrousdPerMillion:       -1,
+				LongCachedInputMicrousdPerMillion: 500_000,
+				LongOutputMicrousdPerMillion:      45_000_000,
+			},
+		},
+	}
+	_, err := normalizeUsagePricing(pricing)
+	if err == nil {
+		t.Fatal("expected error for negative long input field")
+	}
+}
+
+func TestNormalizeUsagePricingAcceptsZeroLongFields(t *testing.T) {
+	pricing := UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-4.1": {
+				InputMicrousdPerMillion:  2_000_000,
+				OutputMicrousdPerMillion: 8_000_000,
+			},
+		},
+	}
+	normalized, err := normalizeUsagePricing(pricing)
+	if err != nil {
+		t.Fatalf("normalize with zero long fields: %v", err)
+	}
+	if normalized.Models["gpt-4.1"].LongInputMicrousdPerMillion != 0 {
+		t.Error("long input should be zero for model without long pricing")
+	}
+}
+
+func TestParseOfficialStandardPricingExtractsShortAndLongContextRows(t *testing.T) {
+	body := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]]
+<div data-content-switcher-pane="true" data-value="standard"><div class="hidden">Standard</div>
+<table><thead><tr><th>Model</th><th colSpan="3">Short context</th><th colSpan="3">Long context</th></tr>
+<tr><th>Model</th><th>Input</th><th>Cached input</th><th>Output</th><th>Input</th><th>Cached input</th><th>Output</th></tr></thead>
+<tbody><tr>
+<td><span>gpt-5.5</span></td><td><span>$5.00</span></td><td><span>$0.50</span></td><td><span>$30.00</span></td>
+<td><span>$10.00</span></td><td><span>$1.00</span></td><td><span>$45.00</span></td>
+</tr><tr>
+<td><span>gpt-5.5-pro</span></td><td><span>$30.00</span></td><td><span>$0.00</span></td><td><span>$180.00</span></td>
+<td><span>$60.00</span></td><td><span>$0.00</span></td><td><span>$270.00</span></td>
+</tr></tbody></table></div>
+<div data-content-switcher-pane="true" data-value="batch" hidden></div>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+
+	gpt55, ok := models["gpt-5.5"]
+	if !ok {
+		t.Fatal("missing gpt-5.5 from Short/Long context table")
+	}
+	if gpt55.InputMicrousdPerMillion != 5_000_000 {
+		t.Errorf("gpt-5.5 short input = %d, want 5000000", gpt55.InputMicrousdPerMillion)
+	}
+	if gpt55.CachedInputMicrousdPerMillion != 500_000 {
+		t.Errorf("gpt-5.5 short cached = %d, want 500000", gpt55.CachedInputMicrousdPerMillion)
+	}
+	if gpt55.OutputMicrousdPerMillion != 30_000_000 {
+		t.Errorf("gpt-5.5 short output = %d, want 30000000", gpt55.OutputMicrousdPerMillion)
+	}
+	if gpt55.LongInputMicrousdPerMillion != 10_000_000 {
+		t.Errorf("gpt-5.5 long input = %d, want 10000000", gpt55.LongInputMicrousdPerMillion)
+	}
+	if gpt55.LongCachedInputMicrousdPerMillion != 1_000_000 {
+		t.Errorf("gpt-5.5 long cached = %d, want 1000000", gpt55.LongCachedInputMicrousdPerMillion)
+	}
+	if gpt55.LongOutputMicrousdPerMillion != 45_000_000 {
+		t.Errorf("gpt-5.5 long output = %d, want 45000000", gpt55.LongOutputMicrousdPerMillion)
+	}
+
+	gpt55pro, ok := models["gpt-5.5-pro"]
+	if !ok {
+		t.Fatal("missing gpt-5.5-pro from Short/Long context table")
+	}
+	if gpt55pro.InputMicrousdPerMillion != 30_000_000 {
+		t.Errorf("gpt-5.5-pro short input = %d, want 30000000", gpt55pro.InputMicrousdPerMillion)
+	}
+	if gpt55pro.CachedInputMicrousdPerMillion != 0 {
+		t.Errorf("gpt-5.5-pro short cached = %d, want 0", gpt55pro.CachedInputMicrousdPerMillion)
+	}
+	if gpt55pro.OutputMicrousdPerMillion != 180_000_000 {
+		t.Errorf("gpt-5.5-pro short output = %d, want 180000000", gpt55pro.OutputMicrousdPerMillion)
+	}
+	if gpt55pro.LongInputMicrousdPerMillion != 60_000_000 {
+		t.Errorf("gpt-5.5-pro long input = %d, want 60000000", gpt55pro.LongInputMicrousdPerMillion)
+	}
+	if gpt55pro.LongCachedInputMicrousdPerMillion != 0 {
+		t.Errorf("gpt-5.5-pro long cached = %d, want 0", gpt55pro.LongCachedInputMicrousdPerMillion)
+	}
+	if gpt55pro.LongOutputMicrousdPerMillion != 270_000_000 {
+		t.Errorf("gpt-5.5-pro long output = %d, want 270000000", gpt55pro.LongOutputMicrousdPerMillion)
+	}
+}
+
+func TestEstimateUsageCostSnapshotsLongFieldsWhenPresent(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5.5": {
+				InputMicrousdPerMillion:           5_000_000,
+				CachedInputMicrousdPerMillion:     500_000,
+				OutputMicrousdPerMillion:          30_000_000,
+				LongInputMicrousdPerMillion:       10_000_000,
+				LongCachedInputMicrousdPerMillion: 1_000_000,
+				LongOutputMicrousdPerMillion:      45_000_000,
+			},
+			"gpt-4.1": {
+				InputMicrousdPerMillion:       2_000_000,
+				CachedInputMicrousdPerMillion: 500_000,
+				OutputMicrousdPerMillion:      8_000_000,
+			},
+		},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	// Model with long fields: snapshot should include them.
+	estimate, err := service.EstimateUsageCost(context.Background(), UsageCostInput{
+		Model:        "gpt-5.5",
+		InputTokens:  1000,
+		OutputTokens: 500,
+	})
+	if err != nil {
+		t.Fatalf("EstimateUsageCost: %v", err)
+	}
+	if !estimate.Matched {
+		t.Fatal("Matched = false, want true")
+	}
+	if estimate.Snapshot["longInputMicrousdPerMillion"] != int64(10_000_000) {
+		t.Errorf("long input snapshot = %v, want 10000000", estimate.Snapshot["longInputMicrousdPerMillion"])
+	}
+	if estimate.Snapshot["longCachedInputMicrousdPerMillion"] != int64(1_000_000) {
+		t.Errorf("long cached snapshot = %v, want 1000000", estimate.Snapshot["longCachedInputMicrousdPerMillion"])
+	}
+	if estimate.Snapshot["longOutputMicrousdPerMillion"] != int64(45_000_000) {
+		t.Errorf("long output snapshot = %v, want 45000000", estimate.Snapshot["longOutputMicrousdPerMillion"])
+	}
+
+	// Model without long fields: snapshot should NOT include them.
+	estimate2, err := service.EstimateUsageCost(context.Background(), UsageCostInput{
+		Model:        "gpt-4.1",
+		InputTokens:  1000,
+		OutputTokens: 500,
+	})
+	if err != nil {
+		t.Fatalf("EstimateUsageCost: %v", err)
+	}
+	if _, ok := estimate2.Snapshot["longInputMicrousdPerMillion"]; ok {
+		t.Error("long input snapshot should be absent for model without long pricing")
+	}
+}
+
+// TestParseOfficialStandardPricingBlocksSSRContamination proves that hidden
+// batch/priority panes do not contaminate Standard pricing parsed from SSR HTML.
+func TestParseOfficialStandardPricingBlocksSSRContamination(t *testing.T) {
+	body := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]]
+<div data-content-switcher-pane="true" data-value="standard">
+<table><tbody><tr>
+<td><span>gpt-5.5</span></td><td><span>$5.00</span></td><td><span>$0.50</span></td><td><span>$30.00</span></td>
+<td><span>$10.00</span></td><td><span>$1.00</span></td><td><span>$45.00</span></td>
+</tr></tbody></table></div>
+<div data-content-switcher-pane="true" data-value="batch" hidden>
+<table><tbody><tr>
+<td><span>gpt-5.5</span></td><td><span>$1.00</span></td><td><span>$0.10</span></td><td><span>$2.00</span></td>
+<td><span>$3.00</span></td><td><span>$0.30</span></td><td><span>$6.00</span></td>
+</tr></tbody></table></div>
+<div data-content-switcher-pane="true" data-value="priority" hidden>
+<table><tbody><tr>
+<td><span>gpt-5.5</span></td><td><span>$7.50</span></td><td><span>$0.75</span></td><td><span>$45.00</span></td>
+<td><span>$15.00</span></td><td><span>$1.50</span></td><td><span>$67.50</span></td>
+</tr></tbody></table></div>
+<div data-content-switcher-pane="true" data-value="flex" hidden></div>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+
+	gpt55, ok := models["gpt-5.5"]
+	if !ok {
+		t.Fatal("missing gpt-5.5")
+	}
+	// Must be Standard values, NOT batch/priority contamination.
+	if gpt55.InputMicrousdPerMillion != 5_000_000 {
+		t.Errorf("short input = %d, want 5000000 (contamination detected)", gpt55.InputMicrousdPerMillion)
+	}
+	if gpt55.CachedInputMicrousdPerMillion != 500_000 {
+		t.Errorf("short cached = %d, want 500000 (contamination detected)", gpt55.CachedInputMicrousdPerMillion)
+	}
+	if gpt55.OutputMicrousdPerMillion != 30_000_000 {
+		t.Errorf("short output = %d, want 30000000 (contamination detected)", gpt55.OutputMicrousdPerMillion)
+	}
+	if gpt55.LongInputMicrousdPerMillion != 10_000_000 {
+		t.Errorf("long input = %d, want 10000000 (contamination detected)", gpt55.LongInputMicrousdPerMillion)
+	}
+	if gpt55.LongCachedInputMicrousdPerMillion != 1_000_000 {
+		t.Errorf("long cached = %d, want 1000000 (contamination detected)", gpt55.LongCachedInputMicrousdPerMillion)
+	}
+	if gpt55.LongOutputMicrousdPerMillion != 45_000_000 {
+		t.Errorf("long output = %d, want 45000000 (contamination detected)", gpt55.LongOutputMicrousdPerMillion)
+	}
+}
+
+// TestParseOfficialStandardPricingParsesSSRPaneAsLastPane verifies that
+// Short/Long context rows are still parsed when the Standard pane is the last
+// content-switcher pane (no following pane div).
+func TestParseOfficialStandardPricingParsesSSRPaneAsLastPane(t *testing.T) {
+	// Standard pane at the end — no batch/priority div after it.
+	body := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]]
+<div data-content-switcher-pane="true" data-value="standard">
+<table><tbody><tr>
+<td><span>gpt-5.5</span></td><td><span>$5.00</span></td><td><span>$0.50</span></td><td><span>$30.00</span></td>
+<td><span>$10.00</span></td><td><span>$1.00</span></td><td><span>$45.00</span></td>
+</tr></tbody></table></div>
+</body></html>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	gpt55, ok := models["gpt-5.5"]
+	if !ok {
+		t.Fatal("missing gpt-5.5 when Standard is last pane")
+	}
+	if gpt55.InputMicrousdPerMillion != 5_000_000 {
+		t.Errorf("short input = %d, want 5000000", gpt55.InputMicrousdPerMillion)
+	}
+	if gpt55.LongInputMicrousdPerMillion != 10_000_000 {
+		t.Errorf("long input = %d, want 10000000", gpt55.LongInputMicrousdPerMillion)
+	}
+	if gpt55.LongOutputMicrousdPerMillion != 45_000_000 {
+		t.Errorf("long output = %d, want 45000000", gpt55.LongOutputMicrousdPerMillion)
+	}
+}
+
+// TestParseOfficialStandardPricingSSROnlyModel parses a model that only appears
+// in the SSR table (not in 4-value Astro props).
+func TestParseOfficialStandardPricingSSROnlyModel(t *testing.T) {
+	body := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]]
+<div data-content-switcher-pane="true" data-value="standard">
+<table><tbody><tr>
+<td><span>gpt-5.5</span></td><td><span>$5.00</span></td><td><span>$0.50</span></td><td><span>$30.00</span></td>
+<td><span>$10.00</span></td><td><span>$1.00</span></td><td><span>$45.00</span></td>
+</tr><tr>
+<td><span>ssr-only-model</span></td><td><span>$2.00</span></td><td><span>$0.20</span></td><td><span>$12.00</span></td>
+<td><span>$4.00</span></td><td><span>$0.40</span></td><td><span>$18.00</span></td>
+</tr></tbody></table></div>
+<div data-content-switcher-pane="true" data-value="batch" hidden></div>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	ssrOnly, ok := models["ssr-only-model"]
+	if !ok {
+		t.Fatal("missing ssr-only-model from SSR table")
+	}
+	if ssrOnly.InputMicrousdPerMillion != 2_000_000 {
+		t.Errorf("short input = %d, want 2000000", ssrOnly.InputMicrousdPerMillion)
+	}
+	if ssrOnly.CachedInputMicrousdPerMillion != 200_000 {
+		t.Errorf("short cached = %d, want 200000", ssrOnly.CachedInputMicrousdPerMillion)
+	}
+	if ssrOnly.OutputMicrousdPerMillion != 12_000_000 {
+		t.Errorf("short output = %d, want 12000000", ssrOnly.OutputMicrousdPerMillion)
+	}
+	if ssrOnly.LongInputMicrousdPerMillion != 4_000_000 {
+		t.Errorf("long input = %d, want 4000000", ssrOnly.LongInputMicrousdPerMillion)
+	}
+	if ssrOnly.LongCachedInputMicrousdPerMillion != 400_000 {
+		t.Errorf("long cached = %d, want 400000", ssrOnly.LongCachedInputMicrousdPerMillion)
+	}
+	if ssrOnly.LongOutputMicrousdPerMillion != 18_000_000 {
+		t.Errorf("long output = %d, want 18000000", ssrOnly.LongOutputMicrousdPerMillion)
+	}
+}
+
 func TestParseOfficialStandardPricingExtractsStandardRows(t *testing.T) {
 	body := `[1,[[0,"gpt-5.5 (<272K context length)"],[0,5],[0,0.5],[0,30]]],[1,[[0,"gpt-5.4-mini"],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,"gpt-5-nano"],[0,0.05],[0,0.005],[0,0.4]]],[1,[[0,"gpt-5-pro"],[0,15],[0,null],[0,120]]],[1,[[0,"gpt-4.1"],[0,2],[0,0.5],[0,8]]],[1,[[0,"chatgpt-4o-latest"],[0,5],[0,"-"],[0,15]]]`
 
@@ -1978,23 +2272,22 @@ func TestParseOfficialStandardPricingDeduplicatesByFirstRow(t *testing.T) {
 
 func TestParseOfficialStandardPricingExtractsCurrentPageShape(t *testing.T) {
 	body := `<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.5 (&lt;272K context length)&quot;],[0,5],[0,0.5],[0,30]]],[1,[[0,&quot;gpt-5.4-mini&quot;],[0,0.75],[0,0.075],[0,4.5]]]]]}"></astro-island>
-<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;batch&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;batch-only&quot;],[0,1],[0,0.1],[0,2]]]]]}"></astro-island>
-<astro-island component-export="GroupedPricingTable" props="{&quot;headings&quot;:[1,[[0,&quot;Category&quot;],[0,&quot;Model&quot;],[0,&quot;Input&quot;],[0,&quot;Cached input&quot;],[0,&quot;Output&quot;]]],&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;ChatGPT&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;chat-latest&quot;],[0,5],[0,0.5],[0,30]]]]]}],[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-codex&quot;],[0,1.75],[0,0.175],[0,14]]]]]}]]]}"></astro-island>`
+<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;batch&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;batch-only&quot;],[0,1],[0,0.1],[0,2]]]]]}"></astro-island>`
 
 	models, err := parseOfficialStandardPricing(body)
 	if err != nil {
 		t.Fatalf("parseOfficialStandardPricing: %v", err)
 	}
-	for _, model := range []string{"gpt-5.5", "gpt-5.4-mini", "chat-latest", "gpt-5.3-codex"} {
+	if got := len(models); got != 2 {
+		t.Fatalf("model count = %d, want 2", got)
+	}
+	for _, model := range []string{"gpt-5.5", "gpt-5.4-mini"} {
 		if _, ok := models[model]; !ok {
-			t.Fatalf("missing parsed model %q from current page shape: %+v", model, models)
+			t.Fatalf("missing parsed model %q from current page shape", model)
 		}
 	}
 	if _, ok := models["batch-only"]; ok {
 		t.Fatal("batch-only model was parsed from non-standard tier")
-	}
-	if models["chat-latest"].CachedInputMicrousdPerMillion != 500_000 || models["chat-latest"].OutputMicrousdPerMillion != 30_000_000 {
-		t.Fatalf("chat-latest pricing = %+v, want 5/0.5/30", models["chat-latest"])
 	}
 }
 
