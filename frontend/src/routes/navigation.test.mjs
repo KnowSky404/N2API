@@ -1198,11 +1198,39 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(requestLogsPage, /No pricing rows match/);
 });
 
-test('usage pricing table defaults to read-only paginated price order', () => {
-  assert.match(requestLogsPage, /let pricingEditMode = \$state\(false\)/);
-  assert.match(requestLogsPage, /Edit pricing/);
-  assert.match(requestLogsPage, /Done editing/);
-  assert.match(requestLogsPage, /pricingEditMode/);
+test('usage pricing table defaults to per-row editing with sticky actions', () => {
+  // Per-row editing replaces global pricingEditMode; no Edit pricing toggle
+  assert.doesNotMatch(requestLogsPage, /Edit pricing/);
+  assert.doesNotMatch(requestLogsPage, /Done editing/);
+  assert.doesNotMatch(requestLogsPage, /let pricingEditMode = \$state\(false\)/);
+
+  // Row state uses object references, not numeric indexes
+  assert.doesNotMatch(requestLogsPage, /editingPricingRowIndex/);
+  assert.doesNotMatch(requestLogsPage, /deleteConfirmPricingRowIndex/);
+  assert.match(requestLogsPage, /editingPricingRow = \$state\(null\)/);
+  assert.match(requestLogsPage, /deleteConfirmPricingRow = \$state\(null\)/);
+  assert.match(requestLogsPage, /function startEditingPricingRow/);
+  assert.match(requestLogsPage, /editingPricingRow = row/);
+  assert.match(requestLogsPage, /editingPricingRow = null/);
+  assert.match(requestLogsPage, /deleteConfirmPricingRow = null/);
+  assert.match(requestLogsPage, /function confirmRemovePricingRow/);
+  assert.match(requestLogsPage, /@param.*UsagePricingRow.*row/);
+  assert.match(requestLogsPage, /finishPricingRowEdit/);
+
+  // Biaxial scroll container with sticky header
+  assert.match(requestLogsPage, /overflow-auto max-h-\[65vh\]/);
+  assert.match(requestLogsPage, /sticky left-0 top-0/);
+  assert.match(requestLogsPage, /sticky right-0 top-0/);
+
+  // Sticky left Model and right Actions columns
+  assert.match(requestLogsPage, /sticky left-0/);
+  assert.match(requestLogsPage, /sticky right-0/);
+  assert.match(requestLogsPage, />Actions</);
+  assert.match(requestLogsPage, />Edit</);
+  assert.match(requestLogsPage, />Remove</);
+
+  // Delete confirmation state and modal
+  assert.match(requestLogsPage, /Remove this pricing row/);
 
   assert.match(requestLogsPage, /sortedPricingRows/);
   assert.match(requestLogsPage, /outputMicrousdPerMillion/);
@@ -1226,4 +1254,7 @@ test('usage pricing table defaults to read-only paginated price order', () => {
   assert.match(requestLogsPage, /Previous/);
   assert.match(requestLogsPage, /Next/);
   assert.match(requestLogsPage, /pricingPage\s*=\s*1/);
+
+  // Actions column always present (colspan accounts for it)
+  assert.match(requestLogsPage, /colspan="8"/);
 });

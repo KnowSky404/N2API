@@ -342,7 +342,8 @@
         longOutputMicrousdPerMillion: 0
       }
     ];
-    pricingEditMode = true;
+    const newRow = (usagePricing.rows || []).slice(-1)[0];
+    editingPricingRow = newRow;
     pricingSearch = '';
     pricingPage = Math.max(1, Math.ceil((usagePricing.rows || []).length / pricingPageSize));
   }
@@ -354,7 +355,27 @@
   }
 
   let showSyncConfirmModal = $state(false);
-  let pricingEditMode = $state(false);
+
+  /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
+  let editingPricingRow = $state(null);
+  /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
+  let deleteConfirmPricingRow = $state(null);
+
+  /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
+  function startEditingPricingRow(row) {
+    editingPricingRow = row;
+  }
+
+  function finishPricingRowEdit() {
+    editingPricingRow = null;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
+  function confirmRemovePricingRow(row) {
+    const index = (usagePricing.rows || []).indexOf(row);
+    if (index >= 0) removePricingRow(index);
+    deleteConfirmPricingRow = null;
+  }
   let pricingSearch = $state('');
   let pricingPage = $state(1);
   let pricingPageSize = $state(5);
@@ -418,10 +439,6 @@
 
   /** @param {SubmitEvent} event */
   function submitUsagePricing(event) {
-    if (!pricingEditMode) {
-      event.preventDefault();
-      return;
-    }
     return saveUsagePricing(event);
   }
 
@@ -592,22 +609,13 @@
         <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
-          onclick={() => pricingEditMode = !pricingEditMode}
+          onclick={addPricingRow}
         >
-          {pricingEditMode ? 'Done editing' : 'Edit pricing'}
+          Add model
         </button>
-        {#if pricingEditMode}
-          <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-            type="button"
-            onclick={addPricingRow}
-          >
-            Add model
-          </button>
-          <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={usagePricing.saving}>
-            {usagePricing.saving ? 'Saving' : 'Save pricing'}
-          </button>
-        {/if}
+        <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={usagePricing.saving}>
+          {usagePricing.saving ? 'Saving' : 'Save pricing'}
+        </button>
       </div>
     </div>
 
@@ -640,88 +648,92 @@
       </div>
     </div>
 
-    <div class="mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
+    <div class="mt-5 overflow-auto max-h-[65vh] rounded-lg border border-[#ededed]">
       <table class="w-full min-w-[1280px] text-left text-sm">
         <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
           <tr>
-            <th class="px-4 py-3 font-medium">Model</th>
-            <th class="px-4 py-3 font-medium">Input µ$/M</th>
-            <th class="px-4 py-3 font-medium">Cached input µ$/M</th>
-            <th class="px-4 py-3 font-medium">Output µ$/M</th>
-            <th class="px-4 py-3 font-medium">Long input µ$/M</th>
-            <th class="px-4 py-3 font-medium">Long cached input µ$/M</th>
-            <th class="px-4 py-3 font-medium">Long output µ$/M</th>
-            {#if pricingEditMode}
-              <th class="px-4 py-3 font-medium">Action</th>
-            {/if}
+            <th class="sticky left-0 top-0 z-20 bg-[#f5f5f5] px-4 py-3 font-medium shadow-[8px_0_12px_rgba(255,255,255,0.85)]">Model</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Input µ$/M</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Cached input µ$/M</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Output µ$/M</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long input µ$/M</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long cached input µ$/M</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long output µ$/M</th>
+            <th class="sticky right-0 top-0 z-20 bg-[#f5f5f5] px-3 py-3 text-right font-medium shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-[#ededed]">
           {#if !usagePricing.rows?.length}
             <tr>
-              <td class="px-4 py-5 text-[#6e6e6e]" colspan={pricingEditMode ? 8 : 7}>No pricing rows configured. Add a model or sync official OpenAI Standard pricing.</td>
+              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows configured. Add a model or sync official OpenAI Standard pricing.</td>
             </tr>
           {:else if sortedPricingRows.length === 0}
             <tr>
-              <td class="px-4 py-5 text-[#6e6e6e]" colspan={pricingEditMode ? 8 : 7}>No pricing rows match your search.</td>
+              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows match your search.</td>
             </tr>
           {:else}
             {#each paginatedPricingRows as row, index (row.model + '-' + (usagePricing.rows || []).indexOf(row))}
+              {@const isEditing = editingPricingRow === row}
               <tr>
-                <td class="px-4 py-3">
-                  {#if pricingEditMode}
+                <td class="sticky left-0 z-[5] bg-white px-4 py-3 shadow-[8px_0_12px_rgba(255,255,255,0.85)]">
+                  {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={row.model} placeholder="gpt-5" />
                   {:else}
                     <span class="block max-w-[220px] truncate font-mono text-[13px] text-[#0d0d0d]">{row.model || '-'}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
-                  {#if pricingEditMode}
+                  {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.inputMicrousdPerMillion} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.inputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
-                  {#if pricingEditMode}
+                  {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.cachedInputMicrousdPerMillion} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.cachedInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
-                  {#if pricingEditMode}
+                  {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.outputMicrousdPerMillion} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.outputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
-                  {#if pricingEditMode}
+                  {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longInputMicrousdPerMillion} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
-                  {#if pricingEditMode}
+                  {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longCachedInputMicrousdPerMillion} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longCachedInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
-                  {#if pricingEditMode}
+                  {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longOutputMicrousdPerMillion} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longOutputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                {#if pricingEditMode}
-                  <td class="px-4 py-3">
-                    <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => removePricingRow((usagePricing.rows || []).indexOf(row))}>Remove</button>
-                  </td>
-                {/if}
+                <td class="sticky right-0 bg-white px-3 py-3 shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+                  <div class="flex justify-end gap-2 whitespace-nowrap">
+                    {#if isEditing}
+                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={finishPricingRowEdit}>Done</button>
+                    {:else}
+                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => startEditingPricingRow(row)}>Edit</button>
+                      <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => { deleteConfirmPricingRow = row; }}>Remove</button>
+                    {/if}
+                  </div>
+                </td>
               </tr>
             {/each}
           {/if}
@@ -766,6 +778,40 @@
       </div>
     </div>
   </form>
+
+  {#if deleteConfirmPricingRow}
+    {@const row = deleteConfirmPricingRow}
+    {@const deletingModel = row.model || 'this row'}
+    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      onclick={() => { deleteConfirmPricingRow = null; }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm remove pricing row"
+    >
+      <div class="w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" onclick={(e) => e.stopPropagation()}>
+        <p class="text-sm font-medium text-[#0d0d0d]">Remove this pricing row?</p>
+        <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{deletingModel}</p>
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            onclick={() => { deleteConfirmPricingRow = null; }}
+          >
+            Cancel
+          </button>
+          <button
+            class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+            type="button"
+            onclick={() => confirmRemovePricingRow(row)}
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if showSyncConfirmModal}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
