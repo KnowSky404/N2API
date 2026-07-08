@@ -1217,6 +1217,9 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(requestLogsPage, /@param.*UsagePricingRow.*row/);
   assert.match(requestLogsPage, /finishPricingRowEdit/);
 
+  // Header pricing actions stay pinned to the right side of the section
+  assert.match(requestLogsPage, /ml-auto flex flex-wrap items-center justify-end gap-3/);
+
   // Biaxial scroll container with sticky header
   assert.match(requestLogsPage, /overflow-auto max-h-\[65vh\]/);
   assert.match(requestLogsPage, /sticky left-0 top-0/);

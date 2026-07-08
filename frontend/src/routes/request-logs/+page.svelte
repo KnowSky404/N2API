@@ -589,7 +589,7 @@
         <h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Pricing</h2>
         <p class="mt-1 text-sm text-[#6e6e6e]">Official OpenAI Standard pricing — USD micro-prices per 1M tokens for historical estimates.</p>
       </div>
-      <div class="flex flex-wrap items-center gap-3">
+      <div class="ml-auto flex flex-wrap items-center justify-end gap-3">
         <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
