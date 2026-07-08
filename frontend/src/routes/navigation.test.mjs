@@ -1196,6 +1196,14 @@ test('usage pricing supports official OpenAI sync', () => {
   // Zero rows vs zero search matches
   assert.match(requestLogsPage, /No pricing rows/);
   assert.match(requestLogsPage, /No pricing rows match/);
+
+  // No explicit Reload pricing button in the pricing section header
+  assert.doesNotMatch(requestLogsPage, /Reload pricing/);
+  assert.doesNotMatch(requestLogsPage, /onclick=\{loadUsagePricing\}/);
+
+  // syncMessage shown as toast notification with close, not inline content
+  assert.doesNotMatch(requestLogsPage, /\{:else if usagePricing\.syncMessage\}/);
+  assert.match(requestLogsPage, /closeSyncMessage|syncMessageToast/);
 });
 
 test('usage pricing table defaults to per-row editing with sticky actions', () => {
@@ -1232,8 +1240,20 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(requestLogsPage, />Edit</);
   assert.match(requestLogsPage, />Remove</);
 
-  // Delete confirmation state and modal
-  assert.match(requestLogsPage, /Remove this pricing row/);
+  // Delete confirmation uses anchored absolute popover near the Remove button
+  // Remove button is wrapped in a relative container for popover anchoring
+  assert.match(requestLogsPage, /relative inline-flex/);
+  // Popover is absolute-positioned near the Remove button with arrow caret
+  assert.match(requestLogsPage, /absolute right-0 top-full z-30/);
+  assert.match(requestLogsPage, /Remove this pricing row\?/);
+  // Arrow caret points upward toward the Remove button
+  assert.match(requestLogsPage, /-top-2 right-3.*rotate-45/);
+  // No full-screen overlay backdrop for delete confirmation
+  assert.doesNotMatch(requestLogsPage, /aria-label="Confirm remove pricing row"/);
+  assert.doesNotMatch(requestLogsPage, /fixed inset-0.*deleteConfirmPricingRow/);
+  // Cancel and Remove buttons exist inside the popover
+  assert.match(requestLogsPage, />Cancel</);
+  assert.match(requestLogsPage, /deleteConfirmPricingRow\s*===\s*row/);
 
   assert.match(requestLogsPage, /sortedPricingRows/);
   assert.match(requestLogsPage, /outputMicrousdPerMillion/);

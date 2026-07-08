@@ -10,7 +10,6 @@
     loadKeys,
     loadProviderAccounts,
     loadRoutingPools,
-    loadUsagePricing,
     loadUsageSummary,
     loadRequestLogs,
     providerAccounts,
@@ -361,6 +360,17 @@
   /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
   let deleteConfirmPricingRow = $state(null);
 
+  let closeSyncMessage = $state('');
+
+  $effect(() => {
+    const msg = usagePricing.syncMessage;
+    if (msg) {
+      closeSyncMessage = msg;
+      const timer = setTimeout(() => { closeSyncMessage = ''; }, 6000);
+      return () => clearTimeout(timer);
+    }
+  });
+
   /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
   function startEditingPricingRow(row) {
     editingPricingRow = row;
@@ -593,14 +603,6 @@
         <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
-          disabled={usagePricing.loading}
-          onclick={loadUsagePricing}
-        >
-          {usagePricing.loading ? 'Loading' : 'Reload pricing'}
-        </button>
-        <button
-          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-          type="button"
           disabled={usagePricing.loading || usagePricing.saving || usagePricing.syncing}
           onclick={openSyncConfirmModal}
         >
@@ -621,8 +623,6 @@
 
     {#if usagePricing.error}
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usagePricing.error}</p>
-    {:else if usagePricing.syncMessage}
-      <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">{usagePricing.syncMessage}</p>
     {:else if usagePricing.saved}
       <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">Pricing saved.</p>
     {/if}
@@ -730,7 +730,20 @@
                       <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={finishPricingRowEdit}>Done</button>
                     {:else}
                       <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => startEditingPricingRow(row)}>Edit</button>
-                      <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => { deleteConfirmPricingRow = row; }}>Remove</button>
+                      <div class="relative inline-flex">
+                        <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => { deleteConfirmPricingRow = row; }}>Remove</button>
+                        {#if deleteConfirmPricingRow === row}
+                          <div class="absolute right-0 top-full z-30 mt-2 w-72 rounded-xl border border-[#ededed] bg-white p-4 shadow-[0_4px_16px_rgba(13,13,13,0.08)]">
+                            <div class="absolute -top-2 right-3 h-3 w-3 rotate-45 border-l border-t border-[#ededed] bg-white"></div>
+                            <p class="text-sm font-medium text-[#0d0d0d]">Remove this pricing row?</p>
+                            <p class="mt-1 text-sm text-[#6e6e6e]">{row.model || 'this row'}</p>
+                            <div class="mt-3 flex justify-end gap-2">
+                              <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => { deleteConfirmPricingRow = null; }}>Cancel</button>
+                              <button class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => confirmRemovePricingRow(row)}>Remove</button>
+                            </div>
+                          </div>
+                        {/if}
+                      </div>
                     {/if}
                   </div>
                 </td>
@@ -779,36 +792,13 @@
     </div>
   </form>
 
-  {#if deleteConfirmPricingRow}
-    {@const row = deleteConfirmPricingRow}
-    {@const deletingModel = row.model || 'this row'}
-    <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-      onclick={() => { deleteConfirmPricingRow = null; }}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Confirm remove pricing row"
-    >
-      <div class="w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" onclick={(e) => e.stopPropagation()}>
-        <p class="text-sm font-medium text-[#0d0d0d]">Remove this pricing row?</p>
-        <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{deletingModel}</p>
-        <div class="mt-4 flex justify-end gap-2">
-          <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-            type="button"
-            onclick={() => { deleteConfirmPricingRow = null; }}
-          >
-            Cancel
-          </button>
-          <button
-            class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
-            type="button"
-            onclick={() => confirmRemovePricingRow(row)}
-          >
-            Remove
-          </button>
-        </div>
+
+
+  {#if closeSyncMessage}
+    <div class="fixed right-4 top-20 z-50 max-w-sm rounded-lg border border-[#cce7db] bg-[#e8f5f0] p-4 shadow-lg">
+      <div class="flex items-start justify-between gap-2">
+        <p class="text-sm text-[#0a7a5e]">{closeSyncMessage}</p>
+        <button class="ml-2 shrink-0 text-[#0a7a5e] hover:text-[#08694a]" type="button" onclick={() => { closeSyncMessage = ''; }} aria-label="Close sync message">&times;</button>
       </div>
     </div>
   {/if}
