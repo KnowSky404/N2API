@@ -357,8 +357,7 @@
 
   /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
   let editingPricingRow = $state(null);
-  /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
-  let deleteConfirmPricingRow = $state(null);
+  let deleteConfirmPricingPopover = $state(/** @type {{row: import('$lib/admin-state.svelte.js').UsagePricingRow, top: number, left: number}|null} */ (null));
 
   let closeSyncMessage = $state('');
 
@@ -384,8 +383,28 @@
   function confirmRemovePricingRow(row) {
     const index = (usagePricing.rows || []).indexOf(row);
     if (index >= 0) removePricingRow(index);
-    deleteConfirmPricingRow = null;
+    deleteConfirmPricingPopover = null;
   }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row
+   * @param {MouseEvent} event
+   */
+  function openDeleteConfirmPricingRow(row, event) {
+    const rect = /** @type {HTMLElement} */ (event.currentTarget).getBoundingClientRect();
+    const popoverWidth = 288;
+    let left = rect.left + rect.width - popoverWidth;
+    if (left < 8) left = 8;
+    if (left + popoverWidth > window.innerWidth - 8) left = window.innerWidth - popoverWidth - 8;
+    deleteConfirmPricingPopover = { row, top: rect.bottom + 8, left };
+  }
+
+  function closeDeleteConfirmPricingPopover() {
+    deleteConfirmPricingPopover = null;
+  }
+
+  const deleteConfirmPricingRow = $derived(deleteConfirmPricingPopover?.row ?? null);
+
   let pricingSearch = $state('');
   let pricingPage = $state(1);
   let pricingPageSize = $state(5);
@@ -465,6 +484,8 @@
 <svelte:head>
   <title>N2API Request Logs</title>
 </svelte:head>
+
+<svelte:window onscroll={closeDeleteConfirmPricingPopover} onresize={closeDeleteConfirmPricingPopover} />
 
 <AuthGate>
 <div class="space-y-6">
@@ -730,20 +751,7 @@
                       <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={finishPricingRowEdit}>Done</button>
                     {:else}
                       <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => startEditingPricingRow(row)}>Edit</button>
-                      <div class="relative inline-flex">
-                        <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => { deleteConfirmPricingRow = row; }}>Remove</button>
-                        {#if deleteConfirmPricingRow === row}
-                          <div class="absolute right-0 top-full z-30 mt-2 w-72 rounded-xl border border-[#ededed] bg-white p-4 shadow-[0_4px_16px_rgba(13,13,13,0.08)]">
-                            <div class="absolute -top-2 right-3 h-3 w-3 rotate-45 border-l border-t border-[#ededed] bg-white"></div>
-                            <p class="text-sm font-medium text-[#0d0d0d]">Remove this pricing row?</p>
-                            <p class="mt-1 text-sm text-[#6e6e6e]">{row.model || 'this row'}</p>
-                            <div class="mt-3 flex justify-end gap-2">
-                              <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => { deleteConfirmPricingRow = null; }}>Cancel</button>
-                              <button class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => confirmRemovePricingRow(row)}>Remove</button>
-                            </div>
-                          </div>
-                        {/if}
-                      </div>
+                        <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50" type="button" onclick={(e) => openDeleteConfirmPricingRow(row, e)}>Remove</button>
                     {/if}
                   </div>
                 </td>
@@ -1196,4 +1204,16 @@
   </div>
 </section>
 </div>
+
+{#if deleteConfirmPricingPopover}
+  <div class="fixed z-50 w-72 rounded-xl border border-[#ededed] bg-white p-4 shadow-[0_4px_16px_rgba(13,13,13,0.08)]" style="top: {deleteConfirmPricingPopover.top}px; left: {deleteConfirmPricingPopover.left}px;">
+    <p class="text-sm font-medium text-[#0d0d0d]">Remove this pricing row?</p>
+    <p class="mt-1 text-sm text-[#6e6e6e]">{deleteConfirmPricingRow?.model || 'this row'}</p>
+    <div class="mt-3 flex justify-end gap-2">
+      <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={closeDeleteConfirmPricingPopover}>Cancel</button>
+      <button class="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => deleteConfirmPricingRow && confirmRemovePricingRow(deleteConfirmPricingRow)}>Remove</button>
+    </div>
+  </div>
+{/if}
+
 </AuthGate>

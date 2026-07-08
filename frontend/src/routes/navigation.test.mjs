@@ -1216,11 +1216,11 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.doesNotMatch(requestLogsPage, /editingPricingRowIndex/);
   assert.doesNotMatch(requestLogsPage, /deleteConfirmPricingRowIndex/);
   assert.match(requestLogsPage, /editingPricingRow = \$state\(null\)/);
-  assert.match(requestLogsPage, /deleteConfirmPricingRow = \$state\(null\)/);
+  assert.match(requestLogsPage, /deleteConfirmPricingPopover\s*=.*\$state/);
   assert.match(requestLogsPage, /function startEditingPricingRow/);
   assert.match(requestLogsPage, /editingPricingRow = row/);
   assert.match(requestLogsPage, /editingPricingRow = null/);
-  assert.match(requestLogsPage, /deleteConfirmPricingRow = null/);
+  assert.match(requestLogsPage, /deleteConfirmPricingPopover = null/);
   assert.match(requestLogsPage, /function confirmRemovePricingRow/);
   assert.match(requestLogsPage, /@param.*UsagePricingRow.*row/);
   assert.match(requestLogsPage, /finishPricingRowEdit/);
@@ -1240,20 +1240,26 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(requestLogsPage, />Edit</);
   assert.match(requestLogsPage, />Remove</);
 
-  // Delete confirmation uses anchored absolute popover near the Remove button
-  // Remove button is wrapped in a relative container for popover anchoring
-  assert.match(requestLogsPage, /relative inline-flex/);
-  // Popover is absolute-positioned near the Remove button with arrow caret
-  assert.match(requestLogsPage, /absolute right-0 top-full z-30/);
+  // Delete confirmation uses fixed popover positioned from viewport coordinates
+  // Remove button is no longer wrapped in a relative container for the popover
+  assert.doesNotMatch(requestLogsPage, /relative inline-flex/);
+  // Popover uses fixed positioning, rendered outside the scroll container
+  assert.doesNotMatch(requestLogsPage, /absolute right-0 top-full z-30/);
   assert.match(requestLogsPage, /Remove this pricing row\?/);
-  // Arrow caret points upward toward the Remove button
-  assert.match(requestLogsPage, /-top-2 right-3.*rotate-45/);
+  // No arrow caret on the fixed popover
+  assert.doesNotMatch(requestLogsPage, /-top-2 right-3.*rotate-45/);
   // No full-screen overlay backdrop for delete confirmation
   assert.doesNotMatch(requestLogsPage, /aria-label="Confirm remove pricing row"/);
-  assert.doesNotMatch(requestLogsPage, /fixed inset-0.*deleteConfirmPricingRow/);
+  assert.doesNotMatch(requestLogsPage, /fixed inset-0.*deleteConfirmPricingPopover/);
   // Cancel and Remove buttons exist inside the popover
   assert.match(requestLogsPage, />Cancel</);
-  assert.match(requestLogsPage, /deleteConfirmPricingRow\s*===\s*row/);
+  assert.match(requestLogsPage, /deleteConfirmPricingPopover/);
+  // Fixed popover rendered outside the table, positioned with viewport coordinates
+  assert.match(requestLogsPage, /fixed z-50 w-72/);
+  assert.match(requestLogsPage, /openDeleteConfirmPricingRow/);
+  assert.match(requestLogsPage, /getBoundingClientRect/);
+  // Popover closes on window scroll/resize via svelte:window
+  assert.match(requestLogsPage, /<svelte:window/);
 
   assert.match(requestLogsPage, /sortedPricingRows/);
   assert.match(requestLogsPage, /outputMicrousdPerMillion/);
