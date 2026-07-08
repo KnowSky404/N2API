@@ -1197,3 +1197,33 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(requestLogsPage, /No pricing rows/);
   assert.match(requestLogsPage, /No pricing rows match/);
 });
+
+test('usage pricing table defaults to read-only paginated price order', () => {
+  assert.match(requestLogsPage, /let pricingEditMode = \$state\(false\)/);
+  assert.match(requestLogsPage, /Edit pricing/);
+  assert.match(requestLogsPage, /Done editing/);
+  assert.match(requestLogsPage, /pricingEditMode/);
+
+  assert.match(requestLogsPage, /sortedPricingRows/);
+  assert.match(requestLogsPage, /outputMicrousdPerMillion/);
+  assert.match(requestLogsPage, /inputMicrousdPerMillion/);
+  assert.match(requestLogsPage, /longOutputMicrousdPerMillion/);
+  assert.match(requestLogsPage, /localeCompare\(right\.model/);
+  assert.match(requestLogsPage, /\[\.\.\.filteredPricingRows\]\.sort/);
+
+  assert.match(requestLogsPage, /let pricingPage = \$state\(1\)/);
+  assert.match(requestLogsPage, /let pricingPageSize = \$state\(5\)/);
+  assert.match(requestLogsPage, /pricingPageCount/);
+  assert.match(requestLogsPage, /normalizedPricingPage/);
+  assert.match(requestLogsPage, /paginatedPricingRows/);
+  assert.match(requestLogsPage, /pricingPageSummary/);
+  assert.match(requestLogsPage, /\{#each paginatedPricingRows as row/);
+
+  assert.match(requestLogsPage, /value=\{5\}/);
+  assert.match(requestLogsPage, /value=\{10\}/);
+  assert.match(requestLogsPage, /value=\{20\}/);
+  assert.doesNotMatch(requestLogsPage, /value=\{50\}/);
+  assert.match(requestLogsPage, /Previous/);
+  assert.match(requestLogsPage, /Next/);
+  assert.match(requestLogsPage, /pricingPage\s*=\s*1/);
+});

@@ -342,15 +342,22 @@
         longOutputMicrousdPerMillion: 0
       }
     ];
+    pricingEditMode = true;
+    pricingSearch = '';
+    pricingPage = Math.max(1, Math.ceil((usagePricing.rows || []).length / pricingPageSize));
   }
 
   /** @param {number} index */
   function removePricingRow(index) {
     usagePricing.rows = usagePricing.rows.filter((_, rowIndex) => rowIndex !== index);
+    pricingPage = Math.min(pricingPage, Math.max(1, Math.ceil((usagePricing.rows || []).length / pricingPageSize)));
   }
 
   let showSyncConfirmModal = $state(false);
+  let pricingEditMode = $state(false);
   let pricingSearch = $state('');
+  let pricingPage = $state(1);
+  let pricingPageSize = $state(5);
 
   const filteredPricingRows = $derived(
     (usagePricing.rows || []).filter((row) => {
@@ -368,6 +375,55 @@
       return searchText.includes(query);
     })
   );
+
+  const sortedPricingRows = $derived(
+    [...filteredPricingRows].sort((left, right) => {
+      const outputDiff = Number(right.outputMicrousdPerMillion ?? 0) - Number(left.outputMicrousdPerMillion ?? 0);
+      if (outputDiff !== 0) return outputDiff;
+      const inputDiff = Number(right.inputMicrousdPerMillion ?? 0) - Number(left.inputMicrousdPerMillion ?? 0);
+      if (inputDiff !== 0) return inputDiff;
+      const longOutputDiff = Number(right.longOutputMicrousdPerMillion ?? 0) - Number(left.longOutputMicrousdPerMillion ?? 0);
+      if (longOutputDiff !== 0) return longOutputDiff;
+      return String(left.model ?? '').localeCompare(right.model ?? '');
+    })
+  );
+
+  const pricingPageCount = $derived(Math.max(1, Math.ceil(sortedPricingRows.length / pricingPageSize)));
+  const normalizedPricingPage = $derived(Math.min(Math.max(pricingPage, 1), pricingPageCount));
+  const paginatedPricingRows = $derived(
+    sortedPricingRows.slice((normalizedPricingPage - 1) * pricingPageSize, normalizedPricingPage * pricingPageSize)
+  );
+  const pricingPageSummary = $derived(
+    sortedPricingRows.length === 0
+      ? '0'
+      : `${(normalizedPricingPage - 1) * pricingPageSize + 1}-${(normalizedPricingPage - 1) * pricingPageSize + paginatedPricingRows.length}`
+  );
+
+  /** @param {Event & { currentTarget: HTMLInputElement }} event */
+  function changePricingSearch(event) {
+    pricingSearch = event.currentTarget.value;
+    pricingPage = 1;
+  }
+
+  /** @param {Event & { currentTarget: HTMLSelectElement }} event */
+  function changePricingPageSize(event) {
+    pricingPageSize = Number(event.currentTarget.value) || 5;
+    pricingPage = 1;
+  }
+
+  /** @param {number | null | undefined} value */
+  function formatPricingValue(value) {
+    return String(Number(value ?? 0));
+  }
+
+  /** @param {SubmitEvent} event */
+  function submitUsagePricing(event) {
+    if (!pricingEditMode) {
+      event.preventDefault();
+      return;
+    }
+    return saveUsagePricing(event);
+  }
 
   function openSyncConfirmModal() {
     showSyncConfirmModal = true;
@@ -510,7 +566,7 @@
 </section>
 
 <section class="rounded-lg border border-[#ededed] bg-white p-6">
-  <form onsubmit={saveUsagePricing}>
+  <form onsubmit={submitUsagePricing}>
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Pricing</h2>
@@ -536,13 +592,22 @@
         <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
-          onclick={addPricingRow}
+          onclick={() => pricingEditMode = !pricingEditMode}
         >
-          Add model
+          {pricingEditMode ? 'Done editing' : 'Edit pricing'}
         </button>
-        <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={usagePricing.saving}>
-          {usagePricing.saving ? 'Saving' : 'Save pricing'}
-        </button>
+        {#if pricingEditMode}
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            onclick={addPricingRow}
+          >
+            Add model
+          </button>
+          <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={usagePricing.saving}>
+            {usagePricing.saving ? 'Saving' : 'Save pricing'}
+          </button>
+        {/if}
       </div>
     </div>
 
@@ -561,12 +626,13 @@
           class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           type="search"
           placeholder="Search model name or prices"
-          bind:value={pricingSearch}
+          value={pricingSearch}
+          oninput={changePricingSearch}
         />
       </label>
       <div class="flex items-end">
         <p class="text-sm text-[#6e6e6e] tabular-nums">
-          {filteredPricingRows.length} / {(usagePricing.rows || []).length} rows
+          {sortedPricingRows.length} / {(usagePricing.rows || []).length} rows
           {#if pricingSearch.trim()}
             matching
           {/if}
@@ -585,50 +651,119 @@
             <th class="px-4 py-3 font-medium">Long input µ$/M</th>
             <th class="px-4 py-3 font-medium">Long cached input µ$/M</th>
             <th class="px-4 py-3 font-medium">Long output µ$/M</th>
-            <th class="px-4 py-3 font-medium">Action</th>
+            {#if pricingEditMode}
+              <th class="px-4 py-3 font-medium">Action</th>
+            {/if}
           </tr>
         </thead>
         <tbody class="divide-y divide-[#ededed]">
           {#if !usagePricing.rows?.length}
             <tr>
-              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows configured. Add a model or sync official OpenAI Standard pricing.</td>
+              <td class="px-4 py-5 text-[#6e6e6e]" colspan={pricingEditMode ? 8 : 7}>No pricing rows configured. Add a model or sync official OpenAI Standard pricing.</td>
             </tr>
-          {:else if filteredPricingRows.length === 0}
+          {:else if sortedPricingRows.length === 0}
             <tr>
-              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows match your search.</td>
+              <td class="px-4 py-5 text-[#6e6e6e]" colspan={pricingEditMode ? 8 : 7}>No pricing rows match your search.</td>
             </tr>
           {:else}
-            {#each filteredPricingRows as row, index (row.model + '-' + (usagePricing.rows || []).indexOf(row))}
+            {#each paginatedPricingRows as row, index (row.model + '-' + (usagePricing.rows || []).indexOf(row))}
               <tr>
                 <td class="px-4 py-3">
-                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={row.model} placeholder="gpt-5" />
+                  {#if pricingEditMode}
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={row.model} placeholder="gpt-5" />
+                  {:else}
+                    <span class="block max-w-[220px] truncate font-mono text-[13px] text-[#0d0d0d]">{row.model || '-'}</span>
+                  {/if}
                 </td>
                 <td class="px-4 py-3">
-                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.inputMicrousdPerMillion} />
+                  {#if pricingEditMode}
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.inputMicrousdPerMillion} />
+                  {:else}
+                    <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.inputMicrousdPerMillion)}</span>
+                  {/if}
                 </td>
                 <td class="px-4 py-3">
-                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.cachedInputMicrousdPerMillion} />
+                  {#if pricingEditMode}
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.cachedInputMicrousdPerMillion} />
+                  {:else}
+                    <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.cachedInputMicrousdPerMillion)}</span>
+                  {/if}
                 </td>
                 <td class="px-4 py-3">
-                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.outputMicrousdPerMillion} />
+                  {#if pricingEditMode}
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.outputMicrousdPerMillion} />
+                  {:else}
+                    <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.outputMicrousdPerMillion)}</span>
+                  {/if}
                 </td>
                 <td class="px-4 py-3">
-                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longInputMicrousdPerMillion} />
+                  {#if pricingEditMode}
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longInputMicrousdPerMillion} />
+                  {:else}
+                    <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longInputMicrousdPerMillion)}</span>
+                  {/if}
                 </td>
                 <td class="px-4 py-3">
-                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longCachedInputMicrousdPerMillion} />
+                  {#if pricingEditMode}
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longCachedInputMicrousdPerMillion} />
+                  {:else}
+                    <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longCachedInputMicrousdPerMillion)}</span>
+                  {/if}
                 </td>
                 <td class="px-4 py-3">
-                  <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longOutputMicrousdPerMillion} />
+                  {#if pricingEditMode}
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longOutputMicrousdPerMillion} />
+                  {:else}
+                    <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longOutputMicrousdPerMillion)}</span>
+                  {/if}
                 </td>
-                <td class="px-4 py-3">
-                  <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => removePricingRow((usagePricing.rows || []).indexOf(row))}>Remove</button>
-                </td>
+                {#if pricingEditMode}
+                  <td class="px-4 py-3">
+                    <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => removePricingRow((usagePricing.rows || []).indexOf(row))}>Remove</button>
+                  </td>
+                {/if}
               </tr>
             {/each}
           {/if}
         </tbody>
       </table>
+    </div>
+
+    <div class="mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
+      <p class="tabular-nums">Showing {pricingPageSummary} of {sortedPricingRows.length}</p>
+      <div class="flex flex-wrap items-center gap-3">
+        <label class="flex items-center gap-2 font-medium text-[#3c3c3c]">
+          Rows
+          <select
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+            value={pricingPageSize}
+            onchange={changePricingPageSize}
+          >
+            <option value={5}>5</option>
+            <option value={10}>10</option>
+            <option value={20}>20</option>
+          </select>
+        </label>
+        <div class="flex items-center gap-2">
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={normalizedPricingPage <= 1}
+            onclick={() => pricingPage = Math.max(1, normalizedPricingPage - 1)}
+          >
+            Previous
+          </button>
+          <span class="tabular-nums text-[#3c3c3c]">Page {normalizedPricingPage} / {pricingPageCount}</span>
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={normalizedPricingPage >= pricingPageCount}
+            onclick={() => pricingPage = Math.min(pricingPageCount, normalizedPricingPage + 1)}
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </div>
   </form>
 
