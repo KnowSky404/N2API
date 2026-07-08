@@ -91,18 +91,75 @@ components:
 
 # N2API Design System
 
-## Design Direction (July 2026)
+## Design Direction (Reviewed 2026-07-08)
 
-N2API's UI direction follows the current ChatGPT app shell aesthetic observed
-from live sampling of `chatgpt.com` (July 2026): a restrained, app-first
+N2API's UI direction follows the ChatGPT app shell aesthetic observed from
+live sampling of `chatgpt.com` (2026-07-08): a restrained, app-first
 interface with a white canvas, near-white sidebar rail, minimal chrome, and
 muted gray surfaces. The experience is software-app-like, not a marketing
 landing page. No decorative gradients, orbs, hero sections, or OpenAI brand
 assets appear.
 
+Consumer affordances visible in the current shell -- New chat, Search chats,
+Images, Apps, Deep research, Settings/Help, central prompt, login/signup --
+are ChatGPT-specific features. N2API adopts the app-shell restraint and
+sidebar/drawer navigation pattern but does not copy consumer chat affordances
+or ChatGPT interaction design. N2API is an operational dashboard, not a
+ChatGPT clone.
+
 N2API adapts this into an operational dashboard: the same white-canvas
 app-shell feel applied to provider management, routing, logs, and admin
 settings.
+
+## Source Interpretation
+
+This DESIGN.md synthesizes four external sources, each reviewed on
+2026-07-08. Their roles and what N2API takes from each:
+
+- **OpenAI Brand Guidelines** (`openai.com/brand`, now titled "Design
+  Guidelines") -- Binding trademark rules. OpenAI name/logo, ChatGPT/GPT
+  brands, Blossom, and OpenAI Sans are OpenAI-owned intellectual property.
+  N2API must not use them as product branding, alter them, incorporate them
+  into its own branding, or make them more prominent than N2API's own
+  identity. Logos may appear only when directly related to an OpenAI service
+  and only as provided by OpenAI. Model names may be referenced precisely in
+  context but are not permitted in app titles; the GPT brand must not appear
+  in product, developer, or company names. Do not imply endorsement or
+  sponsorship.
+
+- **Open Design OpenAI-inspired DESIGN.md** (`nexu-io/open-design`) --
+  Reference palette and restraint philosophy. N2API adopts the core visual
+  values: true white canvas, #0d0d0d ink, #10a37f teal accent, hairline
+  borders, 8-12px radii, generous whitespace, and Inter font stack. N2API
+  rejects the editorial/marketing elements: Signifier serif, large section
+  rhythm, and rounded CTAs/cards as brand mimicry.
+
+- **Google Labs DESIGN.md format spec** (`google-labs-code/design.md`) --
+  Defines the file structure. YAML frontmatter holds machine-readable,
+  normative design tokens. Markdown body provides human-readable rationale.
+  This file follows that structure.
+
+- **Live ChatGPT app shell** (`chatgpt.com`, 2026-07-08) -- Confirms the
+  current minimal white app surface, sidebar/drawer navigation, and consumer
+  feature set. N2API adopts the app-shell restraint and navigation pattern;
+  consumer chat features are not relevant to an operational dashboard.
+
+## Token Contract
+
+The YAML frontmatter above contains the normative design tokens. Markdown
+sections provide rationale and usage guidance. When values conflict, YAML
+tokens are authoritative.
+
+Tailwind CSS mappings:
+
+- `rounded.md` (8px) maps to Tailwind `rounded-lg`.
+- `rounded.sm` (6px) maps to Tailwind `rounded-md`.
+- `rounded.lg` (12px) maps to Tailwind `rounded-xl`.
+- CSS variables in `frontend/src/app.css` should mirror the YAML color tokens where present; Tailwind utility and arbitrary hex classes must preserve the same rendered values.
+- Spacing tokens are a design scale for utility selection rather than a generated Tailwind extension unless a future config explicitly adds one.
+
+Implementation rule: rendered visual values must match YAML tokens. Prose
+descriptions are advisory context.
 
 ## Overview
 
@@ -112,11 +169,16 @@ direction of restraint: near-monochrome surfaces, generous white space,
 precise type, minimal decoration, and a single teal accent for active or
 successful states.
 
-This is not an OpenAI-branded product. **Do not use OpenAI logos, wordmarks,
-Blossom marks, ChatGPT marks, GPT marks, or model names as product branding.**
-OpenAI-related names may appear only where they accurately describe an
-integration, provider, or model setting. Do not imply OpenAI endorsement,
-partnership, sponsorship, or official status in any way.
+This is not an OpenAI-branded product. **OpenAI name/logo, ChatGPT, GPT,
+Blossom, and OpenAI Sans are OpenAI-owned trademarks.** Do not use them as
+N2API product branding, alter the wordmark or logo, incorporate OpenAI logos
+into N2API branding, or make OpenAI marks more prominent than N2API's own
+identity. OpenAI logos may appear only when directly related to an OpenAI
+service and exactly as provided. Do not imply endorsement, partnership,
+sponsorship, or official status. Model names may be referenced precisely in
+API and configuration contexts but are not permitted in the product name or
+app title; the GPT brand must not appear in product, developer, or company
+names. Do not depend on proprietary OpenAI Sans as a UI font.
 
 Design density should be moderate. N2API is an admin dashboard, not a
 marketing site, so prefer compact tables, settings groups, status rows, and
@@ -124,7 +186,7 @@ focused forms over large hero sections or decorative storytelling.
 
 ## App Shell Principles
 
-- The app background reads as **white or near-white** — not a distinct colored
+- The app background reads as **white or near-white** -- not a distinct colored
   background.
 - The sidebar is a **low-contrast near-white rail**, distinct from content
   only by a hairline border and slightly muted fill.
@@ -346,11 +408,19 @@ When building N2API UI:
 
 ## Sources
 
-This file is adapted for N2API from:
+Last reviewed: 2026-07-08. Each source has a specific role in this file.
 
-- OpenAI Brand Guidelines: https://openai.com/brand/
-- Open Design's OpenAI-inspired DESIGN.md reference: https://github.com/nexu-io/open-design/blob/main/design-systems/openai/DESIGN.md
-- Google Labs DESIGN.md format documentation: https://github.com/google-labs-code/design.md/blob/main/docs/spec.md
-- Live ChatGPT app shell sampling (July 2026): white canvas, near-white
-  sidebar rail, muted gray surfaces, no decorative elements, app-first
-  composition.
+- **OpenAI Brand Guidelines** (`openai.com/brand`, now titled "Design
+  Guidelines") -- Binding trademark and brand-use rules. N2API must comply
+  with all restrictions on OpenAI name/logo, ChatGPT, GPT, Blossom, and
+  OpenAI Sans.
+- **Open Design OpenAI-inspired DESIGN.md** (`nexu-io/open-design`) --
+  Reference for palette and restraint philosophy. N2API adopts the core
+  visual values; rejects editorial serif, marketing-section rhythm, and
+  brand mimicry.
+- **Google Labs DESIGN.md format spec** (`google-labs-code/design.md`) --
+  Defines the YAML-frontmatter + Markdown structure this file follows.
+  YAML tokens are normative; prose is rationale.
+- **Live ChatGPT app shell** (`chatgpt.com`, 2026-07-08) -- Confirms current
+  minimal app surface, sidebar/drawer navigation, and consumer feature set.
+  N2API adopts app-shell restraint, not consumer chat features.
