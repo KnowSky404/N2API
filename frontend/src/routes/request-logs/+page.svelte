@@ -16,7 +16,7 @@
     requestLogs,
     resetRequestLogFilters,
     routingPools,
-    saveUsagePricing,
+    savePricingRows,
     session,
     syncOfficialUsagePricing,
     usage,
@@ -359,6 +359,8 @@
   let editingPricingRow = $state(null);
   let deleteConfirmPricingPopover = $state(/** @type {{row: import('$lib/admin-state.svelte.js').UsagePricingRow, top: number, left: number}|null} */ (null));
 
+  const pricingBusy = $derived(usagePricing.loading || usagePricing.saving || usagePricing.syncing);
+
   let closeSyncMessage = $state('');
 
   $effect(() => {
@@ -375,8 +377,10 @@
     editingPricingRow = row;
   }
 
-  function finishPricingRowEdit() {
-    editingPricingRow = null;
+  async function commitPricingRow() {
+    if (await savePricingRows()) {
+      editingPricingRow = null;
+    }
   }
 
   /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
@@ -466,10 +470,7 @@
     return String(Number(value ?? 0));
   }
 
-  /** @param {SubmitEvent} event */
-  function submitUsagePricing(event) {
-    return saveUsagePricing(event);
-  }
+
 
   function openSyncConfirmModal() {
     showSyncConfirmModal = true;
@@ -614,7 +615,7 @@
 </section>
 
 <section class="rounded-lg border border-[#ededed] bg-white p-6">
-  <form onsubmit={submitUsagePricing}>
+  <div>
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Pricing</h2>
@@ -624,21 +625,22 @@
         <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
-          disabled={usagePricing.loading || usagePricing.saving || usagePricing.syncing}
+          disabled={pricingBusy}
           onclick={openSyncConfirmModal}
         >
           {usagePricing.syncing ? 'Syncing' : 'Sync official'}
         </button>
         <button
-          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
+          disabled={pricingBusy}
           onclick={addPricingRow}
         >
           Add model
         </button>
-        <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={usagePricing.saving}>
-          {usagePricing.saving ? 'Saving' : 'Save pricing'}
-        </button>
+        {#if pricingBusy}
+          <span class="text-sm text-[#6e6e6e] font-medium">thinking</span>
+        {/if}
       </div>
     </div>
 
@@ -748,10 +750,10 @@
                 <td class="sticky right-0 bg-white px-3 py-3 shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
                   <div class="flex justify-end gap-2 whitespace-nowrap">
                     {#if isEditing}
-                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={finishPricingRowEdit}>Done</button>
+                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={commitPricingRow}>Done</button>
                     {:else}
-                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => startEditingPricingRow(row)}>Edit</button>
-                        <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50" type="button" onclick={(e) => openDeleteConfirmPricingRow(row, e)}>Remove</button>
+                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={() => startEditingPricingRow(row)}>Edit</button>
+                        <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={(e) => openDeleteConfirmPricingRow(row, e)}>Remove</button>
                     {/if}
                   </div>
                 </td>
@@ -798,7 +800,7 @@
         </div>
       </div>
     </div>
-  </form>
+  </div>
 
 
 
@@ -832,8 +834,9 @@
             Cancel
           </button>
           <button
-            class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#3c3c3c]"
+            class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
+            disabled={pricingBusy}
             onclick={confirmSyncOfficial}
           >
             Confirm sync

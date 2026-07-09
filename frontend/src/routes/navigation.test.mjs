@@ -1197,6 +1197,38 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(requestLogsPage, /No pricing rows/);
   assert.match(requestLogsPage, /No pricing rows match/);
 
+
+  // No global Save pricing button or form submit wrapper
+  assert.doesNotMatch(requestLogsPage, /Save pricing/);
+  assert.doesNotMatch(requestLogsPage, /onsubmit=\{submitUsagePricing\}/);
+
+  // Loading indicator shows lowercase thinking
+  assert.match(requestLogsPage, />thinking</);
+
+  // pricingBusy derived used for disabling controls during operations
+  assert.match(requestLogsPage, /pricingBusy/);
+
+  // Sync official calls loadUsagePricing after POST success (cross-line, locked to function body keywords)
+  assert.match(adminState, /syncOfficialUsagePricing[\s\S]*?sync-official[\s\S]*?await loadUsagePricing\(\)/,
+    'syncOfficialUsagePricing must call await loadUsagePricing() on success path');
+
+  // savePricingRows exists and calls loadUsagePricing after PUT success
+  assert.match(adminState, /savePricingRows/);
+  assert.match(adminState, /savePricingRows[\s\S]*?PUT[\s\S]*?await loadUsagePricing\(\)/,
+    'savePricingRows must call await loadUsagePricing() after PUT success');
+
+  // Row Done button calls commitPricingRow (save+reload), not just clear edit state
+  assert.match(requestLogsPage, /commitPricingRow/);
+  assert.match(requestLogsPage, /onclick=\{commitPricingRow\}/);
+  assert.doesNotMatch(requestLogsPage, /finishPricingRowEdit/);
+
+  // Page imports savePricingRows from admin-state, no longer imports saveUsagePricing for the form
+  assert.match(requestLogsPage, /savePricingRows/);
+
+  // commitPricingRow only clears editingPricingRow on successful save
+  assert.match(requestLogsPage, /if \(await savePricingRows\(\)\)/,
+    'commitPricingRow must guard editingPricingRow = null behind a successful savePricingRows');
+
   // No explicit Reload pricing button in the pricing section header
   assert.doesNotMatch(requestLogsPage, /Reload pricing/);
   assert.doesNotMatch(requestLogsPage, /onclick=\{loadUsagePricing\}/);
@@ -1223,7 +1255,7 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(requestLogsPage, /deleteConfirmPricingPopover = null/);
   assert.match(requestLogsPage, /function confirmRemovePricingRow/);
   assert.match(requestLogsPage, /@param.*UsagePricingRow.*row/);
-  assert.match(requestLogsPage, /finishPricingRowEdit/);
+  assert.match(requestLogsPage, /commitPricingRow/);
 
   // Header pricing actions stay pinned to the right side of the section
   assert.match(requestLogsPage, /ml-auto flex flex-wrap items-center justify-end gap-3/);

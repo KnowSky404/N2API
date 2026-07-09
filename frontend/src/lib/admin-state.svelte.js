@@ -3139,8 +3139,16 @@ export async function loadUsagePricing() {
 /** @param {SubmitEvent} event */
 export async function saveUsagePricing(event) {
   event.preventDefault();
+  return savePricingRows();
+}
+
+/**
+ * Save current usagePricing.rows via PUT, then reload from the server.
+ * @returns {Promise<boolean>}
+ */
+export async function savePricingRows() {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   usagePricing.saving = true;
   usagePricing.error = '';
@@ -3171,26 +3179,20 @@ export async function saveUsagePricing(event) {
         models
       })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     usagePricing.version = payload.version ?? 1;
     usagePricing.currency = payload.currency ?? 'USD';
     usagePricing.unit = payload.unit ?? '1M_tokens';
-    usagePricing.rows = Object.entries(payload.models ?? {}).map(([model, price]) => ({
-      model,
-      inputMicrousdPerMillion: Number(price?.inputMicrousdPerMillion ?? 0),
-      cachedInputMicrousdPerMillion: Number(price?.cachedInputMicrousdPerMillion ?? 0),
-      outputMicrousdPerMillion: Number(price?.outputMicrousdPerMillion ?? 0),
-      longInputMicrousdPerMillion: Number(price?.longInputMicrousdPerMillion ?? 0),
-      longCachedInputMicrousdPerMillion: Number(price?.longCachedInputMicrousdPerMillion ?? 0),
-      longOutputMicrousdPerMillion: Number(price?.longOutputMicrousdPerMillion ?? 0)
-    }));
     usagePricing.saved = true;
+    await loadUsagePricing();
     await loadUsageSummary(usage.range, usage.groupBy);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     usagePricing.error = error instanceof Error ? error.message : 'Failed to save usage pricing';
+    return false;
   } finally {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     usagePricing.saving = false;
   }
 }
@@ -3226,6 +3228,7 @@ export async function syncOfficialUsagePricing() {
     }));
     const total = payload.synced?.total ?? 0;
     usagePricing.syncMessage = `Synced official OpenAI Standard pricing for ${total} models.`;
+    await loadUsagePricing();
     await loadUsageSummary(usage.range, usage.groupBy);
     return true;
   } catch (error) {
