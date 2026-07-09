@@ -384,10 +384,20 @@
   }
 
   /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
-  function confirmRemovePricingRow(row) {
+  async function confirmRemovePricingRow(row) {
+    const priorRows = [...(usagePricing.rows || [])];
     const index = (usagePricing.rows || []).indexOf(row);
-    if (index >= 0) removePricingRow(index);
-    deleteConfirmPricingPopover = null;
+    if (index < 0) {
+      deleteConfirmPricingPopover = null;
+      return;
+    }
+    removePricingRow(index);
+
+    if (await savePricingRows()) {
+      deleteConfirmPricingPopover = null;
+    } else {
+      usagePricing.rows = priorRows;
+    }
   }
 
   /**

@@ -1254,6 +1254,8 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(requestLogsPage, /editingPricingRow = null/);
   assert.match(requestLogsPage, /deleteConfirmPricingPopover = null/);
   assert.match(requestLogsPage, /function confirmRemovePricingRow/);
+  assert.match(requestLogsPage, /confirmRemovePricingRow[\s\S]*?await savePricingRows\(\)/,
+    'confirmRemovePricingRow must persist row removal through savePricingRows');
   assert.match(requestLogsPage, /@param.*UsagePricingRow.*row/);
   assert.match(requestLogsPage, /commitPricingRow/);
 
