@@ -102,7 +102,7 @@ review, commits, final verification, and Docker refresh.
    named custom agents or DeepSeek model IDs directly, first discover native multi-agent tools.
    In the current Codex API surface, `multi_agent_v1.spawn_agent` exposes `deepseek-worker` and
    `deepseek-flash` directly; use those native roles instead of nested `codex exec`.
-   The global `deepseek-worker` agent is configured with a 256K context window and xhigh reasoning;
+   The global `deepseek-worker` agent is configured with a 256K context window and max reasoning;
    the global `deepseek-flash` agent is configured with a 256K context window and high reasoning.
    Use `agent_type="deepseek-worker"` for implementation and bounded test/update tasks, and
    `agent_type="deepseek-flash"` for read-only scans, diagnostics, test-output triage, and summaries.
