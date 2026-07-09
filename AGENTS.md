@@ -102,6 +102,8 @@ review, commits, final verification, and Docker refresh.
    named custom agents or DeepSeek model IDs directly, first discover native multi-agent tools.
    In the current Codex API surface, `multi_agent_v1.spawn_agent` exposes `deepseek-worker` and
    `deepseek-flash` directly; use those native roles instead of nested `codex exec`.
+   The global `deepseek-worker` agent is configured with a 256K context window and xhigh reasoning;
+   the global `deepseek-flash` agent is configured with a 256K context window and high reasoning.
    Use `agent_type="deepseek-worker"` for implementation and bounded test/update tasks, and
    `agent_type="deepseek-flash"` for read-only scans, diagnostics, test-output triage, and summaries.
    Split DeepSeek work into short, bounded runs by default: read-only scan/diagnosis first,
@@ -112,7 +114,7 @@ review, commits, final verification, and Docker refresh.
    should include `status`, `changed files`, `commands run`, `results`, `blockers`, and `assumptions`.
    If multiple workers edit in parallel, their write sets must not overlap unless the parent session
    is intentionally sequencing follow-up fixes. If a worker session reports a smaller
-   `model_context_window` than requested, surface that discrepancy instead of assuming the 1M window
+   `model_context_window` than requested, surface that discrepancy instead of assuming the configured window
    took effect.
    Use nested `codex exec` only if the native DeepSeek subagent roles are unavailable and the user
    explicitly approves that fallback for the specific turn, because nested CLI runs can inherit a
