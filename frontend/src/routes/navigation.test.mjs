@@ -1202,8 +1202,13 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.doesNotMatch(requestLogsPage, /Save pricing/);
   assert.doesNotMatch(requestLogsPage, /onsubmit=\{submitUsagePricing\}/);
 
-  // Loading indicator shows lowercase thinking
-  assert.match(requestLogsPage, />thinking</);
+  // Pricing loading shows a section-level centered spinner overlay with an icon and thinking label.
+  assert.doesNotMatch(requestLogsPage, /text-\[#6e6e6e\] font-medium">thinking<\/span>/);
+  assert.match(requestLogsPage, /import \{ LoaderCircle \} from 'lucide-svelte';/);
+  assert.match(requestLogsPage, /\{#if pricingBusy\}[\s\S]*?aria-label="Pricing operation in progress"[\s\S]*?animate-spin[\s\S]*?>thinking</,
+    'pricing busy state must render a centered spinner overlay with a thinking label');
+  assert.match(requestLogsPage, /absolute inset-0 z-40/,
+    'pricing busy overlay must cover the pricing section instead of a single inline cell');
 
   // pricingBusy derived used for disabling controls during operations
   assert.match(requestLogsPage, /pricingBusy/);

@@ -24,6 +24,7 @@
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
+  import { LoaderCircle } from 'lucide-svelte';
   let providerAccountsRequested = $state(false);
   let routingPoolsRequested = $state(false);
   let apiKeysRequested = $state(false);
@@ -624,8 +625,14 @@
   </div>
 </section>
 
-<section class="rounded-lg border border-[#ededed] bg-white p-6">
+<section class="relative rounded-lg border border-[#ededed] bg-white p-6">
   <div>
+    {#if pricingBusy}
+      <div class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-lg bg-white/85 backdrop-blur-[2px]" aria-label="Pricing operation in progress">
+        <LoaderCircle class="h-8 w-8 animate-spin text-[#10a37f]" aria-hidden="true" />
+        <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+      </div>
+    {/if}
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Pricing</h2>
@@ -648,9 +655,6 @@
         >
           Add model
         </button>
-        {#if pricingBusy}
-          <span class="text-sm text-[#6e6e6e] font-medium">thinking</span>
-        {/if}
       </div>
     </div>
 
