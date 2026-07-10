@@ -1204,7 +1204,17 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/pricing/);
   assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/models\/all/);
   assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/deprecations/);
-  assert.match(requestLogsPage, /Upcoming shutdowns/);
+  assert.doesNotMatch(requestLogsPage, /<p class="font-medium">Upcoming shutdowns<\/p>/);
+  assert.match(requestLogsPage, /ignoreUpcomingUsagePricing/);
+  assert.match(requestLogsPage, /showUpcomingIgnoreModal/);
+  assert.match(requestLogsPage, /aria-label="Review upcoming model shutdowns"/);
+  assert.match(requestLogsPage, /title="Review upcoming model shutdowns"/);
+  assert.match(requestLogsPage, /<TriangleAlert[^>]*aria-hidden="true"/);
+  assert.match(requestLogsPage, /Review upcoming model shutdowns[\s\S]*?\{usagePricing\.syncing \? 'Syncing' : 'Sync official'\}/);
+  assert.match(requestLogsPage, /aria-labelledby="upcoming-ignore-title"/);
+  assert.match(requestLogsPage, /id="upcoming-ignore-title"[\s\S]*?Upcoming model shutdowns/);
+  assert.match(requestLogsPage, /Remove \{usagePricing\.upcomingShutdowns\.length\} models/);
+  assert.match(requestLogsPage, /confirmUpcomingIgnore[\s\S]*?ignoreUpcomingUsagePricing/);
   assert.match(requestLogsPage, /showShutdownRemovalModal/);
   assert.match(requestLogsPage, /Review shutdowns \(\{usagePricing\.deletionCandidates\.length\}\)/);
   assert.match(requestLogsPage, /openShutdownRemovalModal/);
@@ -1230,7 +1240,7 @@ test('usage pricing supports official OpenAI sync', () => {
 
   // Pricing loading shows a section-level centered spinner overlay with an icon and thinking label.
   assert.doesNotMatch(requestLogsPage, /text-\[#6e6e6e\] font-medium">thinking<\/span>/);
-  assert.match(requestLogsPage, /import \{ LoaderCircle \} from 'lucide-svelte';/);
+  assert.match(requestLogsPage, /import \{[^}]*LoaderCircle[^}]*TriangleAlert[^}]*\} from 'lucide-svelte';/);
   assert.match(requestLogsPage, /\{#if pricingBusy\}[\s\S]*?aria-label="Pricing operation in progress"[\s\S]*?animate-spin[\s\S]*?>thinking</,
     'pricing busy state must render a centered spinner overlay with a thinking label');
   assert.match(requestLogsPage, /absolute inset-0 z-40/,
@@ -1238,6 +1248,7 @@ test('usage pricing supports official OpenAI sync', () => {
 
   // pricingBusy derived used for disabling controls during operations
   assert.match(requestLogsPage, /pricingBusy/);
+  assert.match(requestLogsPage, /pricingBusy[\s\S]*?usagePricing\.ignoringUpcoming/);
 
   // Sync official calls loadUsagePricing after POST success (cross-line, locked to function body keywords)
   assert.match(adminState, /syncOfficialUsagePricing[\s\S]*?sync-official[\s\S]*?await loadUsagePricing\(\)/,

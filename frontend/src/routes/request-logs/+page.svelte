@@ -7,6 +7,7 @@
     formatCostMicrousd,
     formatRequestLogCost,
     formatTokens,
+    ignoreUpcomingUsagePricing,
     loadKeys,
     loadProviderAccounts,
     loadRoutingPools,
@@ -25,7 +26,7 @@
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
-  import { LoaderCircle } from 'lucide-svelte';
+  import { LoaderCircle, TriangleAlert } from 'lucide-svelte';
   let providerAccountsRequested = $state(false);
   let routingPoolsRequested = $state(false);
   let apiKeysRequested = $state(false);
@@ -357,13 +358,20 @@
 
   let showSyncConfirmModal = $state(false);
   let showShutdownRemovalModal = $state(false);
+  let showUpcomingIgnoreModal = $state(false);
   let selectedShutdownModels = $state(/** @type {string[]} */ ([]));
 
   /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
   let editingPricingRow = $state(null);
   let deleteConfirmPricingPopover = $state(/** @type {{row: import('$lib/admin-state.svelte.js').UsagePricingRow, top: number, left: number}|null} */ (null));
 
-  const pricingBusy = $derived(usagePricing.loading || usagePricing.saving || usagePricing.syncing || usagePricing.removingShutdown);
+  const pricingBusy = $derived(
+    usagePricing.loading ||
+    usagePricing.saving ||
+    usagePricing.syncing ||
+    usagePricing.removingShutdown ||
+    usagePricing.ignoringUpcoming
+  );
 
   let closeSyncMessage = $state('');
 
@@ -507,6 +515,28 @@
     showSyncConfirmModal = true;
   }
 
+  function openUpcomingIgnoreModal() {
+    showUpcomingIgnoreModal = true;
+  }
+
+  function closeUpcomingIgnoreModal() {
+    if (!pricingBusy) showUpcomingIgnoreModal = false;
+  }
+
+  async function confirmUpcomingIgnore() {
+    const models = (usagePricing.upcomingShutdowns || []).map((item) => item.model);
+    if (await ignoreUpcomingUsagePricing(models)) {
+      showUpcomingIgnoreModal = false;
+    }
+  }
+
+  /** @param {KeyboardEvent} event */
+  function handlePricingModalKeydown(event) {
+    if (event.key === 'Escape' && showUpcomingIgnoreModal && !pricingBusy) {
+      showUpcomingIgnoreModal = false;
+    }
+  }
+
   function openShutdownRemovalModal() {
     selectedShutdownModels = (usagePricing.deletionCandidates || []).map((item) => item.model);
     showShutdownRemovalModal = true;
@@ -539,7 +569,7 @@
   <title>N2API Request Logs</title>
 </svelte:head>
 
-<svelte:window onscroll={closeDeleteConfirmPricingPopover} onresize={closeDeleteConfirmPricingPopover} />
+<svelte:window onscroll={closeDeleteConfirmPricingPopover} onresize={closeDeleteConfirmPricingPopover} onkeydown={handlePricingModalKeydown} />
 
 <AuthGate>
 <div class="space-y-6">
@@ -691,6 +721,21 @@
             Review shutdowns ({usagePricing.deletionCandidates.length})
           </button>
         {/if}
+        {#if usagePricing.upcomingShutdowns?.length}
+          <button
+            class="relative grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            aria-label="Review upcoming model shutdowns"
+            title="Review upcoming model shutdowns"
+            disabled={pricingBusy}
+            onclick={openUpcomingIgnoreModal}
+          >
+            <TriangleAlert class="h-4 w-4" aria-hidden="true" />
+            <span class="absolute -right-1.5 -top-1.5 grid min-h-4 min-w-4 place-items-center rounded-full border-2 border-white bg-amber-700 px-1 text-[9px] font-semibold leading-none text-white">
+              {usagePricing.upcomingShutdowns.length}
+            </span>
+          </button>
+        {/if}
         <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
@@ -714,17 +759,6 @@
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usagePricing.error}</p>
     {:else if usagePricing.saved}
       <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">Pricing saved.</p>
-    {/if}
-
-    {#if usagePricing.upcomingShutdowns?.length}
-      <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <p class="font-medium">Upcoming shutdowns</p>
-        <ul class="mt-2 space-y-1">
-          {#each usagePricing.upcomingShutdowns as item (item.model)}
-            <li><span class="font-mono">{item.model}</span> · {item.shutdownDate}{item.replacement ? ` · Use ${item.replacement}` : ''}</li>
-          {/each}
-        </ul>
-      </div>
     {/if}
 
     <div class="mt-5 grid gap-3" style="grid-template-columns: 1fr auto">
@@ -919,6 +953,58 @@
             onclick={confirmSyncOfficial}
           >
             Confirm sync
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showUpcomingIgnoreModal}
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="upcoming-ignore-title"
+      tabindex="-1"
+      onclick={(event) => event.target === event.currentTarget && closeUpcomingIgnoreModal()}
+      onkeydown={handlePricingModalKeydown}
+    >
+      <div class="grid w-full max-w-lg gap-4 rounded-lg bg-white p-5 shadow-xl">
+        <div class="flex items-start gap-3">
+          <div class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-800">
+            <TriangleAlert class="h-5 w-5" aria-hidden="true" />
+          </div>
+          <div>
+            <h3 id="upcoming-ignore-title" class="text-lg font-semibold text-[#0d0d0d]">Upcoming model shutdowns</h3>
+            <p class="mt-1 text-sm text-[#6e6e6e]">Remove and keep these models out of future official pricing syncs.</p>
+          </div>
+        </div>
+        <div class="max-h-72 overflow-y-auto rounded-lg border border-[#ededed]">
+          {#each usagePricing.upcomingShutdowns as item (item.model)}
+            <div class="border-t border-[#ededed] px-3 py-3 first:border-t-0">
+              <p class="font-mono text-[13px] font-medium text-[#0d0d0d]">{item.model}</p>
+              <p class="mt-1 text-xs text-[#6e6e6e]">
+                Shutdown {item.shutdownDate}{item.replacement ? ` · Use ${item.replacement}` : ''}
+              </p>
+            </div>
+          {/each}
+        </div>
+        <div class="flex justify-end gap-2">
+          <button
+            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:opacity-60"
+            type="button"
+            disabled={pricingBusy}
+            onclick={closeUpcomingIgnoreModal}
+          >
+            Cancel
+          </button>
+          <button
+            class="rounded-lg bg-[#ef4146] px-3 py-2 text-sm font-medium text-white hover:bg-[#d7373c] disabled:opacity-60"
+            type="button"
+            disabled={pricingBusy || !usagePricing.upcomingShutdowns.length}
+            onclick={confirmUpcomingIgnore}
+          >
+            Remove {usagePricing.upcomingShutdowns.length} models
           </button>
         </div>
       </div>
