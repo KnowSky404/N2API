@@ -2291,6 +2291,92 @@ func TestParseOfficialStandardPricingExtractsCurrentPageShape(t *testing.T) {
 	}
 }
 
+func TestParseOfficialModelCatalogIncludesDeprecatedMarker(t *testing.T) {
+	body := `<a href="/api/docs/models/gpt-5.6-sol"><div>GPT-5.6 Sol</div></a>
+<a href="/api/docs/models/gpt-5.3-chat-latest"><div>GPT-5.3 Chat</div><div>Deprecated</div></a>`
+
+	models, err := parseOfficialModelCatalog(body)
+	if err != nil {
+		t.Fatalf("parseOfficialModelCatalog: %v", err)
+	}
+	if models["gpt-5.6-sol"].Deprecated {
+		t.Fatal("gpt-5.6-sol unexpectedly deprecated")
+	}
+	if !models["gpt-5.3-chat-latest"].Deprecated {
+		t.Fatal("missing deprecated marker")
+	}
+}
+
+func TestParseOfficialStandardPricingSupportsCacheWritesColumns(t *testing.T) {
+	body := `<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.6-sol&quot;],[0,5],[0,0.5],[0,6.25],[0,30]]]]]}"></astro-island>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	price, ok := models["gpt-5.6-sol"]
+	if !ok {
+		t.Fatal("missing gpt-5.6-sol")
+	}
+	if price.InputMicrousdPerMillion != 5_000_000 {
+		t.Fatalf("input = %d, want 5000000", price.InputMicrousdPerMillion)
+	}
+	if price.CachedInputMicrousdPerMillion != 500_000 {
+		t.Fatalf("cached input = %d, want 500000", price.CachedInputMicrousdPerMillion)
+	}
+	if price.OutputMicrousdPerMillion != 30_000_000 {
+		t.Fatalf("output = %d, want 30000000", price.OutputMicrousdPerMillion)
+	}
+}
+
+func TestParseOfficialStandardPricingSupportsCacheWritesSSRColumns(t *testing.T) {
+	body := `<div data-content-switcher-pane="true" data-value="standard">
+<table><tbody><tr>
+<td>gpt-5.6-sol</td><td>$5.00</td><td>$0.50</td><td>$6.25</td><td>$30.00</td>
+<td>$10.00</td><td>$1.00</td><td>$12.50</td><td>$60.00</td>
+</tr></tbody></table></div>
+<div data-content-switcher-pane="true" data-value="batch" hidden></div>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	price, ok := models["gpt-5.6-sol"]
+	if !ok {
+		t.Fatal("missing gpt-5.6-sol")
+	}
+	if price.OutputMicrousdPerMillion != 30_000_000 {
+		t.Fatalf("short output = %d, want 30000000", price.OutputMicrousdPerMillion)
+	}
+	if price.LongInputMicrousdPerMillion != 10_000_000 {
+		t.Fatalf("long input = %d, want 10000000", price.LongInputMicrousdPerMillion)
+	}
+	if price.LongOutputMicrousdPerMillion != 60_000_000 {
+		t.Fatalf("long output = %d, want 60000000", price.LongOutputMicrousdPerMillion)
+	}
+}
+
+func TestParseOfficialDeprecationsNormalizesDates(t *testing.T) {
+	body := `<table><thead><tr><th>Shutdown date</th><th>Model / system</th><th>Recommended replacement</th></tr></thead><tbody>
+<tr><td>Aug 10, 2026</td><td><code>gpt-5.3-chat-latest</code></td><td><code>gpt-5.5</code></td></tr>
+<tr><td>2026‑03‑26</td><td><code>gpt-4-0314</code></td><td><code>gpt-5</code></td></tr>
+</tbody></table>`
+
+	items, err := parseOfficialDeprecations(body)
+	if err != nil {
+		t.Fatalf("parseOfficialDeprecations: %v", err)
+	}
+	if got := items["gpt-5.3-chat-latest"].ShutdownDate; got != "2026-08-10" {
+		t.Fatalf("English date = %q, want 2026-08-10", got)
+	}
+	if got := items["gpt-4-0314"].ShutdownDate; got != "2026-03-26" {
+		t.Fatalf("Unicode date = %q, want 2026-03-26", got)
+	}
+	if got := items["gpt-5.3-chat-latest"].Replacement; got != "gpt-5.5" {
+		t.Fatalf("replacement = %q, want gpt-5.5", got)
+	}
+}
+
 type fakePricingFetcher struct {
 	body []byte
 	err  error

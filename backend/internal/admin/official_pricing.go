@@ -13,7 +13,21 @@ import (
 	"time"
 )
 
-const officialPricingURL = "https://developers.openai.com/api/docs/pricing"
+const (
+	officialModelsURL       = "https://developers.openai.com/api/docs/models/all"
+	officialPricingURL      = "https://developers.openai.com/api/docs/pricing"
+	officialDeprecationsURL = "https://developers.openai.com/api/docs/deprecations"
+)
+
+type OfficialModel struct {
+	Deprecated bool
+}
+
+type ModelDeprecation struct {
+	Model        string `json:"model"`
+	ShutdownDate string `json:"shutdownDate"`
+	Replacement  string `json:"replacement"`
+}
 
 // PricingFetcher abstracts fetching the OpenAI official pricing page.
 type PricingFetcher interface {
@@ -110,7 +124,10 @@ var contextAnnotationRe = regexp.MustCompile(`\s*\(<\d+[KM] context length\)\s*$
 //
 // Each price field may be a number, null, "", or "-".
 var pricingRowRe = regexp.MustCompile(`\[1,\[\[0,"([^"]+)"\],\[0,([^\]]+)\],\[0,([^\]]+)\],\[0,([^\]]+)\]\]`)
+var pricingRowWithCacheWritesRe = regexp.MustCompile(`\[1,\[\[0,"([^"]+)"\],\[0,([^\]]+)\],\[0,([^\]]+)\],\[0,([^\]]+)\],\[0,([^\]]+)\]\]`)
 var standardTextTokenPropsRe = regexp.MustCompile(`TextTokenPricingTables"[^>]*props="([^"]*&quot;tier&quot;:\[0,&quot;standard&quot;][^"]*)"`)
+
+var modelCatalogLinkRe = regexp.MustCompile(`(?s)<a[^>]*\bhref="/api/docs/models/([^"]+)"[^>]*>(.*?)</a>`)
 
 // ssrStandardPaneRe isolates the rendered Standard content-switcher pane.
 // The captured content stops at the next pane div or at end-of-string,
@@ -125,6 +142,27 @@ var ssrTdRe = regexp.MustCompile(`(?s)<td[^>]*>(.*?)</td>`)
 
 // htmlTagRe strips HTML tags from extracted cell text.
 var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+var htmlCodeRe = regexp.MustCompile(`(?s)<code[^>]*>(.*?)</code>`)
+
+func parseOfficialModelCatalog(body string) (map[string]OfficialModel, error) {
+	models := map[string]OfficialModel{}
+	for _, match := range modelCatalogLinkRe.FindAllStringSubmatch(body, -1) {
+		if len(match) < 3 {
+			continue
+		}
+		model := strings.TrimSpace(html.UnescapeString(match[1]))
+		if model == "" || len(model) > maxModelNameLen {
+			continue
+		}
+		models[model] = OfficialModel{
+			Deprecated: strings.Contains(strings.ToLower(htmlTagRe.ReplaceAllString(match[2], " ")), "deprecated"),
+		}
+	}
+	if len(models) == 0 {
+		return nil, ErrInvalidInput
+	}
+	return models, nil
+}
 
 // parseOfficialStandardPricing extracts compatible Standard token-pricing rows
 // from the official pricing page HTML body.
@@ -175,7 +213,7 @@ func parseSSRShortLongInto(models map[string]UsagePrice, body string) {
 				continue
 			}
 			cells := ssrTdRe.FindAllStringSubmatch(tr[1], -1)
-			if len(cells) != 7 {
+			if len(cells) != 7 && len(cells) != 9 {
 				continue
 			}
 			rawModel := htmlTagRe.ReplaceAllString(cells[0][1], "")
@@ -192,19 +230,30 @@ func parseSSRShortLongInto(models map[string]UsagePrice, body string) {
 				return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(s), "$"))
 			}
 
+			shortOutputIndex := 3
+			longInputIndex := 4
+			longCachedIndex := 5
+			longOutputIndex := 6
+			if len(cells) == 9 {
+				shortOutputIndex = 4
+				longInputIndex = 5
+				longCachedIndex = 6
+				longOutputIndex = 8
+			}
+
 			sInput, ok := parseDollarPrice(cleanCell(1))
 			if !ok {
 				continue
 			}
-			sOutput, ok := parseDollarPrice(cleanCell(3))
+			sOutput, ok := parseDollarPrice(cleanCell(shortOutputIndex))
 			if !ok {
 				continue
 			}
 			sCached, _ := parseDollarPrice(cleanCell(2))
 
-			lInput, _ := parseDollarPrice(cleanCell(4))
-			lCached, _ := parseDollarPrice(cleanCell(5))
-			lOutput, _ := parseDollarPrice(cleanCell(6))
+			lInput, _ := parseDollarPrice(cleanCell(longInputIndex))
+			lCached, _ := parseDollarPrice(cleanCell(longCachedIndex))
+			lOutput, _ := parseDollarPrice(cleanCell(longOutputIndex))
 
 			if existing, exists := models[model]; exists {
 				// Merge: keep existing short fields, update long fields.
@@ -228,13 +277,19 @@ func parseSSRShortLongInto(models map[string]UsagePrice, body string) {
 
 func parsePricingRowsInto(models map[string]UsagePrice, body string) {
 	body = html.UnescapeString(body)
-	matches := pricingRowRe.FindAllStringSubmatch(body, -1)
+	parsePricingRowMatchesInto(models, pricingRowWithCacheWritesRe.FindAllStringSubmatch(body, -1), 5)
+	parsePricingRowMatchesInto(models, pricingRowRe.FindAllStringSubmatch(body, -1), 4)
+}
 
+func parsePricingRowMatchesInto(models map[string]UsagePrice, matches [][]string, outputIndex int) {
 	for _, m := range matches {
+		if len(m) <= outputIndex {
+			continue
+		}
 		rawModel := strings.TrimSpace(m[1])
 		rawInput := strings.TrimSpace(m[2])
 		rawCached := strings.TrimSpace(m[3])
-		rawOutput := strings.TrimSpace(m[4])
+		rawOutput := strings.TrimSpace(m[outputIndex])
 
 		// Strip context annotations like " (<272K context length)".
 		model := contextAnnotationRe.ReplaceAllString(rawModel, "")
@@ -266,6 +321,58 @@ func parsePricingRowsInto(models map[string]UsagePrice, body string) {
 			OutputMicrousdPerMillion:      output,
 		}
 	}
+}
+
+func parseOfficialDeprecations(body string) (map[string]ModelDeprecation, error) {
+	items := map[string]ModelDeprecation{}
+	for _, tr := range ssrTrRe.FindAllStringSubmatch(body, -1) {
+		if len(tr) < 2 {
+			continue
+		}
+		cells := ssrTdRe.FindAllStringSubmatch(tr[1], -1)
+		if len(cells) < 3 {
+			continue
+		}
+		shutdownDate, ok := parseShutdownDate(cellText(cells[0][1]))
+		if !ok {
+			continue
+		}
+		replacement := cellText(cells[len(cells)-1][1])
+		for _, code := range htmlCodeRe.FindAllStringSubmatch(cells[1][1], -1) {
+			if len(code) < 2 {
+				continue
+			}
+			model := cellText(code[1])
+			if model == "" || len(model) > maxModelNameLen {
+				continue
+			}
+			items[model] = ModelDeprecation{
+				Model:        model,
+				ShutdownDate: shutdownDate,
+				Replacement:  replacement,
+			}
+		}
+	}
+	if len(items) == 0 {
+		return nil, ErrInvalidInput
+	}
+	return items, nil
+}
+
+func cellText(value string) string {
+	return strings.TrimSpace(html.UnescapeString(htmlTagRe.ReplaceAllString(value, "")))
+}
+
+func parseShutdownDate(value string) (string, bool) {
+	replacer := strings.NewReplacer("‑", "-", "–", "-", "—", "-", "−", "-")
+	value = strings.TrimSpace(replacer.Replace(value))
+	for _, layout := range []string{"2006-01-02", "Jan 2, 2006", "January 2, 2006"} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed.Format("2006-01-02"), true
+		}
+	}
+	return "", false
 }
 
 // parseDollarPrice converts a dollar string/number from the pricing page into
