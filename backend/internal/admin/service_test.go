@@ -4,12 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+type staticRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f staticRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestHTTPOfficialDocumentFetcherRejectsOversizedResponse(t *testing.T) {
+	fetcher := &HTTPOfficialDocumentFetcher{client: &http.Client{Transport: staticRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(strings.Repeat("x", (2<<20)+1))),
+			Header:     make(http.Header),
+		}, nil
+	})}}
+
+	_, err := fetcher.Fetch(context.Background(), officialPricingURL)
+	if err == nil {
+		t.Fatal("Fetch returned nil error for oversized response")
+	}
+}
 
 func TestBootstrapCreatesAdminOnceAndPreservesExistingHash(t *testing.T) {
 	repo := newMemoryRepo()

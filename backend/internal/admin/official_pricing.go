@@ -18,6 +18,7 @@ const (
 	officialModelsURL       = "https://developers.openai.com/api/docs/models/all"
 	officialPricingURL      = "https://developers.openai.com/api/docs/pricing"
 	officialDeprecationsURL = "https://developers.openai.com/api/docs/deprecations"
+	maxOfficialDocumentSize = 2 << 20
 )
 
 type OfficialModel struct {
@@ -64,7 +65,14 @@ func (f *HTTPOfficialDocumentFetcher) Fetch(ctx context.Context, url string) ([]
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("pricing page status %d", resp.StatusCode)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxOfficialDocumentSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("official document read: %w", err)
+	}
+	if len(body) > maxOfficialDocumentSize {
+		return nil, fmt.Errorf("official document exceeds %d bytes", maxOfficialDocumentSize)
+	}
+	return body, nil
 }
 
 // UsagePricingSyncSummary reports the result of an official pricing sync.
