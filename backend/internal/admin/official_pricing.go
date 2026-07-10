@@ -474,6 +474,10 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 	for model, price := range current.Models {
 		mergedModels[model] = price
 	}
+	ignoredModels := make(map[string]struct{}, len(current.IgnoredModels))
+	for _, model := range current.IgnoredModels {
+		ignoredModels[model] = struct{}{}
+	}
 
 	added := []string{}
 	updated := []string{}
@@ -484,6 +488,9 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 	}
 	today := now().UTC().Format("2006-01-02")
 	for model, price := range officialPrices {
+		if _, ignored := ignoredModels[model]; ignored {
+			continue
+		}
 		if _, exists := catalog[model]; !exists {
 			continue
 		}
@@ -531,11 +538,12 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 	})
 
 	pricing := UsagePricing{
-		Version:   current.Version,
-		Currency:  current.Currency,
-		Unit:      current.Unit,
-		UpdatedAt: now().UTC(),
-		Models:    mergedModels,
+		Version:       current.Version,
+		Currency:      current.Currency,
+		Unit:          current.Unit,
+		UpdatedAt:     now().UTC(),
+		Models:        mergedModels,
+		IgnoredModels: append([]string(nil), current.IgnoredModels...),
 	}
 
 	normalized, err := normalizeUsagePricing(pricing)
@@ -634,6 +642,7 @@ func (s *Service) RemoveShutdownUsagePricing(ctx context.Context, models []strin
 	normalized, err := normalizeUsagePricing(UsagePricing{
 		Version: current.Version, Currency: current.Currency, Unit: current.Unit,
 		UpdatedAt: now().UTC(), Models: mergedModels,
+		IgnoredModels: append([]string(nil), current.IgnoredModels...),
 	})
 	if err != nil {
 		return UsagePricing{}, nil, err

@@ -2659,6 +2659,41 @@ func TestSyncOfficialUsagePricingWarnsForNewUpcomingShutdownModel(t *testing.T) 
 	}
 }
 
+func TestSyncOfficialUsagePricingSkipsIgnoredModels(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"local-model": {InputMicrousdPerMillion: 99},
+		},
+		IgnoredModels: []string{"gpt-5.3-chat-latest"},
+	}
+	fixtures := officialSyncFixtures()
+	fixtures[officialPricingURL] = []byte(`<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-chat-latest&quot;],[0,1.75],[0,0.175],[0,14]]]]]}"></astro-island>`)
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: fixtures})
+	service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+	pricing, summary, err := service.SyncOfficialUsagePricing(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOfficialUsagePricing returned error: %v", err)
+	}
+	if _, exists := pricing.Models["gpt-5.3-chat-latest"]; exists {
+		t.Fatal("ignored upcoming model was re-added")
+	}
+	if got, want := pricing.IgnoredModels, []string{"gpt-5.3-chat-latest"}; !slices.Equal(got, want) {
+		t.Fatalf("IgnoredModels = %v, want %v", got, want)
+	}
+	if len(summary.UpcomingShutdowns) != 0 {
+		t.Fatalf("UpcomingShutdowns = %+v, want empty", summary.UpcomingShutdowns)
+	}
+	if slices.Contains(summary.Added, "gpt-5.3-chat-latest") {
+		t.Fatalf("Added contains ignored model: %v", summary.Added)
+	}
+}
+
 func TestSyncOfficialUsagePricingSourceFailureIsAtomic(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2749,6 +2784,7 @@ func TestRemoveShutdownUsagePricingRemovesValidatedModels(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.usagePricing = UsagePricing{
 		Version: 1, Currency: "USD", Unit: "1M_tokens",
+		IgnoredModels: []string{"gpt-5.3-chat-latest"},
 		Models: map[string]UsagePrice{
 			"gpt-4-0314":  {InputMicrousdPerMillion: 30_000_000},
 			"o1-mini":     {InputMicrousdPerMillion: 3_000_000},
@@ -2779,6 +2815,9 @@ func TestRemoveShutdownUsagePricingRemovesValidatedModels(t *testing.T) {
 	}
 	if _, ok := pricing.Models["local-model"]; !ok {
 		t.Fatal("local-model was removed")
+	}
+	if got, want := pricing.IgnoredModels, []string{"gpt-5.3-chat-latest"}; !slices.Equal(got, want) {
+		t.Fatalf("IgnoredModels = %v, want %v", got, want)
 	}
 	if repo.usagePricingSaveCount != 1 {
 		t.Fatalf("save count = %d, want 1", repo.usagePricingSaveCount)
