@@ -95,9 +95,13 @@ type fakeAdminService struct {
 	errorRuleID          int64
 	errorRuleErr         error
 
-	syncOfficialPricing admin.UsagePricing
-	syncOfficialSummary admin.UsagePricingSyncSummary
-	syncOfficialErr     error
+	syncOfficialPricing   admin.UsagePricing
+	syncOfficialSummary   admin.UsagePricingSyncSummary
+	syncOfficialErr       error
+	removeShutdownModels  []string
+	removeShutdownPricing admin.UsagePricing
+	removeShutdownRemoved []string
+	removeShutdownErr     error
 }
 
 type fakeProviderService struct {
@@ -479,6 +483,11 @@ func (s *fakeAdminService) UpdateUsagePricing(_ context.Context, pricing admin.U
 
 func (s *fakeAdminService) SyncOfficialUsagePricing(_ context.Context) (admin.UsagePricing, admin.UsagePricingSyncSummary, error) {
 	return s.syncOfficialPricing, s.syncOfficialSummary, s.syncOfficialErr
+}
+
+func (s *fakeAdminService) RemoveShutdownUsagePricing(_ context.Context, models []string) (admin.UsagePricing, []string, error) {
+	s.removeShutdownModels = append([]string(nil), models...)
+	return s.removeShutdownPricing, s.removeShutdownRemoved, s.removeShutdownErr
 }
 
 func (s *fakeAdminService) GetModelSettings(_ context.Context) (admin.ModelSettings, error) {
@@ -5710,7 +5719,7 @@ func TestAdminSyncOfficialUsagePricingReturnsPricingAndSummary(t *testing.T) {
 			"gpt-5.5": {InputMicrousdPerMillion: 5_000_000, CachedInputMicrousdPerMillion: 500_000, OutputMicrousdPerMillion: 30_000_000},
 		},
 	}
-	admins.syncOfficialSummary = admin.UsagePricingSyncSummary{Total: 1, Source: "https://developers.openai.com/api/docs/pricing"}
+	admins.syncOfficialSummary = admin.UsagePricingSyncSummary{Total: 1, Sources: admin.UsagePricingSyncSources{Pricing: "https://developers.openai.com/api/docs/pricing"}}
 
 	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
 
@@ -5736,8 +5745,81 @@ func TestAdminSyncOfficialUsagePricingReturnsPricingAndSummary(t *testing.T) {
 	if body.Synced.Total != 1 {
 		t.Errorf("synced.total = %d, want 1", body.Synced.Total)
 	}
-	if body.Synced.Source == "" {
-		t.Error("synced.source is empty")
+	if body.Synced.Sources.Pricing == "" {
+		t.Error("synced.sources.pricing is empty")
+	}
+}
+
+func TestAdminRemoveShutdownUsagePricingRequiresAuth(t *testing.T) {
+	admins := newFakeAdminService()
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/remove-shutdown", strings.NewReader(`{"models":["gpt-4-0314"]}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminRemoveShutdownUsagePricingReturnsRemovedModels(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.removeShutdownPricing = admin.UsagePricing{
+		Version: 1, Currency: "USD", Unit: "1M_tokens",
+		Models: map[string]admin.UsagePrice{"gpt-5.5": {InputMicrousdPerMillion: 5_000_000}},
+	}
+	admins.removeShutdownRemoved = []string{"gpt-4-0314"}
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/remove-shutdown", strings.NewReader(`{"models":["gpt-4-0314"]}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got, want := admins.removeShutdownModels, []string{"gpt-4-0314"}; !slices.Equal(got, want) {
+		t.Fatalf("models = %v, want %v", got, want)
+	}
+	var body struct {
+		Pricing admin.UsagePricing `json:"pricing"`
+		Removed []string           `json:"removed"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(body.Removed, []string{"gpt-4-0314"}) {
+		t.Fatalf("removed = %v", body.Removed)
+	}
+}
+
+func TestAdminRemoveShutdownUsagePricingMapsInvalidInputTo400(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.removeShutdownErr = admin.ErrInvalidInput
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/remove-shutdown", strings.NewReader(`{"models":["gpt-5.3-chat-latest"]}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminRemoveShutdownUsagePricingRejectsMalformedJSON(t *testing.T) {
+	admins := newFakeAdminService()
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/remove-shutdown", strings.NewReader(`{"models":`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "bad_request" {
+		t.Fatalf("error = %v, want bad_request", body["error"])
 	}
 }
 

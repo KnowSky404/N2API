@@ -2546,3 +2546,82 @@ func TestSyncOfficialUsagePricingWithoutFetcherUsesDefaultFetcher(t *testing.T) 
 		t.Fatal("officialDocumentFetcher is nil, want default HTTP fetcher")
 	}
 }
+
+func TestRemoveShutdownUsagePricingRemovesValidatedModels(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version: 1, Currency: "USD", Unit: "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-4-0314":  {InputMicrousdPerMillion: 30_000_000},
+			"o1-mini":     {InputMicrousdPerMillion: 3_000_000},
+			"local-model": {InputMicrousdPerMillion: 99},
+		},
+	}
+	fixtures := officialSyncFixtures()
+	fixtures[officialDeprecationsURL] = []byte(`<table><tbody>
+<tr><td>2026-03-26</td><td><code>gpt-4-0314</code></td><td><code>gpt-5</code></td></tr>
+<tr><td>2025-10-27</td><td><code>o1-mini</code></td><td><code>o4-mini</code></td></tr>
+</tbody></table>`)
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: fixtures})
+	service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+	pricing, removed, err := service.RemoveShutdownUsagePricing(context.Background(), []string{"o1-mini", "gpt-4-0314"})
+	if err != nil {
+		t.Fatalf("RemoveShutdownUsagePricing: %v", err)
+	}
+	if got, want := removed, []string{"gpt-4-0314", "o1-mini"}; !slices.Equal(got, want) {
+		t.Fatalf("removed = %v, want %v", got, want)
+	}
+	if _, ok := pricing.Models["gpt-4-0314"]; ok {
+		t.Fatal("gpt-4-0314 was not removed")
+	}
+	if _, ok := pricing.Models["o1-mini"]; ok {
+		t.Fatal("o1-mini was not removed")
+	}
+	if _, ok := pricing.Models["local-model"]; !ok {
+		t.Fatal("local-model was removed")
+	}
+	if repo.usagePricingSaveCount != 1 {
+		t.Fatalf("save count = %d, want 1", repo.usagePricingSaveCount)
+	}
+}
+
+func TestRemoveShutdownUsagePricingRejectsInvalidBatchAtomically(t *testing.T) {
+	tests := []struct {
+		name   string
+		models []string
+	}{
+		{name: "blank", models: []string{"gpt-4-0314", " "}},
+		{name: "duplicate", models: []string{"gpt-4-0314", "gpt-4-0314"}},
+		{name: "unknown", models: []string{"unknown-model"}},
+		{name: "not local", models: []string{"o1-mini"}},
+		{name: "future shutdown", models: []string{"gpt-5.3-chat-latest"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			repo.usagePricing = UsagePricing{
+				Version: 1, Currency: "USD", Unit: "1M_tokens",
+				Models: map[string]UsagePrice{
+					"gpt-4-0314":          {InputMicrousdPerMillion: 30_000_000},
+					"gpt-5.3-chat-latest": {InputMicrousdPerMillion: 1_750_000},
+				},
+			}
+			service := NewService(repo, Config{SessionTTL: time.Hour})
+			service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: officialSyncFixtures()})
+			service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+			_, _, err := service.RemoveShutdownUsagePricing(context.Background(), tt.models)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error = %v, want ErrInvalidInput", err)
+			}
+			if repo.usagePricingSaveCount != 0 {
+				t.Fatalf("save count = %d, want 0", repo.usagePricingSaveCount)
+			}
+			if len(repo.usagePricing.Models) != 2 {
+				t.Fatalf("models changed: %v", repo.usagePricing.Models)
+			}
+		})
+	}
+}
