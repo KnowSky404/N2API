@@ -1213,7 +1213,9 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(requestLogsPage, /Review upcoming model shutdowns[\s\S]*?\{usagePricing\.syncing \? 'Syncing' : 'Sync official'\}/);
   assert.match(requestLogsPage, /aria-labelledby="upcoming-ignore-title"/);
   assert.match(requestLogsPage, /id="upcoming-ignore-title"[\s\S]*?Upcoming model shutdowns/);
-  assert.match(requestLogsPage, /Remove \{usagePricing\.upcomingShutdowns\.length\} models/);
+  assert.match(requestLogsPage, /const upcomingIgnoreActionLabel = \$derived/);
+  assert.match(requestLogsPage, /\{upcomingIgnoreActionLabel\}/);
+  assert.match(requestLogsPage, /upcomingShutdowns\.length === 1 \? '' : 's'/);
   assert.match(requestLogsPage, /confirmUpcomingIgnore[\s\S]*?ignoreUpcomingUsagePricing/);
   assert.match(requestLogsPage, /showShutdownRemovalModal/);
   assert.match(requestLogsPage, /Review shutdowns \(\{usagePricing\.deletionCandidates\.length\}\)/);

@@ -372,6 +372,9 @@
     usagePricing.removingShutdown ||
     usagePricing.ignoringUpcoming
   );
+  const upcomingIgnoreActionLabel = $derived(
+    `Remove ${usagePricing.upcomingShutdowns.length} model${usagePricing.upcomingShutdowns.length === 1 ? '' : 's'}`
+  );
 
   let closeSyncMessage = $state('');
 
@@ -1004,7 +1007,7 @@
             disabled={pricingBusy || !usagePricing.upcomingShutdowns.length}
             onclick={confirmUpcomingIgnore}
           >
-            Remove {usagePricing.upcomingShutdowns.length} models
+            {upcomingIgnoreActionLabel}
           </button>
         </div>
       </div>
