@@ -585,22 +585,30 @@ func (s *Service) SetNow(now func() time.Time) {
 	s.now = now
 }
 
-func (s *Service) RemoveShutdownUsagePricing(ctx context.Context, models []string) (UsagePricing, []string, error) {
+func normalizeRequestedPricingModels(models []string) ([]string, map[string]struct{}, error) {
 	if len(models) == 0 {
-		return UsagePricing{}, nil, ErrInvalidInput
+		return nil, nil, ErrInvalidInput
 	}
 	requested := make([]string, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
 	for _, value := range models {
 		model := strings.TrimSpace(value)
 		if model == "" || len(model) > maxModelNameLen {
-			return UsagePricing{}, nil, ErrInvalidInput
+			return nil, nil, ErrInvalidInput
 		}
 		if _, exists := seen[model]; exists {
-			return UsagePricing{}, nil, ErrInvalidInput
+			return nil, nil, ErrInvalidInput
 		}
 		seen[model] = struct{}{}
 		requested = append(requested, model)
+	}
+	return requested, seen, nil
+}
+
+func (s *Service) RemoveShutdownUsagePricing(ctx context.Context, models []string) (UsagePricing, []string, error) {
+	requested, seen, err := normalizeRequestedPricingModels(models)
+	if err != nil {
+		return UsagePricing{}, nil, err
 	}
 
 	if s.officialDocumentFetcher == nil {
@@ -650,6 +658,67 @@ func (s *Service) RemoveShutdownUsagePricing(ctx context.Context, models []strin
 	saved, err := s.repo.SaveUsagePricing(ctx, normalized)
 	if err != nil {
 		return UsagePricing{}, nil, fmt.Errorf("save usage pricing after shutdown removal: %w", err)
+	}
+	sort.Strings(requested)
+	return saved, requested, nil
+}
+
+func (s *Service) IgnoreUpcomingUsagePricing(ctx context.Context, models []string) (UsagePricing, []string, error) {
+	requested, seen, err := normalizeRequestedPricingModels(models)
+	if err != nil {
+		return UsagePricing{}, nil, err
+	}
+	if s.officialDocumentFetcher == nil {
+		s.officialDocumentFetcher = NewHTTPOfficialDocumentFetcher(30 * time.Second)
+	}
+	body, err := s.officialDocumentFetcher.Fetch(ctx, officialDeprecationsURL)
+	if err != nil {
+		return UsagePricing{}, nil, fmt.Errorf("fetch official deprecations: %w", err)
+	}
+	deprecations, err := parseOfficialDeprecations(string(body))
+	if err != nil {
+		return UsagePricing{}, nil, err
+	}
+	current, err := s.GetUsagePricing(ctx)
+	if err != nil {
+		return UsagePricing{}, nil, err
+	}
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	today := now().UTC().Format("2006-01-02")
+	for _, model := range requested {
+		if _, exists := current.Models[model]; !exists {
+			return UsagePricing{}, nil, ErrInvalidInput
+		}
+		item, exists := deprecations[model]
+		if !exists || item.ShutdownDate <= today {
+			return UsagePricing{}, nil, ErrInvalidInput
+		}
+	}
+
+	remainingModels := make(map[string]UsagePrice, len(current.Models)-len(requested))
+	for model, price := range current.Models {
+		if _, remove := seen[model]; !remove {
+			remainingModels[model] = price
+		}
+	}
+	ignoredModels := append(append([]string(nil), current.IgnoredModels...), requested...)
+	normalized, err := normalizeUsagePricing(UsagePricing{
+		Version:       current.Version,
+		Currency:      current.Currency,
+		Unit:          current.Unit,
+		UpdatedAt:     now().UTC(),
+		Models:        remainingModels,
+		IgnoredModels: ignoredModels,
+	})
+	if err != nil {
+		return UsagePricing{}, nil, err
+	}
+	saved, err := s.repo.SaveUsagePricing(ctx, normalized)
+	if err != nil {
+		return UsagePricing{}, nil, fmt.Errorf("save usage pricing after upcoming ignore: %w", err)
 	}
 	sort.Strings(requested)
 	return saved, requested, nil

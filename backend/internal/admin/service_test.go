@@ -2885,3 +2885,106 @@ func TestRemoveShutdownUsagePricingSourceFailureIsAtomic(t *testing.T) {
 		t.Fatal("model was removed after source failure")
 	}
 }
+
+func TestIgnoreUpcomingUsagePricingRemovesAndPersistsModels(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5.3-chat-latest": {InputMicrousdPerMillion: 1_750_000},
+			"gpt-5.2-codex":       {InputMicrousdPerMillion: 1_500_000},
+			"local-model":         {InputMicrousdPerMillion: 99},
+		},
+	}
+	fixtures := officialSyncFixtures()
+	fixtures[officialDeprecationsURL] = []byte(`<table><tbody>
+<tr><td>Aug 10, 2026</td><td><code>gpt-5.3-chat-latest</code></td><td><code>gpt-5.5</code></td></tr>
+<tr><td>Sep 15, 2026</td><td><code>gpt-5.2-codex</code></td><td><code>gpt-5.3-codex</code></td></tr>
+</tbody></table>`)
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: fixtures})
+	service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+	pricing, ignored, err := service.IgnoreUpcomingUsagePricing(context.Background(), []string{"gpt-5.3-chat-latest", "gpt-5.2-codex"})
+	if err != nil {
+		t.Fatalf("IgnoreUpcomingUsagePricing returned error: %v", err)
+	}
+	if got, want := ignored, []string{"gpt-5.2-codex", "gpt-5.3-chat-latest"}; !slices.Equal(got, want) {
+		t.Fatalf("ignored = %v, want %v", got, want)
+	}
+	if got, want := pricing.IgnoredModels, ignored; !slices.Equal(got, want) {
+		t.Fatalf("IgnoredModels = %v, want %v", got, want)
+	}
+	if _, exists := pricing.Models["gpt-5.3-chat-latest"]; exists {
+		t.Fatal("gpt-5.3-chat-latest still exists")
+	}
+	if _, exists := pricing.Models["gpt-5.2-codex"]; exists {
+		t.Fatal("gpt-5.2-codex still exists")
+	}
+	if _, exists := pricing.Models["local-model"]; !exists {
+		t.Fatal("unrelated local-model was removed")
+	}
+	if repo.usagePricingSaveCount != 1 {
+		t.Fatalf("save count = %d, want 1", repo.usagePricingSaveCount)
+	}
+}
+
+func TestIgnoreUpcomingUsagePricingRejectsInvalidBatchAtomically(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		models        []string
+		includeFuture bool
+	}{
+		{name: "blank", models: []string{"gpt-5.3-chat-latest", " "}, includeFuture: true},
+		{name: "duplicate", models: []string{"gpt-5.3-chat-latest", "gpt-5.3-chat-latest"}, includeFuture: true},
+		{name: "unknown", models: []string{"unknown-model"}, includeFuture: true},
+		{name: "not local", models: []string{"gpt-5.3-chat-latest"}},
+		{name: "already shut down", models: []string{"gpt-4-0314"}, includeFuture: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			models := map[string]UsagePrice{
+				"local-model": {InputMicrousdPerMillion: 99},
+				"gpt-4-0314":  {InputMicrousdPerMillion: 30_000_000},
+			}
+			if tc.includeFuture {
+				models["gpt-5.3-chat-latest"] = UsagePrice{InputMicrousdPerMillion: 1_750_000}
+			}
+			repo.usagePricing = UsagePricing{Version: 1, Currency: "USD", Unit: "1M_tokens", Models: models}
+			service := NewService(repo, Config{SessionTTL: time.Hour})
+			service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: officialSyncFixtures()})
+			service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+			_, _, err := service.IgnoreUpcomingUsagePricing(context.Background(), tc.models)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error = %v, want ErrInvalidInput", err)
+			}
+			if repo.usagePricingSaveCount != 0 {
+				t.Fatalf("save count = %d, want 0", repo.usagePricingSaveCount)
+			}
+		})
+	}
+}
+
+func TestIgnoreUpcomingUsagePricingSourceFailureIsAtomic(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version: 1, Currency: "USD", Unit: "1M_tokens",
+		Models: map[string]UsagePrice{"gpt-5.3-chat-latest": {InputMicrousdPerMillion: 1_750_000}},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{
+		bodies: officialSyncFixtures(),
+		errs:   map[string]error{officialDeprecationsURL: errors.New("source unavailable")},
+	})
+
+	_, _, err := service.IgnoreUpcomingUsagePricing(context.Background(), []string{"gpt-5.3-chat-latest"})
+	if err == nil {
+		t.Fatal("IgnoreUpcomingUsagePricing returned nil error")
+	}
+	if repo.usagePricingSaveCount != 0 {
+		t.Fatalf("save count = %d, want 0", repo.usagePricingSaveCount)
+	}
+}
