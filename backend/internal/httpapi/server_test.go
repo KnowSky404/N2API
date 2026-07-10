@@ -102,6 +102,10 @@ type fakeAdminService struct {
 	removeShutdownPricing admin.UsagePricing
 	removeShutdownRemoved []string
 	removeShutdownErr     error
+	ignoreUpcomingModels  []string
+	ignoreUpcomingPricing admin.UsagePricing
+	ignoreUpcomingIgnored []string
+	ignoreUpcomingErr     error
 }
 
 type fakeProviderService struct {
@@ -488,6 +492,11 @@ func (s *fakeAdminService) SyncOfficialUsagePricing(_ context.Context) (admin.Us
 func (s *fakeAdminService) RemoveShutdownUsagePricing(_ context.Context, models []string) (admin.UsagePricing, []string, error) {
 	s.removeShutdownModels = append([]string(nil), models...)
 	return s.removeShutdownPricing, s.removeShutdownRemoved, s.removeShutdownErr
+}
+
+func (s *fakeAdminService) IgnoreUpcomingUsagePricing(_ context.Context, models []string) (admin.UsagePricing, []string, error) {
+	s.ignoreUpcomingModels = append([]string(nil), models...)
+	return s.ignoreUpcomingPricing, s.ignoreUpcomingIgnored, s.ignoreUpcomingErr
 }
 
 func (s *fakeAdminService) GetModelSettings(_ context.Context) (admin.ModelSettings, error) {
@@ -5808,6 +5817,85 @@ func TestAdminRemoveShutdownUsagePricingRejectsMalformedJSON(t *testing.T) {
 	admins := newFakeAdminService()
 	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/remove-shutdown", strings.NewReader(`{"models":`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["error"] != "bad_request" {
+		t.Fatalf("error = %v, want bad_request", body["error"])
+	}
+}
+
+func TestAdminIgnoreUpcomingUsagePricingRequiresAuth(t *testing.T) {
+	admins := newFakeAdminService()
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/ignore-upcoming", strings.NewReader(`{"models":["gpt-5.3-chat-latest"]}`))
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAdminIgnoreUpcomingUsagePricingReturnsIgnoredModels(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.ignoreUpcomingPricing = admin.UsagePricing{
+		Version:       1,
+		Currency:      "USD",
+		Unit:          "1M_tokens",
+		Models:        map[string]admin.UsagePrice{"local-model": {}},
+		IgnoredModels: []string{"gpt-5.3-chat-latest"},
+	}
+	admins.ignoreUpcomingIgnored = []string{"gpt-5.3-chat-latest"}
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/ignore-upcoming", strings.NewReader(`{"models":["gpt-5.3-chat-latest"]}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got, want := admins.ignoreUpcomingModels, []string{"gpt-5.3-chat-latest"}; !slices.Equal(got, want) {
+		t.Fatalf("models = %v, want %v", got, want)
+	}
+	var body struct {
+		Pricing admin.UsagePricing `json:"pricing"`
+		Ignored []string           `json:"ignored"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(body.Ignored, []string{"gpt-5.3-chat-latest"}) {
+		t.Fatalf("ignored = %v", body.Ignored)
+	}
+	if !slices.Equal(body.Pricing.IgnoredModels, []string{"gpt-5.3-chat-latest"}) {
+		t.Fatalf("pricing ignored models = %v", body.Pricing.IgnoredModels)
+	}
+}
+
+func TestAdminIgnoreUpcomingUsagePricingMapsInvalidInputTo400(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.ignoreUpcomingErr = admin.ErrInvalidInput
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/ignore-upcoming", strings.NewReader(`{"models":["gpt-5.3-chat-latest"]}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAdminIgnoreUpcomingUsagePricingRejectsMalformedJSON(t *testing.T) {
+	admins := newFakeAdminService()
+	srv := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/usage-pricing/ignore-upcoming", strings.NewReader(`{"models":`))
 	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

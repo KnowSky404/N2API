@@ -56,6 +56,7 @@ type AdminService interface {
 	UpdateUsagePricing(ctx context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error)
 	SyncOfficialUsagePricing(ctx context.Context) (admin.UsagePricing, admin.UsagePricingSyncSummary, error)
 	RemoveShutdownUsagePricing(ctx context.Context, models []string) (admin.UsagePricing, []string, error)
+	IgnoreUpcomingUsagePricing(ctx context.Context, models []string) (admin.UsagePricing, []string, error)
 	GetModelSettings(ctx context.Context) (admin.ModelSettings, error)
 	UpdateModelSettings(ctx context.Context, settings admin.ModelSettings) (admin.ModelSettings, error)
 	GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error)
@@ -917,6 +918,29 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, map[string]any{
 			"pricing": pricing,
 			"removed": removed,
+		})
+	}))
+
+	mux.HandleFunc("POST /api/admin/usage-pricing/ignore-upcoming", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		var req struct {
+			Models []string `json:"models"`
+		}
+		if err := decodeJSON(w, r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		pricing, ignored, err := admins.IgnoreUpcomingUsagePricing(r.Context(), req.Models)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"pricing": pricing,
+			"ignored": ignored,
 		})
 	}))
 
