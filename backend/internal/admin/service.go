@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -189,11 +191,12 @@ type UsageSummaryRow struct {
 }
 
 type UsagePricing struct {
-	Version   int                   `json:"version"`
-	Currency  string                `json:"currency"`
-	Unit      string                `json:"unit"`
-	UpdatedAt time.Time             `json:"updatedAt"`
-	Models    map[string]UsagePrice `json:"models"`
+	Version       int                   `json:"version"`
+	Currency      string                `json:"currency"`
+	Unit          string                `json:"unit"`
+	UpdatedAt     time.Time             `json:"updatedAt"`
+	Models        map[string]UsagePrice `json:"models"`
+	IgnoredModels []string              `json:"ignoredModels,omitempty"`
 }
 
 type UsagePrice struct {
@@ -878,6 +881,20 @@ func (s *Service) UpdateUsagePricing(ctx context.Context, pricing UsagePricing) 
 	if err != nil {
 		return UsagePricing{}, err
 	}
+	current, err := s.GetUsagePricing(ctx)
+	if err != nil {
+		return UsagePricing{}, err
+	}
+	normalized.IgnoredModels = append([]string(nil), current.IgnoredModels...)
+	for model := range normalized.Models {
+		normalized.IgnoredModels = slices.DeleteFunc(normalized.IgnoredModels, func(ignored string) bool {
+			return ignored == model
+		})
+	}
+	normalized, err = normalizeUsagePricing(normalized)
+	if err != nil {
+		return UsagePricing{}, err
+	}
 	normalized.UpdatedAt = time.Now().UTC()
 	return s.repo.SaveUsagePricing(ctx, normalized)
 }
@@ -1029,13 +1046,30 @@ func normalizeUsagePricing(pricing UsagePricing) (UsagePricing, error) {
 	if len(models) == 0 {
 		return UsagePricing{}, ErrInvalidInput
 	}
+	ignoredModels := make([]string, 0, len(pricing.IgnoredModels))
+	seenIgnored := make(map[string]struct{}, len(pricing.IgnoredModels))
+	for _, rawModel := range pricing.IgnoredModels {
+		model := strings.TrimSpace(rawModel)
+		if model == "" || len(model) > maxModelNameLen {
+			return UsagePricing{}, ErrInvalidInput
+		}
+		if _, duplicate := seenIgnored[model]; duplicate {
+			return UsagePricing{}, ErrInvalidInput
+		}
+		seenIgnored[model] = struct{}{}
+		if _, restored := models[model]; !restored {
+			ignoredModels = append(ignoredModels, model)
+		}
+	}
+	sort.Strings(ignoredModels)
 
 	return UsagePricing{
-		Version:   version,
-		Currency:  currency,
-		Unit:      unit,
-		UpdatedAt: pricing.UpdatedAt,
-		Models:    models,
+		Version:       version,
+		Currency:      currency,
+		Unit:          unit,
+		UpdatedAt:     pricing.UpdatedAt,
+		Models:        models,
+		IgnoredModels: ignoredModels,
 	}, nil
 }
 

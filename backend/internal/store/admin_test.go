@@ -285,9 +285,10 @@ func TestAdminRepositoryUsagePricingSettings(t *testing.T) {
 	}
 
 	saved, err := repo.SaveUsagePricing(ctx, admin.UsagePricing{
-		Version:  1,
-		Currency: "USD",
-		Unit:     "1M_tokens",
+		Version:       1,
+		Currency:      "USD",
+		Unit:          "1M_tokens",
+		IgnoredModels: []string{"gpt-5.3-chat-latest"},
 		Models: map[string]admin.UsagePrice{
 			"gpt-5": {
 				InputMicrousdPerMillion:       1_000_000,
@@ -306,6 +307,9 @@ func TestAdminRepositoryUsagePricingSettings(t *testing.T) {
 	}
 	if found.Currency != saved.Currency || found.Unit != saved.Unit || found.Models["gpt-5"].OutputMicrousdPerMillion != 4_000_000 {
 		t.Fatalf("pricing = %+v, want saved pricing", found)
+	}
+	if !slices.Equal(found.IgnoredModels, saved.IgnoredModels) {
+		t.Fatalf("IgnoredModels = %v, want %v", found.IgnoredModels, saved.IgnoredModels)
 	}
 }
 

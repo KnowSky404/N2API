@@ -1188,6 +1188,42 @@ func TestUpdateUsagePricingRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestUpdateUsagePricingPreservesIgnoredModelsAndRestoresExplicitModel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"local-model": {InputMicrousdPerMillion: 1},
+		},
+		IgnoredModels: []string{"gpt-5.2-codex", "gpt-5.3-chat-latest"},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	saved, err := service.UpdateUsagePricing(context.Background(), UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"local-model":         {InputMicrousdPerMillion: 2},
+			"gpt-5.3-chat-latest": {InputMicrousdPerMillion: 1_750_000},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateUsagePricing returned error: %v", err)
+	}
+	if got, want := saved.IgnoredModels, []string{"gpt-5.2-codex"}; !slices.Equal(got, want) {
+		t.Fatalf("IgnoredModels = %v, want %v", got, want)
+	}
+	if got := saved.Models["local-model"].InputMicrousdPerMillion; got != 2 {
+		t.Fatalf("local-model input = %d, want 2", got)
+	}
+	if _, exists := saved.Models["gpt-5.3-chat-latest"]; !exists {
+		t.Fatal("explicitly restored model is missing")
+	}
+}
+
 func TestEstimateUsageCostUsesConfiguredModelPricing(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.usagePricing = UsagePricing{
@@ -1945,6 +1981,48 @@ func TestNormalizeUsagePricingAcceptsZeroLongFields(t *testing.T) {
 	}
 	if normalized.Models["gpt-4.1"].LongInputMicrousdPerMillion != 0 {
 		t.Error("long input should be zero for model without long pricing")
+	}
+}
+
+func TestNormalizeUsagePricingSortsIgnoredModelsAndOmitsRestoredModels(t *testing.T) {
+	pricing, err := normalizeUsagePricing(UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5.3-chat-latest": {},
+		},
+		IgnoredModels: []string{" gpt-5.3-chat-latest ", "gpt-5.2-codex"},
+	})
+	if err != nil {
+		t.Fatalf("normalizeUsagePricing returned error: %v", err)
+	}
+	if got, want := pricing.IgnoredModels, []string{"gpt-5.2-codex"}; !slices.Equal(got, want) {
+		t.Fatalf("IgnoredModels = %v, want %v", got, want)
+	}
+}
+
+func TestNormalizeUsagePricingRejectsInvalidIgnoredModels(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		models []string
+	}{
+		{name: "blank", models: []string{" "}},
+		{name: "duplicate", models: []string{"gpt-5.2-codex", " gpt-5.2-codex "}},
+		{name: "overlong", models: []string{strings.Repeat("x", maxModelNameLen+1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normalizeUsagePricing(UsagePricing{
+				Version:       1,
+				Currency:      "USD",
+				Unit:          "1M_tokens",
+				Models:        map[string]UsagePrice{"gpt-5.5": {}},
+				IgnoredModels: tc.models,
+			})
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("normalizeUsagePricing error = %v, want ErrInvalidInput", err)
+			}
+		})
 	}
 }
 
