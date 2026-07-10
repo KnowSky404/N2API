@@ -1176,7 +1176,14 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(adminState, /\/api\/admin\/usage-pricing\/sync-official/);
   assert.match(adminState, /syncing/);
   assert.match(adminState, /syncMessage/);
-  assert.match(adminState, /Synced official OpenAI Standard pricing for/);
+  assert.match(adminState, /Official pricing synced:/);
+  assert.match(adminState, /upcomingShutdowns/);
+  assert.match(adminState, /deletionCandidates/);
+  assert.match(adminState, /removingShutdown/);
+  assert.match(adminState, /removalMessage/);
+  assert.match(adminState, /removeShutdownUsagePricing/);
+  assert.match(adminState, /\/api\/admin\/usage-pricing\/remove-shutdown/);
+  assert.match(adminState, /removeShutdownUsagePricing[\s\S]*?POST[\s\S]*?JSON\.stringify\(\{ models \}\)[\s\S]*?await loadUsagePricing\(\)/);
   assert.match(adminState, /longInputMicrousdPerMillion/);
   assert.match(adminState, /longCachedInputMicrousdPerMillion/);
   assert.match(adminState, /longOutputMicrousdPerMillion/);
@@ -1184,8 +1191,18 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.doesNotMatch(requestLogsPage, /onclick=\{syncOfficialUsagePricing\}/);
   // Confirmation modal state
   assert.match(requestLogsPage, /showSyncConfirmModal/);
+  assert.doesNotMatch(requestLogsPage, /replaces all current pricing rows/);
+  assert.match(requestLogsPage, /Local-only pricing rows remain unchanged/);
   // Official source URL in modal
   assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/pricing/);
+  assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/models\/all/);
+  assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/deprecations/);
+  assert.match(requestLogsPage, /Upcoming shutdowns/);
+  assert.match(requestLogsPage, /showShutdownRemovalModal/);
+  assert.match(requestLogsPage, /selectedShutdownModels/);
+  assert.match(requestLogsPage, /type="checkbox"/);
+  assert.match(requestLogsPage, /Remove \{selectedShutdownModels\.length\} models/);
+  assert.match(requestLogsPage, /usagePricing\.removingShutdown/);
   // Search state for pricing rows
   assert.match(requestLogsPage, /pricingSearch/);
   assert.match(requestLogsPage, /filteredPricingRows/);

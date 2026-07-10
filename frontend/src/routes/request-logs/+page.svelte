@@ -14,6 +14,7 @@
     loadRequestLogs,
     providerAccounts,
     requestLogs,
+    removeShutdownUsagePricing,
     resetRequestLogFilters,
     routingPools,
     savePricingRows,
@@ -355,17 +356,36 @@
   }
 
   let showSyncConfirmModal = $state(false);
+  let showShutdownRemovalModal = $state(false);
+  let selectedShutdownModels = $state(/** @type {string[]} */ ([]));
 
   /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
   let editingPricingRow = $state(null);
   let deleteConfirmPricingPopover = $state(/** @type {{row: import('$lib/admin-state.svelte.js').UsagePricingRow, top: number, left: number}|null} */ (null));
 
-  const pricingBusy = $derived(usagePricing.loading || usagePricing.saving || usagePricing.syncing);
+  const pricingBusy = $derived(usagePricing.loading || usagePricing.saving || usagePricing.syncing || usagePricing.removingShutdown);
 
   let closeSyncMessage = $state('');
 
   $effect(() => {
     const msg = usagePricing.syncMessage;
+    if (msg) {
+      closeSyncMessage = msg;
+      const timer = setTimeout(() => { closeSyncMessage = ''; }, 6000);
+      return () => clearTimeout(timer);
+    }
+  });
+
+  $effect(() => {
+    const candidates = usagePricing.deletionCandidates || [];
+    if (candidates.length > 0 && !usagePricing.syncing) {
+      selectedShutdownModels = candidates.map((item) => item.model);
+      showShutdownRemovalModal = true;
+    }
+  });
+
+  $effect(() => {
+    const msg = usagePricing.removalMessage;
     if (msg) {
       closeSyncMessage = msg;
       const timer = setTimeout(() => { closeSyncMessage = ''; }, 6000);
@@ -487,9 +507,26 @@
     showSyncConfirmModal = true;
   }
 
-  function confirmSyncOfficial() {
+  async function confirmSyncOfficial() {
     showSyncConfirmModal = false;
-    syncOfficialUsagePricing();
+    await syncOfficialUsagePricing();
+  }
+
+  /** @param {Event & { currentTarget: HTMLInputElement }} event */
+  function toggleShutdownModel(event) {
+    const model = event.currentTarget.value;
+    if (event.currentTarget.checked) {
+      if (!selectedShutdownModels.includes(model)) selectedShutdownModels = [...selectedShutdownModels, model];
+    } else {
+      selectedShutdownModels = selectedShutdownModels.filter((item) => item !== model);
+    }
+  }
+
+  async function confirmShutdownRemoval() {
+    if (await removeShutdownUsagePricing(selectedShutdownModels)) {
+      showShutdownRemovalModal = false;
+      selectedShutdownModels = [];
+    }
   }
 </script>
 
@@ -664,6 +701,17 @@
       <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">Pricing saved.</p>
     {/if}
 
+    {#if usagePricing.upcomingShutdowns?.length}
+      <div class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <p class="font-medium">Upcoming shutdowns</p>
+        <ul class="mt-2 space-y-1">
+          {#each usagePricing.upcomingShutdowns as item (item.model)}
+            <li><span class="font-mono">{item.model}</span> · {item.shutdownDate}{item.replacement ? ` · Use ${item.replacement}` : ''}</li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+
     <div class="mt-5 grid gap-3" style="grid-template-columns: 1fr auto">
       <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Search pricing rows
@@ -834,11 +882,13 @@
       <div class="mx-4 w-full max-w-md rounded-xl border border-[#ededed] bg-white p-6 shadow-lg">
         <h3 class="text-lg font-semibold text-[#0d0d0d]">Sync official OpenAI pricing</h3>
         <p class="mt-3 text-sm text-[#3c3c3c]">
-          This will sync official OpenAI Standard pricing. It replaces all current pricing rows with the latest official data.
+          Compatible OpenAI Standard prices will be added or updated. Local-only pricing rows remain unchanged.
         </p>
-        <p class="mt-2 text-sm text-[#6e6e6e]">
-          Source: <a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">https://developers.openai.com/api/docs/pricing</a>
-        </p>
+        <div class="mt-3 space-y-1 text-sm text-[#6e6e6e]">
+          <p><a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/models/all" target="_blank" rel="noopener noreferrer">Models catalog</a></p>
+          <p><a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">Standard pricing</a></p>
+          <p><a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/deprecations" target="_blank" rel="noopener noreferrer">Deprecations</a></p>
+        </div>
         <div class="mt-6 flex justify-end gap-3">
           <button
             class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
@@ -855,6 +905,29 @@
           >
             Confirm sync
           </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showShutdownRemovalModal}
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="shutdown-removal-title">
+      <div class="mx-4 w-full max-w-lg rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <h3 id="shutdown-removal-title" class="text-lg font-semibold text-[#0d0d0d]">Remove shut-down models</h3>
+        <div class="mt-4 max-h-[50vh] overflow-y-auto rounded-lg border border-[#ededed] divide-y divide-[#ededed]">
+          {#each usagePricing.deletionCandidates as item (item.model)}
+            <label class="flex items-start gap-3 px-4 py-3 text-sm">
+              <input class="mt-0.5 h-4 w-4 accent-[#0d0d0d]" type="checkbox" value={item.model} checked={selectedShutdownModels.includes(item.model)} onchange={toggleShutdownModel} />
+              <span class="min-w-0">
+                <span class="block truncate font-mono font-medium text-[#0d0d0d]">{item.model}</span>
+                <span class="mt-1 block text-[#6e6e6e]">Shut down {item.shutdownDate}{item.replacement ? ` · Use ${item.replacement}` : ''}</span>
+              </span>
+            </label>
+          {/each}
+        </div>
+        <div class="mt-6 flex justify-end gap-3">
+          <button class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => showShutdownRemovalModal = false}>Cancel</button>
+          <button class="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy || selectedShutdownModels.length === 0} onclick={confirmShutdownRemoval}>Remove {selectedShutdownModels.length} models</button>
         </div>
       </div>
     </div>

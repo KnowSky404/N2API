@@ -465,14 +465,18 @@ export const usage = $state({
   summaries: {},
   current: null
 });
-/** @type {{ loading: boolean, saving: boolean, syncing: boolean, error: string, saved: boolean, syncMessage: string, version: number, currency: string, unit: string, rows: UsagePricingRow[] }} */
+/** @type {{ loading: boolean, saving: boolean, syncing: boolean, removingShutdown: boolean, error: string, saved: boolean, syncMessage: string, removalMessage: string, upcomingShutdowns: Array<{model: string, shutdownDate: string, replacement: string}>, deletionCandidates: Array<{model: string, shutdownDate: string, replacement: string}>, version: number, currency: string, unit: string, rows: UsagePricingRow[] }} */
 export const usagePricing = $state({
   loading: false,
   saving: false,
   syncing: false,
+  removingShutdown: false,
   error: '',
   saved: false,
   syncMessage: '',
+  removalMessage: '',
+  upcomingShutdowns: [],
+  deletionCandidates: [],
   version: 1,
   currency: 'USD',
   unit: '1M_tokens',
@@ -1044,9 +1048,13 @@ function clearUsage() {
     loading: false,
     saving: false,
     syncing: false,
+    removingShutdown: false,
     error: '',
     saved: false,
     syncMessage: '',
+    removalMessage: '',
+    upcomingShutdowns: [],
+    deletionCandidates: [],
     version: 1,
     currency: 'USD',
     unit: '1M_tokens',
@@ -3199,7 +3207,7 @@ export async function savePricingRows() {
 
 /**
  * Sync official OpenAI pricing into the usage pricing table.
- * On success replaces current pricing rows; on failure sets error without clearing edits.
+ * On success merges official prices and returns lifecycle notices.
  * @returns {Promise<boolean>}
  */
 export async function syncOfficialUsagePricing() {
@@ -3210,6 +3218,7 @@ export async function syncOfficialUsagePricing() {
   usagePricing.error = '';
   usagePricing.saved = false;
   usagePricing.syncMessage = '';
+  usagePricing.removalMessage = '';
 
   try {
     const payload = await requestJSON('/api/admin/usage-pricing/sync-official', { method: 'POST' });
@@ -3226,8 +3235,11 @@ export async function syncOfficialUsagePricing() {
       longCachedInputMicrousdPerMillion: Number(price?.longCachedInputMicrousdPerMillion ?? 0),
       longOutputMicrousdPerMillion: Number(price?.longOutputMicrousdPerMillion ?? 0)
     }));
-    const total = payload.synced?.total ?? 0;
-    usagePricing.syncMessage = `Synced official OpenAI Standard pricing for ${total} models.`;
+    usagePricing.upcomingShutdowns = Array.isArray(payload.synced?.upcomingShutdowns) ? payload.synced.upcomingShutdowns : [];
+    usagePricing.deletionCandidates = Array.isArray(payload.synced?.deletionCandidates) ? payload.synced.deletionCandidates : [];
+    const added = Array.isArray(payload.synced?.added) ? payload.synced.added.length : 0;
+    const updated = Array.isArray(payload.synced?.updated) ? payload.synced.updated.length : 0;
+    usagePricing.syncMessage = `Official pricing synced: ${added} added, ${updated} updated.`;
     await loadUsagePricing();
     await loadUsageSummary(usage.range, usage.groupBy);
     return true;
@@ -3238,6 +3250,38 @@ export async function syncOfficialUsagePricing() {
   } finally {
     if (!isCurrentAuthenticated(version)) return false;
     usagePricing.syncing = false;
+  }
+}
+
+/** @param {string[]} models */
+export async function removeShutdownUsagePricing(models) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || !Array.isArray(models) || models.length === 0) return false;
+
+  usagePricing.removingShutdown = true;
+  usagePricing.error = '';
+  usagePricing.saved = false;
+  usagePricing.removalMessage = '';
+
+  try {
+    const payload = await requestJSON('/api/admin/usage-pricing/remove-shutdown', {
+      method: 'POST',
+      body: JSON.stringify({ models })
+    });
+    if (!isCurrentAuthenticated(version)) return false;
+    const removed = Array.isArray(payload.removed) ? payload.removed : [];
+    usagePricing.deletionCandidates = usagePricing.deletionCandidates.filter((item) => !removed.includes(item.model));
+    usagePricing.removalMessage = `Removed ${removed.length} shut-down model${removed.length === 1 ? '' : 's'}.`;
+    await loadUsagePricing();
+    await loadUsageSummary(usage.range, usage.groupBy);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    usagePricing.error = error instanceof Error ? error.message : 'Failed to remove shut-down models';
+    return false;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return false;
+    usagePricing.removingShutdown = false;
   }
 }
 
