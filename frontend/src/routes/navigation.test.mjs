@@ -1184,6 +1184,13 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(adminState, /removeShutdownUsagePricing/);
   assert.match(adminState, /\/api\/admin\/usage-pricing\/remove-shutdown/);
   assert.match(adminState, /removeShutdownUsagePricing[\s\S]*?POST[\s\S]*?JSON\.stringify\(\{ models \}\)[\s\S]*?await loadUsagePricing\(\)/);
+  assert.match(adminState, /ignoringUpcoming:\s*false/);
+  assert.match(adminState, /export async function ignoreUpcomingUsagePricing\(models\)/);
+  assert.match(adminState, /\/api\/admin\/usage-pricing\/ignore-upcoming/);
+  assert.match(adminState, /ignoreUpcomingUsagePricing[\s\S]*?POST[\s\S]*?JSON\.stringify\(\{ models \}\)/);
+  assert.match(adminState, /ignoreUpcomingUsagePricing[\s\S]*?usagePricing\.upcomingShutdowns\s*=\s*usagePricing\.upcomingShutdowns\.filter/);
+  assert.match(adminState, /ignoreUpcomingUsagePricing[\s\S]*?await loadUsagePricing\(\)[\s\S]*?await loadUsageSummary/);
+  assert.match(adminState, /Ignored \$\{ignored\.length\} upcoming-shutdown model/);
   assert.match(adminState, /longInputMicrousdPerMillion/);
   assert.match(adminState, /longCachedInputMicrousdPerMillion/);
   assert.match(adminState, /longOutputMicrousdPerMillion/);

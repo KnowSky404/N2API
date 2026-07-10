@@ -465,12 +465,13 @@ export const usage = $state({
   summaries: {},
   current: null
 });
-/** @type {{ loading: boolean, saving: boolean, syncing: boolean, removingShutdown: boolean, error: string, saved: boolean, syncMessage: string, removalMessage: string, upcomingShutdowns: Array<{model: string, shutdownDate: string, replacement: string}>, deletionCandidates: Array<{model: string, shutdownDate: string, replacement: string}>, version: number, currency: string, unit: string, rows: UsagePricingRow[] }} */
+/** @type {{ loading: boolean, saving: boolean, syncing: boolean, removingShutdown: boolean, ignoringUpcoming: boolean, error: string, saved: boolean, syncMessage: string, removalMessage: string, upcomingShutdowns: Array<{model: string, shutdownDate: string, replacement: string}>, deletionCandidates: Array<{model: string, shutdownDate: string, replacement: string}>, version: number, currency: string, unit: string, rows: UsagePricingRow[] }} */
 export const usagePricing = $state({
   loading: false,
   saving: false,
   syncing: false,
   removingShutdown: false,
+  ignoringUpcoming: false,
   error: '',
   saved: false,
   syncMessage: '',
@@ -1049,6 +1050,7 @@ function clearUsage() {
     saving: false,
     syncing: false,
     removingShutdown: false,
+    ignoringUpcoming: false,
     error: '',
     saved: false,
     syncMessage: '',
@@ -3282,6 +3284,38 @@ export async function removeShutdownUsagePricing(models) {
   } finally {
     if (!isCurrentAuthenticated(version)) return false;
     usagePricing.removingShutdown = false;
+  }
+}
+
+/** @param {string[]} models */
+export async function ignoreUpcomingUsagePricing(models) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || !Array.isArray(models) || models.length === 0) return false;
+
+  usagePricing.ignoringUpcoming = true;
+  usagePricing.error = '';
+  usagePricing.saved = false;
+  usagePricing.removalMessage = '';
+
+  try {
+    const payload = await requestJSON('/api/admin/usage-pricing/ignore-upcoming', {
+      method: 'POST',
+      body: JSON.stringify({ models })
+    });
+    if (!isCurrentAuthenticated(version)) return false;
+    const ignored = Array.isArray(payload.ignored) ? payload.ignored : [];
+    usagePricing.upcomingShutdowns = usagePricing.upcomingShutdowns.filter((item) => !ignored.includes(item.model));
+    usagePricing.removalMessage = `Ignored ${ignored.length} upcoming-shutdown model${ignored.length === 1 ? '' : 's'}.`;
+    await loadUsagePricing();
+    await loadUsageSummary(usage.range, usage.groupBy);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    usagePricing.error = error instanceof Error ? error.message : 'Failed to ignore upcoming-shutdown models';
+    return false;
+  } finally {
+    if (!isCurrentAuthenticated(version)) return false;
+    usagePricing.ignoringUpcoming = false;
   }
 }
 
