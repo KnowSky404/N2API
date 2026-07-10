@@ -478,11 +478,19 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 	added := []string{}
 	updated := []string{}
 	unchanged := 0
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	today := now().UTC().Format("2006-01-02")
 	for model, price := range officialPrices {
 		if _, exists := catalog[model]; !exists {
 			continue
 		}
 		currentPrice, exists := current.Models[model]
+		if item, shutdown := deprecations[model]; !exists && shutdown && item.ShutdownDate <= today {
+			continue
+		}
 		switch {
 		case !exists:
 			added = append(added, model)
@@ -496,11 +504,6 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 	sort.Strings(added)
 	sort.Strings(updated)
 
-	now := time.Now
-	if s.now != nil {
-		now = s.now
-	}
-	today := now().UTC().Format("2006-01-02")
 	upcoming := []ModelDeprecation{}
 	deletionCandidates := []ModelDeprecation{}
 	for model, item := range deprecations {

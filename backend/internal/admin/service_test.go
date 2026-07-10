@@ -2527,6 +2527,36 @@ func TestSyncOfficialUsagePricingAdditiveMergeAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestSyncOfficialUsagePricingDoesNotAddAlreadyShutdownModel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version: 1, Currency: "USD", Unit: "1M_tokens",
+		Models: map[string]UsagePrice{"local-model": {InputMicrousdPerMillion: 99}},
+	}
+	fixtures := officialSyncFixtures()
+	fixtures[officialPricingURL] = []byte(`<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.6-sol&quot;],[0,5],[0,0.5],[0,6.25],[0,30]]],[1,[[0,&quot;gpt-4-0314&quot;],[0,30],[0,0],[0,60]]]]]}"></astro-island>`)
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: fixtures})
+	service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+	pricing, summary, err := service.SyncOfficialUsagePricing(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOfficialUsagePricing: %v", err)
+	}
+	if _, ok := pricing.Models["gpt-4-0314"]; ok {
+		t.Fatal("added model whose shutdown date already passed")
+	}
+	if _, ok := pricing.Models["gpt-5.6-sol"]; !ok {
+		t.Fatal("control model was not added")
+	}
+	if slices.Contains(summary.Added, "gpt-4-0314") {
+		t.Fatalf("added summary contains shut-down model: %v", summary.Added)
+	}
+	if len(summary.DeletionCandidates) != 0 {
+		t.Fatalf("non-local model became deletion candidate: %+v", summary.DeletionCandidates)
+	}
+}
+
 func TestSyncOfficialUsagePricingSourceFailureIsAtomic(t *testing.T) {
 	tests := []struct {
 		name string
