@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,32 +30,29 @@ type ModelDeprecation struct {
 	Replacement  string `json:"replacement"`
 }
 
-// PricingFetcher abstracts fetching the OpenAI official pricing page.
-type PricingFetcher interface {
-	Fetch(ctx context.Context) ([]byte, error)
+// OfficialDocumentFetcher abstracts fetching OpenAI official documentation.
+type OfficialDocumentFetcher interface {
+	Fetch(ctx context.Context, url string) ([]byte, error)
 }
 
-// HTTPPricingFetcher fetches the official pricing page over HTTP.
-type HTTPPricingFetcher struct {
+// HTTPOfficialDocumentFetcher fetches official documents over HTTP.
+type HTTPOfficialDocumentFetcher struct {
 	client *http.Client
-	url    string
 }
 
-// NewHTTPPricingFetcher returns a PricingFetcher that fetches the official
-// pricing page with a bounded timeout.
-func NewHTTPPricingFetcher(timeout time.Duration) PricingFetcher {
+// NewHTTPOfficialDocumentFetcher returns a fetcher with a bounded timeout.
+func NewHTTPOfficialDocumentFetcher(timeout time.Duration) OfficialDocumentFetcher {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	return &HTTPPricingFetcher{
+	return &HTTPOfficialDocumentFetcher{
 		client: &http.Client{Timeout: timeout},
-		url:    officialPricingURL,
 	}
 }
 
-// Fetch retrieves the pricing page body.
-func (f *HTTPPricingFetcher) Fetch(ctx context.Context) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url, nil)
+// Fetch retrieves an official document body.
+func (f *HTTPOfficialDocumentFetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("pricing request: %w", err)
 	}
@@ -70,9 +68,20 @@ func (f *HTTPPricingFetcher) Fetch(ctx context.Context) ([]byte, error) {
 }
 
 // UsagePricingSyncSummary reports the result of an official pricing sync.
+type UsagePricingSyncSources struct {
+	Models       string `json:"models"`
+	Pricing      string `json:"pricing"`
+	Deprecations string `json:"deprecations"`
+}
+
 type UsagePricingSyncSummary struct {
-	Total  int    `json:"total"`
-	Source string `json:"source"`
+	Total              int                     `json:"total"`
+	Added              []string                `json:"added"`
+	Updated            []string                `json:"updated"`
+	Unchanged          int                     `json:"unchanged"`
+	UpcomingShutdowns  []ModelDeprecation      `json:"upcomingShutdowns"`
+	DeletionCandidates []ModelDeprecation      `json:"deletionCandidates"`
+	Sources            UsagePricingSyncSources `json:"sources"`
 }
 
 // defaultUsagePricing returns a UsagePricing pre-seeded with OpenAI official
@@ -404,26 +413,103 @@ func parseDollarPrice(raw string) (int64, bool) {
 // compatible Standard token-pricing rows, saves them, and returns the stored
 // pricing plus a summary.
 func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, UsagePricingSyncSummary, error) {
-	if s.pricingFetcher == nil {
-		s.pricingFetcher = NewHTTPPricingFetcher(30 * time.Second)
+	if s.officialDocumentFetcher == nil {
+		s.officialDocumentFetcher = NewHTTPOfficialDocumentFetcher(30 * time.Second)
 	}
 
-	body, err := s.pricingFetcher.Fetch(ctx)
+	modelsBody, err := s.officialDocumentFetcher.Fetch(ctx, officialModelsURL)
 	if err != nil {
-		return UsagePricing{}, UsagePricingSyncSummary{}, fmt.Errorf("fetch official pricing: %w", err)
+		return UsagePricing{}, UsagePricingSyncSummary{}, fmt.Errorf("fetch official models: %w", err)
 	}
-
-	models, err := parseOfficialStandardPricing(string(body))
+	catalog, err := parseOfficialModelCatalog(string(modelsBody))
 	if err != nil {
 		return UsagePricing{}, UsagePricingSyncSummary{}, err
 	}
 
+	pricingBody, err := s.officialDocumentFetcher.Fetch(ctx, officialPricingURL)
+	if err != nil {
+		return UsagePricing{}, UsagePricingSyncSummary{}, fmt.Errorf("fetch official pricing: %w", err)
+	}
+	officialPrices, err := parseOfficialStandardPricing(string(pricingBody))
+	if err != nil {
+		return UsagePricing{}, UsagePricingSyncSummary{}, err
+	}
+
+	deprecationsBody, err := s.officialDocumentFetcher.Fetch(ctx, officialDeprecationsURL)
+	if err != nil {
+		return UsagePricing{}, UsagePricingSyncSummary{}, fmt.Errorf("fetch official deprecations: %w", err)
+	}
+	deprecations, err := parseOfficialDeprecations(string(deprecationsBody))
+	if err != nil {
+		return UsagePricing{}, UsagePricingSyncSummary{}, err
+	}
+
+	current, err := s.GetUsagePricing(ctx)
+	if err != nil {
+		return UsagePricing{}, UsagePricingSyncSummary{}, err
+	}
+	mergedModels := make(map[string]UsagePrice, len(current.Models)+len(officialPrices))
+	for model, price := range current.Models {
+		mergedModels[model] = price
+	}
+
+	added := []string{}
+	updated := []string{}
+	unchanged := 0
+	for model, price := range officialPrices {
+		if _, exists := catalog[model]; !exists {
+			continue
+		}
+		currentPrice, exists := current.Models[model]
+		switch {
+		case !exists:
+			added = append(added, model)
+		case currentPrice != price:
+			updated = append(updated, model)
+		default:
+			unchanged++
+		}
+		mergedModels[model] = price
+	}
+	sort.Strings(added)
+	sort.Strings(updated)
+
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	today := now().UTC().Format("2006-01-02")
+	upcoming := []ModelDeprecation{}
+	deletionCandidates := []ModelDeprecation{}
+	for model, item := range deprecations {
+		if _, exists := current.Models[model]; !exists {
+			continue
+		}
+		if item.ShutdownDate <= today {
+			deletionCandidates = append(deletionCandidates, item)
+		} else {
+			upcoming = append(upcoming, item)
+		}
+	}
+	sort.Slice(upcoming, func(i, j int) bool {
+		if upcoming[i].ShutdownDate != upcoming[j].ShutdownDate {
+			return upcoming[i].ShutdownDate < upcoming[j].ShutdownDate
+		}
+		return upcoming[i].Model < upcoming[j].Model
+	})
+	sort.Slice(deletionCandidates, func(i, j int) bool {
+		if deletionCandidates[i].ShutdownDate != deletionCandidates[j].ShutdownDate {
+			return deletionCandidates[i].ShutdownDate < deletionCandidates[j].ShutdownDate
+		}
+		return deletionCandidates[i].Model < deletionCandidates[j].Model
+	})
+
 	pricing := UsagePricing{
-		Version:   1,
-		Currency:  "USD",
-		Unit:      "1M_tokens",
-		UpdatedAt: time.Now().UTC(),
-		Models:    models,
+		Version:   current.Version,
+		Currency:  current.Currency,
+		Unit:      current.Unit,
+		UpdatedAt: now().UTC(),
+		Models:    mergedModels,
 	}
 
 	normalized, err := normalizeUsagePricing(pricing)
@@ -437,16 +523,30 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 	}
 
 	return saved, UsagePricingSyncSummary{
-		Total:  len(saved.Models),
-		Source: officialPricingURL,
+		Total:              len(saved.Models),
+		Added:              added,
+		Updated:            updated,
+		Unchanged:          unchanged,
+		UpcomingShutdowns:  upcoming,
+		DeletionCandidates: deletionCandidates,
+		Sources: UsagePricingSyncSources{
+			Models:       officialModelsURL,
+			Pricing:      officialPricingURL,
+			Deprecations: officialDeprecationsURL,
+		},
 	}, nil
 }
 
-// SetPricingFetcher replaces the pricing fetcher used by SyncOfficialUsagePricing.
-// Pass nil to use the default HTTP fetcher with a 30 s timeout.
-func (s *Service) SetPricingFetcher(f PricingFetcher) {
+func (s *Service) SetOfficialDocumentFetcher(f OfficialDocumentFetcher) {
 	if f == nil {
-		f = NewHTTPPricingFetcher(30 * time.Second)
+		f = NewHTTPOfficialDocumentFetcher(30 * time.Second)
 	}
-	s.pricingFetcher = f
+	s.officialDocumentFetcher = f
+}
+
+func (s *Service) SetNow(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+	s.now = now
 }

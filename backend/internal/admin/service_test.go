@@ -1348,6 +1348,7 @@ type memoryRepo struct {
 	deletedRequestLogsBefore  time.Time
 	deletedRequestLogCount    int64
 	usagePricing              UsagePricing
+	usagePricingSaveCount     int
 	opsAccountHealth          OpsAccountHealth
 	lastOpsAccountHealthSince time.Time
 	opsAccountTests           []OpsAccountTest
@@ -1759,6 +1760,7 @@ func (r *memoryRepo) GetUsagePricing(_ context.Context) (UsagePricing, error) {
 }
 
 func (r *memoryRepo) SaveUsagePricing(_ context.Context, pricing UsagePricing) (UsagePricing, error) {
+	r.usagePricingSaveCount++
 	r.usagePricing = pricing
 	return pricing, nil
 }
@@ -2377,35 +2379,143 @@ func TestParseOfficialDeprecationsNormalizesDates(t *testing.T) {
 	}
 }
 
-type fakePricingFetcher struct {
-	body []byte
-	err  error
+type fakeOfficialDocumentFetcher struct {
+	bodies map[string][]byte
+	errs   map[string]error
 }
 
-func (f *fakePricingFetcher) Fetch(_ context.Context) ([]byte, error) {
-	return f.body, f.err
+func (f *fakeOfficialDocumentFetcher) Fetch(_ context.Context, url string) ([]byte, error) {
+	if err := f.errs[url]; err != nil {
+		return nil, err
+	}
+	return f.bodies[url], nil
+}
+
+func officialSyncFixtures() map[string][]byte {
+	return map[string][]byte{
+		officialModelsURL: []byte(`<a href="/api/docs/models/gpt-5.5"><div>GPT-5.5</div></a>
+<a href="/api/docs/models/gpt-5.6-sol"><div>GPT-5.6 Sol</div></a>
+<a href="/api/docs/models/gpt-5.3-chat-latest"><div>GPT-5.3 Chat</div><div>Deprecated</div></a>
+<a href="/api/docs/models/gpt-4-0314"><div>GPT-4 0314</div><div>Deprecated</div></a>`),
+		officialPricingURL: []byte(`<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.5&quot;],[0,5],[0,0.5],[0,6.25],[0,30]]],[1,[[0,&quot;gpt-5.6-sol&quot;],[0,5],[0,0.5],[0,6.25],[0,30]]]]]}"></astro-island>`),
+		officialDeprecationsURL: []byte(`<table><tbody>
+<tr><td>Aug 10, 2026</td><td><code>gpt-5.3-chat-latest</code></td><td><code>gpt-5.5</code></td></tr>
+<tr><td>2026-03-26</td><td><code>gpt-4-0314</code></td><td><code>gpt-5</code></td></tr>
+</tbody></table>`),
+	}
+}
+
+func TestSyncOfficialUsagePricingAdditiveMergeAndLifecycle(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5.5":             {InputMicrousdPerMillion: 1},
+			"local-model":         {InputMicrousdPerMillion: 99},
+			"gpt-4-0314":          {InputMicrousdPerMillion: 30_000_000},
+			"gpt-5.3-chat-latest": {InputMicrousdPerMillion: 1_750_000},
+		},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: officialSyncFixtures()})
+	service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+	pricing, summary, err := service.SyncOfficialUsagePricing(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOfficialUsagePricing: %v", err)
+	}
+	if got := pricing.Models["gpt-5.5"].InputMicrousdPerMillion; got != 5_000_000 {
+		t.Fatalf("updated gpt-5.5 input = %d, want 5000000", got)
+	}
+	if _, ok := pricing.Models["gpt-5.6-sol"]; !ok {
+		t.Fatal("missing newly added gpt-5.6-sol")
+	}
+	if got := pricing.Models["local-model"].InputMicrousdPerMillion; got != 99 {
+		t.Fatalf("local model input = %d, want 99", got)
+	}
+	if _, ok := pricing.Models["gpt-4-0314"]; !ok {
+		t.Fatal("sync deleted shut-down model before confirmation")
+	}
+	if got, want := summary.Added, []string{"gpt-5.6-sol"}; !slices.Equal(got, want) {
+		t.Fatalf("added = %v, want %v", got, want)
+	}
+	if got, want := summary.Updated, []string{"gpt-5.5"}; !slices.Equal(got, want) {
+		t.Fatalf("updated = %v, want %v", got, want)
+	}
+	if summary.Unchanged != 0 {
+		t.Fatalf("unchanged = %d, want 0", summary.Unchanged)
+	}
+	if len(summary.UpcomingShutdowns) != 1 || summary.UpcomingShutdowns[0].Model != "gpt-5.3-chat-latest" {
+		t.Fatalf("upcoming shutdowns = %+v", summary.UpcomingShutdowns)
+	}
+	if len(summary.DeletionCandidates) != 1 || summary.DeletionCandidates[0].Model != "gpt-4-0314" {
+		t.Fatalf("deletion candidates = %+v", summary.DeletionCandidates)
+	}
+	if summary.Sources.Models != officialModelsURL || summary.Sources.Pricing != officialPricingURL || summary.Sources.Deprecations != officialDeprecationsURL {
+		t.Fatalf("sources = %+v", summary.Sources)
+	}
+	if repo.usagePricingSaveCount != 1 {
+		t.Fatalf("save count = %d, want 1", repo.usagePricingSaveCount)
+	}
+}
+
+func TestSyncOfficialUsagePricingSourceFailureIsAtomic(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{name: "models", url: officialModelsURL},
+		{name: "pricing", url: officialPricingURL},
+		{name: "deprecations", url: officialDeprecationsURL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			repo.usagePricing = UsagePricing{
+				Version:  1,
+				Currency: "USD",
+				Unit:     "1M_tokens",
+				Models:   map[string]UsagePrice{"local-model": {InputMicrousdPerMillion: 99}},
+			}
+			service := NewService(repo, Config{SessionTTL: time.Hour})
+			fixtures := officialSyncFixtures()
+			fixtures[tt.url] = []byte("invalid source")
+			service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: fixtures})
+
+			_, _, err := service.SyncOfficialUsagePricing(context.Background())
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error = %v, want ErrInvalidInput", err)
+			}
+			if repo.usagePricingSaveCount != 0 {
+				t.Fatalf("save count = %d, want 0", repo.usagePricingSaveCount)
+			}
+			if got := repo.usagePricing.Models["local-model"].InputMicrousdPerMillion; got != 99 {
+				t.Fatalf("local model changed to %d", got)
+			}
+		})
+	}
 }
 
 func TestSyncOfficialUsagePricingSavesAndReturnsSummary(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-
-	fixture := `[1,[[0,"gpt-5.5"],[0,5],[0,0.5],[0,30]]],[1,[[0,"gpt-5.4-mini"],[0,0.75],[0,0.075],[0,4.5]]],[1,[[0,"gpt-5"],[0,1.25],[0,0.125],[0,10]]]`
-	service.SetPricingFetcher(&fakePricingFetcher{body: []byte(fixture)})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: officialSyncFixtures()})
 
 	pricing, summary, err := service.SyncOfficialUsagePricing(context.Background())
 	if err != nil {
 		t.Fatalf("SyncOfficialUsagePricing: %v", err)
 	}
 
-	if summary.Total != 3 {
-		t.Errorf("summary.Total = %d, want 3", summary.Total)
+	if summary.Total == 0 {
+		t.Error("summary.Total = 0")
 	}
-	if summary.Source == "" {
-		t.Error("summary.Source is empty")
+	if summary.Sources.Pricing == "" {
+		t.Error("summary.Sources.Pricing is empty")
 	}
-	if len(pricing.Models) != 3 {
-		t.Errorf("len(pricing.Models) = %d, want 3", len(pricing.Models))
+	if len(pricing.Models) == 0 {
+		t.Error("len(pricing.Models) = 0")
 	}
 
 	// Verify the values were saved through the repo.
@@ -2418,7 +2528,9 @@ func TestSyncOfficialUsagePricingSavesAndReturnsSummary(t *testing.T) {
 func TestSyncOfficialUsagePricingInvalidSourceReturnsErrInvalidInput(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	service.SetPricingFetcher(&fakePricingFetcher{body: []byte("no model data here")})
+	fixtures := officialSyncFixtures()
+	fixtures[officialPricingURL] = []byte("no model data here")
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: fixtures})
 
 	_, _, err := service.SyncOfficialUsagePricing(context.Background())
 	if !errors.Is(err, ErrInvalidInput) {
@@ -2430,7 +2542,7 @@ func TestSyncOfficialUsagePricingWithoutFetcherUsesDefaultFetcher(t *testing.T) 
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 
-	if service.pricingFetcher == nil {
-		t.Fatal("pricingFetcher is nil, want default HTTP fetcher")
+	if service.officialDocumentFetcher == nil {
+		t.Fatal("officialDocumentFetcher is nil, want default HTTP fetcher")
 	}
 }

@@ -337,11 +337,12 @@ type Repository interface {
 }
 
 type Service struct {
-	repo                   Repository
-	sessionTTL             time.Duration
-	encryptionSecret       string
-	defaultGatewaySettings GatewaySettings
-	pricingFetcher         PricingFetcher
+	repo                    Repository
+	sessionTTL              time.Duration
+	encryptionSecret        string
+	defaultGatewaySettings  GatewaySettings
+	officialDocumentFetcher OfficialDocumentFetcher
+	now                     func() time.Time
 }
 
 func NewService(repo Repository, cfg Config) *Service {
@@ -351,11 +352,12 @@ func NewService(repo Repository, cfg Config) *Service {
 	}
 
 	return &Service{
-		repo:                   repo,
-		sessionTTL:             sessionTTL,
-		encryptionSecret:       cfg.EncryptionSecret,
-		defaultGatewaySettings: cfg.DefaultGatewaySettings,
-		pricingFetcher:         NewHTTPPricingFetcher(30 * time.Second),
+		repo:                    repo,
+		sessionTTL:              sessionTTL,
+		encryptionSecret:        cfg.EncryptionSecret,
+		defaultGatewaySettings:  cfg.DefaultGatewaySettings,
+		officialDocumentFetcher: NewHTTPOfficialDocumentFetcher(30 * time.Second),
+		now:                     time.Now,
 	}
 }
 
