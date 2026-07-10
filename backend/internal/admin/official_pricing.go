@@ -507,13 +507,14 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 	upcoming := []ModelDeprecation{}
 	deletionCandidates := []ModelDeprecation{}
 	for model, item := range deprecations {
-		if _, exists := current.Models[model]; !exists {
-			continue
-		}
 		if item.ShutdownDate <= today {
-			deletionCandidates = append(deletionCandidates, item)
+			if _, exists := current.Models[model]; exists {
+				deletionCandidates = append(deletionCandidates, item)
+			}
 		} else {
-			upcoming = append(upcoming, item)
+			if _, exists := mergedModels[model]; exists {
+				upcoming = append(upcoming, item)
+			}
 		}
 	}
 	sort.Slice(upcoming, func(i, j int) bool {

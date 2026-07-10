@@ -2557,6 +2557,30 @@ func TestSyncOfficialUsagePricingDoesNotAddAlreadyShutdownModel(t *testing.T) {
 	}
 }
 
+func TestSyncOfficialUsagePricingWarnsForNewUpcomingShutdownModel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version: 1, Currency: "USD", Unit: "1M_tokens",
+		Models: map[string]UsagePrice{"local-model": {InputMicrousdPerMillion: 99}},
+	}
+	fixtures := officialSyncFixtures()
+	fixtures[officialPricingURL] = []byte(`<astro-island component-export="TextTokenPricingTables" props="{&quot;tier&quot;:[0,&quot;standard&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-chat-latest&quot;],[0,1.75],[0,0.175],[0,14]]]]]}"></astro-island>`)
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{bodies: fixtures})
+	service.SetNow(func() time.Time { return time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC) })
+
+	pricing, summary, err := service.SyncOfficialUsagePricing(context.Background())
+	if err != nil {
+		t.Fatalf("SyncOfficialUsagePricing: %v", err)
+	}
+	if _, ok := pricing.Models["gpt-5.3-chat-latest"]; !ok {
+		t.Fatal("upcoming shutdown model was not added")
+	}
+	if len(summary.UpcomingShutdowns) != 1 || summary.UpcomingShutdowns[0].Model != "gpt-5.3-chat-latest" {
+		t.Fatalf("upcoming shutdowns = %+v", summary.UpcomingShutdowns)
+	}
+}
+
 func TestSyncOfficialUsagePricingSourceFailureIsAtomic(t *testing.T) {
 	tests := []struct {
 		name string
