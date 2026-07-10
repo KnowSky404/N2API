@@ -2381,6 +2381,31 @@ func TestParseOfficialStandardPricingSupportsCacheWritesSSRColumns(t *testing.T)
 	}
 }
 
+func TestParseOfficialStandardPricingIncludesSpecializedStandardRows(t *testing.T) {
+	body := `<div id="content-switcher-specialized-pricing" data-content-switcher-root>
+<div class="content-switcher-panes">
+<div data-content-switcher-pane="true" data-value="standard">
+<astro-island component-export="GroupedPricingTable" props="{&quot;headings&quot;:[1,[[0,&quot;Category&quot;],[0,&quot;Model&quot;],[0,&quot;Input&quot;],[0,&quot;Cached input&quot;],[0,&quot;Output&quot;]]],&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;ChatGPT&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;chat-latest&quot;],[0,5],[0,0.5],[0,30]]]]]}],[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;gpt-5.3-codex&quot;],[0,1.75],[0,0.175],[0,14]]]]]}]]]}" ssr></astro-island>
+</div>
+<div data-content-switcher-pane="true" data-value="batch">
+<astro-island component-export="GroupedPricingTable" props="{&quot;groups&quot;:[1,[[0,{&quot;model&quot;:[0,&quot;Codex&quot;],&quot;rows&quot;:[1,[[1,[[0,&quot;batch-only-codex&quot;],[0,0.5],[0,0.05],[0,3]]]]]}]]]}" ssr></astro-island>
+</div></div></div>`
+
+	models, err := parseOfficialStandardPricing(body)
+	if err != nil {
+		t.Fatalf("parseOfficialStandardPricing: %v", err)
+	}
+	if got := models["chat-latest"].OutputMicrousdPerMillion; got != 30_000_000 {
+		t.Fatalf("chat-latest output = %d, want 30000000", got)
+	}
+	if got := models["gpt-5.3-codex"].InputMicrousdPerMillion; got != 1_750_000 {
+		t.Fatalf("gpt-5.3-codex input = %d, want 1750000", got)
+	}
+	if _, ok := models["batch-only-codex"]; ok {
+		t.Fatal("parsed Batch specialized pricing")
+	}
+}
+
 func TestParseOfficialDeprecationsNormalizesDates(t *testing.T) {
 	body := `<table><thead><tr><th>Shutdown date</th><th>Model / system</th><th>Recommended replacement</th></tr></thead><tbody>
 <tr><td>Aug 10, 2026</td><td><code>gpt-5.3-chat-latest</code></td><td><code>gpt-5.5</code></td></tr>
@@ -2399,6 +2424,24 @@ func TestParseOfficialDeprecationsNormalizesDates(t *testing.T) {
 	}
 	if got := items["gpt-5.3-chat-latest"].Replacement; got != "gpt-5.5" {
 		t.Fatalf("replacement = %q, want gpt-5.5", got)
+	}
+}
+
+func TestParseOfficialDeprecationsAcceptsPlainTextModelRows(t *testing.T) {
+	body := `<table><thead><tr><th>Shutdown date</th><th>Model / system</th><th>Recommended replacement</th></tr></thead><tbody>
+<tr><td>2026-05-07</td><td>gpt-4o-realtime-preview</td><td>gpt-realtime-1.5</td></tr>
+</tbody></table>`
+
+	items, err := parseOfficialDeprecations(body)
+	if err != nil {
+		t.Fatalf("parseOfficialDeprecations: %v", err)
+	}
+	item, ok := items["gpt-4o-realtime-preview"]
+	if !ok {
+		t.Fatal("missing plain-text model")
+	}
+	if item.ShutdownDate != "2026-05-07" || item.Replacement != "gpt-realtime-1.5" {
+		t.Fatalf("item = %+v", item)
 	}
 }
 
@@ -2646,5 +2689,28 @@ func TestRemoveShutdownUsagePricingRejectsInvalidBatchAtomically(t *testing.T) {
 				t.Fatalf("models changed: %v", repo.usagePricing.Models)
 			}
 		})
+	}
+}
+
+func TestRemoveShutdownUsagePricingSourceFailureIsAtomic(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version: 1, Currency: "USD", Unit: "1M_tokens",
+		Models: map[string]UsagePrice{"gpt-4-0314": {InputMicrousdPerMillion: 30_000_000}},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.SetOfficialDocumentFetcher(&fakeOfficialDocumentFetcher{
+		errs: map[string]error{officialDeprecationsURL: errors.New("upstream unavailable")},
+	})
+
+	_, _, err := service.RemoveShutdownUsagePricing(context.Background(), []string{"gpt-4-0314"})
+	if err == nil {
+		t.Fatal("RemoveShutdownUsagePricing returned nil error")
+	}
+	if repo.usagePricingSaveCount != 0 {
+		t.Fatalf("save count = %d, want 0", repo.usagePricingSaveCount)
+	}
+	if _, ok := repo.usagePricing.Models["gpt-4-0314"]; !ok {
+		t.Fatal("model was removed after source failure")
 	}
 }

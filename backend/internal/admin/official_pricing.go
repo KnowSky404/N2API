@@ -143,6 +143,7 @@ var contextAnnotationRe = regexp.MustCompile(`\s*\(<\d+[KM] context length\)\s*$
 var pricingRowRe = regexp.MustCompile(`\[1,\[\[0,"([^"]+)"\],\[0,([^\]]+)\],\[0,([^\]]+)\],\[0,([^\]]+)\]\]`)
 var pricingRowWithCacheWritesRe = regexp.MustCompile(`\[1,\[\[0,"([^"]+)"\],\[0,([^\]]+)\],\[0,([^\]]+)\],\[0,([^\]]+)\],\[0,([^\]]+)\]\]`)
 var standardTextTokenPropsRe = regexp.MustCompile(`TextTokenPricingTables"[^>]*props="([^"]*&quot;tier&quot;:\[0,&quot;standard&quot;][^"]*)"`)
+var standardSpecializedPaneRe = regexp.MustCompile(`(?s)id="content-switcher-specialized-pricing".*?<div[^>]*\bdata-content-switcher-pane="true"[^>]*\bdata-value="standard"[^>]*>(.*?)(?:<div[^>]*\bdata-content-switcher-pane="true"|\z)`)
 
 var modelCatalogLinkRe = regexp.MustCompile(`(?s)<a[^>]*\bhref="/api/docs/models/([^"]+)"[^>]*>(.*?)</a>`)
 
@@ -160,6 +161,7 @@ var ssrTdRe = regexp.MustCompile(`(?s)<td[^>]*>(.*?)</td>`)
 // htmlTagRe strips HTML tags from extracted cell text.
 var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 var htmlCodeRe = regexp.MustCompile(`(?s)<code[^>]*>(.*?)</code>`)
+var modelIdentifierRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 
 func parseOfficialModelCatalog(body string) (map[string]OfficialModel, error) {
 	models := map[string]OfficialModel{}
@@ -207,6 +209,11 @@ func parseOfficialStandardPricing(body string) (map[string]UsagePrice, error) {
 func officialStandardPricingSections(body string) []string {
 	sections := []string{}
 	for _, match := range standardTextTokenPropsRe.FindAllStringSubmatch(body, -1) {
+		if len(match) > 1 {
+			sections = append(sections, html.UnescapeString(match[1]))
+		}
+	}
+	for _, match := range standardSpecializedPaneRe.FindAllStringSubmatch(body, -1) {
 		if len(match) > 1 {
 			sections = append(sections, html.UnescapeString(match[1]))
 		}
@@ -355,7 +362,14 @@ func parseOfficialDeprecations(body string) (map[string]ModelDeprecation, error)
 			continue
 		}
 		replacement := cellText(cells[len(cells)-1][1])
-		for _, code := range htmlCodeRe.FindAllStringSubmatch(cells[1][1], -1) {
+		modelCells := htmlCodeRe.FindAllStringSubmatch(cells[1][1], -1)
+		if len(modelCells) == 0 {
+			plainModel := cellText(cells[1][1])
+			if modelIdentifierRe.MatchString(plainModel) {
+				modelCells = [][]string{{plainModel, plainModel}}
+			}
+		}
+		for _, code := range modelCells {
 			if len(code) < 2 {
 				continue
 			}
