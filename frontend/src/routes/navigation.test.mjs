@@ -1199,6 +1199,8 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/deprecations/);
   assert.match(requestLogsPage, /Upcoming shutdowns/);
   assert.match(requestLogsPage, /showShutdownRemovalModal/);
+  assert.match(requestLogsPage, /Review shutdowns \(\{usagePricing\.deletionCandidates\.length\}\)/);
+  assert.match(requestLogsPage, /openShutdownRemovalModal/);
   assert.match(requestLogsPage, /selectedShutdownModels/);
   assert.match(requestLogsPage, /type="checkbox"/);
   assert.match(requestLogsPage, /Remove \{selectedShutdownModels\.length\} models/);

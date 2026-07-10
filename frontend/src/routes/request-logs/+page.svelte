@@ -507,6 +507,11 @@
     showSyncConfirmModal = true;
   }
 
+  function openShutdownRemovalModal() {
+    selectedShutdownModels = (usagePricing.deletionCandidates || []).map((item) => item.model);
+    showShutdownRemovalModal = true;
+  }
+
   async function confirmSyncOfficial() {
     showSyncConfirmModal = false;
     await syncOfficialUsagePricing();
@@ -676,6 +681,16 @@
         <p class="mt-1 text-sm text-[#6e6e6e]">Official OpenAI Standard pricing — USD micro-prices per 1M tokens for historical estimates.</p>
       </div>
       <div class="ml-auto flex flex-wrap items-center justify-end gap-3">
+        {#if usagePricing.deletionCandidates?.length}
+          <button
+            class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            disabled={pricingBusy}
+            onclick={openShutdownRemovalModal}
+          >
+            Review shutdowns ({usagePricing.deletionCandidates.length})
+          </button>
+        {/if}
         <button
           class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
