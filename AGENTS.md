@@ -12,10 +12,10 @@
 - When web search is still needed, use it only after Context7 cannot answer the library/framework/API/CLI documentation question or when the user explicitly asks for broader web research.
 
 ## Development Workflow
-- Prefer relevant Superpowers skills for planning, design, debugging, implementation, verification, review, and branch finishing.
-- Before implementing non-trivial behavior, use the appropriate Superpowers planning/design workflow.
-- Before fixing bugs or failed checks, use the Superpowers systematic debugging workflow.
-- Before claiming work is complete, use the Superpowers verification-before-completion workflow and report the exact commands that passed.
+- Use an applicable skill when it is available in the current session, but do not make the workflow depend on a specific plugin.
+- Before implementing non-trivial behavior, write a concise specification and implementation plan with clear acceptance criteria.
+- Before fixing bugs or failed checks, reproduce the issue, gather evidence, and identify the root cause before changing code.
+- Before claiming work is complete, review the diff and worktree state, run the relevant verification commands, and report the exact commands that passed.
 - Keep work scoped and incremental. Avoid bundling unrelated refactors into feature or bugfix changes.
 
 ## Project Direction
