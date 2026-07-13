@@ -331,23 +331,16 @@
     loadUsageSummary(event.currentTarget.value, usage.groupBy);
   }
 
-  function addPricingRow() {
-    usagePricing.rows = [
-      ...usagePricing.rows,
-      {
-        model: '',
-        inputMicrousdPerMillion: 0,
-        cachedInputMicrousdPerMillion: 0,
-        outputMicrousdPerMillion: 0,
-        longInputMicrousdPerMillion: 0,
-        longCachedInputMicrousdPerMillion: 0,
-        longOutputMicrousdPerMillion: 0
-      }
-    ];
-    const newRow = (usagePricing.rows || []).slice(-1)[0];
-    editingPricingRow = newRow;
-    pricingSearch = '';
-    pricingPage = Math.max(1, Math.ceil((usagePricing.rows || []).length / pricingPageSize));
+  function emptyPricingRow() {
+    return {
+      model: '',
+      inputMicrousdPerMillion: 0,
+      cachedInputMicrousdPerMillion: 0,
+      outputMicrousdPerMillion: 0,
+      longInputMicrousdPerMillion: 0,
+      longCachedInputMicrousdPerMillion: 0,
+      longOutputMicrousdPerMillion: 0
+    };
   }
 
   /** @param {number} index */
@@ -359,6 +352,9 @@
   let showSyncConfirmModal = $state(false);
   let showShutdownRemovalModal = $state(false);
   let showUpcomingIgnoreModal = $state(false);
+  let showAddPricingModal = $state(false);
+  let addPricingError = $state('');
+  let newPricingRow = $state(emptyPricingRow());
   let selectedShutdownModels = $state(/** @type {string[]} */ ([]));
 
   /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
@@ -530,6 +526,51 @@
       : 0;
   }
 
+  function openAddPricingModal() {
+    newPricingRow = emptyPricingRow();
+    addPricingError = '';
+    showAddPricingModal = true;
+  }
+
+  function closeAddPricingModal() {
+    if (pricingBusy) return;
+    showAddPricingModal = false;
+    addPricingError = '';
+    newPricingRow = emptyPricingRow();
+  }
+
+  /** @param {SubmitEvent} event */
+  async function submitAddPricingModel(event) {
+    event.preventDefault();
+    if (pricingBusy) return;
+
+    const model = String(newPricingRow.model ?? '').trim();
+    if (!model) {
+      addPricingError = 'Model name is required.';
+      return;
+    }
+    if ((usagePricing.rows || []).some((row) => String(row.model ?? '').trim() === model)) {
+      addPricingError = 'A pricing row for this model already exists.';
+      return;
+    }
+
+    addPricingError = '';
+    const priorRows = [...(usagePricing.rows || [])];
+    const row = { ...newPricingRow, model };
+    usagePricing.rows = [...priorRows, row];
+
+    if (!(await savePricingRows())) {
+      usagePricing.rows = priorRows;
+      addPricingError = usagePricing.error || 'Failed to add pricing model.';
+      return;
+    }
+
+    pricingSearch = '';
+    const sortedIndex = sortedPricingRows.findIndex((item) => item.model === model);
+    pricingPage = sortedIndex >= 0 ? Math.floor(sortedIndex / pricingPageSize) + 1 : 1;
+    closeAddPricingModal();
+  }
+
   function openSyncConfirmModal() {
     showSyncConfirmModal = true;
   }
@@ -551,9 +592,9 @@
 
   /** @param {KeyboardEvent} event */
   function handlePricingModalKeydown(event) {
-    if (event.key === 'Escape' && showUpcomingIgnoreModal && !pricingBusy) {
-      showUpcomingIgnoreModal = false;
-    }
+    if (event.key !== 'Escape' || pricingBusy) return;
+    if (showAddPricingModal) closeAddPricingModal();
+    if (showUpcomingIgnoreModal) showUpcomingIgnoreModal = false;
   }
 
   function openShutdownRemovalModal() {
@@ -767,7 +808,7 @@
           class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
           disabled={pricingBusy}
-          onclick={addPricingRow}
+          onclick={openAddPricingModal}
         >
           Add model
         </button>
@@ -975,6 +1016,67 @@
           </button>
         </div>
       </div>
+    </div>
+  {/if}
+
+  {#if showAddPricingModal}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="add-pricing-title"
+      tabindex="-1"
+      onclick={(event) => event.target === event.currentTarget && closeAddPricingModal()}
+      onkeydown={handlePricingModalKeydown}
+    >
+      <form class="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg border border-[#ededed] bg-white p-5 shadow-xl sm:p-6" onsubmit={submitAddPricingModel}>
+        <div>
+          <h3 id="add-pricing-title" class="text-lg font-semibold text-[#0d0d0d]">Add pricing model</h3>
+          <p class="mt-1 text-sm text-[#6e6e6e]">Enter prices in USD per 1M tokens.</p>
+        </div>
+
+        <div class="mt-5 grid gap-4 sm:grid-cols-2">
+          <label class="grid gap-1.5 text-sm font-medium text-[#3c3c3c] sm:col-span-2">
+            Model
+            <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={newPricingRow.model} placeholder="gpt-5" required disabled={pricingBusy} />
+          </label>
+          <label class="grid gap-1.5 text-sm font-medium text-[#3c3c3c]">
+            Input
+            <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(newPricingRow.inputMicrousdPerMillion)} oninput={(event) => updatePricingValue(newPricingRow, 'inputMicrousdPerMillion', event)} required disabled={pricingBusy} />
+          </label>
+          <label class="grid gap-1.5 text-sm font-medium text-[#3c3c3c]">
+            Cached input
+            <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(newPricingRow.cachedInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(newPricingRow, 'cachedInputMicrousdPerMillion', event)} required disabled={pricingBusy} />
+          </label>
+          <label class="grid gap-1.5 text-sm font-medium text-[#3c3c3c]">
+            Output
+            <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(newPricingRow.outputMicrousdPerMillion)} oninput={(event) => updatePricingValue(newPricingRow, 'outputMicrousdPerMillion', event)} required disabled={pricingBusy} />
+          </label>
+          <label class="grid gap-1.5 text-sm font-medium text-[#3c3c3c]">
+            Long input
+            <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(newPricingRow.longInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(newPricingRow, 'longInputMicrousdPerMillion', event)} required disabled={pricingBusy} />
+          </label>
+          <label class="grid gap-1.5 text-sm font-medium text-[#3c3c3c]">
+            Long cached input
+            <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(newPricingRow.longCachedInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(newPricingRow, 'longCachedInputMicrousdPerMillion', event)} required disabled={pricingBusy} />
+          </label>
+          <label class="grid gap-1.5 text-sm font-medium text-[#3c3c3c]">
+            Long output
+            <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(newPricingRow.longOutputMicrousdPerMillion)} oninput={(event) => updatePricingValue(newPricingRow, 'longOutputMicrousdPerMillion', event)} required disabled={pricingBusy} />
+          </label>
+        </div>
+
+        {#if addPricingError}
+          <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{addPricingError}</p>
+        {/if}
+
+        <div class="mt-6 flex justify-end gap-3">
+          <button class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={closeAddPricingModal}>Cancel</button>
+          <button class="rounded-lg bg-[#0d0d0d] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={pricingBusy}>{usagePricing.saving ? 'Adding' : 'Add model'}</button>
+        </div>
+      </form>
     </div>
   {/if}
 

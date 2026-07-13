@@ -1227,6 +1227,27 @@ test('usage pricing supports official OpenAI sync', () => {
   // Search state for pricing rows
   assert.match(requestLogsPage, /pricingSearch/);
   assert.match(requestLogsPage, /filteredPricingRows/);
+  // Add model uses a modal draft and only mutates persisted rows on submit.
+  assert.match(requestLogsPage, /let showAddPricingModal = \$state\(false\)/);
+  assert.match(requestLogsPage, /onclick=\{openAddPricingModal\}/);
+  assert.match(requestLogsPage, /\{#if showAddPricingModal\}[\s\S]*?aria-labelledby="add-pricing-title"[\s\S]*?<form[\s\S]*?onsubmit=\{submitAddPricingModel\}/);
+  assert.match(requestLogsPage, /id="add-pricing-title"[\s\S]*?>Add pricing model</);
+  assert.match(requestLogsPage, /submitAddPricingModel[\s\S]*?Model name is required\.[\s\S]*?already exists\.[\s\S]*?usagePricing\.rows = \[\.\.\.priorRows, row\][\s\S]*?await savePricingRows\(\)[\s\S]*?usagePricing\.rows = priorRows/);
+  assert.match(requestLogsPage, /closeAddPricingModal[\s\S]*?showAddPricingModal = false/);
+  assert.match(requestLogsPage, /showAddPricingModal[\s\S]*?handlePricingModalKeydown/);
+  assert.match(requestLogsPage, /bind:value=\{newPricingRow\.model\}/);
+  for (const field of [
+    'inputMicrousdPerMillion',
+    'cachedInputMicrousdPerMillion',
+    'outputMicrousdPerMillion',
+    'longInputMicrousdPerMillion',
+    'longCachedInputMicrousdPerMillion',
+    'longOutputMicrousdPerMillion'
+  ]) {
+    assert.match(requestLogsPage, new RegExp(`newPricingRow\\.${field}`));
+  }
+  assert.doesNotMatch(requestLogsPage, /function addPricingRow\(\)/);
+  assert.doesNotMatch(requestLogsPage, /editingPricingRow = newRow/);
   // Long context field headers or inputs
   assert.match(requestLogsPage, /longInputMicrousdPerMillion/);
   assert.match(requestLogsPage, /longCachedInputMicrousdPerMillion/);
