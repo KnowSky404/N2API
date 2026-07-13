@@ -6,6 +6,8 @@
 
 N2API is a personal AI API/account gateway for self-hosted use. It is inspired by sub2api's practical workflow, but it is a new implementation focused on personal use rather than platform billing or merchant operations.
 
+Brand assets, original generated concepts, exact prompts, and export metadata are documented in [`docs/brand`](docs/brand/README.md).
+
 ## V1 Direction
 
 - Go backend service.
