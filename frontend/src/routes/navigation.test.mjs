@@ -828,12 +828,22 @@ test('api keys action buttons stay compact on one row', () => {
   assert.match(apiKeysPage, /<Trash2 class="size-4"/);
 });
 
-test('api keys page physically deletes only an already deleted key after confirmation', () => {
+test('api keys page confirms logical, physical, and bulk deletion with a custom popconfirm', () => {
   assert.match(apiKeysPage, /deleteRevokedKey/);
-  assert.match(apiKeysPage, /confirm\(/);
+  assert.match(apiKeysPage, /deleteConfirmKeyPopover/);
+  assert.match(apiKeysPage, /openDeleteConfirmKey/);
+  assert.match(apiKeysPage, /openBulkDeleteConfirm/);
+  assert.match(apiKeysPage, /confirmDeleteKey/);
+  assert.match(apiKeysPage, /Delete this API key\?/);
+  assert.match(apiKeysPage, /Permanently delete this API key\?/);
+  assert.match(apiKeysPage, /Delete selected API keys\?/);
   assert.match(apiKeysPage, /Permanently delete/);
-  assert.match(apiKeysPage, /if \(!key\.revokedAt\)/);
-  assert.match(apiKeysPage, /await deleteRevokedKey\(key\.id\)/);
+  assert.match(apiKeysPage, /await revokeKey\(target\.key\.id\)/);
+  assert.match(apiKeysPage, /await deleteRevokedKey\(target\.key\.id\)/);
+  assert.match(apiKeysPage, /await bulkRevokeSelectedAPIKeys\(\)/);
+  assert.match(apiKeysPage, /onclick=\{\(event\) => openDeleteConfirmKey\(key, event\)\}/);
+  assert.match(apiKeysPage, /onclick=\{openBulkDeleteConfirm\}/);
+  assert.doesNotMatch(apiKeysPage, /\bconfirm\(/);
   assert.match(adminState, /export async function deleteRevokedKey/);
   assert.match(adminState, /\/api\/admin\/keys\/\$\{id\}/);
   assert.match(adminState, /method: 'DELETE'/);

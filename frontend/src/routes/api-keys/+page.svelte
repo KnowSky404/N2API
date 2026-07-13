@@ -48,6 +48,9 @@
   const editingKey = $derived(apiKeys.items.find((key) => key.id === editingKeyId) ?? null);
   let logsKeyId = $state(0);
   const logsKey = $derived(apiKeys.items.find((key) => key.id === logsKeyId) ?? null);
+  let deleteConfirmKeyPopover = $state(/** @type {{key: import('$lib/admin-state.svelte.js').APIKey|null, bulk: boolean, top: number, left: number}|null} */ (null));
+  let deleteConfirmBusy = $state(false);
+  const deleteConfirmKey = $derived(deleteConfirmKeyPopover?.key ?? null);
   let appliedAPIKeySearch = $state('');
   let bulkEditModalOpen = $state(false);
   const bulkEditForm = $state({
@@ -307,14 +310,54 @@
     logsKeyId = 0;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
-  async function deleteKey(key) {
-    if (!key.revokedAt) {
-      await revokeKey(key.id);
-      return;
+  /** @param {MouseEvent} event */
+  function deleteConfirmPosition(event) {
+    const rect = /** @type {HTMLElement} */ (event.currentTarget).getBoundingClientRect();
+    const popoverWidth = 288;
+    let left = rect.left + rect.width - popoverWidth;
+    if (left < 8) left = 8;
+    if (left + popoverWidth > window.innerWidth - 8) left = window.innerWidth - popoverWidth - 8;
+    return { top: rect.bottom + 8, left };
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').APIKey} key
+   * @param {MouseEvent} event
+   */
+  function openDeleteConfirmKey(key, event) {
+    apiKeys.error = '';
+    deleteConfirmKeyPopover = { key, bulk: false, ...deleteConfirmPosition(event) };
+  }
+
+  /** @param {MouseEvent} event */
+  function openBulkDeleteConfirm(event) {
+    if (selectedEditableAPIKeys.length === 0) return;
+    apiKeys.error = '';
+    deleteConfirmKeyPopover = { key: null, bulk: true, ...deleteConfirmPosition(event) };
+  }
+
+  function closeDeleteConfirmKeyPopover() {
+    if (!deleteConfirmBusy) deleteConfirmKeyPopover = null;
+  }
+
+  async function confirmDeleteKey() {
+    const target = deleteConfirmKeyPopover;
+    if (!target || deleteConfirmBusy) return;
+
+    deleteConfirmBusy = true;
+    apiKeys.error = '';
+    try {
+      if (target.bulk) {
+        await bulkRevokeSelectedAPIKeys();
+      } else if (target.key?.revokedAt) {
+        await deleteRevokedKey(target.key.id);
+      } else if (target.key) {
+        await revokeKey(target.key.id);
+      }
+      if (!apiKeys.error) deleteConfirmKeyPopover = null;
+    } finally {
+      deleteConfirmBusy = false;
     }
-    if (!confirm(`Permanently delete "${key.name}"? This cannot be undone.`)) return;
-    await deleteRevokedKey(key.id);
   }
 
   /** @param {SubmitEvent} event */
@@ -1363,8 +1406,8 @@
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={apiKeys.saving}
-          onclick={bulkRevokeSelectedAPIKeys}
+          disabled={apiKeys.saving || deleteConfirmBusy || selectedEditableAPIKeys.length === 0}
+          onclick={openBulkDeleteConfirm}
         >
           Delete
         </button>
@@ -1500,7 +1543,8 @@
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
-              onclick={() => deleteKey(key)}
+              disabled={apiKeys.saving || deleteConfirmBusy}
+              onclick={(event) => openDeleteConfirmKey(key, event)}
               title={key.revokedAt ? 'Permanently delete key' : 'Delete key'}
               aria-label={key.revokedAt ? 'Permanently delete key' : 'Delete key'}
             >
@@ -1561,5 +1605,51 @@
     </div>
   </div>
 </section>
+
+{#if deleteConfirmKeyPopover}
+  <div
+    class="fixed z-50 w-72 rounded-xl border border-[#ededed] bg-white p-4 shadow-[0_4px_16px_rgba(13,13,13,0.08)]"
+    style="top: {deleteConfirmKeyPopover.top}px; left: {deleteConfirmKeyPopover.left}px;"
+  >
+    <p class="text-sm font-medium text-[#0d0d0d]">
+      {deleteConfirmKeyPopover.bulk
+        ? 'Delete selected API keys?'
+        : deleteConfirmKey?.revokedAt
+          ? 'Permanently delete this API key?'
+          : 'Delete this API key?'}
+    </p>
+    <p class="mt-1 text-sm text-[#6e6e6e]">
+      {deleteConfirmKeyPopover.bulk
+        ? `${selectedEditableAPIKeys.length} selected key${selectedEditableAPIKeys.length === 1 ? '' : 's'}`
+        : deleteConfirmKey?.revokedAt
+          ? `${deleteConfirmKey.name}. This cannot be undone.`
+          : deleteConfirmKey?.name || 'this key'}
+    </p>
+    <div class="mt-3 flex justify-end gap-2">
+      <button
+        class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+        type="button"
+        disabled={deleteConfirmBusy}
+        onclick={closeDeleteConfirmKeyPopover}
+      >
+        Cancel
+      </button>
+      <button
+        class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+        type="button"
+        disabled={deleteConfirmBusy || (deleteConfirmKeyPopover.bulk && selectedEditableAPIKeys.length === 0)}
+        onclick={confirmDeleteKey}
+      >
+        {deleteConfirmBusy
+          ? 'Deleting'
+          : deleteConfirmKeyPopover.bulk
+            ? `Delete ${selectedEditableAPIKeys.length}`
+            : deleteConfirmKey?.revokedAt
+              ? 'Permanently delete'
+              : 'Delete'}
+      </button>
+    </div>
+  </div>
+{/if}
 
 </AuthGate>
