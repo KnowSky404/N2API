@@ -20,7 +20,6 @@
     ScrollText,
     Activity,
     Fingerprint,
-    AlertTriangle,
     PanelLeftClose,
     PanelLeftOpen,
     CircleUser,
@@ -40,8 +39,7 @@
     { href: '/api-keys', label: 'API Keys', icon: Key },
     { href: '/request-logs', label: 'Request Logs', icon: ScrollText },
     { href: '/ops', label: 'Ops', icon: Activity },
-    { href: '/fingerprints', label: 'Fingerprints', icon: Fingerprint },
-    { href: '/error-passthrough', label: 'Error rules', icon: AlertTriangle }
+    { href: '/fingerprints', label: 'Fingerprints', icon: Fingerprint }
   ];
 
   const activePath = $derived(page.url.pathname);

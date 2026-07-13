@@ -14,8 +14,7 @@ const expectedFiles = [
   'src/routes/api-keys/+page.svelte',
   'src/routes/request-logs/+page.svelte',
   'src/routes/ops/+page.svelte',
-  'src/routes/fingerprints/+page.svelte',
-  'src/routes/error-passthrough/+page.svelte'
+  'src/routes/fingerprints/+page.svelte'
 ];
 
 const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
@@ -45,10 +44,12 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Error rules', 'Sign out', 'Change password', 'Update', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Update', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
+  assert.doesNotMatch(layout, /label:\s*'Error rules'/);
+  assert.equal(existsSync('src/routes/error-passthrough/+page.svelte'), false, 'error rules page should be removed');
   assert.match(layout, /changePassword/);
   assert.match(layout, /changePasswordForm\.currentPassword/);
   assert.match(layout, /changePasswordForm\.newPassword/);
@@ -1118,7 +1119,6 @@ test('route pages use shared AuthGate instead of duplicate login forms', () => {
     { name: 'request-logs', path: 'src/routes/request-logs/+page.svelte' },
     { name: 'ops', path: 'src/routes/ops/+page.svelte' },
     { name: 'fingerprints', path: 'src/routes/fingerprints/+page.svelte' },
-    { name: 'error-passthrough', path: 'src/routes/error-passthrough/+page.svelte' },
   ];
   for (const page of pages) {
     const src = readFileSync(page.path, 'utf8');
