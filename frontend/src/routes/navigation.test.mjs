@@ -1309,14 +1309,27 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   // Biaxial scroll container with sticky header
   assert.match(requestLogsPage, /overflow-auto max-h-\[65vh\]/);
   assert.match(requestLogsPage, /sticky left-0 top-0/);
-  assert.match(requestLogsPage, /sticky right-0 top-0/);
+  assert.match(requestLogsPage, /md:sticky md:right-0/);
 
   // Sticky left Model and right Actions columns
   assert.match(requestLogsPage, /sticky left-0/);
-  assert.match(requestLogsPage, /sticky right-0/);
+  assert.match(requestLogsPage, /md:sticky md:right-0/);
   assert.match(requestLogsPage, />Actions</);
   assert.match(requestLogsPage, />Edit</);
   assert.match(requestLogsPage, />Remove</);
+
+  // Prices match OpenAI's user-facing USD per 1M tokens presentation while
+  // retaining integer micro-USD values in the API state.
+  assert.match(requestLogsPage, /Input \(\$\/1M tokens\)/);
+  assert.match(requestLogsPage, /Cached input \(\$\/1M tokens\)/);
+  assert.match(requestLogsPage, /Output \(\$\/1M tokens\)/);
+  assert.doesNotMatch(requestLogsPage, /µ\$\/M/);
+  assert.doesNotMatch(requestLogsPage, /USD micro-prices/);
+  assert.match(requestLogsPage, /prices shown in USD per 1M tokens/);
+  assert.match(requestLogsPage, /Number\(value \?\? 0\) \/ 1_000_000/);
+  assert.match(requestLogsPage, /padEnd\(2, '0'\)/);
+  assert.match(requestLogsPage, /Math\.round\(dollarsPerMillion \* 1_000_000\)/);
+  assert.match(requestLogsPage, /step="0\.000001"/);
 
   // Delete confirmation uses fixed popover positioned from viewport coordinates
   // Remove button is no longer wrapped in a relative container for the popover

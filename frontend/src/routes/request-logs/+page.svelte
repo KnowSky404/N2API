@@ -508,11 +508,27 @@
   }
 
   /** @param {number | null | undefined} value */
-  function formatPricingValue(value) {
-    return String(Number(value ?? 0));
+  function formatPricingInputValue(value) {
+    const [whole, fraction] = (Number(value ?? 0) / 1_000_000).toFixed(6).split('.');
+    return `${whole}.${fraction.replace(/0+$/, '').padEnd(2, '0')}`;
   }
 
+  /** @param {number | null | undefined} value */
+  function formatPricingValue(value) {
+    return `$${formatPricingInputValue(value)}`;
+  }
 
+  /**
+   * @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row
+   * @param {'inputMicrousdPerMillion'|'cachedInputMicrousdPerMillion'|'outputMicrousdPerMillion'|'longInputMicrousdPerMillion'|'longCachedInputMicrousdPerMillion'|'longOutputMicrousdPerMillion'} field
+   * @param {Event & { currentTarget: HTMLInputElement }} event
+   */
+  function updatePricingValue(row, field, event) {
+    const dollarsPerMillion = Number(event.currentTarget.value);
+    row[field] = Number.isFinite(dollarsPerMillion) && dollarsPerMillion >= 0
+      ? Math.round(dollarsPerMillion * 1_000_000)
+      : 0;
+  }
 
   function openSyncConfirmModal() {
     showSyncConfirmModal = true;
@@ -711,7 +727,7 @@
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
         <h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Pricing</h2>
-        <p class="mt-1 text-sm text-[#6e6e6e]">Official OpenAI Standard pricing — USD micro-prices per 1M tokens for historical estimates.</p>
+      <p class="mt-1 text-sm text-[#6e6e6e]">Official OpenAI Standard pricing — prices shown in USD per 1M tokens for historical estimates.</p>
       </div>
       <div class="ml-auto flex flex-wrap items-center justify-end gap-3">
         {#if usagePricing.deletionCandidates?.length}
@@ -790,13 +806,13 @@
         <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
           <tr>
             <th class="sticky left-0 top-0 z-20 bg-[#f5f5f5] px-4 py-3 font-medium shadow-[8px_0_12px_rgba(255,255,255,0.85)]">Model</th>
-            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Input µ$/M</th>
-            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Cached input µ$/M</th>
-            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Output µ$/M</th>
-            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long input µ$/M</th>
-            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long cached input µ$/M</th>
-            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long output µ$/M</th>
-            <th class="sticky right-0 top-0 z-20 bg-[#f5f5f5] px-3 py-3 text-right font-medium shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Input ($/1M tokens)</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Cached input ($/1M tokens)</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Output ($/1M tokens)</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long input ($/1M tokens)</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long cached input ($/1M tokens)</th>
+            <th class="sticky top-0 z-10 bg-[#f5f5f5] px-4 py-3 font-medium">Long output ($/1M tokens)</th>
+            <th class="top-0 z-20 bg-[#f5f5f5] px-3 py-3 text-right font-medium md:sticky md:right-0 md:shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-[#ededed]">
@@ -821,47 +837,47 @@
                 </td>
                 <td class="px-4 py-3">
                   {#if isEditing}
-                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.inputMicrousdPerMillion} />
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.inputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'inputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.inputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
                   {#if isEditing}
-                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.cachedInputMicrousdPerMillion} />
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.cachedInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'cachedInputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.cachedInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
                   {#if isEditing}
-                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.outputMicrousdPerMillion} />
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.outputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'outputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.outputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
                   {#if isEditing}
-                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longInputMicrousdPerMillion} />
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.longInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'longInputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
                   {#if isEditing}
-                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longCachedInputMicrousdPerMillion} />
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.longCachedInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'longCachedInputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longCachedInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
                 <td class="px-4 py-3">
                   {#if isEditing}
-                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="1" bind:value={row.longOutputMicrousdPerMillion} />
+                    <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.longOutputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'longOutputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longOutputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                <td class="sticky right-0 bg-white px-3 py-3 shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+                <td class="bg-white px-3 py-3 md:sticky md:right-0 md:shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
                   <div class="flex justify-end gap-2 whitespace-nowrap">
                     {#if isEditing}
                       <button class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={commitPricingRow}>Done</button>
