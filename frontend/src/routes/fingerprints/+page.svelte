@@ -173,6 +173,38 @@
       </section>
     {/if}
 
+    <section class="rounded-lg border border-[#ededed] bg-white">
+      <div class="border-b border-[#ededed] px-4 py-3">
+        <h3 class="text-base font-semibold text-[#0d0d0d]">System sending defaults</h3>
+      </div>
+      <div class="ui-table-shell overflow-x-auto">
+        <table class="ui-table w-full min-w-[720px] text-sm">
+          <thead>
+            <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
+              <th class="px-4 py-3">Account type</th>
+              <th class="px-4 py-3">Default identity</th>
+              <th class="px-4 py-3">HTTP headers</th>
+              <th class="px-4 py-3">TLS</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-[#ededed]">
+            <tr>
+              <td class="px-4 py-3 font-medium text-[#0d0d0d]">Codex OAuth</td>
+              <td class="px-4 py-3 text-[#3c3c3c]">Default Codex CLI</td>
+              <td class="px-4 py-3 text-[#3c3c3c]">Codex TUI headers</td>
+              <td class="px-4 py-3 text-[#3c3c3c]">Default transport</td>
+            </tr>
+            <tr>
+              <td class="px-4 py-3 font-medium text-[#0d0d0d]">API upstream</td>
+              <td class="px-4 py-3 text-[#3c3c3c]">Default API upstream (pass-through)</td>
+              <td class="px-4 py-3 text-[#3c3c3c]">Client headers; upstream bearer token</td>
+              <td class="px-4 py-3 text-[#3c3c3c]">Default transport</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- Form modal -->
     {#if showForm}
       <section class="rounded-lg border border-[#ededed] bg-white p-6">

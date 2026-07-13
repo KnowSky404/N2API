@@ -655,7 +655,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
                   class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                   bind:value={apiUpstreamForm.fingerprintProfileId}
                 >
-                  <option value="0">No fingerprint profile</option>
+                  <option value="0">Default API upstream (pass-through)</option>
                   {#each fingerprintProfiles.items as fp}
                     <option value={String(fp.id)}>{fp.name}</option>
                   {/each}
@@ -1109,7 +1109,7 @@ Enabled
                   updateProviderAccountFingerprintProfile(account, target.value);
                 }}
               >
-                <option value="0">None</option>
+                <option value="0">{account.accountType === 'api_upstream' ? 'Default API upstream (pass-through)' : 'Default Codex CLI'}</option>
                 {#each fingerprintProfiles.items as fp}
                   <option value={fp.id}>{fp.name}</option>
                 {/each}

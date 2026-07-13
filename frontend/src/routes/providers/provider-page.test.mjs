@@ -234,8 +234,7 @@ test('provider account create forms can bind fingerprint profiles', () => {
   assert.match(adminStateSource, /fingerprintProfileId: account \? account\.fingerprintProfileId \?\? 0 : Number\(providerConnectForm\.fingerprintProfileId\)/);
   assert.match(adminStateSource, /fingerprintProfileId: Number\(apiUpstreamForm\.fingerprintProfileId\)/);
   assert.match(source, /<option value="0">Default Codex CLI<\/option>/);
-  assert.match(source, /<option value="0">No fingerprint profile<\/option>/);
-  assert.match(source, /<option value="0">None<\/option>/);
+  assert.match(source, /<option value="0">Default API upstream \(pass-through\)<\/option>/);
 
   // Confirm each context-specific label is correct via source slices
   const providerConnectSlice = source.slice(
@@ -248,13 +247,15 @@ test('provider account create forms can bind fingerprint profiles', () => {
     source.indexOf('apiUpstreamForm.fingerprintProfileId'),
     source.indexOf('apiUpstreamForm.fingerprintProfileId') + 300
   );
-  assert.match(apiUpstreamSlice, /<option value="0">No fingerprint profile<\/option>/);
+  assert.match(apiUpstreamSlice, /<option value="0">Default API upstream \(pass-through\)<\/option>/);
 
   const editAccountSlice = source.slice(
     source.lastIndexOf('value={account.fingerprintProfileId ?? 0}'),
     source.lastIndexOf('value={account.fingerprintProfileId ?? 0}') + 500
   );
-  assert.match(editAccountSlice, /<option value="0">None<\/option>/);
+  assert.match(editAccountSlice, /account\.accountType === 'api_upstream'/);
+  assert.match(editAccountSlice, /Default API upstream \(pass-through\)/);
+  assert.match(editAccountSlice, /Default Codex CLI/);
 });
 
 test('provider account state sends fingerprint profile on new account creation', async () => {
