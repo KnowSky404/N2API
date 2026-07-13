@@ -819,12 +819,25 @@ test('api keys page disables keys reversibly', () => {
 });
 
 test('api keys action buttons stay compact on one row', () => {
+  assert.match(apiKeysPage, /min-w-0 max-w-full overflow-x-hidden/);
   assert.match(apiKeysPage, /whitespace-nowrap/);
   assert.match(apiKeysPage, /inline-flex items-center justify-end gap-1/);
   assert.match(apiKeysPage, /class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center/);
   assert.match(apiKeysPage, /<Pencil class="size-4"/);
   assert.match(apiKeysPage, /<ScrollText class="size-4"/);
   assert.match(apiKeysPage, /<Trash2 class="size-4"/);
+});
+
+test('api keys page physically deletes only an already deleted key after confirmation', () => {
+  assert.match(apiKeysPage, /deleteRevokedKey/);
+  assert.match(apiKeysPage, /confirm\(/);
+  assert.match(apiKeysPage, /Permanently delete/);
+  assert.match(apiKeysPage, /if \(!key\.revokedAt\)/);
+  assert.match(apiKeysPage, /await deleteRevokedKey\(key\.id\)/);
+  assert.match(adminState, /export async function deleteRevokedKey/);
+  assert.match(adminState, /\/api\/admin\/keys\/\$\{id\}/);
+  assert.match(adminState, /method: 'DELETE'/);
+  assert.match(adminState, /apiKeys\.items = apiKeys\.items\.filter/);
 });
 
 test('route UI uses the pricing-derived shared component contract', () => {

@@ -225,6 +225,7 @@ func main() {
 		slog.Error("admin bootstrap failed", "error", err)
 		os.Exit(1)
 	}
+	go runAPIKeyCleanup(ctx, adminService, time.Hour)
 
 	providerRepo := store.NewProviderRepository(pool)
 	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
@@ -292,6 +293,33 @@ func main() {
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			slog.Error("server shutdown failed", "error", err)
 			os.Exit(1)
+		}
+	}
+}
+
+func runAPIKeyCleanup(ctx context.Context, service *admin.Service, interval time.Duration) {
+	cleanup := func() {
+		deleted, err := service.PurgeExpiredAPIKeys(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("api key cleanup failed", "error", err)
+			}
+			return
+		}
+		if deleted > 0 {
+			slog.Info("physically deleted expired API keys", "count", deleted)
+		}
+	}
+
+	cleanup()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
 		}
 	}
 }

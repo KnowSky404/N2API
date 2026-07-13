@@ -37,6 +37,7 @@ type AdminService interface {
 	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
 	GetAPIKeySecret(ctx context.Context, id int64) (string, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
+	DeleteRevokedAPIKey(ctx context.Context, id int64) error
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error)
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (admin.APIKey, error)
@@ -405,6 +406,23 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]admin.APIKey{"key": key})
+	}))
+
+	mux.HandleFunc("DELETE /api/admin/keys/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		id, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		if err := admins.DeleteRevokedAPIKey(r.Context(), id); err != nil {
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 
 	mux.HandleFunc("PATCH /api/admin/keys/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

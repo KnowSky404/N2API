@@ -39,6 +39,8 @@ func (s fakeAutoTestStatusSource) ProviderAccountAutoTestStatus() provider.AutoT
 
 type fakeAdminService struct {
 	keys                 []admin.APIKey
+	deletedKeyID         int64
+	deleteKeyErr         error
 	logs                 []admin.RequestLog
 	requestLogFilter     admin.RequestLogFilter
 	errorOnEmptyLogout   bool
@@ -266,6 +268,11 @@ func (s *fakeAdminService) RevokeAPIKey(_ context.Context, id int64) (admin.APIK
 		}
 	}
 	return admin.APIKey{}, admin.ErrNotFound
+}
+
+func (s *fakeAdminService) DeleteRevokedAPIKey(_ context.Context, id int64) error {
+	s.deletedKeyID = id
+	return s.deleteKeyErr
 }
 
 func (s *fakeAdminService) UpdateAPIKeyName(_ context.Context, id int64, name string) (admin.APIKey, error) {
@@ -1430,12 +1437,44 @@ func TestListAPIKeysIncludesPhysicalDeleteAtForRevokedKeys(t *testing.T) {
 	if len(body.Keys) != 2 {
 		t.Fatalf("keys length = %d, want 2", len(body.Keys))
 	}
-	want := revokedAt.Add(30 * 24 * time.Hour)
+	want := revokedAt.Add(7 * 24 * time.Hour)
 	if body.Keys[0].ID != 7 || body.Keys[0].PhysicalDeleteAt == nil || !body.Keys[0].PhysicalDeleteAt.Equal(want) {
 		t.Fatalf("revoked key physicalDeleteAt = %+v, want %s", body.Keys[0], want.Format(time.RFC3339))
 	}
 	if body.Keys[1].ID != 8 || body.Keys[1].PhysicalDeleteAt != nil {
 		t.Fatalf("active key physicalDeleteAt = %+v, want nil", body.Keys[1])
+	}
+}
+
+func TestDeleteRevokedAPIKeyParsesIDAndReturnsNoContent(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/keys/7", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s, want 204", recorder.Code, recorder.Body.String())
+	}
+	if admins.deletedKeyID != 7 {
+		t.Fatalf("deleted key ID = %d, want 7", admins.deletedKeyID)
+	}
+}
+
+func TestDeleteRevokedAPIKeyReturnsNotFoundForNonRevokedKey(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.deleteKeyErr = admin.ErrNotFound
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/keys/7", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s, want 404", recorder.Code, recorder.Body.String())
 	}
 }
 

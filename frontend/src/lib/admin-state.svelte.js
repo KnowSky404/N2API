@@ -3366,6 +3366,24 @@ export async function revokeKey(id) {
   }
 }
 
+/** @param {number} id */
+export async function deleteRevokedKey(id) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  apiKeys.error = '';
+
+  try {
+    await requestJSON(`/api/admin/keys/${id}`, { method: 'DELETE' });
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.items = apiKeys.items.filter((key) => key.id !== id);
+    delete selectedAPIKeyIds[String(id)];
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
+    apiKeys.error = error instanceof Error ? error.message : 'Failed to permanently delete API key';
+  }
+}
+
 
 
 /**

@@ -22,7 +22,7 @@ const (
 	maxRequestLogQueryLen         = 200
 	APIKeyModelPolicyAll          = "all"
 	APIKeyModelPolicySelected     = "selected"
-	APIKeyPhysicalDeleteRetention = 30 * 24 * time.Hour
+	APIKeyPhysicalDeleteRetention = 7 * 24 * time.Hour
 	RequestLogStatusAll           = "all"
 	RequestLogStatusSuccess       = "success"
 	RequestLogStatusClientError   = "client_error"
@@ -297,6 +297,7 @@ type Repository interface {
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
 	PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error)
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
+	DeleteRevokedAPIKey(ctx context.Context, id int64) error
 	GetAPIKeyEncryptedSecret(ctx context.Context, id int64) (string, error)
 	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error)
@@ -520,15 +521,23 @@ func (s *Service) GetAPIKeySecret(ctx context.Context, id int64) (string, error)
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
-	cutoff := time.Now().Add(-APIKeyPhysicalDeleteRetention)
-	if _, err := s.repo.PurgeRevokedAPIKeys(ctx, cutoff); err != nil {
+	if _, err := s.PurgeExpiredAPIKeys(ctx); err != nil {
 		return nil, err
 	}
 	return s.repo.ListAPIKeys(ctx)
 }
 
+func (s *Service) PurgeExpiredAPIKeys(ctx context.Context) (int64, error) {
+	cutoff := s.now().Add(-APIKeyPhysicalDeleteRetention)
+	return s.repo.PurgeRevokedAPIKeys(ctx, cutoff)
+}
+
 func (s *Service) RevokeAPIKey(ctx context.Context, id int64) (APIKey, error) {
 	return s.repo.RevokeAPIKey(ctx, id)
+}
+
+func (s *Service) DeleteRevokedAPIKey(ctx context.Context, id int64) error {
+	return s.repo.DeleteRevokedAPIKey(ctx, id)
 }
 
 func (s *Service) UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error) {

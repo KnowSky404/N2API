@@ -11,6 +11,7 @@
     copyAPIKeySecret,
     copySecret,
     createKey,
+    deleteRevokedKey,
     formatCostMicrousd,
     formatDate,
     formatTokens,
@@ -293,7 +294,7 @@
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
   function keyPhysicalDeleteTitle(key) {
     if (!key.revokedAt) return keyStatusLabel(key);
-    const value = key.physicalDeleteAt ? formatDate(key.physicalDeleteAt) : '30 days after deletion';
+    const value = key.physicalDeleteAt ? formatDate(key.physicalDeleteAt) : '7 days after deletion';
     return `Physical delete after ${value}`;
   }
 
@@ -304,6 +305,16 @@
 
   function closeKeyLogsModal() {
     logsKeyId = 0;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  async function deleteKey(key) {
+    if (!key.revokedAt) {
+      await revokeKey(key.id);
+      return;
+    }
+    if (!confirm(`Permanently delete "${key.name}"? This cannot be undone.`)) return;
+    await deleteRevokedKey(key.id);
   }
 
   /** @param {SubmitEvent} event */
@@ -472,7 +483,7 @@
 </svelte:head>
 
 <AuthGate>
-<section class="rounded-lg border border-[#ededed] bg-white p-6">
+<section class="min-w-0 max-w-full overflow-x-hidden rounded-lg border border-[#ededed] bg-white p-6">
   <div class="flex flex-wrap items-center justify-between gap-4">
     <div>
 <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">API keys</h2>
@@ -1489,10 +1500,9 @@
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
-              disabled={Boolean(key.revokedAt)}
-              onclick={() => revokeKey(key.id)}
-              title="Delete key"
-              aria-label="Delete key"
+              onclick={() => deleteKey(key)}
+              title={key.revokedAt ? 'Permanently delete key' : 'Delete key'}
+              aria-label={key.revokedAt ? 'Permanently delete key' : 'Delete key'}
             >
               <Trash2 class="size-4" aria-hidden="true" />
               <span class="sr-only">Delete key</span>

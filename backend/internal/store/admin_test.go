@@ -493,6 +493,37 @@ func TestPurgeRevokedAPIKeysRemovesOnlyExpiredRevokedKeys(t *testing.T) {
 	}
 }
 
+func TestDeleteRevokedAPIKeyRejectsActiveAndDeletesRevokedKey(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAdminRepository(t)
+	active, err := repo.CreateAPIKey(ctx, "active", "hash-physical-active", "n2_active", "encrypted-active")
+	if err != nil {
+		t.Fatalf("CreateAPIKey active returned error: %v", err)
+	}
+	revoked, err := repo.CreateAPIKey(ctx, "deleted", "hash-physical-deleted", "n2_deleted", "encrypted-deleted")
+	if err != nil {
+		t.Fatalf("CreateAPIKey deleted returned error: %v", err)
+	}
+	if _, err := repo.RevokeAPIKey(ctx, revoked.ID); err != nil {
+		t.Fatalf("RevokeAPIKey returned error: %v", err)
+	}
+
+	if err := repo.DeleteRevokedAPIKey(ctx, active.ID); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("DeleteRevokedAPIKey active error = %v, want ErrNotFound", err)
+	}
+	if err := repo.DeleteRevokedAPIKey(ctx, revoked.ID); err != nil {
+		t.Fatalf("DeleteRevokedAPIKey revoked returned error: %v", err)
+	}
+
+	keys, err := repo.ListAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListAPIKeys returned error: %v", err)
+	}
+	if len(keys) != 1 || keys[0].ID != active.ID {
+		t.Fatalf("keys = %+v, want only active key %d", keys, active.ID)
+	}
+}
+
 func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()

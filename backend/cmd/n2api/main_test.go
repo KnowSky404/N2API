@@ -67,6 +67,8 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",
 		"go autoTestRunner.Run(ctx)",
+		"go runAPIKeyCleanup(ctx, adminService, time.Hour)",
+		"service.PurgeExpiredAPIKeys(ctx)",
 		"autoTestRunner, os.DirFS(\"frontend/build\")",
 		"server.Shutdown",
 	} {

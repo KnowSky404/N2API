@@ -190,8 +190,9 @@ func TestGatewayDocumentationMentionsAPIKeyDisable(t *testing.T) {
 		for _, want := range []string{
 			"API keys have three visible states",
 			"disabled keys cannot authenticate gateway requests",
-			"30 day retention window",
-			"physically removed during API key listing cleanup",
+			"7 day retention window",
+			"physically removed by startup and hourly cleanup",
+			"physically deleted immediately with a second confirmed Delete action",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in API key disable documentation", path, want)

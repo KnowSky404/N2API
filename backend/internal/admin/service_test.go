@@ -465,8 +465,8 @@ func TestListAPIKeysPurgesRevokedKeysPastRetention(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	now := time.Now().UTC()
-	oldRevokedAt := now.Add(-31 * 24 * time.Hour)
-	recentRevokedAt := now.Add(-2 * 24 * time.Hour)
+	oldRevokedAt := now.Add(-8 * 24 * time.Hour)
+	recentRevokedAt := now.Add(-6 * 24 * time.Hour)
 	repo.keys[1] = memoryAPIKey{APIKey: APIKey{
 		ID:        1,
 		Name:      "old deleted",
@@ -506,6 +506,35 @@ func TestListAPIKeysPurgesRevokedKeysPastRetention(t *testing.T) {
 	}
 	if _, ok := repo.keys[3]; !ok {
 		t.Fatalf("active key was purged")
+	}
+}
+
+func TestDeleteRevokedAPIKeyOnlyDeletesLogicallyDeletedKey(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	active, err := service.CreateAPIKey(context.Background(), "active")
+	if err != nil {
+		t.Fatalf("CreateAPIKey active returned error: %v", err)
+	}
+	revoked, err := service.CreateAPIKey(context.Background(), "deleted")
+	if err != nil {
+		t.Fatalf("CreateAPIKey deleted returned error: %v", err)
+	}
+	if _, err := service.RevokeAPIKey(context.Background(), revoked.Key.ID); err != nil {
+		t.Fatalf("RevokeAPIKey returned error: %v", err)
+	}
+
+	if err := service.DeleteRevokedAPIKey(context.Background(), active.Key.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteRevokedAPIKey active error = %v, want ErrNotFound", err)
+	}
+	if err := service.DeleteRevokedAPIKey(context.Background(), revoked.Key.ID); err != nil {
+		t.Fatalf("DeleteRevokedAPIKey revoked returned error: %v", err)
+	}
+	if _, ok := repo.keys[active.Key.ID]; !ok {
+		t.Fatal("active key was physically deleted")
+	}
+	if _, ok := repo.keys[revoked.Key.ID]; ok {
+		t.Fatal("revoked key remained after physical deletion")
 	}
 }
 
@@ -1555,6 +1584,15 @@ func (r *memoryRepo) RevokeAPIKey(_ context.Context, id int64) (APIKey, error) {
 	key.RevokedAt = &now
 	r.keys[id] = key
 	return key.APIKey, nil
+}
+
+func (r *memoryRepo) DeleteRevokedAPIKey(_ context.Context, id int64) error {
+	key, ok := r.keys[id]
+	if !ok || key.RevokedAt == nil {
+		return ErrNotFound
+	}
+	delete(r.keys, id)
+	return nil
 }
 
 func (r *memoryRepo) UpdateAPIKeyName(_ context.Context, id int64, name string) (APIKey, error) {

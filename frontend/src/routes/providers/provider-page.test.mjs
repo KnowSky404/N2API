@@ -1341,6 +1341,9 @@ test('api keys table keeps lifecycle actions in status and action cells', () => 
   assert.match(apiKeysSource, /role="switch"/);
   assert.match(apiKeysSource, /onchange=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
   assert.match(apiKeysSource, /Delete/);
+  assert.match(apiKeysSource, /deleteRevokedKey/);
+  assert.match(apiKeysSource, /Permanently delete/);
+  assert.match(apiKeysSource, /confirm\(/);
   // JS identifiers bulkRevokeSelectedAPIKeys / revokeKey contain 'Revoke'; check visible text only
   assert.doesNotMatch(apiKeysSource, />\s*Revoke/);
   assert.doesNotMatch(apiKeysSource, /href=\{`\/request-logs\?clientKeyId=\$\{key\.id\}`\}/);
