@@ -143,7 +143,7 @@
           </div>
         {/if}
         <button
-          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#8e8e8e] hover:bg-[#e8e8e8] hover:text-[#3c3c3c]"
+          class="ui-button ui-button--icon flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#8e8e8e] hover:bg-[#e8e8e8] hover:text-[#3c3c3c]"
           class:ml-auto={!sidebarCollapsed}
           class:mx-auto={sidebarCollapsed}
           onclick={toggleSidebar}
@@ -245,7 +245,7 @@
       >
         <div class="flex items-center gap-2 min-w-0">
           <button
-            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+            class="ui-button ui-button--icon flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
             onclick={() => (mobileSidebarOpen = !mobileSidebarOpen)}
             aria-label="Toggle menu"
           >
@@ -262,7 +262,7 @@
         <div class="flex shrink-0 items-center gap-2">
           {#if session.authenticated}
             <button
-              class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[#3c3c3c] hover:bg-[#f5f5f5]"
+              class="ui-button ui-button--md flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[#3c3c3c] hover:bg-[#f5f5f5]"
               onclick={toggleUserDropdown}
             >
               <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
@@ -282,7 +282,7 @@
               <p class="text-sm font-semibold text-[#6e6e6e]">N2API</p>
             </div>
             <button
-              class="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#8e8e8e] hover:bg-[#e8e8e8] hover:text-[#3c3c3c]"
+              class="ui-button ui-button--icon ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[#8e8e8e] hover:bg-[#e8e8e8] hover:text-[#3c3c3c]"
               onclick={() => (mobileSidebarOpen = false)}
               aria-label="Close menu"
             >
@@ -334,14 +334,14 @@
                 </div>
               </div>
               <button
-                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
+                class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
                 onclick={openPasswordModal}
               >
                 <Lock class="h-4 w-4 text-[#8e8e8e]" />
                 Change password
               </button>
               <button
-                class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
+                class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
                 onclick={logout}
               >
                 <LogOut class="h-4 w-4 text-[#8e8e8e]" />
@@ -372,14 +372,14 @@
       <p class="text-xs text-[#8e8e8e]">Signed in</p>
     </div>
     <button
-      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+      class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
       onclick={openPasswordModal}
     >
       <Lock class="h-4 w-4 text-[#6e6e6e]" />
       Change password
     </button>
     <button
-      class="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+      class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
       onclick={logout}
     >
       <LogOut class="h-4 w-4 text-[#6e6e6e]" />
@@ -391,9 +391,9 @@
 <!-- Password change modal -->
 {#if passwordModalOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onclick={(e) => e.target === e.currentTarget && closePasswordModal()}>
-    <div class="w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
-      <h2 class="text-lg font-semibold text-[#0d0d0d]">Change password</h2>
+  <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30" role="dialog" aria-modal="true" aria-labelledby="change-password-title" tabindex="-1" onclick={(e) => e.target === e.currentTarget && closePasswordModal()} onkeydown={(e) => e.key === 'Escape' && closePasswordModal()}>
+    <div class="ui-modal-panel ui-modal-panel--sm w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+      <h2 id="change-password-title" class="text-lg font-semibold text-[#0d0d0d]">Change password</h2>
       <form class="mt-4" onsubmit={handleChangePassword}>
         <label class="block text-xs font-medium text-[#6e6e6e]">
           Current password
@@ -422,14 +422,14 @@
         {/if}
         <div class="mt-4 flex gap-2">
           <button
-            class="flex-1 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--md ui-button--secondary flex-1 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             type="button"
             onclick={closePasswordModal}
           >
             Cancel
           </button>
           <button
-            class="flex-1 rounded-md bg-[#0d0d0d] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--md ui-button--primary flex-1 rounded-md bg-[#0d0d0d] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             disabled={changePasswordForm.submitting}
           >
             {changePasswordForm.submitting ? 'Saving...' : 'Update'}

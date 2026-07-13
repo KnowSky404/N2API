@@ -295,12 +295,25 @@ playful.
 
 Buttons:
 
-- Primary: black background, white text, 8px radius, 10px 16px padding.
+- All text buttons use the shared `.ui-button` primitive. Page-level utilities
+  may control placement, width, or responsive wrapping but must not redefine
+  color, radius, typography, or control height.
+- Compact table, modal, pagination, and panel actions use `.ui-button--sm`:
+  32px minimum height, 12px type, and 10px horizontal padding. This is the
+  canonical pricing-page action size.
+- Standard form and page actions use `.ui-button--md`: 36px minimum height,
+  14px type, and 12px horizontal padding. Very dense secondary tools may use
+  `.ui-button--xs` at 28px; do not use it for primary actions.
+- Icon-only actions use `.ui-button--icon` at a stable 32px square and require
+  an accessible name plus tooltip/title when the icon is not self-explanatory.
+- Primary: black background, white text, 8px radius.
 - Secondary: white background, black text, hairline border.
 - Accent: teal background only for provider login, healthy status actions, or
   success path.
 - Destructive: text or outline first; filled red only for confirmed
   destructive actions.
+- Disabled controls retain their dimensions, use 60% opacity, and show a
+  disabled cursor. Focus-visible uses a 2px teal outline with 2px offset.
 
 Inputs:
 
@@ -312,10 +325,55 @@ Inputs:
 
 Tables and logs:
 
+- Use `.ui-table-shell` and `.ui-table` for every semantic data table. The
+  shell owns the white surface, 8px radius, hairline border, and horizontal
+  overflow; pages only add a minimum table width and section margin.
+- Use `.ui-table-shell--scroll` for long configuration tables. Its maximum
+  height is 65vh. Sticky headers use the muted panel surface; important
+  identity/action columns may remain sticky at the left/right edge.
+- Header cells use 12px/16px vertical/horizontal padding, 500 weight, muted
+  text, and the panel-muted background. Body rows use hairline separators and
+  a subtle neutral hover surface. Empty and loading rows use
+  `.ui-table-empty`, span all visible columns, and never resize the table.
 - Use compact rows with clear timestamp, provider, route, status, latency,
   and action columns.
 - Prefer tabular numbers for latency, counts, token usage, and status codes.
 - Use color sparingly: semantic status dot or badge, not full colored rows.
+- Search and filters sit above the table. Pagination sits below it using
+  `.ui-pagination`: `Showing x-y of n` on the left, page-size and Previous /
+  Page n / m / Next controls on the right. The default page size is 5 when a
+  page introduces local pagination; allowed options are 5, 10, and 20 unless
+  the dataset has a documented operational reason for a different set.
+
+Loading and async feedback:
+
+- A mutation or refresh that temporarily blocks one panel uses a relative
+  panel plus `.ui-loading-overlay`. The overlay is local to that panel, not
+  the whole application, and contains a teal rotating `LoaderCircle` plus the
+  exact lowercase label `thinking`.
+- Initial non-blocking fetches may use `.ui-loading-state` inline or inside a
+  `.ui-table-empty` row. Existing content should stay visible during a local
+  refresh whenever stale data remains useful.
+- The same busy boolean drives the overlay, related button disabled states,
+  and prevention of duplicate submit/close actions. A failed mutation restores
+  editable state and shows an error; success feedback is a transient top-right
+  notification rather than a persistent inline success block.
+
+Modals and confirmations:
+
+- Modal roots use `.ui-modal-backdrop`, `role="dialog"`, `aria-modal="true"`,
+  an accessible title, and Escape handling. Clicking the scrim may close a
+  reversible modal but must not close a busy or destructive confirmation.
+- Panels use `.ui-modal-panel` with an explicit `sm`, `md`, `lg`, or `xl`
+  width modifier. They have a 12px radius, hairline border, white surface,
+  subtle shadow, viewport-bounded height, and internal scrolling.
+- Footer actions use `.ui-modal-actions`; Cancel is secondary and precedes the
+  primary or destructive confirmation. Modal actions use the compact 32px
+  button size established by the pricing page.
+- Destructive table-row actions prefer a button-local Popconfirm rendered in
+  a fixed top-level layer so table overflow cannot clip it. Use a centered
+  modal only when the confirmation contains a list, form, or broader impact
+  that cannot fit safely in a compact popover.
 
 Badges:
 

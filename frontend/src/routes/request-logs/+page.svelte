@@ -665,7 +665,7 @@
         </select>
       </label>
       <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={usage.loading}
         onclick={() => loadUsageSummary(usage.range, usage.groupBy)}
@@ -707,8 +707,8 @@
     {/each}
   </div>
 
-  <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[760px] text-left text-sm">
+  <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+    <table class="ui-table w-full min-w-[760px] text-left text-sm">
       <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
         <tr>
           <th class="px-4 py-3 font-medium">Group</th>
@@ -724,11 +724,11 @@
       <tbody class="divide-y divide-[#ededed]">
         {#if usage.loading && !usage.current}
           <tr>
-            <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading usage summary...</td>
+            <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="8">Loading usage summary...</td>
           </tr>
         {:else if !usage.current?.rows?.length}
           <tr>
-            <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No usage in this range.</td>
+            <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No usage in this range.</td>
           </tr>
         {:else}
           {#each usage.current.rows as row}
@@ -760,7 +760,7 @@
 <section class="relative rounded-lg border border-[#ededed] bg-white p-6">
   <div>
     {#if pricingBusy}
-      <div class="absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-lg bg-white/85 backdrop-blur-[2px]" aria-label="Pricing operation in progress">
+      <div class="ui-loading-overlay absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-lg bg-white/85 backdrop-blur-[2px]" aria-label="Pricing operation in progress">
         <LoaderCircle class="h-8 w-8 animate-spin text-[#10a37f]" aria-hidden="true" />
         <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
       </div>
@@ -773,7 +773,7 @@
       <div class="ml-auto flex flex-wrap items-center justify-end gap-3">
         {#if usagePricing.deletionCandidates?.length}
           <button
-            class="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--sm ui-button--warning rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
             disabled={pricingBusy}
             onclick={openShutdownRemovalModal}
@@ -783,7 +783,7 @@
         {/if}
         {#if usagePricing.upcomingShutdowns?.length}
           <button
-            class="relative grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--icon ui-button--warning relative grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
             aria-label="Review upcoming model shutdowns"
             title="Review upcoming model shutdowns"
@@ -797,7 +797,7 @@
           </button>
         {/if}
         <button
-          class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
           disabled={pricingBusy}
           onclick={openSyncConfirmModal}
@@ -805,7 +805,7 @@
           {usagePricing.syncing ? 'Syncing' : 'Sync official'}
         </button>
         <button
-          class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
           type="button"
           disabled={pricingBusy}
           onclick={openAddPricingModal}
@@ -842,8 +842,8 @@
       </div>
     </div>
 
-    <div class="mt-5 overflow-auto max-h-[65vh] rounded-lg border border-[#ededed]">
-      <table class="w-full min-w-[1280px] text-left text-sm">
+    <div class="ui-table-shell ui-table-shell--scroll mt-5 overflow-auto max-h-[65vh] rounded-lg border border-[#ededed]">
+      <table class="ui-table w-full min-w-[1280px] text-left text-sm">
         <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
           <tr>
             <th class="sticky left-0 top-0 z-20 bg-[#f5f5f5] px-4 py-3 font-medium shadow-[8px_0_12px_rgba(255,255,255,0.85)]">Model</th>
@@ -859,11 +859,11 @@
         <tbody class="divide-y divide-[#ededed]">
           {#if !usagePricing.rows?.length}
             <tr>
-              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows configured. Add a model or sync official OpenAI Standard pricing.</td>
+              <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows configured. Add a model or sync official OpenAI Standard pricing.</td>
             </tr>
           {:else if sortedPricingRows.length === 0}
             <tr>
-              <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows match your search.</td>
+              <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No pricing rows match your search.</td>
             </tr>
           {:else}
             {#each paginatedPricingRows as row, index (row.model + '-' + (usagePricing.rows || []).indexOf(row))}
@@ -921,10 +921,10 @@
                 <td class="bg-white px-3 py-3 md:sticky md:right-0 md:shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
                   <div class="flex justify-end gap-2 whitespace-nowrap">
                     {#if isEditing}
-                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={commitPricingRow}>Done</button>
+                      <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={commitPricingRow}>Done</button>
                     {:else}
-                      <button class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={() => startEditingPricingRow(row)}>Edit</button>
-                        <button class="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={(e) => openDeleteConfirmPricingRow(row, e)}>Remove</button>
+                      <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={() => startEditingPricingRow(row)}>Edit</button>
+                        <button class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={(e) => openDeleteConfirmPricingRow(row, e)}>Remove</button>
                     {/if}
                   </div>
                 </td>
@@ -935,7 +935,7 @@
       </table>
     </div>
 
-    <div class="mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
+    <div class="ui-pagination mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
       <p class="tabular-nums">Showing {pricingPageSummary} of {sortedPricingRows.length}</p>
       <div class="flex flex-wrap items-center gap-3">
         <label class="flex items-center gap-2 font-medium text-[#3c3c3c]">
@@ -952,7 +952,7 @@
         </label>
         <div class="flex items-center gap-2">
           <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"
             disabled={normalizedPricingPage <= 1}
             onclick={() => pricingPage = Math.max(1, normalizedPricingPage - 1)}
@@ -961,7 +961,7 @@
           </button>
           <span class="tabular-nums text-[#3c3c3c]">Page {normalizedPricingPage} / {pricingPageCount}</span>
           <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"
             disabled={normalizedPricingPage >= pricingPageCount}
             onclick={() => pricingPage = Math.min(pricingPageCount, normalizedPricingPage + 1)}
@@ -979,7 +979,7 @@
     <div class="fixed right-4 top-20 z-50 max-w-sm rounded-lg border border-[#cce7db] bg-[#e8f5f0] p-4 shadow-lg">
       <div class="flex items-start justify-between gap-2">
         <p class="text-sm text-[#0a7a5e]">{closeSyncMessage}</p>
-        <button class="ml-2 shrink-0 text-[#0a7a5e] hover:text-[#08694a]" type="button" onclick={() => { closeSyncMessage = ''; }} aria-label="Close sync message">&times;</button>
+        <button class="ui-button ml-2 shrink-0 text-[#0a7a5e] hover:text-[#08694a]" type="button" onclick={() => { closeSyncMessage = ''; }} aria-label="Close sync message">&times;</button>
       </div>
     </div>
   {/if}
@@ -987,8 +987,8 @@
   {#if showSyncConfirmModal}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_interactive_supports_focus -->
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => { if (e.target === e.currentTarget) showSyncConfirmModal = false; }} onkeydown={(e) => { if (e.key === 'Escape') showSyncConfirmModal = false; }}>
-      <div class="mx-4 w-full max-w-md rounded-xl border border-[#ededed] bg-white p-6 shadow-lg">
+    <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => { if (e.target === e.currentTarget) showSyncConfirmModal = false; }} onkeydown={(e) => { if (e.key === 'Escape') showSyncConfirmModal = false; }}>
+      <div class="ui-modal-panel ui-modal-panel--sm mx-4 w-full max-w-md rounded-xl border border-[#ededed] bg-white p-6 shadow-lg">
         <h3 class="text-lg font-semibold text-[#0d0d0d]">Sync official OpenAI pricing</h3>
         <p class="mt-3 text-sm text-[#3c3c3c]">
           Compatible OpenAI Standard prices will be added or updated. Local-only pricing rows remain unchanged.
@@ -998,16 +998,16 @@
           <p><a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">Standard pricing</a></p>
           <p><a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/deprecations" target="_blank" rel="noopener noreferrer">Deprecations</a></p>
         </div>
-        <div class="mt-6 flex justify-end gap-3">
+        <div class="ui-modal-actions mt-6 flex justify-end gap-3">
           <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             type="button"
             onclick={() => showSyncConfirmModal = false}
           >
             Cancel
           </button>
           <button
-            class="rounded-lg bg-[#0d0d0d] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
             disabled={pricingBusy}
             onclick={confirmSyncOfficial}
@@ -1023,7 +1023,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_interactive_supports_focus -->
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-pricing-title"
@@ -1031,7 +1031,7 @@
       onclick={(event) => event.target === event.currentTarget && closeAddPricingModal()}
       onkeydown={handlePricingModalKeydown}
     >
-      <form class="max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg border border-[#ededed] bg-white p-5 shadow-xl sm:p-6" onsubmit={submitAddPricingModel}>
+      <form class="ui-modal-panel ui-modal-panel--lg max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg border border-[#ededed] bg-white p-5 shadow-xl sm:p-6" onsubmit={submitAddPricingModel}>
         <div>
           <h3 id="add-pricing-title" class="text-lg font-semibold text-[#0d0d0d]">Add pricing model</h3>
           <p class="mt-1 text-sm text-[#6e6e6e]">Enter prices in USD per 1M tokens.</p>
@@ -1072,9 +1072,9 @@
           <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{addPricingError}</p>
         {/if}
 
-        <div class="mt-6 flex justify-end gap-3">
-          <button class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={closeAddPricingModal}>Cancel</button>
-          <button class="rounded-lg bg-[#0d0d0d] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={pricingBusy}>{usagePricing.saving ? 'Adding' : 'Add model'}</button>
+        <div class="ui-modal-actions mt-6 flex justify-end gap-3">
+          <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={closeAddPricingModal}>Cancel</button>
+          <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={pricingBusy}>{usagePricing.saving ? 'Adding' : 'Add model'}</button>
         </div>
       </form>
     </div>
@@ -1082,7 +1082,7 @@
 
   {#if showUpcomingIgnoreModal}
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="upcoming-ignore-title"
@@ -1090,7 +1090,7 @@
       onclick={(event) => event.target === event.currentTarget && closeUpcomingIgnoreModal()}
       onkeydown={handlePricingModalKeydown}
     >
-      <div class="grid w-full max-w-lg gap-4 rounded-lg bg-white p-5 shadow-xl">
+      <div class="ui-modal-panel ui-modal-panel--md grid w-full max-w-lg gap-4 rounded-lg bg-white p-5 shadow-xl">
         <div class="flex items-start gap-3">
           <div class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-800">
             <TriangleAlert class="h-5 w-5" aria-hidden="true" />
@@ -1110,9 +1110,9 @@
             </div>
           {/each}
         </div>
-        <div class="flex justify-end gap-2">
+        <div class="ui-modal-actions flex justify-end gap-2">
           <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:opacity-60"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:opacity-60"
             type="button"
             disabled={pricingBusy}
             onclick={closeUpcomingIgnoreModal}
@@ -1120,7 +1120,7 @@
             Cancel
           </button>
           <button
-            class="rounded-lg bg-[#ef4146] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#d7373c] disabled:opacity-60"
+            class="ui-button ui-button--sm ui-button--danger-filled rounded-lg bg-[#ef4146] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#d7373c] disabled:opacity-60"
             type="button"
             disabled={pricingBusy || !usagePricing.upcomingShutdowns.length}
             onclick={confirmUpcomingIgnore}
@@ -1133,8 +1133,8 @@
   {/if}
 
   {#if showShutdownRemovalModal}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="shutdown-removal-title">
-      <div class="mx-4 w-full max-w-lg rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+    <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="shutdown-removal-title">
+      <div class="ui-modal-panel ui-modal-panel--md mx-4 w-full max-w-lg rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
         <h3 id="shutdown-removal-title" class="text-lg font-semibold text-[#0d0d0d]">Remove shut-down models</h3>
         <div class="mt-4 max-h-[50vh] overflow-y-auto rounded-lg border border-[#ededed] divide-y divide-[#ededed]">
           {#each usagePricing.deletionCandidates as item (item.model)}
@@ -1147,9 +1147,9 @@
             </label>
           {/each}
         </div>
-        <div class="mt-6 flex justify-end gap-3">
-          <button class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => showShutdownRemovalModal = false}>Cancel</button>
-          <button class="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy || selectedShutdownModels.length === 0} onclick={confirmShutdownRemoval}>Remove {selectedShutdownModels.length} models</button>
+        <div class="ui-modal-actions mt-6 flex justify-end gap-3">
+          <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => showShutdownRemovalModal = false}>Cancel</button>
+          <button class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy || selectedShutdownModels.length === 0} onclick={confirmShutdownRemoval}>Remove {selectedShutdownModels.length} models</button>
         </div>
       </div>
     </div>
@@ -1165,21 +1165,21 @@
 </p>
       <div class="flex items-center gap-2 mt-2">
         <a
-          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
+          class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
           href={exportRequestLogsURL("csv")}
           target="_blank" rel="noopener noreferrer"
         >
           Export CSV
         </a>
         <a
-          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
+          class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
           href={exportRequestLogsURL("json")}
           target="_blank" rel="noopener noreferrer"
         >
           Export JSON
         </a>
         <a
-          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
+          class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
           href={exportRequestLogsURL("jsonl")}
           target="_blank" rel="noopener noreferrer"
         >
@@ -1334,7 +1334,7 @@
         Only fallback requests
       </label>
       <button
-        class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={requestLogs.loading}
         onclick={loadRequestLogs}
@@ -1350,8 +1350,8 @@
     </p>
   {/if}
 
-  <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1560px] text-left text-sm">
+  <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+    <table class="ui-table w-full min-w-[1560px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Time</th>
@@ -1374,11 +1374,11 @@
 <tbody class="divide-y divide-[#ededed]">
   {#if requestLogs.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="15">Loading request logs...</td>
+      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="15">Loading request logs...</td>
     </tr>
   {:else if requestLogs.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="15">No gateway requests yet.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="15">No gateway requests yet.</td>
     </tr>
   {:else}
     {#each requestLogs.items as log}
@@ -1522,8 +1522,8 @@
     <p class="text-sm font-medium text-[#0d0d0d]">Remove this pricing row?</p>
     <p class="mt-1 text-sm text-[#6e6e6e]">{deleteConfirmPricingRow?.model || 'this row'}</p>
     <div class="mt-3 flex justify-end gap-2">
-      <button class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={closeDeleteConfirmPricingPopover}>Cancel</button>
-      <button class="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => deleteConfirmPricingRow && confirmRemovePricingRow(deleteConfirmPricingRow)}>Remove</button>
+      <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={closeDeleteConfirmPricingPopover}>Cancel</button>
+      <button class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => deleteConfirmPricingRow && confirmRemovePricingRow(deleteConfirmPricingRow)}>Remove</button>
     </div>
   </div>
 {/if}

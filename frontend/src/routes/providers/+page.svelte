@@ -52,7 +52,7 @@
   let accountEnabledFilter = $state('all');
   let accountSort = $state({ key: 'account', direction: 'asc' });
   let accountPage = $state(1);
-  let accountPageSize = $state(10);
+  let accountPageSize = $state(5);
   let addAccountModalOpen = $state(false);
   /** @type {'oauth' | 'api_upstream'} */
   let addAccountModalTab = $state('oauth');
@@ -378,7 +378,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
     </p>
     <div class="flex flex-wrap gap-2">
 <button
-  class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+  class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
   type="button"
   disabled={providerAccounts.loading || providerAccounts.saving || providerAccounts.items.length === 0}
   onclick={testAllProviderAccounts}
@@ -386,7 +386,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   Test all accounts
 </button>
 <button
-  class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+  class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
   type="button"
   disabled={providerAccounts.loading}
   onclick={loadProviderAccounts}
@@ -397,7 +397,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   </div>
 
   <button
-    class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60 inline-flex items-center gap-1.5"
+    class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60 inline-flex items-center gap-1.5"
     type="button"
     onclick={() => { addAccountModalOpen = true; }}
   >
@@ -408,13 +408,13 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   <!-- Add account modal -->
   {#if addAccountModalOpen}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
-    <div class="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh] overflow-y-auto" onclick={(e) => e.target === e.currentTarget && (addAccountModalOpen = false)} role="dialog" aria-modal="true" aria-label="Add account">
-      <div class="w-full max-w-xl rounded-xl border border-[#ededed] bg-white shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+    <div class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh] overflow-y-auto" onclick={(e) => e.target === e.currentTarget && (addAccountModalOpen = false)} role="dialog" aria-modal="true" aria-label="Add account">
+      <div class="ui-modal-panel ui-modal-panel--lg ui-modal-panel--flush w-full max-w-xl rounded-xl border border-[#ededed] bg-white shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
         <!-- Header -->
         <div class="flex items-center justify-between border-b border-[#ededed] px-6 py-4">
           <h2 class="text-lg font-semibold text-[#0d0d0d]">Add account</h2>
           <button
-            class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+            class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
             type="button"
             onclick={() => { addAccountModalOpen = false; }}
             aria-label="Close"
@@ -426,14 +426,14 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
         <!-- Tabs -->
         <div class="flex border-b border-[#ededed]">
           <button
-            class="flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'oauth' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
+            class="ui-button ui-button--md flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'oauth' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
             type="button"
             onclick={() => { addAccountModalTab = 'oauth'; }}
           >
             OAuth account
           </button>
           <button
-            class="flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'api_upstream' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
+            class="ui-button ui-button--md flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'api_upstream' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
             type="button"
             onclick={() => { addAccountModalTab = 'api_upstream'; }}
           >
@@ -501,7 +501,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
                   <div class="flex flex-wrap items-center justify-between gap-3">
                     <p class="text-sm font-medium text-[#0a7a5e]">OAuth authorization link</p>
                     <button
-                      class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                      class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
                       type="button"
                       onclick={copyAuthorizationURL}
                     >
@@ -516,14 +516,14 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
 
               <div class="flex items-center gap-3">
                 <button
-                  class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
                   type="submit"
                   disabled={provider.loading || !provider.data?.configured || provider.connecting}
                 >
                   {provider.connecting ? 'Generating link' : 'Generate OAuth link'}
                 </button>
                 <button
-                  class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                  class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
                   type="button"
                   onclick={() => { addAccountModalOpen = false; }}
                 >
@@ -553,7 +553,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
                 </label>
                 <div class="flex items-center gap-3">
                   <button
-                    class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                    class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
                     type="submit"
                     disabled={providerOAuth.completing || !providerOAuth.callbackUrl.trim()}
                   >
@@ -688,14 +688,14 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
 
               <div class="flex items-center gap-3">
                 <button
-                  class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
                   type="submit"
                   disabled={apiUpstreamForm.submitting}
                 >
                   {apiUpstreamForm.submitting ? 'Adding' : 'Add API upstream'}
                 </button>
                 <button
-                  class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                  class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
                   type="button"
                   onclick={() => { addAccountModalOpen = false; }}
                 >
@@ -769,38 +769,38 @@ Enabled
     </label>
   </div>
 
-  <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[1180px] text-left text-sm">
+  <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+    <table class="ui-table w-full min-w-[1180px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="w-12 px-4 py-3 font-medium">Select</th>
     <th class="px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('account')}>
-      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('account')}>
+      <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('account')}>
         Account<span class="text-[11px]">{sortIndicator('account')}</span>
       </button>
     </th>
     <th class="w-36 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('type')}>
-      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('type')}>
+      <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('type')}>
         Type<span class="text-[11px]">{sortIndicator('type')}</span>
       </button>
     </th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('status')}>
-      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('status')}>
+      <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('status')}>
         Status<span class="text-[11px]">{sortIndicator('status')}</span>
       </button>
     </th>
     <th class="w-32 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('enabled')}>
-      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('enabled')}>
+      <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('enabled')}>
         Enabled<span class="text-[11px]">{sortIndicator('enabled')}</span>
       </button>
     </th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('refresh')}>
-      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('refresh')}>
+      <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('refresh')}>
         Last refresh<span class="text-[11px]">{sortIndicator('refresh')}</span>
       </button>
     </th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('used')}>
-      <button class="inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('used')}>
+      <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('used')}>
         Last used<span class="text-[11px]">{sortIndicator('used')}</span>
       </button>
     </th>
@@ -810,15 +810,15 @@ Enabled
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">Loading provider accounts...</td>
+      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="8">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No provider accounts connected yet.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="8">No accounts match your search.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No accounts match your search.</td>
     </tr>
   {:else}
     {#each paginatedProviderAccounts as account}
@@ -886,7 +886,7 @@ Enabled
         <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
           <div class="relative flex justify-end gap-2 whitespace-nowrap">
             <button
-              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={providerAccounts.saving}
               onclick={() => openAccountEditor(account)}
@@ -897,7 +897,7 @@ Enabled
               <span class="sr-only">Edit account</span>
             </button>
             <button
-              class="inline-flex size-8 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              class="ui-button ui-button--icon ui-button--danger inline-flex size-8 items-center justify-center rounded-md border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={providerAccounts.saving}
               onclick={() => toggleDeleteConfirmation(account)}
@@ -916,7 +916,7 @@ Enabled
     </table>
   </div>
 
-  <div class="mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
+  <div class="ui-pagination mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
     <p>
       Showing {providerAccountPageSummary} of {filteredProviderAccounts.length}
       {#if providerAccounts.items.length !== filteredProviderAccounts.length}
@@ -936,14 +936,14 @@ Enabled
             accountPage = 1;
           }}
         >
+          <option value={5}>5</option>
           <option value={10}>10</option>
-          <option value={25}>25</option>
-          <option value={50}>50</option>
+          <option value={20}>20</option>
         </select>
       </label>
       <span class="text-xs tabular-nums text-[#6e6e6e]">Page {normalizedAccountPage} of {accountPageCount}</span>
       <button
-        class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={normalizedAccountPage <= 1}
         onclick={() => goToProviderAccountPage(accountPage - 1)}
@@ -951,7 +951,7 @@ Enabled
         Previous
       </button>
       <button
-        class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={normalizedAccountPage >= accountPageCount}
         onclick={() => goToProviderAccountPage(accountPage + 1)}
@@ -966,25 +966,25 @@ Enabled
     {@const account = deletingProviderAccount}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30"
       onclick={() => { deletingProviderAccountId = 0; }}
       role="dialog"
       aria-modal="true"
       aria-label={`Confirm deleting ${accountLabel(account)}`}
     >
-      <div class="w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" onclick={(e) => e.stopPropagation()}>
+      <div class="ui-modal-panel ui-modal-panel--sm w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" onclick={(e) => e.stopPropagation()}>
         <p class="text-sm font-medium text-[#0d0d0d]">Delete this account?</p>
         <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{accountLabel(account)}</p>
         <div class="mt-4 flex justify-end gap-2">
           <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             type="button"
             onclick={() => { deletingProviderAccountId = 0; }}
           >
             Cancel
           </button>
           <button
-            class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            class="ui-button ui-button--md ui-button--danger rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"
             disabled={providerAccounts.saving}
             onclick={() => confirmDisconnectProviderAccount(account)}
@@ -1003,18 +1003,18 @@ Enabled
   {@const enabledModels = enabledAccountModelCount(modelState.items)}
   {@const modelSummary = accountModelSummary(modelState.items)}
   <div
-    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
+    class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
     role="presentation"
     onclick={(event) => event.target === event.currentTarget && closeAccountEditor()}
   >
-    <div class="grid w-full max-w-5xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${accountLabel(account)}`}>
+    <div class="ui-modal-panel ui-modal-panel--xl grid w-full max-w-5xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${accountLabel(account)}`}>
       <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
         <div class="min-w-0">
           <h2 class="truncate text-lg font-semibold text-[#0d0d0d]">Edit account</h2>
           <p class="mt-1 truncate text-sm text-[#6e6e6e]">{accountLabel(account)}</p>
         </div>
         <button
-          class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+          class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
           onclick={closeAccountEditor}
           aria-label="Close edit account modal"
@@ -1120,13 +1120,13 @@ Enabled
         <div class="grid content-start gap-3">
           <h3 class="text-sm font-semibold text-[#0d0d0d]">Account actions</h3>
           <div class="flex flex-wrap gap-2">
-            <a class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href={`/request-logs?providerAccountId=${account.id}`}>Request logs</a>
-            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => testProviderAccount(account)}>Test</button>
-            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
-            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => pauseProviderAccount(account)}>Pause</button>
-            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => refreshProviderAccount(account)}>Refresh</button>
-            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => resetProviderAccountStatus(account)}>Reset local status</button>
-            <button class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => connectProvider(account)}>Reauthorize</button>
+            <a class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href={`/request-logs?providerAccountId=${account.id}`}>Request logs</a>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => testProviderAccount(account)}>Test</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => pauseProviderAccount(account)}>Pause</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => refreshProviderAccount(account)}>Refresh</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => resetProviderAccountStatus(account)}>Reset local status</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => connectProvider(account)}>Reauthorize</button>
           </div>
           <dl class="grid gap-2 text-xs text-[#6e6e6e]">
             <div><dt class="font-medium text-[#3c3c3c]">Type</dt><dd>{accountTypeLabel(account)}</dd></div>
@@ -1152,7 +1152,7 @@ Enabled
                 API key
                 <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="apiKey" type="password" autocomplete="off" placeholder="Leave blank to keep current key" disabled={providerAccounts.saving} />
               </label>
-              <button class="self-end rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save upstream</button>
+              <button class="ui-button ui-button--sm ui-button--secondary self-end rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save upstream</button>
             </div>
           </form>
         {:else}
@@ -1162,7 +1162,7 @@ Enabled
               Proxy URL
               <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" value={account.proxyUrlSummary || ''} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
             </label>
-            <button class="justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save proxy</button>
+            <button class="ui-button ui-button--sm ui-button--secondary justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save proxy</button>
           </form>
         {/if}
         <form
@@ -1177,14 +1177,14 @@ Enabled
             <div class="flex flex-wrap items-center gap-2">
               {#if account.accountType === 'api_upstream'}
                 <button
-                  class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                  class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                   type="button"
                   disabled={modelState.loading || modelState.saving || modelState.syncing}
                   onclick={() => syncAccountModels(account.id)}
                 >{modelState.syncing ? 'Syncing' : 'Sync from upstream'}</button>
               {/if}
               <button
-                class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                 type="submit"
                 disabled={modelState.loading || modelState.saving || modelState.syncing}
               >{modelState.saving ? 'Saving' : 'Save manual'}</button>
@@ -1223,7 +1223,7 @@ Enabled
                   <span class="inline-flex items-center rounded-full border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#6e6e6e]">{sourceBadgeLabel(configuredModel)}</span>
                   {#if configuredModel.source !== 'upstream'}
                     <button
-                      class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                      class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                       type="button"
                       disabled={modelState.loading || modelState.saving || modelState.syncing}
                       onclick={() => {
@@ -1253,7 +1253,7 @@ Enabled
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="text-sm font-semibold text-[#0d0d0d]">Recent test history</h3>
             {#if historyState.loading}
-              <span class="text-xs text-[#6e6e6e]">Loading test history...</span>
+              <span class="ui-loading-state text-xs text-[#6e6e6e]" aria-live="polite">Loading test history...</span>
             {/if}
           </div>
           {#if historyState.error}
@@ -1261,8 +1261,8 @@ Enabled
           {:else if !historyState.loading && historyState.items.length === 0}
             <p class="mt-3 text-sm text-[#6e6e6e]">No test history recorded yet.</p>
           {:else if historyState.items.length > 0}
-            <div class="mt-3 overflow-x-auto rounded-lg border border-[#ededed]">
-              <table class="w-full min-w-[560px] text-left text-sm">
+            <div class="ui-table-shell mt-3 overflow-x-auto rounded-lg border border-[#ededed]">
+              <table class="ui-table w-full min-w-[560px] text-left text-sm">
                 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
                   <tr>
                     <th class="px-3 py-2 font-medium">Checked</th>

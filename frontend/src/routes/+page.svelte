@@ -237,7 +237,7 @@
             {gatewaySettings.error}
           </p>
         {:else if gatewaySettings.loading || !gatewaySettings.data}
-          <p class="mt-4 text-sm text-[#6e6e6e]">Loading gateway runtime limits...</p>
+          <p class="ui-loading-state mt-4 text-sm text-[#6e6e6e]" aria-live="polite">Loading gateway runtime limits...</p>
         {:else}
           <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-3">
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
@@ -273,7 +273,7 @@
           <p class="mt-2 text-sm text-[#6e6e6e]">Gateway usage and estimated spend in the last day.</p>
         </div>
         <a
-          class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
+          class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
           href="/request-logs?gatewayFallbacks=1"
         >
           Fallback logs
@@ -282,7 +282,7 @@
       {#if usage.error}
         <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
       {:else if usage.loading && !usage24h}
-        <p class="mt-5 text-sm text-[#6e6e6e]">Loading usage summary...</p>
+        <p class="ui-loading-state mt-5 text-sm text-[#6e6e6e]" aria-live="polite">Loading usage summary...</p>
       {:else}
         <dl class="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3">
           <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
@@ -346,7 +346,7 @@
         </div>
         <div class="flex shrink-0 items-center gap-2">
           <button
-            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"
             disabled={opsMonitor.loading}
             onclick={() => loadOpsDashboard(86400)}
@@ -354,7 +354,7 @@
             {opsMonitor.loading ? 'Refreshing' : 'Refresh'}
           </button>
           <a
-            class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             href="/ops"
           >
             Open ops monitor
@@ -364,7 +364,7 @@
       {#if opsMonitor.error && !opsMonitor.stats}
         <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{opsMonitor.error}</p>
       {:else if opsMonitor.loading && !opsMonitor.stats}
-        <p class="mt-5 text-sm text-[#6e6e6e]">Loading operations snapshot...</p>
+        <p class="ui-loading-state mt-5 text-sm text-[#6e6e6e]" aria-live="polite">Loading operations snapshot...</p>
       {:else}
         <dl class="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3">
           <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
@@ -472,7 +472,7 @@
       <p class="mt-2 text-sm text-[#6e6e6e]">Latest request log snapshot.</p>
       <div class="mt-5 overflow-hidden rounded-lg border border-[#ededed]">
         {#if requestLogs.loading}
-          <p class="p-4 text-sm text-[#6e6e6e]">Loading request logs...</p>
+          <p class="ui-loading-state p-4 text-sm text-[#6e6e6e]" aria-live="polite">Loading request logs...</p>
         {:else if requestLogs.items.length === 0}
           <p class="p-4 text-sm text-[#6e6e6e]">No gateway requests yet.</p>
         {:else}

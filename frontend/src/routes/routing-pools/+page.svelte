@@ -284,7 +284,7 @@
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <button
-          class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+          class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
           type="button"
           onclick={() => (showCreateModal = true)}
         >
@@ -292,7 +292,7 @@
         </button>
         {#if selectedRoutingPoolId !== 'all'}
           <button
-            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={() => (selectedRoutingPoolId = 'all')}
           >
@@ -300,7 +300,7 @@
           </button>
         {/if}
         <button
-          class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
           disabled={routingPools.loading}
           onclick={() => loadRoutingPools()}
         >
@@ -319,17 +319,17 @@
     {#if showCreateModal}
       <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
       <div
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+        class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
         onclick={(e) => e.target === e.currentTarget && (showCreateModal = false)}
         role="dialog"
         aria-modal="true"
         aria-label="Create routing pool"
       >
-        <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
           <div class="mb-4 flex items-center justify-between">
             <h3 class="text-lg font-semibold text-[#0d0d0d]">Create routing pool</h3>
             <button
-              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+              class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
               type="button"
               onclick={() => (showCreateModal = false)}
             >
@@ -373,7 +373,7 @@
                 {/each}
               </select>
             </label>
-            <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving}>
+            <button class="ui-button ui-button--md ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving}>
               {routingPools.saving ? "Saving" : "Create pool"}
             </button>
           </form>
@@ -408,7 +408,7 @@
     </div>
 
     {#if routingPools.loading}
-      <p class="mt-6 text-sm text-[#6e6e6e]">Loading routing pools...</p>
+      <p class="ui-loading-state mt-6 text-sm text-[#6e6e6e]" aria-live="polite">Loading routing pools...</p>
     {:else if routingPools.items.length === 0}
       <p class="mt-6 rounded-lg border border-dashed border-[#d9d9d9] bg-[#fafafa] p-6 text-sm text-[#6e6e6e]">
         No routing pools configured.
@@ -418,8 +418,8 @@
         No routing pool matches this link.
       </p>
     {:else}
-      <div class="mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-        <table class="w-full min-w-[980px] text-left text-sm">
+      <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+        <table class="ui-table w-full min-w-[980px] text-left text-sm">
           <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
             <tr>
               <th class="px-4 py-3 font-medium">Pool</th>
@@ -480,7 +480,7 @@
                 <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
                   <div class="relative flex justify-end gap-2 whitespace-nowrap">
                     <button
-                      class="rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                      class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
                       type="button"
                       disabled={routingPools.saving}
                       onclick={() => openRoutingPoolEditor(pool)}
@@ -490,7 +490,7 @@
                       Edit
                     </button>
                     <button
-                      class="rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                       type="button"
                       disabled={routingPools.saving}
                       onclick={() => deleteRoutingPool(pool.id)}
@@ -513,18 +513,18 @@
   {@const pool = editingRoutingPool}
   <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
   <div
-    class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
+    class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
     role="presentation"
     onclick={(event) => event.target === event.currentTarget && closeRoutingPoolEditor()}
   >
-    <div class="grid w-full max-w-4xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${routingPoolLabel(pool)}`}>
+    <div class="ui-modal-panel ui-modal-panel--xl grid w-full max-w-4xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${routingPoolLabel(pool)}`}>
       <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
         <div class="min-w-0">
           <h2 class="truncate text-lg font-semibold text-[#0d0d0d]">Edit routing pool</h2>
           <p class="mt-1 truncate text-sm text-[#6e6e6e]">{routingPoolLabel(pool)}</p>
         </div>
         <button
-          class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+          class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
           onclick={closeRoutingPoolEditor}
           aria-label="Close edit pool modal"
@@ -596,10 +596,10 @@
             <span class="text-xs text-[#6e6e6e]">{pool.enabled ? 'Enabled' : 'Disabled'}</span>
           </label>
           <div class="flex items-end gap-2">
-            <button class="rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => updateRoutingPool(pool)}>
+            <button class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => updateRoutingPool(pool)}>
               Save
             </button>
-            <button class="rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => { deleteRoutingPool(pool.id); closeRoutingPoolEditor(); }}>
+            <button class="ui-button ui-button--md ui-button--danger rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-700 disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => { deleteRoutingPool(pool.id); closeRoutingPoolEditor(); }}>
               Delete
             </button>
           </div>
@@ -629,7 +629,7 @@
           </div>
           <div class="flex flex-wrap gap-2">
             <a
-              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
               href={`/request-logs?routingPoolId=${pool.id}`}
               title="View request logs"
               aria-label="View request logs"
@@ -638,7 +638,7 @@
             </a>
             {#if routingPoolFallbackChainLogsHref(pool)}
               <a
-                class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
                 href={routingPoolFallbackChainLogsHref(pool)}
                 title="View fallback chain logs"
                 aria-label="View fallback chain logs"
@@ -647,7 +647,7 @@
               </a>
             {/if}
             <a
-              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
               href={`/api-keys?routingPoolId=${pool.id}`}
               title="View API keys"
               aria-label="View API keys"
@@ -655,7 +655,7 @@
               API keys
             </a>
             <a
-              class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
               href={routingPoolDiagnosticsHref(pool)}
               title="View routing diagnostics"
               aria-label="View routing diagnostics"
@@ -666,12 +666,12 @@
         </div>
 
         {#if providerAccounts.loading}
-          <p class="mt-4 text-sm text-[#6e6e6e]">Loading provider accounts...</p>
+          <p class="ui-loading-state mt-4 text-sm text-[#6e6e6e]" aria-live="polite">Loading provider accounts...</p>
         {:else if providerAccounts.items.length === 0}
           <p class="mt-4 text-sm text-[#6e6e6e]">No provider accounts available.</p>
         {:else}
-          <div class="mt-4 overflow-x-auto">
-            <table class="min-w-full divide-y divide-[#ededed] text-left text-sm">
+          <div class="ui-table-shell mt-4 overflow-x-auto">
+            <table class="ui-table min-w-full divide-y divide-[#ededed] text-left text-sm">
               <thead class="text-xs text-[#6e6e6e]">
                 <tr>
                   <th class="py-2 pr-3 font-medium">Include</th>
@@ -710,7 +710,7 @@
                     </td>
                     <td class="px-3 py-2 text-right">
                       <a
-                        class="inline-flex rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                        class="ui-button ui-button--sm ui-button--secondary inline-flex rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
                         href={`/providers?providerAccountId=${account.id}`}
                         title="View provider account"
                         aria-label="View provider account"
@@ -726,7 +726,7 @@
         {/if}
 
         <div class="mt-4 flex justify-end">
-          <button class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
+          <button class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60" disabled={routingPools.saving} onclick={() => saveMembership(pool)}>
             Save membership
           </button>
         </div>

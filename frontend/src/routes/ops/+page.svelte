@@ -142,7 +142,7 @@
         <div class="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white p-0.5">
           {#each rangeOptions as option}
             <button
-              class="rounded-md px-3 py-1.5 text-sm font-medium transition-colors {range === option.value ? 'bg-[#0d0d0d] text-white' : 'text-[#3c3c3c] hover:bg-[#f5f5f5]'}"
+              class="ui-button ui-button--md ui-button--primary rounded-md px-3 py-1.5 text-sm font-medium transition-colors {range === option.value ? 'bg-[#0d0d0d] text-white' : 'text-[#3c3c3c] hover:bg-[#f5f5f5]'}"
               onclick={() => changeRange(option.value)}
             >
               {option.label}
@@ -452,8 +452,8 @@
           </div>
 
           {#if opsMonitor.accountTests.tests?.length > 0}
-            <div class="mt-4 overflow-x-auto">
-              <table class="w-full text-sm">
+            <div class="ui-table-shell mt-4 overflow-x-auto">
+              <table class="ui-table w-full text-sm">
                 <thead>
                   <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                     <th class="py-2 pr-4">Checked</th>
@@ -496,8 +496,8 @@
         <section class="rounded-lg border border-[#ededed] bg-white p-6">
           <h3 class="text-base font-semibold text-[#0d0d0d]">Request throughput</h3>
           <p class="mt-1 text-sm text-[#6e6e6e]">Requests, tokens, and estimated cost per time bucket.</p>
-          <div class="mt-4 overflow-x-auto">
-            <table class="w-full text-sm">
+          <div class="ui-table-shell mt-4 overflow-x-auto">
+            <table class="ui-table w-full text-sm">
               <thead>
                 <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                   <th class="py-2 pr-4">Time</th>
@@ -530,8 +530,8 @@
         <section class="rounded-lg border border-[#ededed] bg-white p-6">
           <h3 class="text-base font-semibold text-[#0d0d0d]">Error breakdown over time</h3>
           <p class="mt-1 text-sm text-[#6e6e6e]">Error counts by category per time bucket.</p>
-          <div class="mt-4 overflow-x-auto">
-            <table class="w-full text-sm">
+          <div class="ui-table-shell mt-4 overflow-x-auto">
+            <table class="ui-table w-full text-sm">
               <thead>
                 <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                   <th class="py-2 pr-4">Time</th>

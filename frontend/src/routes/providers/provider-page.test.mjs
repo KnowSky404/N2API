@@ -707,13 +707,17 @@ test('provider account table supports search, sorting, and a pinned actions colu
 
 test('provider account table paginates rows and shows summary controls below the table', () => {
   assert.match(source, /let accountPage = \$state\(1\)/);
-  assert.match(source, /let accountPageSize = \$state\(10\)/);
+  assert.match(source, /let accountPageSize = \$state\(5\)/);
   assert.match(source, /const accountPageCount = \$derived/);
   assert.match(source, /const paginatedProviderAccounts = \$derived/);
   assert.match(source, /const providerAccountPageSummary = \$derived/);
   assert.match(source, /#each paginatedProviderAccounts as account/);
   assert.match(source, /Showing \{providerAccountPageSummary\} of \{filteredProviderAccounts\.length\}/);
   assert.match(source, /bind:value=\{accountPageSize\}/);
+  assert.match(source, /<option value=\{5\}>5<\/option>/);
+  assert.match(source, /<option value=\{10\}>10<\/option>/);
+  assert.match(source, /<option value=\{20\}>20<\/option>/);
+  assert.doesNotMatch(source, /<option value=\{25\}>25<\/option>/);
   assert.match(source, /onclick=\{\(\) => goToProviderAccountPage\(accountPage - 1\)\}/);
   assert.match(source, /onclick=\{\(\) => goToProviderAccountPage\(accountPage \+ 1\)\}/);
   assert.doesNotMatch(source, /<p class="mt-3 text-sm text-\[#6e6e6e\]">\s*Showing \{filteredProviderAccounts\.length\} of \{providerAccounts\.items\.length\}/);

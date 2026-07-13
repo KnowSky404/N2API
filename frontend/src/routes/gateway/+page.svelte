@@ -239,14 +239,14 @@
       <div class="mt-4 rounded-md border border-[#ededed] bg-[#fafafa] p-3">
         <h4 class="text-sm font-semibold text-[#0d0d0d]">Blocked reasons</h4>
         {#if providerAccounts.loading}
-          <p class="mt-2 text-sm text-[#6e6e6e]">Loading provider account health...</p>
+          <p class="ui-loading-state mt-2 text-sm text-[#6e6e6e]" aria-live="polite">Loading provider account health...</p>
         {:else if unschedulableAccountSummary.length === 0}
           <p class="mt-2 text-sm text-[#6e6e6e]">No blocked provider accounts.</p>
         {:else}
           <div class="mt-3 flex flex-wrap gap-2">
             {#each unschedulableAccountSummary as item}
               <a
-                class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#3c3c3c] underline-offset-2 hover:underline"
+                class="ui-button ui-button--md ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#3c3c3c] underline-offset-2 hover:underline"
                 href={unschedulableReasonHref(item.reason)}
                 aria-label="View provider accounts with this blocked reason"
               >
@@ -266,7 +266,7 @@
           <p class="mt-1 text-sm text-[#6e6e6e]">Current concurrency and rate guards from the running service.</p>
         </div>
         {#if gatewaySettings.loading}
-          <span class="text-sm text-[#6e6e6e]">Loading...</span>
+          <span class="ui-loading-state text-sm text-[#6e6e6e]" aria-live="polite">Loading...</span>
         {/if}
       </div>
       {#if gatewaySettings.error}
@@ -274,7 +274,7 @@
           {gatewaySettings.error}
         </p>
       {:else if gatewaySettings.loading || !gatewaySettings.data}
-        <p class="mt-4 text-sm text-[#6e6e6e]">Loading gateway runtime limits...</p>
+        <p class="ui-loading-state mt-4 text-sm text-[#6e6e6e]" aria-live="polite">Loading gateway runtime limits...</p>
       {:else}
         <form class="mt-4" onsubmit={(event) => { event.preventDefault(); updateGatewaySettings(); }}>
           <dl class="grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">
@@ -358,13 +358,13 @@
             </div>
           </div>
           <div class="mt-4 flex flex-wrap items-center gap-3">
-            <button class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving}>
+            <button class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving}>
               {gatewaySettings.saving ? 'Saving' : 'Save runtime limits'}
             </button>
             {#if gatewaySettings.saved}
               <span class="text-sm text-[#0a7a5e]">Runtime limits saved.</span>
             {/if}
-            <button type="button" class="rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
+            <button type="button" class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
               {gatewaySettings.cleanupRunning ? 'Cleaning' : 'Clean request logs'}
             </button>
             {#if gatewaySettings.cleanupResult}
@@ -385,7 +385,7 @@
           <p class="mt-1 text-sm text-[#6e6e6e]">Traffic distribution across accounts, client keys, and sticky sessions.</p>
         </div>
         {#if usage.loading}
-          <span class="text-sm text-[#6e6e6e]">Loading...</span>
+          <span class="ui-loading-state text-sm text-[#6e6e6e]" aria-live="polite">Loading...</span>
         {/if}
       </div>
       {#if usage.error}

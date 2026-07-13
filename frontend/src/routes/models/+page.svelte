@@ -317,13 +317,13 @@
         </div>
         <div class="flex flex-wrap gap-2">
           <a
-            class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+            class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
             href="/api-keys"
           >
             Open API Keys
           </a>
           <a
-            class="rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             href="/providers"
           >
             Open Provider accounts
@@ -362,7 +362,7 @@
             <div class="mt-2 flex flex-wrap gap-2">
               {#each blockedReasonSummary as [reason, count]}
                 <a
-                  class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 underline-offset-2 hover:underline"
+                  class="ui-button ui-button--sm rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800 underline-offset-2 hover:underline"
                   href={modelRoutingBlockedReasonHref(reason)}
                   aria-label="View provider accounts with this blocked reason"
                 >
@@ -438,7 +438,7 @@
             />
           </label>
           <button
-            class="justify-self-start rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--md ui-button--primary justify-self-start rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             disabled={modelRoutingPreview.loading}
           >
             {modelRoutingPreview.loading ? 'Previewing' : 'Preview selection'}
@@ -520,7 +520,7 @@
                   <div class="mt-2 flex flex-wrap gap-2">
                     {#each modelRoutingPreview.result.blockedReasonCounts as reason}
                       <a
-                        class="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs leading-5 text-amber-800 underline-offset-2 hover:underline"
+                        class="ui-button ui-button--sm rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs leading-5 text-amber-800 underline-offset-2 hover:underline"
                         href={modelRoutingBlockedReasonHref(reason.reason)}
                         aria-label="View provider accounts with this blocked reason"
                       >
@@ -594,7 +594,7 @@
           <p class="mt-1 text-sm text-[#6e6e6e]">Candidate accounts are ordered the same way the gateway scheduler will consider them.</p>
         </div>
         {#if modelRouting.loading}
-          <span class="text-sm text-[#6e6e6e]">Loading...</span>
+          <span class="ui-loading-state text-sm text-[#6e6e6e]" aria-live="polite">Loading...</span>
         {/if}
       </div>
 
@@ -635,8 +635,8 @@
         </label>
       </div>
 
-      <div class="mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
-        <table class="min-w-full divide-y divide-[#ededed] text-left text-sm">
+      <div class="ui-table-shell mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
+        <table class="ui-table min-w-full divide-y divide-[#ededed] text-left text-sm">
           <thead class="bg-[#fafafa] text-xs text-[#6e6e6e]">
             <tr>
               <th class="px-4 py-3 font-medium">Model</th>
@@ -648,15 +648,15 @@
           <tbody class="divide-y divide-[#ededed]">
             {#if modelRouting.loading && modelRouting.models.length === 0}
               <tr>
-                <td class="px-4 py-5 text-[#6e6e6e]" colspan="4">Loading model routing...</td>
+                <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="4">Loading model routing...</td>
               </tr>
             {:else if modelRouting.models.length === 0}
               <tr>
-                <td class="px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing policy configured yet.</td>
+                <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing policy configured yet.</td>
               </tr>
             {:else if visibleModelRoutingRows.length === 0}
               <tr>
-                <td class="px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing rows match your filters.</td>
+                <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing rows match your filters.</td>
               </tr>
             {:else}
               {#each visibleModelRoutingRows as model}

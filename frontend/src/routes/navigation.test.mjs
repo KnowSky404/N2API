@@ -27,6 +27,8 @@ const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
 const opsPage = readFileSync('src/routes/ops/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 const authGate = readFileSync('src/lib/AuthGate.svelte', 'utf8');
+const uiStyles = readFileSync('src/app.css', 'utf8');
+const designSystem = readFileSync('../DESIGN.md', 'utf8');
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {
   for (const file of expectedFiles) {
@@ -809,10 +811,50 @@ test('api keys page disables keys reversibly', () => {
 test('api keys action buttons stay compact on one row', () => {
   assert.match(apiKeysPage, /whitespace-nowrap/);
   assert.match(apiKeysPage, /inline-flex items-center justify-end gap-1/);
-  assert.match(apiKeysPage, /class="inline-flex size-8 items-center justify-center/);
+  assert.match(apiKeysPage, /class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center/);
   assert.match(apiKeysPage, /<Pencil class="size-4"/);
   assert.match(apiKeysPage, /<ScrollText class="size-4"/);
   assert.match(apiKeysPage, /<Trash2 class="size-4"/);
+});
+
+test('route UI uses the pricing-derived shared component contract', () => {
+  for (const selector of [
+    '.ui-button',
+    '.ui-button--sm',
+    '.ui-button--icon',
+    '.ui-modal-backdrop',
+    '.ui-modal-panel',
+    '.ui-loading-overlay',
+    '.ui-table-shell',
+    '.ui-table',
+    '.ui-pagination'
+  ]) {
+    assert.match(uiStyles, new RegExp(selector.replace('.', '\\.')), `${selector} should be defined`);
+  }
+
+  for (const contract of [
+    'Loading and async feedback',
+    'Modals and confirmations',
+    '.ui-button--sm',
+    '.ui-table-shell--scroll',
+    'Previous /',
+    'Popconfirm'
+  ]) {
+    assert.match(designSystem, new RegExp(contract.replaceAll('.', '\\.')), `DESIGN.md should define ${contract}`);
+  }
+
+  for (const file of expectedFiles.filter((path) => path.endsWith('.svelte'))) {
+    const source = readFileSync(file, 'utf8');
+    for (const match of source.matchAll(/<button[^>]*class="([^"]+)"/g)) {
+      assert.match(match[1], /(?:^|\s)ui-button(?:\s|$)/, `${file} button should use ui-button`);
+    }
+    for (const match of source.matchAll(/<table class="([^"]+)"/g)) {
+      assert.match(match[1], /(?:^|\s)ui-table(?:\s|$)/, `${file} table should use ui-table`);
+    }
+    for (const match of source.matchAll(/class="([^"]*fixed inset-0 z-50[^"]*bg-black\/(?:30|40)[^"]*)"/g)) {
+      assert.match(match[1], /(?:^|\s)ui-modal-backdrop(?:\s|$)/, `${file} modal should use ui-modal-backdrop`);
+    }
+  }
 });
 
 test('api keys page renames keys without rotating secrets', () => {
@@ -1114,7 +1156,7 @@ test('api keys page supports local table pagination', () => {
   assert.match(apiKeysPage, /value=\{5\}/);
   assert.match(apiKeysPage, /value=\{10\}/);
   assert.match(apiKeysPage, /value=\{20\}/);
-  assert.match(apiKeysPage, /value=\{50\}/);
+  assert.doesNotMatch(apiKeysPage, /value=\{50\}/);
   // Navigation controls
   assert.match(apiKeysPage, /Previous/);
   assert.match(apiKeysPage, /Next/);

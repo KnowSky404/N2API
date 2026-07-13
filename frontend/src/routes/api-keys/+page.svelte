@@ -106,7 +106,7 @@
 
   // --- Pagination state ---
   let keyPage = $state(1);
-  let keyPageSize = $state(10);
+  let keyPageSize = $state(5);
   const keyPageCount = $derived(Math.max(1, Math.ceil(filteredAPIKeys.length / keyPageSize)));
   const normalizedKeyPage = $derived(Math.min(Math.max(keyPage, 1), keyPageCount));
   const paginatedAPIKeys = $derived(
@@ -483,7 +483,7 @@
     </div>
     <div>
       <button
-        class="rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+        class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
         type="button"
         onclick={openCreateKeyModal}
       >
@@ -499,7 +499,7 @@
     Copy this key now. You can copy it again later from the Prefix column.
   </p>
   <button
-    class="rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+    class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
     type="button"
     onclick={copySecret}
   >
@@ -523,17 +523,17 @@
   {#if createKeyModalOpen}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       onclick={(e) => e.target === e.currentTarget && closeCreateKeyModal()}
       role="dialog"
       aria-modal="true"
       aria-label="Create API key"
     >
-      <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+      <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Create API key</h3>
           <button
-            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeCreateKeyModal}
           >
@@ -557,7 +557,7 @@
               required
             />
           </label>
-          <button class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={apiKeys.creating}>
+          <button class="ui-button ui-button--md ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={apiKeys.creating}>
             {apiKeys.creating ? 'Creating' : 'Create key'}
           </button>
         </form>
@@ -568,17 +568,17 @@
   {#if bulkEditModalOpen}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       onclick={(e) => e.target === e.currentTarget && closeBulkEditModal()}
       role="dialog"
       aria-modal="true"
       aria-label="Bulk edit API keys"
     >
-      <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+      <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Bulk edit API keys</h3>
           <button
-            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeBulkEditModal}
           >
@@ -788,7 +788,7 @@
           {/if}
 
           <button
-            class="w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--md ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="submit"
             disabled={apiKeys.saving || selectedEditableAPIKeys.length === 0}
           >
@@ -801,17 +801,17 @@
   {#if editingKey}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       onclick={(e) => e.target === e.currentTarget && closeEditModal()}
       role="dialog"
       aria-modal="true"
       aria-label="Edit API key"
     >
-      <div class="w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+      <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Edit key &middot; {editingKey.name}</h3>
           <button
-            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeEditModal}
           >
@@ -1212,7 +1212,7 @@
 
           <div class="flex items-center justify-end">
             <button
-              class="rounded-md border border-[#10a37f] bg-[#10a37f] px-4 py-2 text-sm font-medium text-white hover:bg-[#0a7a5e] disabled:cursor-not-allowed disabled:opacity-60"
+              class="ui-button ui-button--md ui-button--primary rounded-md border border-[#10a37f] bg-[#10a37f] px-4 py-2 text-sm font-medium text-white hover:bg-[#0a7a5e] disabled:cursor-not-allowed disabled:opacity-60"
               type="submit"
               disabled={Boolean(editingKey.revokedAt)}
             >
@@ -1227,20 +1227,20 @@
   {#if logsKey}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       onclick={(e) => e.target === e.currentTarget && closeKeyLogsModal()}
       role="dialog"
       aria-modal="true"
       aria-label="API key logs"
     >
-      <div class="w-full max-w-2xl max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+      <div class="ui-modal-panel ui-modal-panel--lg w-full max-w-2xl max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
         <div class="mb-4 flex items-center justify-between gap-3">
           <div class="min-w-0">
             <h3 class="truncate text-lg font-semibold text-[#0d0d0d]">Logs · {logsKey.name}</h3>
             <p class="mt-1 font-mono text-xs text-[#6e6e6e]">{logsKey.prefix}</p>
           </div>
           <button
-            class="rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeKeyLogsModal}
           >
@@ -1325,7 +1325,7 @@
       <p class="text-sm text-[#3c3c3c]">{selectedAPIKeyCount} selected · {selectedEditableAPIKeys.length} editable</p>
       <div class="flex flex-wrap gap-2">
         <button
-          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={openBulkEditModal}
@@ -1334,7 +1334,7 @@
           Edit selected
         </button>
         <button
-          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={() => bulkSetSelectedAPIKeysDisabled(false)}
@@ -1342,7 +1342,7 @@
           Enable
         </button>
         <button
-          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={() => bulkSetSelectedAPIKeysDisabled(true)}
@@ -1350,7 +1350,7 @@
           Disable
         </button>
         <button
-          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={bulkRevokeSelectedAPIKeys}
@@ -1358,7 +1358,7 @@
           Delete
         </button>
         <button
-          class="inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={clearAPIKeySelection}
@@ -1369,8 +1369,8 @@
     </div>
   {/if}
 
-  <div class="mt-4 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="w-full min-w-[980px] text-left text-sm">
+  <div class="ui-table-shell mt-4 overflow-x-auto rounded-lg border border-[#ededed]">
+    <table class="ui-table w-full min-w-[980px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="w-12 px-4 py-3 font-medium">
@@ -1396,15 +1396,15 @@
 <tbody class="divide-y divide-[#ededed]">
   {#if apiKeys.loading}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">Loading API keys...</td>
+      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="7">Loading API keys...</td>
     </tr>
   {:else if apiKeys.items.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys created yet.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys created yet.</td>
     </tr>
   {:else if filteredAPIKeys.length === 0}
     <tr>
-      <td class="px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys match your filters.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys match your filters.</td>
     </tr>
   {:else}
     {#each paginatedAPIKeys as key}
@@ -1427,7 +1427,7 @@
             <span class="font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</span>
             {#if !key.revokedAt}
               <button
-                class="inline-flex size-7 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                class="ui-button ui-button--icon ui-button--secondary inline-flex size-7 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                 type="button"
                 disabled={!key.secretAvailable}
                 onclick={() => copyAPIKeySecret(key.id)}
@@ -1467,7 +1467,7 @@
         <td class="whitespace-nowrap px-4 py-3 align-middle text-right">
           <div class="inline-flex items-center justify-end gap-1 whitespace-nowrap">
             <button
-              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
               type="button"
               onclick={() => openEditModal(key.id)}
               title="Edit key"
@@ -1477,7 +1477,7 @@
               <span class="sr-only">Edit key</span>
             </button>
             <button
-              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+              class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
               type="button"
               onclick={() => openKeyLogsModal(key.id)}
               title="View request logs"
@@ -1487,7 +1487,7 @@
               <span class="sr-only">View request logs</span>
             </button>
             <button
-              class="inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
               disabled={Boolean(key.revokedAt)}
               onclick={() => revokeKey(key.id)}
@@ -1506,7 +1506,7 @@
     </table>
   </div>
 
-  <div class="mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
+  <div class="ui-pagination mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
     <p>
       Showing {apiKeyPageSummary} of {filteredAPIKeys.length}
       {#if filteredAPIKeys.length !== apiKeys.items.length}
@@ -1529,12 +1529,11 @@
           <option value={5}>5</option>
           <option value={10}>10</option>
           <option value={20}>20</option>
-          <option value={50}>50</option>
         </select>
       </label>
       <span class="text-xs tabular-nums text-[#6e6e6e]">Page {normalizedKeyPage} of {keyPageCount}</span>
       <button
-        class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={normalizedKeyPage <= 1}
         onclick={() => goToAPIKeyPage(keyPage - 1)}
@@ -1542,7 +1541,7 @@
         Previous
       </button>
       <button
-        class="rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={normalizedKeyPage >= keyPageCount}
         onclick={() => goToAPIKeyPage(keyPage + 1)}
