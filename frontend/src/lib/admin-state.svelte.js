@@ -3423,15 +3423,23 @@ function selectedEditableAPIKeyIDs() {
     .map((key) => key.id);
 }
 
+function selectedRevokedAPIKeyIDs() {
+  const selected = new Set(Object.keys(selectedAPIKeyIds).map((id) => Number(id)));
+  return apiKeys.items
+    .filter((key) => selected.has(key.id) && Boolean(key.revokedAt))
+    .map((key) => key.id);
+}
+
 /**
  * @param {number[]} ids
  * @param {(id: number) => Promise<void>} action
+ * @param {string} [emptyMessage]
  */
-async function runAPIKeyBatch(ids, action) {
+async function runAPIKeyBatch(ids, action, emptyMessage = 'Select at least one active or disabled API key') {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return false;
   if (ids.length === 0) {
-    apiKeys.error = 'Select at least one active or disabled API key';
+    apiKeys.error = emptyMessage;
     return false;
   }
 
@@ -3466,6 +3474,16 @@ export async function bulkRevokeSelectedAPIKeys() {
   return runAPIKeyBatch(selectedEditableAPIKeyIDs(), async (id) => {
     await revokeKey(id);
   });
+}
+
+export async function bulkDeleteSelectedRevokedAPIKeys() {
+  return runAPIKeyBatch(
+    selectedRevokedAPIKeyIDs(),
+    async (id) => {
+      await deleteRevokedKey(id);
+    },
+    'Select at least one deleted API key'
+  );
 }
 
 /**

@@ -1346,10 +1346,13 @@ test('api keys table keeps lifecycle actions in status and action cells', () => 
   assert.match(apiKeysSource, /deleteConfirmKeyPopover/);
   assert.match(apiKeysSource, /openDeleteConfirmKey/);
   assert.match(apiKeysSource, /openBulkDeleteConfirm/);
+  assert.match(apiKeysSource, /openBulkPermanentDeleteConfirm/);
   assert.match(apiKeysSource, /confirmDeleteKey/);
   assert.match(apiKeysSource, /Delete this API key\?/);
   assert.match(apiKeysSource, /Permanently delete this API key\?/);
   assert.match(apiKeysSource, /Delete selected API keys\?/);
+  assert.match(apiKeysSource, /Permanently delete selected API keys\?/);
+  assert.match(apiKeysSource, /bulkDeleteSelectedRevokedAPIKeys/);
   assert.doesNotMatch(apiKeysSource, /\bconfirm\(/);
   // JS identifiers bulkRevokeSelectedAPIKeys / revokeKey contain 'Revoke'; check visible text only
   assert.doesNotMatch(apiKeysSource, />\s*Revoke/);

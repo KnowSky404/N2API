@@ -833,16 +833,20 @@ test('api keys page confirms logical, physical, and bulk deletion with a custom 
   assert.match(apiKeysPage, /deleteConfirmKeyPopover/);
   assert.match(apiKeysPage, /openDeleteConfirmKey/);
   assert.match(apiKeysPage, /openBulkDeleteConfirm/);
+  assert.match(apiKeysPage, /openBulkPermanentDeleteConfirm/);
   assert.match(apiKeysPage, /confirmDeleteKey/);
   assert.match(apiKeysPage, /Delete this API key\?/);
   assert.match(apiKeysPage, /Permanently delete this API key\?/);
   assert.match(apiKeysPage, /Delete selected API keys\?/);
+  assert.match(apiKeysPage, /Permanently delete selected API keys\?/);
   assert.match(apiKeysPage, /Permanently delete/);
   assert.match(apiKeysPage, /await revokeKey\(target\.key\.id\)/);
   assert.match(apiKeysPage, /await deleteRevokedKey\(target\.key\.id\)/);
   assert.match(apiKeysPage, /await bulkRevokeSelectedAPIKeys\(\)/);
+  assert.match(apiKeysPage, /await bulkDeleteSelectedRevokedAPIKeys\(\)/);
   assert.match(apiKeysPage, /onclick=\{\(event\) => openDeleteConfirmKey\(key, event\)\}/);
   assert.match(apiKeysPage, /onclick=\{openBulkDeleteConfirm\}/);
+  assert.match(apiKeysPage, /onclick=\{openBulkPermanentDeleteConfirm\}/);
   assert.doesNotMatch(apiKeysPage, /\bconfirm\(/);
   assert.match(adminState, /export async function deleteRevokedKey/);
   assert.match(adminState, /\/api\/admin\/keys\/\$\{id\}/);
@@ -1167,6 +1171,7 @@ test('api keys page supports table filters and row selection', () => {
     'Enable',
     'Disable',
     'Delete',
+    'Permanently delete',
     'Clear'
   ]) {
     assert.match(apiKeysPage, new RegExp(label.replaceAll(' ', '\\s+')), `api keys page should include ${label}`);
@@ -1175,12 +1180,14 @@ test('api keys page supports table filters and row selection', () => {
   assert.match(apiKeysPage, /selectedAPIKeyIds/);
   assert.match(apiKeysPage, /selectedAPIKeyCount/);
   assert.match(apiKeysPage, /selectedEditableAPIKeys/);
+  assert.match(apiKeysPage, /selectedRevokedAPIKeys/);
   assert.match(apiKeysPage, /allFilteredAPIKeysSelected/);
   assert.match(apiKeysPage, /toggleAPIKeySelection/);
   assert.match(apiKeysPage, /toggleFilteredAPIKeySelection/);
   assert.match(apiKeysPage, /clearAPIKeySelection/);
   assert.match(apiKeysPage, /bulkSetSelectedAPIKeysDisabled/);
   assert.match(apiKeysPage, /bulkRevokeSelectedAPIKeys/);
+  assert.match(apiKeysPage, /bulkDeleteSelectedRevokedAPIKeys/);
   assert.match(apiKeysPage, /openBulkEditModal/);
   assert.match(apiKeysPage, /bind:value=\{keyRoutingPoolFilter\}/);
   assert.match(apiKeysPage, /bind:value=\{keyModelPolicyFilter\}/);
@@ -1244,9 +1251,11 @@ test('api key batch helpers reuse existing per-key endpoints', () => {
   assert.match(adminState, /export function clearAPIKeySelection/);
   assert.match(adminState, /export async function bulkSetSelectedAPIKeysDisabled/);
   assert.match(adminState, /export async function bulkRevokeSelectedAPIKeys/);
+  assert.match(adminState, /export async function bulkDeleteSelectedRevokedAPIKeys/);
   assert.match(adminState, /export async function bulkUpdateSelectedAPIKeys/);
   assert.match(adminState, /await setAPIKeyDisabled\(id,\s*disabled\)/);
   assert.match(adminState, /await revokeKey\(id\)/);
+  assert.match(adminState, /await deleteRevokedKey\(id\)/);
   assert.match(adminState, /await updateAPIKeyModelPolicy/);
   assert.match(adminState, /await updateAPIKeyLimits/);
   assert.match(adminState, /await updateAPIKeyBudgets/);
@@ -1254,6 +1263,7 @@ test('api key batch helpers reuse existing per-key endpoints', () => {
   assert.match(adminState, /saving: false,[\s\S]*?items: \[\]/);
   assert.match(adminState, /delete selectedAPIKeyIds\[String\(id\)\]/);
   assert.match(adminState, /Select at least one active or disabled API key/);
+  assert.match(adminState, /Select at least one deleted API key/);
   assert.doesNotMatch(adminState, /\/api\/admin\/keys\/bulk/);
 });
 

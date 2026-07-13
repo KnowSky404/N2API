@@ -4,6 +4,7 @@
   import {
     apiKeys,
     apiKeyModelWarnings,
+    bulkDeleteSelectedRevokedAPIKeys,
     bulkRevokeSelectedAPIKeys,
     bulkSetSelectedAPIKeysDisabled,
     bulkUpdateSelectedAPIKeys,
@@ -48,7 +49,7 @@
   const editingKey = $derived(apiKeys.items.find((key) => key.id === editingKeyId) ?? null);
   let logsKeyId = $state(0);
   const logsKey = $derived(apiKeys.items.find((key) => key.id === logsKeyId) ?? null);
-  let deleteConfirmKeyPopover = $state(/** @type {{key: import('$lib/admin-state.svelte.js').APIKey|null, bulk: boolean, top: number, left: number}|null} */ (null));
+  let deleteConfirmKeyPopover = $state(/** @type {{key: import('$lib/admin-state.svelte.js').APIKey|null, bulkAction: 'revoke'|'purge'|null, top: number, left: number}|null} */ (null));
   let deleteConfirmBusy = $state(false);
   const deleteConfirmKey = $derived(deleteConfirmKeyPopover?.key ?? null);
   let appliedAPIKeySearch = $state('');
@@ -130,6 +131,15 @@
       .filter((id) => {
         const key = apiKeys.items.find((k) => k.id === id);
         return key && !key.revokedAt;
+      })
+  );
+
+  const selectedRevokedAPIKeys = $derived(
+    Object.keys(selectedAPIKeyIds)
+      .map(Number)
+      .filter((id) => {
+        const key = apiKeys.items.find((k) => k.id === id);
+        return key && Boolean(key.revokedAt);
       })
   );
 
@@ -326,14 +336,21 @@
    */
   function openDeleteConfirmKey(key, event) {
     apiKeys.error = '';
-    deleteConfirmKeyPopover = { key, bulk: false, ...deleteConfirmPosition(event) };
+    deleteConfirmKeyPopover = { key, bulkAction: null, ...deleteConfirmPosition(event) };
   }
 
   /** @param {MouseEvent} event */
   function openBulkDeleteConfirm(event) {
     if (selectedEditableAPIKeys.length === 0) return;
     apiKeys.error = '';
-    deleteConfirmKeyPopover = { key: null, bulk: true, ...deleteConfirmPosition(event) };
+    deleteConfirmKeyPopover = { key: null, bulkAction: 'revoke', ...deleteConfirmPosition(event) };
+  }
+
+  /** @param {MouseEvent} event */
+  function openBulkPermanentDeleteConfirm(event) {
+    if (selectedRevokedAPIKeys.length === 0) return;
+    apiKeys.error = '';
+    deleteConfirmKeyPopover = { key: null, bulkAction: 'purge', ...deleteConfirmPosition(event) };
   }
 
   function closeDeleteConfirmKeyPopover() {
@@ -347,8 +364,10 @@
     deleteConfirmBusy = true;
     apiKeys.error = '';
     try {
-      if (target.bulk) {
+      if (target.bulkAction === 'revoke') {
         await bulkRevokeSelectedAPIKeys();
+      } else if (target.bulkAction === 'purge') {
+        await bulkDeleteSelectedRevokedAPIKeys();
       } else if (target.key?.revokedAt) {
         await deleteRevokedKey(target.key.id);
       } else if (target.key) {
@@ -1376,7 +1395,9 @@
 
   {#if selectedAPIKeyCount > 0}
     <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#e5e5e5] bg-[#fafafa] p-3">
-      <p class="text-sm text-[#3c3c3c]">{selectedAPIKeyCount} selected · {selectedEditableAPIKeys.length} editable</p>
+      <p class="text-sm text-[#3c3c3c]">
+        {selectedAPIKeyCount} selected · {selectedEditableAPIKeys.length} editable · {selectedRevokedAPIKeys.length} deleted
+      </p>
       <div class="flex flex-wrap gap-2">
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
@@ -1410,6 +1431,14 @@
           onclick={openBulkDeleteConfirm}
         >
           Delete
+        </button>
+        <button
+          class="ui-button ui-button--sm ui-button--danger inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+          disabled={apiKeys.saving || deleteConfirmBusy || selectedRevokedAPIKeys.length === 0}
+          onclick={openBulkPermanentDeleteConfirm}
+        >
+          Permanently delete
         </button>
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
@@ -1612,15 +1641,19 @@
     style="top: {deleteConfirmKeyPopover.top}px; left: {deleteConfirmKeyPopover.left}px;"
   >
     <p class="text-sm font-medium text-[#0d0d0d]">
-      {deleteConfirmKeyPopover.bulk
-        ? 'Delete selected API keys?'
+      {deleteConfirmKeyPopover.bulkAction === 'purge'
+        ? 'Permanently delete selected API keys?'
+        : deleteConfirmKeyPopover.bulkAction === 'revoke'
+          ? 'Delete selected API keys?'
         : deleteConfirmKey?.revokedAt
           ? 'Permanently delete this API key?'
           : 'Delete this API key?'}
     </p>
     <p class="mt-1 text-sm text-[#6e6e6e]">
-      {deleteConfirmKeyPopover.bulk
-        ? `${selectedEditableAPIKeys.length} selected key${selectedEditableAPIKeys.length === 1 ? '' : 's'}`
+      {deleteConfirmKeyPopover.bulkAction === 'purge'
+        ? `${selectedRevokedAPIKeys.length} deleted key${selectedRevokedAPIKeys.length === 1 ? '' : 's'}. This cannot be undone.`
+        : deleteConfirmKeyPopover.bulkAction === 'revoke'
+          ? `${selectedEditableAPIKeys.length} selected key${selectedEditableAPIKeys.length === 1 ? '' : 's'}`
         : deleteConfirmKey?.revokedAt
           ? `${deleteConfirmKey.name}. This cannot be undone.`
           : deleteConfirmKey?.name || 'this key'}
@@ -1637,13 +1670,17 @@
       <button
         class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
         type="button"
-        disabled={deleteConfirmBusy || (deleteConfirmKeyPopover.bulk && selectedEditableAPIKeys.length === 0)}
+        disabled={deleteConfirmBusy
+          || (deleteConfirmKeyPopover.bulkAction === 'revoke' && selectedEditableAPIKeys.length === 0)
+          || (deleteConfirmKeyPopover.bulkAction === 'purge' && selectedRevokedAPIKeys.length === 0)}
         onclick={confirmDeleteKey}
       >
         {deleteConfirmBusy
           ? 'Deleting'
-          : deleteConfirmKeyPopover.bulk
-            ? `Delete ${selectedEditableAPIKeys.length}`
+          : deleteConfirmKeyPopover.bulkAction === 'purge'
+            ? `Permanently delete ${selectedRevokedAPIKeys.length}`
+            : deleteConfirmKeyPopover.bulkAction === 'revoke'
+              ? `Delete ${selectedEditableAPIKeys.length}`
             : deleteConfirmKey?.revokedAt
               ? 'Permanently delete'
               : 'Delete'}
