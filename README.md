@@ -1,4 +1,8 @@
-# N2API
+<div align="center">
+  <img src="frontend/static/n2api-logo.svg" alt="N2API logo" width="112" height="112" />
+  <h1>N2API</h1>
+  <p>Personal AI API/account gateway for self-hosted use.</p>
+</div>
 
 N2API is a personal AI API/account gateway for self-hosted use. It is inspired by sub2api's practical workflow, but it is a new implementation focused on personal use rather than platform billing or merchant operations.
 

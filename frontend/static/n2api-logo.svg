@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
+  <title id="title">N2API logo</title>
+  <desc id="description">A geometric N with a central routing node splitting into two paths.</desc>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#ffffff" />
+  <path
+    d="M15 48V16L49 48V16"
+    fill="none"
+    stroke="#0d0d0d"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="9"
+  />
+  <path
+    d="M32 32L43 21H54M32 32L43 43H54"
+    fill="none"
+    stroke="#10a37f"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="5"
+  />
+  <circle cx="32" cy="32" r="4.5" fill="#10a37f" />
+  <circle cx="54" cy="21" r="3.5" fill="#10a37f" />
+  <circle cx="54" cy="43" r="3.5" fill="#10a37f" />
+</svg>

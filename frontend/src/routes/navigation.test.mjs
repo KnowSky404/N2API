@@ -28,7 +28,16 @@ const opsPage = readFileSync('src/routes/ops/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
 const authGate = readFileSync('src/lib/AuthGate.svelte', 'utf8');
 const uiStyles = readFileSync('src/app.css', 'utf8');
+const appHtml = readFileSync('src/app.html', 'utf8');
 const designSystem = readFileSync('../DESIGN.md', 'utf8');
+const readme = readFileSync('../README.md', 'utf8');
+
+test('brand assets provide the README logo and website favicon', () => {
+  assert.equal(existsSync('static/n2api-logo.svg'), true, 'README logo should exist');
+  assert.equal(existsSync('static/favicon.svg'), true, 'favicon should exist');
+  assert.match(appHtml, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg" \/>/);
+  assert.match(readme, /frontend\/static\/n2api-logo\.svg/);
+});
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {
   for (const file of expectedFiles) {
