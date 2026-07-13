@@ -79,7 +79,7 @@ async function handleDelete(id, pattern) {
           <h2 class="text-2xl font-semibold text-[#0d0d0d]">Error passthrough rules</h2>
           <p class="mt-2 text-sm text-[#6e6e6e]">Define patterns for upstream error responses that should be passed through to clients.</p>
         </div>
-        <button class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white" onclick={() => { resetForm(); showForm = true; }}>New rule</button>
+        <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white" onclick={() => { resetForm(); showForm = true; }}>New rule</button>
       </div>
     </section>
 
@@ -113,8 +113,8 @@ async function handleDelete(id, pattern) {
             </label>
           </div>
           <div class="flex items-center gap-3">
-            <button class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" disabled={errorPassthroughRules.saving} type="submit">{errorPassthroughRules.saving ? 'Saving' : editingId ? 'Save' : 'Create'}</button>
-            <button class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d]" type="button" onclick={resetForm}>Cancel</button>
+            <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" disabled={errorPassthroughRules.saving} type="submit">{errorPassthroughRules.saving ? 'Saving' : editingId ? 'Save' : 'Create'}</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d]" type="button" onclick={resetForm}>Cancel</button>
           </div>
         </form>
       </section>
@@ -149,8 +149,8 @@ async function handleDelete(id, pattern) {
                     <span class={rule.enabled ? 'rounded-full bg-[#e8f5f0] px-2 py-0.5 text-xs font-medium text-[#0a7a5e]' : 'rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#6e6e6e]'}>{rule.enabled ? 'Enabled' : 'Disabled'}</span>
                   </td>
                   <td class="px-4 py-3 text-right">
-                    <button class="ui-button ui-button--md rounded-md px-2.5 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" onclick={() => edit(rule)}>Edit</button>
-                    <button class="ui-button ui-button--md ml-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50" onclick={() => handleDelete(rule.id, rule.pattern)}>Delete</button>
+                    <button class="ui-button ui-button--sm rounded-md px-2.5 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" onclick={() => edit(rule)}>Edit</button>
+                    <button class="ui-button ui-button--sm ml-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50" onclick={() => handleDelete(rule.id, rule.pattern)}>Delete</button>
                   </td>
                 </tr>
               {/each}

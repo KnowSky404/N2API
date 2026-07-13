@@ -483,7 +483,7 @@
     </div>
     <div>
       <button
-        class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+        class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
         type="button"
         onclick={openCreateKeyModal}
       >
@@ -499,7 +499,7 @@
     Copy this key now. You can copy it again later from the Prefix column.
   </p>
   <button
-    class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+    class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
     type="button"
     onclick={copySecret}
   >
@@ -533,7 +533,7 @@
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Create API key</h3>
           <button
-            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeCreateKeyModal}
           >
@@ -557,7 +557,7 @@
               required
             />
           </label>
-          <button class="ui-button ui-button--md ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={apiKeys.creating}>
+          <button class="ui-button ui-button--sm ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={apiKeys.creating}>
             {apiKeys.creating ? 'Creating' : 'Create key'}
           </button>
         </form>
@@ -578,7 +578,7 @@
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Bulk edit API keys</h3>
           <button
-            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeBulkEditModal}
           >
@@ -788,7 +788,7 @@
           {/if}
 
           <button
-            class="ui-button ui-button--md ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--sm ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="submit"
             disabled={apiKeys.saving || selectedEditableAPIKeys.length === 0}
           >
@@ -811,7 +811,7 @@
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Edit key &middot; {editingKey.name}</h3>
           <button
-            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeEditModal}
           >
@@ -1212,7 +1212,7 @@
 
           <div class="flex items-center justify-end">
             <button
-              class="ui-button ui-button--md ui-button--primary rounded-md border border-[#10a37f] bg-[#10a37f] px-4 py-2 text-sm font-medium text-white hover:bg-[#0a7a5e] disabled:cursor-not-allowed disabled:opacity-60"
+              class="ui-button ui-button--sm ui-button--primary rounded-md border border-[#10a37f] bg-[#10a37f] px-4 py-2 text-sm font-medium text-white hover:bg-[#0a7a5e] disabled:cursor-not-allowed disabled:opacity-60"
               type="submit"
               disabled={Boolean(editingKey.revokedAt)}
             >
@@ -1240,7 +1240,7 @@
             <p class="mt-1 font-mono text-xs text-[#6e6e6e]">{logsKey.prefix}</p>
           </div>
           <button
-            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
             type="button"
             onclick={closeKeyLogsModal}
           >
@@ -1325,7 +1325,7 @@
       <p class="text-sm text-[#3c3c3c]">{selectedAPIKeyCount} selected · {selectedEditableAPIKeys.length} editable</p>
       <div class="flex flex-wrap gap-2">
         <button
-          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={openBulkEditModal}
@@ -1334,7 +1334,7 @@
           Edit selected
         </button>
         <button
-          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={() => bulkSetSelectedAPIKeysDisabled(false)}
@@ -1342,7 +1342,7 @@
           Enable
         </button>
         <button
-          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={() => bulkSetSelectedAPIKeysDisabled(true)}
@@ -1350,7 +1350,7 @@
           Disable
         </button>
         <button
-          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={bulkRevokeSelectedAPIKeys}
@@ -1358,7 +1358,7 @@
           Delete
         </button>
         <button
-          class="ui-button ui-button--md ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
           disabled={apiKeys.saving}
           onclick={clearAPIKeySelection}

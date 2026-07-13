@@ -142,7 +142,7 @@
         <div class="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white p-0.5">
           {#each rangeOptions as option}
             <button
-              class="ui-button ui-button--md ui-button--primary rounded-md px-3 py-1.5 text-sm font-medium transition-colors {range === option.value ? 'bg-[#0d0d0d] text-white' : 'text-[#3c3c3c] hover:bg-[#f5f5f5]'}"
+              class="ui-button ui-button--md rounded-md px-3 py-1.5 text-sm font-medium transition-colors {range === option.value ? 'bg-[#0d0d0d] text-white' : 'text-[#3c3c3c] hover:bg-[#f5f5f5]'}"
               onclick={() => changeRange(option.value)}
             >
               {option.label}

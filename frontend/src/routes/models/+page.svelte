@@ -317,13 +317,13 @@
         </div>
         <div class="flex flex-wrap gap-2">
           <a
-            class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+            class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
             href="/api-keys"
           >
             Open API Keys
           </a>
           <a
-            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             href="/providers"
           >
             Open Provider accounts
@@ -438,7 +438,7 @@
             />
           </label>
           <button
-            class="ui-button ui-button--md ui-button--primary justify-self-start rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--sm ui-button--primary justify-self-start rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             disabled={modelRoutingPreview.loading}
           >
             {modelRoutingPreview.loading ? 'Previewing' : 'Preview selection'}

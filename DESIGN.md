@@ -69,6 +69,15 @@ spacing:
   "2xl": "32px"
   "3xl": "48px"
   "4xl": "64px"
+controlSizes:
+  button-default:
+    height: "32px"
+    fontSize: "12px"
+    lineHeight: "16px"
+    paddingX: "10px"
+  button-icon:
+    width: "32px"
+    height: "32px"
 components:
   button-primary:
     background: "{colors.ink}"
@@ -298,11 +307,13 @@ Buttons:
 - All text buttons use the shared `.ui-button` primitive. Page-level utilities
   may control placement, width, or responsive wrapping but must not redefine
   color, radius, typography, or control height.
-- Compact table, modal, pagination, and panel actions use `.ui-button--sm`:
-  32px minimum height, 12px type, and 10px horizontal padding. This is the
-  canonical pricing-page action size.
-- Standard form and page actions use `.ui-button--md`: 36px minimum height,
-  14px type, and 12px horizontal padding. Very dense secondary tools may use
+- All command buttons default to `.ui-button--sm`: 32px minimum height, 12px
+  type, 16px line height, and 10px horizontal padding. The pricing-page
+  `Add model` button is the canonical reference for primary, secondary,
+  destructive, table-row, modal, pagination, and page-header commands.
+- `.ui-button--md` is not a general command size. Reserve it for controls whose
+  container owns a larger interaction geometry, such as sidebar/account menu
+  rows, tabs, or segmented range selectors. Very dense secondary tools may use
   `.ui-button--xs` at 28px; do not use it for primary actions.
 - Icon-only actions use `.ui-button--icon` at a stable 32px square and require
   an accessible name plus tooltip/title when the icon is not self-explanatory.
@@ -368,8 +379,8 @@ Modals and confirmations:
   width modifier. They have a 12px radius, hairline border, white surface,
   subtle shadow, viewport-bounded height, and internal scrolling.
 - Footer actions use `.ui-modal-actions`; Cancel is secondary and precedes the
-  primary or destructive confirmation. Modal actions use the compact 32px
-  button size established by the pricing page.
+  primary or destructive confirmation. Modal actions use the default 32px
+  command size established by the pricing-page `Add model` button.
 - Destructive table-row actions prefer a button-local Popconfirm rendered in
   a fixed top-level layer so table overflow cannot clip it. Use a centered
   modal only when the confirmation contains a list, form, or broader impact

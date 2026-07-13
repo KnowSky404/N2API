@@ -273,7 +273,7 @@
           <p class="mt-2 text-sm text-[#6e6e6e]">Gateway usage and estimated spend in the last day.</p>
         </div>
         <a
-          class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
+          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
           href="/request-logs?gatewayFallbacks=1"
         >
           Fallback logs
@@ -346,7 +346,7 @@
         </div>
         <div class="flex shrink-0 items-center gap-2">
           <button
-            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
             type="button"
             disabled={opsMonitor.loading}
             onclick={() => loadOpsDashboard(86400)}
@@ -354,7 +354,7 @@
             {opsMonitor.loading ? 'Refreshing' : 'Refresh'}
           </button>
           <a
-            class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             href="/ops"
           >
             Open ops monitor

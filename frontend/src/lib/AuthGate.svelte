@@ -31,7 +31,7 @@
         {#if loginForm.error}
           <p class="mt-3 text-sm text-red-700">{loginForm.error}</p>
         {/if}
-        <button class="ui-button ui-button--md ui-button--primary mt-5 w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={loginForm.submitting}>
+        <button class="ui-button ui-button--sm ui-button--primary mt-5 w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={loginForm.submitting}>
           {loginForm.submitting ? 'Signing in' : 'Sign in'}
         </button>
       </form>

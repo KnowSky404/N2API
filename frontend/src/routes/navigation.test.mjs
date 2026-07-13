@@ -843,10 +843,23 @@ test('route UI uses the pricing-derived shared component contract', () => {
     assert.match(designSystem, new RegExp(contract.replaceAll('.', '\\.')), `DESIGN.md should define ${contract}`);
   }
 
+  assert.match(designSystem, /button-default:[\s\S]*?height: "32px"[\s\S]*?fontSize: "12px"[\s\S]*?paddingX: "10px"/);
+  assert.match(designSystem, /pricing-page[\s\S]*?`Add model` button is the canonical reference/);
+
   for (const file of expectedFiles.filter((path) => path.endsWith('.svelte'))) {
     const source = readFileSync(file, 'utf8');
     for (const match of source.matchAll(/<button[^>]*class="([^"]+)"/g)) {
       assert.match(match[1], /(?:^|\s)ui-button(?:\s|$)/, `${file} button should use ui-button`);
+      if (/ui-button--(?:primary|secondary|danger|danger-filled|warning)/.test(match[1]) && !match[1].includes('ui-button--icon')) {
+        assert.match(match[1], /(?:^|\s)ui-button--sm(?:\s|$)/, `${file} command button should use the Add model size`);
+        assert.doesNotMatch(match[1], /(?:^|\s)ui-button--md(?:\s|$)/, `${file} command button should not use the old md size`);
+      }
+    }
+    for (const match of source.matchAll(/<a[^>]*class="([^"]*ui-button[^"]*)"/g)) {
+      if (/ui-button--(?:primary|secondary|danger|danger-filled|warning)/.test(match[1]) && !match[1].includes('ui-button--icon')) {
+        assert.match(match[1], /(?:^|\s)ui-button--sm(?:\s|$)/, `${file} command link should use the Add model size`);
+        assert.doesNotMatch(match[1], /(?:^|\s)ui-button--md(?:\s|$)/, `${file} command link should not use the old md size`);
+      }
     }
     for (const match of source.matchAll(/<table class="([^"]+)"/g)) {
       assert.match(match[1], /(?:^|\s)ui-table(?:\s|$)/, `${file} table should use ui-table`);

@@ -246,7 +246,7 @@
           <div class="mt-3 flex flex-wrap gap-2">
             {#each unschedulableAccountSummary as item}
               <a
-                class="ui-button ui-button--md ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#3c3c3c] underline-offset-2 hover:underline"
+                class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#3c3c3c] underline-offset-2 hover:underline"
                 href={unschedulableReasonHref(item.reason)}
                 aria-label="View provider accounts with this blocked reason"
               >
@@ -358,13 +358,13 @@
             </div>
           </div>
           <div class="mt-4 flex flex-wrap items-center gap-3">
-            <button class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving}>
+            <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving}>
               {gatewaySettings.saving ? 'Saving' : 'Save runtime limits'}
             </button>
             {#if gatewaySettings.saved}
               <span class="text-sm text-[#0a7a5e]">Runtime limits saved.</span>
             {/if}
-            <button type="button" class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
+            <button type="button" class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
               {gatewaySettings.cleanupRunning ? 'Cleaning' : 'Clean request logs'}
             </button>
             {#if gatewaySettings.cleanupResult}

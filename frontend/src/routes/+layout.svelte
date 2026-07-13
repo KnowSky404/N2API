@@ -422,14 +422,14 @@
         {/if}
         <div class="mt-4 flex gap-2">
           <button
-            class="ui-button ui-button--md ui-button--secondary flex-1 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--sm ui-button--secondary flex-1 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             type="button"
             onclick={closePasswordModal}
           >
             Cancel
           </button>
           <button
-            class="ui-button ui-button--md ui-button--primary flex-1 rounded-md bg-[#0d0d0d] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            class="ui-button ui-button--sm ui-button--primary flex-1 rounded-md bg-[#0d0d0d] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             disabled={changePasswordForm.submitting}
           >
             {changePasswordForm.submitting ? 'Saving...' : 'Update'}

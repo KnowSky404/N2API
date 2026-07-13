@@ -103,7 +103,7 @@ async function handleSubmit(e) {
           </p>
         </div>
         <button
-          class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+          class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
           onclick={() => { resetForm(); showForm = true; }}
         >
           New profile
@@ -147,10 +147,10 @@ async function handleSubmit(e) {
             Enabled
           </label>
           <div class="flex items-center gap-3">
-            <button class="ui-button ui-button--md ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" disabled={fingerprintProfiles.saving} type="submit">
+            <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" disabled={fingerprintProfiles.saving} type="submit">
               {fingerprintProfiles.saving ? 'Saving' : editingId ? 'Save' : 'Create'}
             </button>
-            <button class="ui-button ui-button--md ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d]" type="button" onclick={resetForm}>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d]" type="button" onclick={resetForm}>
               Cancel
             </button>
           </div>
@@ -192,8 +192,8 @@ async function handleSubmit(e) {
                   </td>
                   <td class="px-4 py-3 text-[#6e6e6e]">{formatDate(fp.createdAt)}</td>
                   <td class="px-4 py-3 text-right">
-                    <button class="ui-button ui-button--md rounded-md px-2.5 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" onclick={() => edit(fp)}>Edit</button>
-                    <button class="ui-button ui-button--md ml-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50" onclick={() => handleDelete(fp.id, fp.name)}>Delete</button>
+                    <button class="ui-button ui-button--sm rounded-md px-2.5 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" onclick={() => edit(fp)}>Edit</button>
+                    <button class="ui-button ui-button--sm ml-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50" onclick={() => handleDelete(fp.id, fp.name)}>Delete</button>
                   </td>
                 </tr>
               {/each}
