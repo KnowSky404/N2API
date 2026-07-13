@@ -62,6 +62,7 @@
 - Use Conventional Commits for commit messages, such as `feat: add provider health check`, `fix: preserve streaming response headers`, `docs: update deployment guide`, `test: cover token refresh`, or `chore: update tooling`.
 - Do not commit generated build artifacts, dependency directories, local caches, or real environment files.
 - After every conversation turn that involves code or functionality changes, rebuild and refresh the local Docker Compose dev stack so the user can test and verify. Use the `n2api-refresh-docker` skill for the exact commands. If no code or functionality was changed during the turn, skip this step.
+- After code or functionality changes are pushed or merged to GitHub, wait for the corresponding `CI Image` workflow run to complete before claiming the work is finished. Confirm both the `Test` and `Build and smoke test image` jobs pass; for `main` branch runs, also confirm the image push step succeeds. If the workflow fails, inspect the GitHub Actions logs and resolve the failure before closing the task.
 
 ## DeepSeek Delegation Workflow
 
