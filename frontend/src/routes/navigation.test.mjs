@@ -1353,11 +1353,20 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(requestLogsPage, /<svelte:window/);
 
   assert.match(requestLogsPage, /sortedPricingRows/);
-  assert.match(requestLogsPage, /outputMicrousdPerMillion/);
-  assert.match(requestLogsPage, /inputMicrousdPerMillion/);
-  assert.match(requestLogsPage, /longOutputMicrousdPerMillion/);
+  assert.match(
+    requestLogsPage,
+    /const sortedPricingRows[\s\S]*?const inputDiff[\s\S]*?if \(inputDiff !== 0\) return inputDiff;[\s\S]*?const outputDiff[\s\S]*?if \(outputDiff !== 0\) return outputDiff;[\s\S]*?const longInputDiff[\s\S]*?if \(longInputDiff !== 0\) return longInputDiff;[\s\S]*?localeCompare\(right\.model/,
+    'pricing rows must sort by input, output, long input, then model name'
+  );
   assert.match(requestLogsPage, /localeCompare\(right\.model/);
   assert.match(requestLogsPage, /\[\.\.\.filteredPricingRows\]\.sort/);
+
+  // Pricing commands use the compact button size without shrinking inputs or selects.
+  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{openSyncConfirmModal\}/);
+  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*h-8 w-8[^"]*"[\s\S]{0,180}?aria-label="Review upcoming model shutdowns"/);
+  assert.match(requestLogsPage, /<button class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{commitPricingRow\}/);
+  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,300}?>\s*Previous/);
+  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{confirmSyncOfficial\}/);
 
   assert.match(requestLogsPage, /let pricingPage = \$state\(1\)/);
   assert.match(requestLogsPage, /let pricingPageSize = \$state\(5\)/);
