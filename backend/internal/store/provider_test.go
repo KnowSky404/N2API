@@ -149,11 +149,31 @@ func TestEnsureDefaultCodexFingerprintProfileUsesSystemKey(t *testing.T) {
 		"func (r *ProviderRepository) EnsureDefaultCodexFingerprintProfile",
 		"provider.DefaultCodexFingerprintSystemKey",
 		"ON CONFLICT (system_key) WHERE system_key <> ''",
-		"DO UPDATE SET enabled = true",
+		"name = EXCLUDED.name",
+		"user_agent = EXCLUDED.user_agent",
+		"headers_json = EXCLUDED.headers_json",
+		"enabled = true",
 		"RETURNING id",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("provider store source missing %q", want)
+		}
+	}
+}
+
+func TestSystemFingerprintProfilesAreReadOnly(t *testing.T) {
+	source, err := os.ReadFile("fingerprint.go")
+	if err != nil {
+		t.Fatalf("ReadFile fingerprint.go returned error: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"WHERE id = $1 AND system_key = ''",
+		"DELETE FROM fingerprint_profiles WHERE id = $1 AND system_key = ''",
+		"ORDER BY CASE WHEN system_key <> '' THEN 0 ELSE 1 END",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("fingerprint store source missing %q", want)
 		}
 	}
 }

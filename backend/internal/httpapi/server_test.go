@@ -5650,6 +5650,7 @@ func (s *fakeAdminService) GetOpsCostBreakdown(_ context.Context, since time.Tim
 func (s *fakeAdminService) ListFingerprintProfiles(_ context.Context) ([]admin.FingerprintProfile, error) {
 	return []admin.FingerprintProfile{{
 		ID:             8,
+		SystemKey:      "codex_cli_default",
 		Name:           "Chrome",
 		Description:    "browser preset",
 		UserAgent:      "Mozilla/5.0",

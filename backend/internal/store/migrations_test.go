@@ -166,6 +166,24 @@ func TestClientAPIKeyEncryptedSecretMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestDefaultCodexFingerprintSeedMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00034_seed_default_codex_fingerprint.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"'codex_cli_default'",
+		"'Default Codex CLI'",
+		"codex-tui/0.135.0",
+		`'{"Originator":"codex-tui","Version":"0.135.0"}'::jsonb`,
+		"ON CONFLICT (system_key) WHERE system_key <> ''",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountModelsMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00007_oauth_account_models.sql")
 	if err != nil {
@@ -603,10 +621,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 33 {
-		t.Fatalf("migration sources = %d, want 33", len(sources))
+	if len(sources) != 34 {
+		t.Fatalf("migration sources = %d, want 34", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[32].Path != "00033_client_api_key_encrypted_secret.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[33].Path != "00034_seed_default_codex_fingerprint.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

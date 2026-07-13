@@ -1551,7 +1551,14 @@ func (r *ProviderRepository) EnsureDefaultCodexFingerprintProfile(ctx context.Co
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, true)
 		ON CONFLICT (system_key) WHERE system_key <> ''
-		DO UPDATE SET enabled = true, updated_at = now()
+		DO UPDATE SET
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			user_agent = EXCLUDED.user_agent,
+			tls_fingerprint = EXCLUDED.tls_fingerprint,
+			headers_json = EXCLUDED.headers_json,
+			enabled = true,
+			updated_at = now()
 		RETURNING id
 	`,
 		provider.DefaultCodexFingerprintSystemKey,

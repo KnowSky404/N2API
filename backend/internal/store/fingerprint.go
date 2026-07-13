@@ -10,9 +10,9 @@ import (
 
 func (r *AdminRepository) ListFingerprintProfiles(ctx context.Context) ([]admin.FingerprintProfile, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, name, description, user_agent, tls_fingerprint, headers_json, enabled, created_at, updated_at
+		SELECT id, system_key, name, description, user_agent, tls_fingerprint, headers_json, enabled, created_at, updated_at
 		FROM fingerprint_profiles
-		ORDER BY name ASC
+		ORDER BY CASE WHEN system_key <> '' THEN 0 ELSE 1 END, name ASC
 	`)
 	if err != nil {
 		return nil, err
@@ -24,7 +24,7 @@ func (r *AdminRepository) ListFingerprintProfiles(ctx context.Context) ([]admin.
 		var fp admin.FingerprintProfile
 		var headersRaw []byte
 		if err := rows.Scan(
-			&fp.ID, &fp.Name, &fp.Description, &fp.UserAgent, &fp.TLSFingerprint,
+			&fp.ID, &fp.SystemKey, &fp.Name, &fp.Description, &fp.UserAgent, &fp.TLSFingerprint,
 			&headersRaw, &fp.Enabled, &fp.CreatedAt, &fp.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -50,9 +50,9 @@ func (r *AdminRepository) CreateFingerprintProfile(ctx context.Context, input ad
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO fingerprint_profiles (name, description, user_agent, tls_fingerprint, headers_json, enabled)
 		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, name, description, user_agent, tls_fingerprint, headers_json, enabled, created_at, updated_at
+		RETURNING id, system_key, name, description, user_agent, tls_fingerprint, headers_json, enabled, created_at, updated_at
 	`, input.Name, input.Description, input.UserAgent, input.TLSFingerprint, headersJSON, input.Enabled).Scan(
-		&fp.ID, &fp.Name, &fp.Description, &fp.UserAgent, &fp.TLSFingerprint,
+		&fp.ID, &fp.SystemKey, &fp.Name, &fp.Description, &fp.UserAgent, &fp.TLSFingerprint,
 		&headersJSON, &fp.Enabled, &fp.CreatedAt, &fp.UpdatedAt,
 	)
 	if err != nil {
@@ -75,10 +75,10 @@ func (r *AdminRepository) UpdateFingerprintProfile(ctx context.Context, id int64
 	err = r.pool.QueryRow(ctx, `
 		UPDATE fingerprint_profiles
 		SET name = $2, description = $3, user_agent = $4, tls_fingerprint = $5, headers_json = $6, enabled = $7, updated_at = now()
-		WHERE id = $1
-		RETURNING id, name, description, user_agent, tls_fingerprint, headers_json, enabled, created_at, updated_at
+		WHERE id = $1 AND system_key = ''
+		RETURNING id, system_key, name, description, user_agent, tls_fingerprint, headers_json, enabled, created_at, updated_at
 	`, id, input.Name, input.Description, input.UserAgent, input.TLSFingerprint, headersJSON, input.Enabled).Scan(
-		&fp.ID, &fp.Name, &fp.Description, &fp.UserAgent, &fp.TLSFingerprint,
+		&fp.ID, &fp.SystemKey, &fp.Name, &fp.Description, &fp.UserAgent, &fp.TLSFingerprint,
 		&headersJSON, &fp.Enabled, &fp.CreatedAt, &fp.UpdatedAt,
 	)
 	if err != nil {
@@ -95,7 +95,7 @@ func (r *AdminRepository) UpdateFingerprintProfile(ctx context.Context, id int64
 }
 
 func (r *AdminRepository) DeleteFingerprintProfile(ctx context.Context, id int64) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM fingerprint_profiles WHERE id = $1`, id)
+	tag, err := r.pool.Exec(ctx, `DELETE FROM fingerprint_profiles WHERE id = $1 AND system_key = ''`, id)
 	if err != nil {
 		return err
 	}

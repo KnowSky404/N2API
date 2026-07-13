@@ -2068,6 +2068,7 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 	var gotOpenAIBeta string
 	var gotOriginator string
 	var gotUserAgent string
+	var gotVersion string
 	var gotHost string
 	var gotBody map[string]any
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2077,6 +2078,7 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
 		gotOriginator = r.Header.Get("originator")
 		gotUserAgent = r.Header.Get("User-Agent")
+		gotVersion = r.Header.Get("Version")
 		gotHost = r.Host
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -2122,11 +2124,14 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 	if gotOpenAIBeta != "responses=experimental" {
 		t.Fatalf("OpenAI-Beta = %q", gotOpenAIBeta)
 	}
-	if gotOriginator != "codex_cli_rs" {
+	if gotOriginator != provider.DefaultCodexFingerprintOriginator {
 		t.Fatalf("originator = %q", gotOriginator)
 	}
-	if !strings.HasPrefix(gotUserAgent, "codex_cli_rs/") {
-		t.Fatalf("User-Agent = %q, want codex_cli_rs prefix", gotUserAgent)
+	if gotUserAgent != provider.DefaultCodexFingerprintUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", gotUserAgent, provider.DefaultCodexFingerprintUserAgent)
+	}
+	if gotVersion != provider.DefaultCodexFingerprintVersion {
+		t.Fatalf("Version = %q, want %q", gotVersion, provider.DefaultCodexFingerprintVersion)
 	}
 	if gotHost != strings.TrimPrefix(upstream.URL, "http://") {
 		t.Fatalf("Host = %q, want configured upstream host", gotHost)

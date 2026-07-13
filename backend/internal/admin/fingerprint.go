@@ -10,6 +10,7 @@ import (
 // FingerprintProfile defines a TLS/UA fingerprint configuration.
 type FingerprintProfile struct {
 	ID             int64             `json:"id"`
+	SystemKey      string            `json:"systemKey"`
 	Name           string            `json:"name"`
 	Description    string            `json:"description"`
 	UserAgent      string            `json:"userAgent"`

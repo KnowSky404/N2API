@@ -47,14 +47,17 @@ const (
 const (
 	DefaultCodexFingerprintSystemKey   = "codex_cli_default"
 	DefaultCodexFingerprintName        = "Default Codex CLI"
-	DefaultCodexFingerprintDescription = "Built-in Codex CLI-style outbound identity for OAuth accounts."
-	DefaultCodexFingerprintUserAgent   = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	DefaultCodexFingerprintDescription = "System-managed Codex TUI outbound identity for OAuth accounts."
+	DefaultCodexFingerprintUserAgent   = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	DefaultCodexFingerprintOriginator  = "codex-tui"
+	DefaultCodexFingerprintVersion     = "0.135.0"
 	DefaultCodexFingerprintTLS         = ""
 )
 
 func DefaultCodexFingerprintHeaders() map[string]string {
 	return map[string]string{
-		"originator": "codex_cli_rs",
+		"Originator": DefaultCodexFingerprintOriginator,
+		"Version":    DefaultCodexFingerprintVersion,
 	}
 }
 
@@ -573,8 +576,9 @@ func (c *HTTPClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessT
 			req.Header.Set("chatgpt-account-id", chatGPTAccountID)
 			req.Header.Set("Accept", "text/event-stream")
 			req.Header.Set("OpenAI-Beta", "responses=experimental")
-			req.Header.Set("originator", "codex_cli_rs")
-			req.Header.Set("User-Agent", "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color")
+			req.Header.Set("originator", DefaultCodexFingerprintOriginator)
+			req.Header.Set("User-Agent", DefaultCodexFingerprintUserAgent)
+			req.Header.Set("Version", DefaultCodexFingerprintVersion)
 			req.Header.Set("Content-Type", "application/json")
 		})
 	}

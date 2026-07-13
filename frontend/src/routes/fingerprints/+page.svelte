@@ -10,9 +10,13 @@
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
+
+  const SYSTEM_DEFAULT_KEY = 'codex_cli_default';
+
   let requested = $state(false);
   let showForm = $state(false);
   let editingId = $state(/** @type {number|null} */ null);
+  let selectedTemplate = $state('');
 
   let form = $state({
     name: '',
@@ -29,9 +33,59 @@
     loadFingerprintProfiles();
   });
 
+  function blankForm() {
+    return { name: '', description: '', userAgent: '', tlsFingerprint: '', headersText: '', enabled: true };
+  }
+
+  function systemDefaultProfile() {
+    return fingerprintProfiles.items.find((profile) => profile.systemKey === SYSTEM_DEFAULT_KEY);
+  }
+
+  function nextTemplateName() {
+    const names = new Set(fingerprintProfiles.items.map((profile) => profile.name));
+    const base = 'Codex CLI custom';
+    if (!names.has(base)) return base;
+    let suffix = 2;
+    while (names.has(`${base} ${suffix}`)) suffix += 1;
+    return `${base} ${suffix}`;
+  }
+
+  /** @param {string} templateKey */
+  function applyTemplate(templateKey) {
+    selectedTemplate = templateKey;
+    if (!templateKey) {
+      form = blankForm();
+      return;
+    }
+    const template = systemDefaultProfile();
+    if (!template) {
+      fingerprintProfiles.error = 'System default fingerprint profile is unavailable';
+      selectedTemplate = '';
+      form = blankForm();
+      return;
+    }
+    fingerprintProfiles.error = '';
+    form = {
+      name: nextTemplateName(),
+      description: `Custom profile based on ${template.name}.`,
+      userAgent: template.userAgent || '',
+      tlsFingerprint: template.tlsFingerprint || '',
+      headersText: template.headers ? JSON.stringify(template.headers, null, 2) : '',
+      enabled: true,
+    };
+  }
+
+  function openCreateForm() {
+    editingId = null;
+    showForm = true;
+    applyTemplate(systemDefaultProfile() ? SYSTEM_DEFAULT_KEY : '');
+  }
+
   /** @param {any} fp */
   function edit(fp) {
+    if (fp.systemKey) return;
     editingId = fp.id;
+    selectedTemplate = '';
     form = {
       name: fp.name,
       description: fp.description || '',
@@ -45,12 +99,13 @@
 
   function resetForm() {
     editingId = null;
-    form = { name: '', description: '', userAgent: '', tlsFingerprint: '', headersText: '', enabled: true };
+    selectedTemplate = '';
+    form = blankForm();
     showForm = false;
   }
 
   /** @param {Event} e */
-async function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
     let headers = /** @type {Record<string, string>} */ ({});
     try {
@@ -104,7 +159,8 @@ async function handleSubmit(e) {
         </div>
         <button
           class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
-          onclick={() => { resetForm(); showForm = true; }}
+          onclick={openCreateForm}
+          disabled={fingerprintProfiles.loading}
         >
           New profile
         </button>
@@ -122,6 +178,19 @@ async function handleSubmit(e) {
       <section class="rounded-lg border border-[#ededed] bg-white p-6">
         <h3 class="text-base font-semibold text-[#0d0d0d]">{editingId ? 'Edit' : 'New'} profile</h3>
         <form class="mt-4 space-y-4" onsubmit={handleSubmit}>
+          {#if !editingId}
+            <label class="block text-sm font-medium text-[#3c3c3c]">
+              Template
+              <select
+                class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                value={selectedTemplate}
+                onchange={(event) => applyTemplate(event.currentTarget.value)}
+              >
+                <option value="">Blank profile</option>
+                <option value={SYSTEM_DEFAULT_KEY}>System default · Codex CLI</option>
+              </select>
+            </label>
+          {/if}
           <label class="block text-sm font-medium text-[#3c3c3c]">
             Name *
             <input class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={form.name} required />
@@ -181,19 +250,43 @@ async function handleSubmit(e) {
             <tbody class="divide-y divide-[#ededed]">
               {#each fingerprintProfiles.items as fp}
                 <tr class="hover:bg-[#fafafa]">
-                  <td class="px-4 py-3 font-medium text-[#0d0d0d]">{fp.name}</td>
-                  <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c] max-w-[200px] truncate">{fp.userAgent || '-'}</td>
-                  <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{fp.tlsFingerprint || '-'}</td>
-                  <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{fp.headers && Object.keys(fp.headers).length ? Object.keys(fp.headers).length + ' entries' : '-'}</td>
+                  <td class="px-4 py-3 align-top">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="font-medium text-[#0d0d0d]">{fp.name}</span>
+                      {#if fp.systemKey}
+                        <span class="rounded-full bg-[#e8f5f0] px-2 py-0.5 text-xs font-medium text-[#0a7a5e]">System default</span>
+                      {/if}
+                    </div>
+                    {#if fp.description}
+                      <p class="mt-1 max-w-[260px] text-xs leading-5 text-[#6e6e6e]">{fp.description}</p>
+                    {/if}
+                  </td>
+                  <td class="max-w-[360px] break-all px-4 py-3 align-top font-mono text-[13px] leading-5 text-[#3c3c3c]">{fp.userAgent || '-'}</td>
+                  <td class="px-4 py-3 align-top font-mono text-[13px] text-[#3c3c3c]">{fp.tlsFingerprint || 'Default transport'}</td>
+                  <td class="px-4 py-3 align-top font-mono text-[13px] text-[#3c3c3c]">
+                    {#if fp.headers && Object.keys(fp.headers).length}
+                      <div class="space-y-1">
+                        {#each Object.entries(fp.headers) as [key, value]}
+                          <div><span class="text-[#6e6e6e]">{key}:</span> {value}</div>
+                        {/each}
+                      </div>
+                    {:else}
+                      -
+                    {/if}
+                  </td>
                   <td class="px-4 py-3">
                     <span class={fp.enabled ? 'rounded-full bg-[#e8f5f0] px-2 py-0.5 text-xs font-medium text-[#0a7a5e]' : 'rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#6e6e6e]'}>
                       {fp.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
                   <td class="px-4 py-3 text-[#6e6e6e]">{formatDate(fp.createdAt)}</td>
-                  <td class="px-4 py-3 text-right">
-                    <button class="ui-button ui-button--sm rounded-md px-2.5 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" onclick={() => edit(fp)}>Edit</button>
-                    <button class="ui-button ui-button--sm ml-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50" onclick={() => handleDelete(fp.id, fp.name)}>Delete</button>
+                  <td class="px-4 py-3 text-right align-top">
+                    {#if fp.systemKey}
+                      <span class="text-xs font-medium text-[#8e8e8e]">Managed by system</span>
+                    {:else}
+                      <button class="ui-button ui-button--sm rounded-md px-2.5 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" onclick={() => edit(fp)}>Edit</button>
+                      <button class="ui-button ui-button--sm ml-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50" onclick={() => handleDelete(fp.id, fp.name)}>Delete</button>
+                    {/if}
                   </td>
                 </tr>
               {/each}

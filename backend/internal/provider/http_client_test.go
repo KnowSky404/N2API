@@ -119,6 +119,8 @@ func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
 	var gotChatGPTAccountID string
 	var gotOpenAIBeta string
 	var gotOriginator string
+	var gotUserAgent string
+	var gotVersion string
 	var gotBody string
 	client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		gotPath = r.URL.Path
@@ -126,6 +128,8 @@ func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
 		gotChatGPTAccountID = r.Header.Get("chatgpt-account-id")
 		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
 		gotOriginator = r.Header.Get("originator")
+		gotUserAgent = r.Header.Get("User-Agent")
+		gotVersion = r.Header.Get("Version")
 		raw, _ := io.ReadAll(r.Body)
 		gotBody = string(raw)
 		return jsonResponse(http.StatusTooManyRequests, map[string]any{
@@ -147,8 +151,8 @@ func TestHTTPClientProbeUsesCodexResponsesForChatGPTAccounts(t *testing.T) {
 	if gotPath != "/backend-api/codex/responses" {
 		t.Fatalf("path = %q, want Codex responses endpoint", gotPath)
 	}
-	if gotAuthorization != "Bearer access-token" || gotChatGPTAccountID != "acct_chatgpt" || gotOpenAIBeta != "responses=experimental" || gotOriginator != "codex_cli_rs" {
-		t.Fatalf("headers auth=%q account=%q beta=%q originator=%q", gotAuthorization, gotChatGPTAccountID, gotOpenAIBeta, gotOriginator)
+	if gotAuthorization != "Bearer access-token" || gotChatGPTAccountID != "acct_chatgpt" || gotOpenAIBeta != "responses=experimental" || gotOriginator != DefaultCodexFingerprintOriginator || gotUserAgent != DefaultCodexFingerprintUserAgent || gotVersion != DefaultCodexFingerprintVersion {
+		t.Fatalf("headers auth=%q account=%q beta=%q originator=%q user-agent=%q version=%q", gotAuthorization, gotChatGPTAccountID, gotOpenAIBeta, gotOriginator, gotUserAgent, gotVersion)
 	}
 	var payload struct {
 		Model        string `json:"model"`

@@ -21,7 +21,7 @@ import (
 
 const defaultUpstreamBaseURL = "https://api.openai.com"
 const defaultCodexResponsesBaseURL = "https://chatgpt.com/backend-api/codex"
-const defaultCodexUserAgent = "codex_cli_rs/0.125.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+const defaultCodexUserAgent = provider.DefaultCodexFingerprintUserAgent
 const defaultCodexInstructions = "You are Codex, a coding agent."
 const maxReplayableRequestBody = 1 << 20
 const maxReplayableAttempts = 5
@@ -1265,8 +1265,9 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
 		req.Header.Set("Accept", "text/event-stream")
 		req.Header.Set("OpenAI-Beta", "responses=experimental")
-		req.Header.Set("originator", "codex_cli_rs")
+		req.Header.Set("originator", provider.DefaultCodexFingerprintOriginator)
 		req.Header.Set("User-Agent", defaultCodexUserAgent)
+		req.Header.Set("Version", provider.DefaultCodexFingerprintVersion)
 		req.Header.Set("Content-Type", "application/json")
 	}
 
