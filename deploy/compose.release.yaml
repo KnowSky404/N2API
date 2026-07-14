@@ -1,0 +1,32 @@
+services:
+  n2api:
+    image: ${N2API_IMAGE:-ghcr.io/knowsky404/n2api:latest}
+    pull_policy: always
+    restart: unless-stopped
+    env_file:
+      - path: ../.env.example
+      - path: ../.env
+        required: false
+    ports:
+      - "${N2API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-n2api}
+      POSTGRES_USER: ${POSTGRES_USER:-n2api}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - n2api-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n2api} -d ${POSTGRES_DB:-n2api}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  n2api-postgres:

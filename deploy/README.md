@@ -13,6 +13,67 @@ docker compose -f deploy/compose.yaml --env-file .env up --build
 
 The default app URL is `http://localhost:3000`.
 
+## Published Images
+
+The `CI Image` workflow tests every pull request without publishing an image.
+After a commit reaches `main`, the same image that passed the PostgreSQL smoke
+test is published with two development tags:
+
+- `main` moves to the newest tested commit on the default branch.
+- `sha-<12 characters>` identifies one tested source commit and is immutable.
+
+Stable releases add two more tags without rebuilding the image:
+
+- `YYYYMMDDNN` is an immutable Europe/Berlin CalVer release, for example
+  `2026071401`.
+- `latest` moves only when a stable GitHub Release is published.
+
+The Git tag, GitHub Release tag, and container version tag always use the same
+CalVer value without a `v` prefix.
+
+## Preview and Publish a Release
+
+Open **Actions > Release > Run workflow** on the `main` branch. Keep `mode` set
+to `preview` first. Preview mode verifies the tested `sha-<12 characters>` image,
+calculates the next CalVer, generates release notes from Conventional Commits,
+and uploads the proposed Release body. It does not create Git tags, container
+tags, or GitHub Releases. A later run may select a newer `main` commit, so a
+standalone preview is informational rather than a locked release candidate.
+
+For an approval gate, configure the repository's `release` environment with a
+required reviewer. Run the workflow with `mode` set to `publish`; its prepare
+job creates a fresh `release-preview-*` artifact, then the publish job waits for
+environment approval and consumes that artifact from the same workflow run.
+After approval it creates the Git tag, promotes the tested digest to the CalVer
+tag, publishes the GitHub Release, and only then moves `latest`. The workflow
+never rebuilds the image and refuses to replace a CalVer tag that points to
+another commit or manifest digest. A rerun can repair `latest` after a partial
+failure without replacing an existing Release.
+
+## Deploy a Published Image
+
+Copy the example environment file and pin an immutable version in `.env`:
+
+```bash
+cp .env.example .env
+printf '\nN2API_IMAGE=ghcr.io/knowsky404/n2api:2026071401\n' >> .env
+docker compose -f deploy/compose.release.yaml --env-file .env pull
+docker compose -f deploy/compose.release.yaml --env-file .env up -d
+curl -fsS http://127.0.0.1:3000/healthz
+```
+
+Back up PostgreSQL before upgrading. For rollback, change `N2API_IMAGE` to the
+previous CalVer, then pull and recreate the stack:
+
+```bash
+docker compose -f deploy/compose.release.yaml --env-file .env pull
+docker compose -f deploy/compose.release.yaml --env-file .env up -d
+curl -fsS http://127.0.0.1:3000/healthz
+```
+
+Use `latest` only when automatic movement to the newest stable release is
+intentional. Use `main` only for development validation, not production.
+
 ## Downstream Codex CLI
 
 After connecting and testing a Codex OAuth provider account, enable the models
