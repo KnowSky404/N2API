@@ -1313,6 +1313,67 @@ func TestEstimateUsageCostReturnsUnmatchedSnapshot(t *testing.T) {
 	}
 }
 
+func TestEstimateUsageCostFallsBackFromDatedSnapshotToBaseModel(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5.4-mini": {
+				InputMicrousdPerMillion:  750_000,
+				OutputMicrousdPerMillion: 4_500_000,
+			},
+		},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	estimate, err := service.EstimateUsageCost(context.Background(), UsageCostInput{
+		Model:        "gpt-5.4-mini-2026-03-17",
+		InputTokens:  25,
+		OutputTokens: 6,
+	})
+	if err != nil {
+		t.Fatalf("EstimateUsageCost returned error: %v", err)
+	}
+	if !estimate.Matched || estimate.CostMicrousd != 46 {
+		t.Fatalf("estimate = %+v, want matched cost 46", estimate)
+	}
+	if estimate.Snapshot["model"] != "gpt-5.4-mini-2026-03-17" || estimate.Snapshot["pricingModel"] != "gpt-5.4-mini" {
+		t.Fatalf("snapshot = %+v, want actual and pricing model", estimate.Snapshot)
+	}
+}
+
+func TestEstimateUsageCostPrefersExactVersionedPriceAndRejectsNonDateSuffixFallback(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.usagePricing = UsagePricing{
+		Version:  1,
+		Currency: "USD",
+		Unit:     "1M_tokens",
+		Models: map[string]UsagePrice{
+			"gpt-5.4-mini":            {InputMicrousdPerMillion: 1_000_000},
+			"gpt-5.4-mini-2026-03-17": {InputMicrousdPerMillion: 2_000_000},
+			"gpt-4":                   {InputMicrousdPerMillion: 3_000_000},
+		},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+
+	exact, err := service.EstimateUsageCost(context.Background(), UsageCostInput{Model: "gpt-5.4-mini-2026-03-17", InputTokens: 10})
+	if err != nil {
+		t.Fatalf("EstimateUsageCost exact returned error: %v", err)
+	}
+	if !exact.Matched || exact.Snapshot["pricingModel"] != "gpt-5.4-mini-2026-03-17" {
+		t.Fatalf("exact estimate = %+v, want exact versioned price", exact)
+	}
+	nonDate, err := service.EstimateUsageCost(context.Background(), UsageCostInput{Model: "gpt-4-0613", InputTokens: 10})
+	if err != nil {
+		t.Fatalf("EstimateUsageCost non-date returned error: %v", err)
+	}
+	if nonDate.Matched {
+		t.Fatalf("non-date estimate = %+v, want unmatched", nonDate)
+	}
+}
+
 func TestModelPolicyHelpersReturnDefaultAndAllowedStatus(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})

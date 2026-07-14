@@ -913,10 +913,11 @@ func (s *Service) EstimateUsageCost(ctx context.Context, usage UsageCostInput) (
 	if err != nil {
 		return UsageCostEstimate{}, err
 	}
-	price, ok := pricing.Models[strings.TrimSpace(usage.Model)]
+	model := strings.TrimSpace(usage.Model)
+	pricingModel, price, ok := usagePriceForModel(pricing.Models, model)
 	snapshot := map[string]any{
 		"matched":   ok,
-		"model":     strings.TrimSpace(usage.Model),
+		"model":     model,
 		"currency":  pricing.Currency,
 		"unit":      pricing.Unit,
 		"version":   pricing.Version,
@@ -925,6 +926,7 @@ func (s *Service) EstimateUsageCost(ctx context.Context, usage UsageCostInput) (
 	if !ok {
 		return UsageCostEstimate{Matched: false, Snapshot: snapshot}, nil
 	}
+	snapshot["pricingModel"] = pricingModel
 	snapshot["inputMicrousdPerMillion"] = price.InputMicrousdPerMillion
 	snapshot["cachedInputMicrousdPerMillion"] = price.CachedInputMicrousdPerMillion
 	snapshot["outputMicrousdPerMillion"] = price.OutputMicrousdPerMillion
@@ -938,6 +940,26 @@ func (s *Service) EstimateUsageCost(ctx context.Context, usage UsageCostInput) (
 		CostMicrousd: estimateCostMicrousd(usage, price),
 		Snapshot:     snapshot,
 	}, nil
+}
+
+func usagePriceForModel(prices map[string]UsagePrice, model string) (string, UsagePrice, bool) {
+	if price, ok := prices[model]; ok {
+		return model, price, true
+	}
+	const dateLength = len("2006-01-02")
+	if len(model) <= dateLength || model[len(model)-dateLength-1] != '-' {
+		return "", UsagePrice{}, false
+	}
+	dateSuffix := model[len(model)-dateLength:]
+	if _, err := time.Parse("2006-01-02", dateSuffix); err != nil {
+		return "", UsagePrice{}, false
+	}
+	baseModel := model[:len(model)-dateLength-1]
+	price, ok := prices[baseModel]
+	if !ok {
+		return "", UsagePrice{}, false
+	}
+	return baseModel, price, true
 }
 
 func (s *Service) GetModelSettings(ctx context.Context) (ModelSettings, error) {
