@@ -13,11 +13,13 @@ const expectedFiles = [
   'src/routes/models/+page.svelte',
   'src/routes/api-keys/+page.svelte',
   'src/routes/request-logs/+page.svelte',
+  'src/routes/pricing/+page.svelte',
   'src/routes/ops/+page.svelte',
   'src/routes/fingerprints/+page.svelte'
 ];
 
 const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
+const pricingPage = readFileSync('src/routes/pricing/+page.svelte', 'utf8');
 const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
 const gatewayPage = readFileSync('src/routes/gateway/+page.svelte', 'utf8');
 const providersPage = readFileSync('src/routes/providers/+page.svelte', 'utf8');
@@ -44,11 +46,12 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Update', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Pricing', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Update', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
   assert.doesNotMatch(layout, /label:\s*'Error rules'/);
+  assert.match(layout, /href:\s*'\/pricing'/);
   assert.equal(existsSync('src/routes/error-passthrough/+page.svelte'), false, 'error rules page should be removed');
   assert.match(layout, /changePassword/);
   assert.match(layout, /changePasswordForm\.currentPassword/);
@@ -367,7 +370,6 @@ test('request logs page includes usage accounting UI', () => {
     'Output tokens',
     'Cached input tokens',
     'Reasoning tokens',
-    'Pricing',
     'Session'
   ]) {
     assert.match(requestLogsPage, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
@@ -391,10 +393,10 @@ test('request logs page includes usage accounting UI', () => {
   assert.match(adminState, /totalCachedInputTokens/);
   assert.match(adminState, /totalReasoningTokens/);
   assert.match(requestLogsPage, /href=\{usageRowHref\(row\)\}/);
-  assert.match(requestLogsPage, /Sync official/);
-  assert.match(requestLogsPage, /Syncing/);
-  assert.match(requestLogsPage, /syncMessage/);
-  assert.match(requestLogsPage, /syncOfficialUsagePricing/);
+  assert.match(pricingPage, /Sync official/);
+  assert.match(pricingPage, /Syncing/);
+  assert.match(pricingPage, /syncMessage/);
+  assert.match(pricingPage, /syncOfficialUsagePricing/);
 });
 
 test('request logs export links request explicit formats', () => {
@@ -1144,6 +1146,7 @@ test('route pages use shared AuthGate instead of duplicate login forms', () => {
     { name: 'models', path: 'src/routes/models/+page.svelte' },
     { name: 'api-keys', path: 'src/routes/api-keys/+page.svelte' },
     { name: 'request-logs', path: 'src/routes/request-logs/+page.svelte' },
+    { name: 'pricing', path: 'src/routes/pricing/+page.svelte' },
     { name: 'ops', path: 'src/routes/ops/+page.svelte' },
     { name: 'fingerprints', path: 'src/routes/fingerprints/+page.svelte' },
   ];
@@ -1268,6 +1271,19 @@ test('api key batch helpers reuse existing per-key endpoints', () => {
 });
 
 
+test('pricing is isolated from request logs behind its own navigation route', () => {
+  const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
+
+  assert.match(layout, /href:\s*'\/pricing'/);
+  assert.match(layout, /label:\s*'Pricing'/);
+  assert.match(pricingPage, /<title>N2API Pricing<\/title>/);
+  assert.match(pricingPage, /<h2[^>]*>Pricing<\/h2>/);
+  assert.doesNotMatch(requestLogsPage, /usagePricing/);
+  assert.doesNotMatch(requestLogsPage, /savePricingRows/);
+  assert.doesNotMatch(requestLogsPage, /syncOfficialUsagePricing/);
+  assert.doesNotMatch(requestLogsPage, /<h2[^>]*>Pricing<\/h2>/);
+});
+
 test('usage pricing supports official OpenAI sync', () => {
   assert.match(adminState, /syncOfficialUsagePricing/);
   assert.match(adminState, /\/api\/admin\/usage-pricing\/sync-official/);
@@ -1292,47 +1308,47 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(adminState, /longCachedInputMicrousdPerMillion/);
   assert.match(adminState, /longOutputMicrousdPerMillion/);
   // Sync official now opens a confirmation modal; the button should not wire directly to syncOfficialUsagePricing
-  assert.doesNotMatch(requestLogsPage, /onclick=\{syncOfficialUsagePricing\}/);
+  assert.doesNotMatch(pricingPage, /onclick=\{syncOfficialUsagePricing\}/);
   // Confirmation modal state
-  assert.match(requestLogsPage, /showSyncConfirmModal/);
-  assert.doesNotMatch(requestLogsPage, /replaces all current pricing rows/);
-  assert.match(requestLogsPage, /Local-only pricing rows remain unchanged/);
+  assert.match(pricingPage, /showSyncConfirmModal/);
+  assert.doesNotMatch(pricingPage, /replaces all current pricing rows/);
+  assert.match(pricingPage, /Local-only pricing rows remain unchanged/);
   // Official source URL in modal
-  assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/pricing/);
-  assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/models\/all/);
-  assert.match(requestLogsPage, /https:\/\/developers\.openai\.com\/api\/docs\/deprecations/);
-  assert.doesNotMatch(requestLogsPage, /<p class="font-medium">Upcoming shutdowns<\/p>/);
-  assert.match(requestLogsPage, /ignoreUpcomingUsagePricing/);
-  assert.match(requestLogsPage, /showUpcomingIgnoreModal/);
-  assert.match(requestLogsPage, /aria-label="Review upcoming model shutdowns"/);
-  assert.match(requestLogsPage, /title="Review upcoming model shutdowns"/);
-  assert.match(requestLogsPage, /<TriangleAlert[^>]*aria-hidden="true"/);
-  assert.match(requestLogsPage, /Review upcoming model shutdowns[\s\S]*?\{usagePricing\.syncing \? 'Syncing' : 'Sync official'\}/);
-  assert.match(requestLogsPage, /aria-labelledby="upcoming-ignore-title"/);
-  assert.match(requestLogsPage, /id="upcoming-ignore-title"[\s\S]*?Upcoming model shutdowns/);
-  assert.match(requestLogsPage, /const upcomingIgnoreActionLabel = \$derived/);
-  assert.match(requestLogsPage, /\{upcomingIgnoreActionLabel\}/);
-  assert.match(requestLogsPage, /upcomingShutdowns\.length === 1 \? '' : 's'/);
-  assert.match(requestLogsPage, /confirmUpcomingIgnore[\s\S]*?ignoreUpcomingUsagePricing/);
-  assert.match(requestLogsPage, /showShutdownRemovalModal/);
-  assert.match(requestLogsPage, /Review shutdowns \(\{usagePricing\.deletionCandidates\.length\}\)/);
-  assert.match(requestLogsPage, /openShutdownRemovalModal/);
-  assert.match(requestLogsPage, /selectedShutdownModels/);
-  assert.match(requestLogsPage, /type="checkbox"/);
-  assert.match(requestLogsPage, /Remove \{selectedShutdownModels\.length\} models/);
-  assert.match(requestLogsPage, /usagePricing\.removingShutdown/);
+  assert.match(pricingPage, /https:\/\/developers\.openai\.com\/api\/docs\/pricing/);
+  assert.match(pricingPage, /https:\/\/developers\.openai\.com\/api\/docs\/models\/all/);
+  assert.match(pricingPage, /https:\/\/developers\.openai\.com\/api\/docs\/deprecations/);
+  assert.doesNotMatch(pricingPage, /<p class="font-medium">Upcoming shutdowns<\/p>/);
+  assert.match(pricingPage, /ignoreUpcomingUsagePricing/);
+  assert.match(pricingPage, /showUpcomingIgnoreModal/);
+  assert.match(pricingPage, /aria-label="Review upcoming model shutdowns"/);
+  assert.match(pricingPage, /title="Review upcoming model shutdowns"/);
+  assert.match(pricingPage, /<TriangleAlert[^>]*aria-hidden="true"/);
+  assert.match(pricingPage, /Review upcoming model shutdowns[\s\S]*?\{usagePricing\.syncing \? 'Syncing' : 'Sync official'\}/);
+  assert.match(pricingPage, /aria-labelledby="upcoming-ignore-title"/);
+  assert.match(pricingPage, /id="upcoming-ignore-title"[\s\S]*?Upcoming model shutdowns/);
+  assert.match(pricingPage, /const upcomingIgnoreActionLabel = \$derived/);
+  assert.match(pricingPage, /\{upcomingIgnoreActionLabel\}/);
+  assert.match(pricingPage, /upcomingShutdowns\.length === 1 \? '' : 's'/);
+  assert.match(pricingPage, /confirmUpcomingIgnore[\s\S]*?ignoreUpcomingUsagePricing/);
+  assert.match(pricingPage, /showShutdownRemovalModal/);
+  assert.match(pricingPage, /Review shutdowns \(\{usagePricing\.deletionCandidates\.length\}\)/);
+  assert.match(pricingPage, /openShutdownRemovalModal/);
+  assert.match(pricingPage, /selectedShutdownModels/);
+  assert.match(pricingPage, /type="checkbox"/);
+  assert.match(pricingPage, /Remove \{selectedShutdownModels\.length\} models/);
+  assert.match(pricingPage, /usagePricing\.removingShutdown/);
   // Search state for pricing rows
-  assert.match(requestLogsPage, /pricingSearch/);
-  assert.match(requestLogsPage, /filteredPricingRows/);
+  assert.match(pricingPage, /pricingSearch/);
+  assert.match(pricingPage, /filteredPricingRows/);
   // Add model uses a modal draft and only mutates persisted rows on submit.
-  assert.match(requestLogsPage, /let showAddPricingModal = \$state\(false\)/);
-  assert.match(requestLogsPage, /onclick=\{openAddPricingModal\}/);
-  assert.match(requestLogsPage, /\{#if showAddPricingModal\}[\s\S]*?aria-labelledby="add-pricing-title"[\s\S]*?<form[\s\S]*?onsubmit=\{submitAddPricingModel\}/);
-  assert.match(requestLogsPage, /id="add-pricing-title"[\s\S]*?>Add pricing model</);
-  assert.match(requestLogsPage, /submitAddPricingModel[\s\S]*?Model name is required\.[\s\S]*?already exists\.[\s\S]*?usagePricing\.rows = \[\.\.\.priorRows, row\][\s\S]*?await savePricingRows\(\)[\s\S]*?usagePricing\.rows = priorRows/);
-  assert.match(requestLogsPage, /closeAddPricingModal[\s\S]*?showAddPricingModal = false/);
-  assert.match(requestLogsPage, /showAddPricingModal[\s\S]*?handlePricingModalKeydown/);
-  assert.match(requestLogsPage, /bind:value=\{newPricingRow\.model\}/);
+  assert.match(pricingPage, /let showAddPricingModal = \$state\(false\)/);
+  assert.match(pricingPage, /onclick=\{openAddPricingModal\}/);
+  assert.match(pricingPage, /\{#if showAddPricingModal\}[\s\S]*?aria-labelledby="add-pricing-title"[\s\S]*?<form[\s\S]*?onsubmit=\{submitAddPricingModel\}/);
+  assert.match(pricingPage, /id="add-pricing-title"[\s\S]*?>Add pricing model</);
+  assert.match(pricingPage, /submitAddPricingModel[\s\S]*?Model name is required\.[\s\S]*?already exists\.[\s\S]*?usagePricing\.rows = \[\.\.\.priorRows, row\][\s\S]*?await savePricingRows\(\)[\s\S]*?usagePricing\.rows = priorRows/);
+  assert.match(pricingPage, /closeAddPricingModal[\s\S]*?showAddPricingModal = false/);
+  assert.match(pricingPage, /showAddPricingModal[\s\S]*?handlePricingModalKeydown/);
+  assert.match(pricingPage, /bind:value=\{newPricingRow\.model\}/);
   for (const field of [
     'inputMicrousdPerMillion',
     'cachedInputMicrousdPerMillion',
@@ -1341,34 +1357,34 @@ test('usage pricing supports official OpenAI sync', () => {
     'longCachedInputMicrousdPerMillion',
     'longOutputMicrousdPerMillion'
   ]) {
-    assert.match(requestLogsPage, new RegExp(`newPricingRow\\.${field}`));
+    assert.match(pricingPage, new RegExp(`newPricingRow\\.${field}`));
   }
-  assert.doesNotMatch(requestLogsPage, /function addPricingRow\(\)/);
-  assert.doesNotMatch(requestLogsPage, /editingPricingRow = newRow/);
+  assert.doesNotMatch(pricingPage, /function addPricingRow\(\)/);
+  assert.doesNotMatch(pricingPage, /editingPricingRow = newRow/);
   // Long context field headers or inputs
-  assert.match(requestLogsPage, /longInputMicrousdPerMillion/);
-  assert.match(requestLogsPage, /longCachedInputMicrousdPerMillion/);
-  assert.match(requestLogsPage, /longOutputMicrousdPerMillion/);
+  assert.match(pricingPage, /longInputMicrousdPerMillion/);
+  assert.match(pricingPage, /longCachedInputMicrousdPerMillion/);
+  assert.match(pricingPage, /longOutputMicrousdPerMillion/);
   // Zero rows vs zero search matches
-  assert.match(requestLogsPage, /No pricing rows/);
-  assert.match(requestLogsPage, /No pricing rows match/);
+  assert.match(pricingPage, /No pricing rows/);
+  assert.match(pricingPage, /No pricing rows match/);
 
 
   // No global Save pricing button or form submit wrapper
-  assert.doesNotMatch(requestLogsPage, /Save pricing/);
-  assert.doesNotMatch(requestLogsPage, /onsubmit=\{submitUsagePricing\}/);
+  assert.doesNotMatch(pricingPage, /Save pricing/);
+  assert.doesNotMatch(pricingPage, /onsubmit=\{submitUsagePricing\}/);
 
   // Pricing loading shows a section-level centered spinner overlay with an icon and thinking label.
-  assert.doesNotMatch(requestLogsPage, /text-\[#6e6e6e\] font-medium">thinking<\/span>/);
-  assert.match(requestLogsPage, /import \{[^}]*LoaderCircle[^}]*TriangleAlert[^}]*\} from 'lucide-svelte';/);
-  assert.match(requestLogsPage, /\{#if pricingBusy\}[\s\S]*?aria-label="Pricing operation in progress"[\s\S]*?animate-spin[\s\S]*?>thinking</,
+  assert.doesNotMatch(pricingPage, /text-\[#6e6e6e\] font-medium">thinking<\/span>/);
+  assert.match(pricingPage, /import \{[^}]*LoaderCircle[^}]*TriangleAlert[^}]*\} from 'lucide-svelte';/);
+  assert.match(pricingPage, /\{#if pricingBusy\}[\s\S]*?aria-label="Pricing operation in progress"[\s\S]*?animate-spin[\s\S]*?>thinking</,
     'pricing busy state must render a centered spinner overlay with a thinking label');
-  assert.match(requestLogsPage, /absolute inset-0 z-40/,
+  assert.match(pricingPage, /absolute inset-0 z-40/,
     'pricing busy overlay must cover the pricing section instead of a single inline cell');
 
   // pricingBusy derived used for disabling controls during operations
-  assert.match(requestLogsPage, /pricingBusy/);
-  assert.match(requestLogsPage, /pricingBusy[\s\S]*?usagePricing\.ignoringUpcoming/);
+  assert.match(pricingPage, /pricingBusy/);
+  assert.match(pricingPage, /pricingBusy[\s\S]*?usagePricing\.ignoringUpcoming/);
 
   // Sync official calls loadUsagePricing after POST success (cross-line, locked to function body keywords)
   assert.match(adminState, /syncOfficialUsagePricing[\s\S]*?sync-official[\s\S]*?await loadUsagePricing\(\)/,
@@ -1380,128 +1396,128 @@ test('usage pricing supports official OpenAI sync', () => {
     'savePricingRows must call await loadUsagePricing() after PUT success');
 
   // Row Done button calls commitPricingRow (save+reload), not just clear edit state
-  assert.match(requestLogsPage, /commitPricingRow/);
-  assert.match(requestLogsPage, /onclick=\{commitPricingRow\}/);
-  assert.doesNotMatch(requestLogsPage, /finishPricingRowEdit/);
+  assert.match(pricingPage, /commitPricingRow/);
+  assert.match(pricingPage, /onclick=\{commitPricingRow\}/);
+  assert.doesNotMatch(pricingPage, /finishPricingRowEdit/);
 
-  // Page imports savePricingRows from admin-state, no longer imports saveUsagePricing for the form
-  assert.match(requestLogsPage, /savePricingRows/);
+  // Pricing page imports savePricingRows from admin-state, no longer imports saveUsagePricing for the form
+  assert.match(pricingPage, /savePricingRows/);
 
   // commitPricingRow only clears editingPricingRow on successful save
-  assert.match(requestLogsPage, /if \(await savePricingRows\(\)\)/,
+  assert.match(pricingPage, /if \(await savePricingRows\(\)\)/,
     'commitPricingRow must guard editingPricingRow = null behind a successful savePricingRows');
 
   // No explicit Reload pricing button in the pricing section header
-  assert.doesNotMatch(requestLogsPage, /Reload pricing/);
-  assert.doesNotMatch(requestLogsPage, /onclick=\{loadUsagePricing\}/);
+  assert.doesNotMatch(pricingPage, /Reload pricing/);
+  assert.doesNotMatch(pricingPage, /onclick=\{loadUsagePricing\}/);
 
   // syncMessage shown as toast notification with close, not inline content
-  assert.doesNotMatch(requestLogsPage, /\{:else if usagePricing\.syncMessage\}/);
-  assert.match(requestLogsPage, /closeSyncMessage|syncMessageToast/);
+  assert.doesNotMatch(pricingPage, /\{:else if usagePricing\.syncMessage\}/);
+  assert.match(pricingPage, /closeSyncMessage|syncMessageToast/);
 });
 
 test('usage pricing table defaults to per-row editing with sticky actions', () => {
   // Per-row editing replaces global pricingEditMode; no Edit pricing toggle
-  assert.doesNotMatch(requestLogsPage, /Edit pricing/);
-  assert.doesNotMatch(requestLogsPage, /Done editing/);
-  assert.doesNotMatch(requestLogsPage, /let pricingEditMode = \$state\(false\)/);
+  assert.doesNotMatch(pricingPage, /Edit pricing/);
+  assert.doesNotMatch(pricingPage, /Done editing/);
+  assert.doesNotMatch(pricingPage, /let pricingEditMode = \$state\(false\)/);
 
   // Row state uses object references, not numeric indexes
-  assert.doesNotMatch(requestLogsPage, /editingPricingRowIndex/);
-  assert.doesNotMatch(requestLogsPage, /deleteConfirmPricingRowIndex/);
-  assert.match(requestLogsPage, /editingPricingRow = \$state\(null\)/);
-  assert.match(requestLogsPage, /deleteConfirmPricingPopover\s*=.*\$state/);
-  assert.match(requestLogsPage, /function startEditingPricingRow/);
-  assert.match(requestLogsPage, /editingPricingRow = row/);
-  assert.match(requestLogsPage, /editingPricingRow = null/);
-  assert.match(requestLogsPage, /deleteConfirmPricingPopover = null/);
-  assert.match(requestLogsPage, /function confirmRemovePricingRow/);
-  assert.match(requestLogsPage, /confirmRemovePricingRow[\s\S]*?await savePricingRows\(\)/,
+  assert.doesNotMatch(pricingPage, /editingPricingRowIndex/);
+  assert.doesNotMatch(pricingPage, /deleteConfirmPricingRowIndex/);
+  assert.match(pricingPage, /editingPricingRow = \$state\(null\)/);
+  assert.match(pricingPage, /deleteConfirmPricingPopover\s*=.*\$state/);
+  assert.match(pricingPage, /function startEditingPricingRow/);
+  assert.match(pricingPage, /editingPricingRow = row/);
+  assert.match(pricingPage, /editingPricingRow = null/);
+  assert.match(pricingPage, /deleteConfirmPricingPopover = null/);
+  assert.match(pricingPage, /function confirmRemovePricingRow/);
+  assert.match(pricingPage, /confirmRemovePricingRow[\s\S]*?await savePricingRows\(\)/,
     'confirmRemovePricingRow must persist row removal through savePricingRows');
-  assert.match(requestLogsPage, /@param.*UsagePricingRow.*row/);
-  assert.match(requestLogsPage, /commitPricingRow/);
+  assert.match(pricingPage, /@param.*UsagePricingRow.*row/);
+  assert.match(pricingPage, /commitPricingRow/);
 
   // Header pricing actions stay pinned to the right side of the section
-  assert.match(requestLogsPage, /ml-auto flex flex-wrap items-center justify-end gap-3/);
+  assert.match(pricingPage, /ml-auto flex flex-wrap items-center justify-end gap-3/);
 
   // Biaxial scroll container with sticky header
-  assert.match(requestLogsPage, /overflow-auto max-h-\[65vh\]/);
-  assert.match(requestLogsPage, /sticky left-0 top-0/);
-  assert.match(requestLogsPage, /md:sticky md:right-0/);
+  assert.match(pricingPage, /overflow-auto max-h-\[65vh\]/);
+  assert.match(pricingPage, /sticky left-0 top-0/);
+  assert.match(pricingPage, /md:sticky md:right-0/);
 
   // Sticky left Model and right Actions columns
-  assert.match(requestLogsPage, /sticky left-0/);
-  assert.match(requestLogsPage, /md:sticky md:right-0/);
-  assert.match(requestLogsPage, />Actions</);
-  assert.match(requestLogsPage, />Edit</);
-  assert.match(requestLogsPage, />Remove</);
+  assert.match(pricingPage, /sticky left-0/);
+  assert.match(pricingPage, /md:sticky md:right-0/);
+  assert.match(pricingPage, />Actions</);
+  assert.match(pricingPage, />Edit</);
+  assert.match(pricingPage, />Remove</);
 
   // Prices match OpenAI's user-facing USD per 1M tokens presentation while
   // retaining integer micro-USD values in the API state.
-  assert.match(requestLogsPage, /Input \(\$\/1M tokens\)/);
-  assert.match(requestLogsPage, /Cached input \(\$\/1M tokens\)/);
-  assert.match(requestLogsPage, /Output \(\$\/1M tokens\)/);
-  assert.doesNotMatch(requestLogsPage, /µ\$\/M/);
-  assert.doesNotMatch(requestLogsPage, /USD micro-prices/);
-  assert.match(requestLogsPage, /prices shown in USD per 1M tokens/);
-  assert.match(requestLogsPage, /Number\(value \?\? 0\) \/ 1_000_000/);
-  assert.match(requestLogsPage, /padEnd\(2, '0'\)/);
-  assert.match(requestLogsPage, /Math\.round\(dollarsPerMillion \* 1_000_000\)/);
-  assert.match(requestLogsPage, /step="0\.000001"/);
+  assert.match(pricingPage, /Input \(\$\/1M tokens\)/);
+  assert.match(pricingPage, /Cached input \(\$\/1M tokens\)/);
+  assert.match(pricingPage, /Output \(\$\/1M tokens\)/);
+  assert.doesNotMatch(pricingPage, /µ\$\/M/);
+  assert.doesNotMatch(pricingPage, /USD micro-prices/);
+  assert.match(pricingPage, /prices shown in USD per 1M tokens/);
+  assert.match(pricingPage, /Number\(value \?\? 0\) \/ 1_000_000/);
+  assert.match(pricingPage, /padEnd\(2, '0'\)/);
+  assert.match(pricingPage, /Math\.round\(dollarsPerMillion \* 1_000_000\)/);
+  assert.match(pricingPage, /step="0\.000001"/);
 
   // Delete confirmation uses fixed popover positioned from viewport coordinates
   // Remove button is no longer wrapped in a relative container for the popover
-  assert.doesNotMatch(requestLogsPage, /relative inline-flex/);
+  assert.doesNotMatch(pricingPage, /relative inline-flex/);
   // Popover uses fixed positioning, rendered outside the scroll container
-  assert.doesNotMatch(requestLogsPage, /absolute right-0 top-full z-30/);
-  assert.match(requestLogsPage, /Remove this pricing row\?/);
+  assert.doesNotMatch(pricingPage, /absolute right-0 top-full z-30/);
+  assert.match(pricingPage, /Remove this pricing row\?/);
   // No arrow caret on the fixed popover
-  assert.doesNotMatch(requestLogsPage, /-top-2 right-3.*rotate-45/);
+  assert.doesNotMatch(pricingPage, /-top-2 right-3.*rotate-45/);
   // No full-screen overlay backdrop for delete confirmation
-  assert.doesNotMatch(requestLogsPage, /aria-label="Confirm remove pricing row"/);
-  assert.doesNotMatch(requestLogsPage, /fixed inset-0.*deleteConfirmPricingPopover/);
+  assert.doesNotMatch(pricingPage, /aria-label="Confirm remove pricing row"/);
+  assert.doesNotMatch(pricingPage, /fixed inset-0.*deleteConfirmPricingPopover/);
   // Cancel and Remove buttons exist inside the popover
-  assert.match(requestLogsPage, />Cancel</);
-  assert.match(requestLogsPage, /deleteConfirmPricingPopover/);
+  assert.match(pricingPage, />Cancel</);
+  assert.match(pricingPage, /deleteConfirmPricingPopover/);
   // Fixed popover rendered outside the table, positioned with viewport coordinates
-  assert.match(requestLogsPage, /fixed z-50 w-72/);
-  assert.match(requestLogsPage, /openDeleteConfirmPricingRow/);
-  assert.match(requestLogsPage, /getBoundingClientRect/);
+  assert.match(pricingPage, /fixed z-50 w-72/);
+  assert.match(pricingPage, /openDeleteConfirmPricingRow/);
+  assert.match(pricingPage, /getBoundingClientRect/);
   // Popover closes on window scroll/resize via svelte:window
-  assert.match(requestLogsPage, /<svelte:window/);
+  assert.match(pricingPage, /<svelte:window/);
 
-  assert.match(requestLogsPage, /sortedPricingRows/);
+  assert.match(pricingPage, /sortedPricingRows/);
   assert.match(
-    requestLogsPage,
+    pricingPage,
     /const sortedPricingRows[\s\S]*?const inputDiff[\s\S]*?if \(inputDiff !== 0\) return inputDiff;[\s\S]*?const outputDiff[\s\S]*?if \(outputDiff !== 0\) return outputDiff;[\s\S]*?const longInputDiff[\s\S]*?if \(longInputDiff !== 0\) return longInputDiff;[\s\S]*?localeCompare\(right\.model/,
     'pricing rows must sort by input, output, long input, then model name'
   );
-  assert.match(requestLogsPage, /localeCompare\(right\.model/);
-  assert.match(requestLogsPage, /\[\.\.\.filteredPricingRows\]\.sort/);
+  assert.match(pricingPage, /localeCompare\(right\.model/);
+  assert.match(pricingPage, /\[\.\.\.filteredPricingRows\]\.sort/);
 
   // Pricing commands use the compact button size without shrinking inputs or selects.
-  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{openSyncConfirmModal\}/);
-  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*h-8 w-8[^"]*"[\s\S]{0,180}?aria-label="Review upcoming model shutdowns"/);
-  assert.match(requestLogsPage, /<button class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{commitPricingRow\}/);
-  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,300}?>\s*Previous/);
-  assert.match(requestLogsPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{confirmSyncOfficial\}/);
+  assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{openSyncConfirmModal\}/);
+  assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*h-8 w-8[^"]*"[\s\S]{0,180}?aria-label="Review upcoming model shutdowns"/);
+  assert.match(pricingPage, /<button class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{commitPricingRow\}/);
+  assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,300}?>\s*Previous/);
+  assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{confirmSyncOfficial\}/);
 
-  assert.match(requestLogsPage, /let pricingPage = \$state\(1\)/);
-  assert.match(requestLogsPage, /let pricingPageSize = \$state\(5\)/);
-  assert.match(requestLogsPage, /pricingPageCount/);
-  assert.match(requestLogsPage, /normalizedPricingPage/);
-  assert.match(requestLogsPage, /paginatedPricingRows/);
-  assert.match(requestLogsPage, /pricingPageSummary/);
-  assert.match(requestLogsPage, /\{#each paginatedPricingRows as row/);
+  assert.match(pricingPage, /let pricingPage = \$state\(1\)/);
+  assert.match(pricingPage, /let pricingPageSize = \$state\(5\)/);
+  assert.match(pricingPage, /pricingPageCount/);
+  assert.match(pricingPage, /normalizedPricingPage/);
+  assert.match(pricingPage, /paginatedPricingRows/);
+  assert.match(pricingPage, /pricingPageSummary/);
+  assert.match(pricingPage, /\{#each paginatedPricingRows as row/);
 
-  assert.match(requestLogsPage, /value=\{5\}/);
-  assert.match(requestLogsPage, /value=\{10\}/);
-  assert.match(requestLogsPage, /value=\{20\}/);
-  assert.doesNotMatch(requestLogsPage, /value=\{50\}/);
-  assert.match(requestLogsPage, /Previous/);
-  assert.match(requestLogsPage, /Next/);
-  assert.match(requestLogsPage, /pricingPage\s*=\s*1/);
+  assert.match(pricingPage, /value=\{5\}/);
+  assert.match(pricingPage, /value=\{10\}/);
+  assert.match(pricingPage, /value=\{20\}/);
+  assert.doesNotMatch(pricingPage, /value=\{50\}/);
+  assert.match(pricingPage, /Previous/);
+  assert.match(pricingPage, /Next/);
+  assert.match(pricingPage, /pricingPage\s*=\s*1/);
 
   // Actions column always present (colspan accounts for it)
-  assert.match(requestLogsPage, /colspan="8"/);
+  assert.match(pricingPage, /colspan="8"/);
 });
