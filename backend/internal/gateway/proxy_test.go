@@ -160,6 +160,17 @@ func (l *fakeRequestLogger) CreateRequestLog(_ context.Context, entry RequestLog
 	return nil
 }
 
+type contextRecordingRequestLogger struct {
+	contextErr error
+	entries    []RequestLog
+}
+
+func (l *contextRecordingRequestLogger) CreateRequestLog(ctx context.Context, entry RequestLog) error {
+	l.contextErr = ctx.Err()
+	l.entries = append(l.entries, entry)
+	return nil
+}
+
 type flushRecordingResponseWriter struct {
 	header  http.Header
 	body    strings.Builder
@@ -196,6 +207,22 @@ func assertLastLoggedError(t *testing.T, logger *fakeRequestLogger, want string)
 	}
 	if got := logger.entries[len(logger.entries)-1].Error; got != want {
 		t.Fatalf("last logged error = %q, want %q", got, want)
+	}
+}
+
+func TestProxyLogsWithDetachedContextAfterClientCancellation(t *testing.T) {
+	logger := &contextRecordingRequestLogger{}
+	proxy := NewProxy(nil, nil, Config{Logger: logger})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	proxy.logRequest(ctx, RequestLog{RequestID: "req_cancelled", StatusCode: http.StatusOK})
+
+	if logger.contextErr != nil {
+		t.Fatalf("logging context error = %v, want detached live context", logger.contextErr)
+	}
+	if len(logger.entries) != 1 || logger.entries[0].RequestID != "req_cancelled" {
+		t.Fatalf("logged entries = %+v, want cancelled request persisted", logger.entries)
 	}
 }
 

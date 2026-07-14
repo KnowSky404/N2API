@@ -26,6 +26,7 @@ const defaultCodexInstructions = "You are Codex, a coding agent."
 const maxReplayableRequestBody = 1 << 20
 const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
+const requestLogWriteTimeout = 5 * time.Second
 
 type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (admin.APIKey, error)
@@ -1669,7 +1670,9 @@ func (p *Proxy) logRequest(ctx context.Context, entry RequestLog) {
 	if entry.StatusCode == 0 {
 		entry.StatusCode = http.StatusOK
 	}
-	_ = p.logger.CreateRequestLog(ctx, entry)
+	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), requestLogWriteTimeout)
+	defer cancel()
+	_ = p.logger.CreateRequestLog(logCtx, entry)
 }
 
 func selectedProviderName(account SelectedAccount) string {
