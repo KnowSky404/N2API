@@ -74,4 +74,3 @@ relabeled as SSE solely because the request targeted the Codex endpoint.
   provider account `free0`, and a pricing snapshot consistent with current
   pricing configuration.
 - Temporary verification API keys are physically removed after the test.
-

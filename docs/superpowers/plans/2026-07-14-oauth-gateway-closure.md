@@ -22,4 +22,3 @@ operational attribution.
 - [ ] Rebuild and recreate the local Compose stack with the repository skill.
 - [ ] Verify `free0` test/refresh, temporary API-key model listing, direct SSE,
   real Codex CLI execution, usage/pricing log attribution, and key cleanup.
-
