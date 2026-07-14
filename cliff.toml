@@ -1,0 +1,42 @@
+[changelog]
+header = """
+# Changelog
+
+"""
+body = """
+{% set breaking_commits = commits | filter(attribute="breaking", value=true) %}
+{% if breaking_commits | length > 0 %}
+### Breaking Changes
+
+{% for commit in breaking_commits %}
+- {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/KnowSky404/N2API/commit/{{ commit.id }}))
+{% endfor %}
+{% endif %}
+{% set non_breaking_commits = commits | filter(attribute="breaking", value=false) %}
+{% for group, commits in non_breaking_commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+
+{% for commit in commits %}
+- {{ commit.message | upper_first }} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/KnowSky404/N2API/commit/{{ commit.id }}))
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+tag_pattern = "^[0-9]{10}$"
+sort_commits = "oldest"
+protect_breaking_commits = true
+commit_parsers = [
+  { message = "^(security|[a-z]+\\(security\\))", group = "<!-- 1 -->Security" },
+  { message = "^(deps|[a-z]+\\(deps\\))", group = "<!-- 7 -->Dependencies" },
+  { message = "^feat", group = "<!-- 2 -->Features" },
+  { message = "^fix", group = "<!-- 3 -->Fixes" },
+  { message = "^perf", group = "<!-- 4 -->Performance" },
+  { message = "^(refactor|build|revert)", group = "<!-- 5 -->Changed" },
+  { message = "^(docs|test|ci|style)(\\(.+\\))?:", skip = true },
+  { message = "^chore", skip = true },
+]

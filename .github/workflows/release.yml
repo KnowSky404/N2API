@@ -1,0 +1,385 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Preview the release or publish it
+        required: true
+        default: preview
+        type: choice
+        options:
+          - preview
+          - publish
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+  TZ: Europe/Berlin
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.prepare.outputs.image }}
+      source_digest: ${{ steps.prepare.outputs.source_digest }}
+      source_sha: ${{ steps.prepare.outputs.source_sha }}
+      source_tag: ${{ steps.prepare.outputs.source_tag }}
+      resume: ${{ steps.prepare.outputs.resume }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - name: Require main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release must be dispatched from the main branch, not $GITHUB_REF" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release inputs
+        id: prepare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_sha="$(git rev-parse HEAD)"
+          if [ "$source_sha" != "$GITHUB_SHA" ]; then
+            echo "Checked out SHA $source_sha does not match dispatch SHA $GITHUB_SHA" >&2
+            exit 1
+          fi
+
+          image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
+          source_tag="sha-${source_sha:0:12}"
+          source_ref="${image}:${source_tag}"
+          source_digest="$(
+            docker buildx imagetools inspect "$source_ref" \
+              | sed -n 's/^Digest:[[:space:]]*//p' \
+              | head -n 1
+          )"
+          if [[ ! "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "The tested source image $source_ref does not exist or has no valid manifest digest" >&2
+            exit 1
+          fi
+
+          mapfile -t sha_versions < <(
+            while IFS= read -r tag; do
+              if [ "$(git rev-list -n 1 "$tag")" = "$source_sha" ]; then
+                printf '%s\n' "$tag"
+              fi
+            done < <(git tag --list | grep -E '^[0-9]{10}$' || true)
+          )
+
+          if [ "${#sha_versions[@]}" -gt 1 ]; then
+            echo "Source SHA already has multiple CalVer tags: ${sha_versions[*]}" >&2
+            exit 1
+          fi
+
+          if [ "${#sha_versions[@]}" -eq 1 ]; then
+            version="${sha_versions[0]}"
+            resume=true
+            if gh release view "$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $version already exists; verifying and repairing its image tags"
+            else
+              echo "Resuming CalVer tag $version, which points to the current SHA and has no Release"
+            fi
+          else
+            resume=false
+            day="$(date +%Y%m%d)"
+            highest=0
+            while IFS= read -r tag; do
+              sequence="${tag:8:2}"
+              if [ "$((10#$sequence))" -gt "$highest" ]; then
+                highest="$((10#$sequence))"
+              fi
+            done < <(git tag --list "${day}[0-9][0-9]" | grep -E "^${day}[0-9]{2}$" || true)
+
+            if [ "$highest" -ge 99 ]; then
+              echo "All CalVer sequences for $day are exhausted" >&2
+              exit 1
+            fi
+            printf -v version '%s%02d' "$day" "$((highest + 1))"
+            if git show-ref --verify --quiet "refs/tags/$version"; then
+              echo "Calculated version $version already exists unexpectedly" >&2
+              exit 1
+            fi
+          fi
+
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "source_digest=$source_digest" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "source_tag=$source_tag" >> "$GITHUB_OUTPUT"
+          echo "resume=$resume" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes for a new tag
+        if: steps.prepare.outputs.resume == 'false'
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
+        with:
+          config: cliff.toml
+          args: --unreleased --tag ${{ steps.prepare.outputs.version }} --strip header
+        env:
+          OUTPUT: release-notes.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Restore release notes for an existing tag
+        if: steps.prepare.outputs.resume == 'true'
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
+        with:
+          config: cliff.toml
+          args: --current --strip header
+        env:
+          OUTPUT: release-notes.md
+          GITHUB_REPO: ${{ github.repository }}
+
+      - name: Render release body
+        env:
+          IMAGE: ${{ steps.prepare.outputs.image }}
+          SOURCE_DIGEST: ${{ steps.prepare.outputs.source_digest }}
+          SOURCE_SHA: ${{ steps.prepare.outputs.source_sha }}
+          SOURCE_TAG: ${{ steps.prepare.outputs.source_tag }}
+          VERSION: ${{ steps.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_tag="$(
+            git tag --list --sort=-version:refname \
+              | grep -E '^[0-9]{10}$' \
+              | grep -vx "$VERSION" \
+              | head -n 1 \
+              || true
+          )"
+
+          {
+            printf '# N2API %s\n\n' "$VERSION"
+            cat release-notes.md
+            printf '\n## Container Image\n\n'
+            printf -- '- Version: `%s:%s`\n' "$IMAGE" "$VERSION"
+            printf -- '- Stable: `%s:latest`\n' "$IMAGE"
+            printf -- '- Tested source: `%s:%s`\n' "$IMAGE" "$SOURCE_TAG"
+            printf -- '- Source commit: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Manifest digest: `%s`\n\n' "$SOURCE_DIGEST"
+            printf '%s\n' \
+              '## Upgrade' \
+              '' \
+              '1. Back up PostgreSQL.' \
+              '2. Set `N2API_IMAGE` to the immutable version tag above.' \
+              '3. Run `docker compose -f deploy/compose.release.yaml --env-file .env pull`.' \
+              '4. Run `docker compose -f deploy/compose.release.yaml --env-file .env up -d`.' \
+              '5. Verify `GET /healthz`.' \
+              '' \
+              '## Rollback' \
+              '' \
+              'Set `N2API_IMAGE` to the previous immutable version, then run the pull and up commands above. Restore PostgreSQL only when a database migration requires it.' \
+              '' \
+              '## Full Changelog' \
+              ''
+            if [ -n "$previous_tag" ]; then
+              printf '[%s...%s](https://github.com/%s/compare/%s...%s)\n' \
+                "$previous_tag" "$VERSION" "$GITHUB_REPOSITORY" "$previous_tag" "$VERSION"
+            else
+              printf '[Initial release through %s](https://github.com/%s/commits/%s)\n' \
+                "$VERSION" "$GITHUB_REPOSITORY" "$VERSION"
+            fi
+          } > release-body.md
+
+          {
+            printf '## Release %s (%s)\n\n' "$VERSION" "${{ inputs.mode }}"
+            cat release-body.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release preview
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-preview-${{ steps.prepare.outputs.version }}
+          path: release-body.md
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    if: inputs.mode == 'publish'
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      actions: read
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Download release preview
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: release-preview-${{ needs.prepare.outputs.version }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create tag and promote tested version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          SOURCE_DIGEST: ${{ needs.prepare.outputs.source_digest }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_TAG: ${{ needs.prepare.outputs.source_tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          digest_for() {
+            docker buildx imagetools inspect "$1" \
+              | sed -n 's/^Digest:[[:space:]]*//p' \
+              | head -n 1
+          }
+
+          git fetch --force --tags origin
+          if git show-ref --verify --quiet "refs/tags/$VERSION"; then
+            tag_sha="$(git rev-list -n 1 "$VERSION")"
+            if [ "$tag_sha" != "$SOURCE_SHA" ]; then
+              echo "Tag $VERSION points to $tag_sha, not $SOURCE_SHA" >&2
+              exit 1
+            fi
+          fi
+
+          current_source_digest="$(digest_for "${IMAGE}:${SOURCE_TAG}")"
+          if [ "$current_source_digest" != "$SOURCE_DIGEST" ]; then
+            echo "Source image digest changed from $SOURCE_DIGEST to $current_source_digest" >&2
+            exit 1
+          fi
+
+          version_ref="${IMAGE}:${VERSION}"
+          if version_inspect="$(docker buildx imagetools inspect "$version_ref" 2>/dev/null)"; then
+            version_digest="$(
+              printf '%s\n' "$version_inspect" \
+                | sed -n 's/^Digest:[[:space:]]*//p' \
+                | head -n 1
+            )"
+            if [ "$version_digest" != "$SOURCE_DIGEST" ]; then
+              echo "$version_ref already points to $version_digest, not $SOURCE_DIGEST" >&2
+              exit 1
+            fi
+          fi
+
+          if ! git show-ref --verify --quiet "refs/tags/$VERSION"; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$VERSION" "$SOURCE_SHA" -m "Release $VERSION"
+            git push origin "refs/tags/$VERSION"
+          fi
+
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "$version_ref" \
+            "${IMAGE}@${SOURCE_DIGEST}"
+
+          promoted_version_digest="$(digest_for "$version_ref")"
+          if [ "$promoted_version_digest" != "$SOURCE_DIGEST" ]; then
+            echo "The version tag does not resolve to the tested source digest" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release $VERSION already exists; continuing idempotently"
+          else
+            gh release create "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --target "$SOURCE_SHA" \
+              --title "N2API $VERSION" \
+              --notes-file release-body.md \
+              --latest
+          fi
+
+      - name: Move latest to the published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          SOURCE_DIGEST: ${{ needs.prepare.outputs.source_digest }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          digest_for() {
+            docker buildx imagetools inspect "$1" \
+              | sed -n 's/^Digest:[[:space:]]*//p' \
+              | head -n 1
+          }
+
+          if ! gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release $VERSION does not exist; refusing to move latest" >&2
+            exit 1
+          fi
+
+          version_digest="$(digest_for "${IMAGE}:${VERSION}")"
+          if [ "$version_digest" != "$SOURCE_DIGEST" ]; then
+            echo "The published version tag no longer matches the tested digest" >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}@${SOURCE_DIGEST}"
+
+          latest_digest="$(digest_for "${IMAGE}:latest")"
+          if [ "$latest_digest" != "$SOURCE_DIGEST" ]; then
+            echo "latest does not resolve to the published version digest" >&2
+            exit 1
+          fi
+
+          {
+            printf '## Published\n\n'
+            printf -- '- Release: `%s`\n' "$VERSION"
+            printf -- '- Source: `%s`\n' "$SOURCE_SHA"
+            printf -- '- Image: `%s:%s`\n' "${{ needs.prepare.outputs.image }}" "$VERSION"
+            printf -- '- Digest: `%s`\n' "${{ needs.prepare.outputs.source_digest }}"
+          } >> "$GITHUB_STEP_SUMMARY"
