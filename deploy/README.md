@@ -17,7 +17,8 @@ The default app URL is `http://localhost:3000`.
 
 The `CI Image` workflow tests every pull request without publishing an image.
 After a commit reaches `main`, the same image that passed the PostgreSQL smoke
-test is published with two development tags:
+test on both supported platforms is published as a multi-platform image with
+two development tags:
 
 - `main` moves to the newest tested commit on the default branch.
 - `sha-<12 characters>` identifies one tested source commit and is immutable.
@@ -30,6 +31,20 @@ Stable releases add two more tags without rebuilding the image:
 
 The Git tag, GitHub Release tag, and container version tag always use the same
 CalVer value without a `v` prefix.
+
+Published images support:
+
+- `linux/amd64`
+- `linux/arm64`
+
+Release `2026071401` predates multi-platform publishing and supports only
+`linux/amd64`. ARM64 hosts must use a later release. Inspect any tag before
+deployment with:
+
+```bash
+N2API_VERSION=YYYYMMDDNN
+docker buildx imagetools inspect "ghcr.io/knowsky404/n2api:${N2API_VERSION}"
+```
 
 ## Preview and Publish a Release
 
@@ -50,20 +65,117 @@ never rebuilds the image and refuses to replace a CalVer tag that points to
 another commit or manifest digest. A rerun can repair `latest` after a partial
 failure without replacing an existing Release.
 
-## Deploy a Published Image
+## Install Docker on Ubuntu 24.04 ARM64
 
-Copy the example environment file and pin an immutable version in `.env`:
+Remove conflicting distribution packages, then install Docker Engine, Buildx,
+and Compose from Docker's official apt repository:
 
 ```bash
-cp .env.example .env
-printf '\nN2API_IMAGE=ghcr.io/knowsky404/n2api:2026071401\n' >> .env
-docker compose -f deploy/compose.release.yaml --env-file .env pull
-docker compose -f deploy/compose.release.yaml --env-file .env up -d
-curl -fsS http://127.0.0.1:3000/healthz
+mapfile -t conflicting_packages < <(
+  dpkg --get-selections \
+    docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc \
+    2>/dev/null \
+    | awk '$2 == "install" { print $1 }'
+)
+if [ "${#conflicting_packages[@]}" -gt 0 ]; then
+  sudo apt remove -y "${conflicting_packages[@]}"
+fi
+sudo apt update
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo docker run --rm hello-world
 ```
 
-Back up PostgreSQL before upgrading. For rollback, change `N2API_IMAGE` to the
-previous CalVer, then pull and recreate the stack:
+Confirm that the host and Docker installation report ARM64 and Compose v2:
+
+```bash
+uname -m
+dpkg --print-architecture
+docker compose version
+```
+
+Expected architecture values are `aarch64` and `arm64`. Docker daemon access is
+root-equivalent; either keep using `sudo` for Docker commands or grant access
+only to a trusted administrator.
+
+## Deploy a Published Image
+
+Check out the release being deployed, copy the example environment file, and
+pin the same immutable version in `.env`:
+
+```bash
+git clone https://github.com/KnowSky404/N2API.git
+cd N2API || exit 1
+N2API_VERSION=YYYYMMDDNN
+git checkout "$N2API_VERSION"
+cp .env.example .env
+printf '\nN2API_IMAGE=ghcr.io/knowsky404/n2api:%s\n' "$N2API_VERSION" >> .env
+```
+
+Replace every `change-me` value before starting the stack. At minimum, set:
+
+- `POSTGRES_PASSWORD` to a random value and use the same value in
+  `DATABASE_URL`. A hex value from `openssl rand -hex 32` avoids URL-encoding
+  ambiguity.
+- `N2API_ADMIN_PASSWORD` to a unique strong password.
+- `N2API_ENCRYPTION_SECRET` to a separate long random value. Losing this value
+  makes encrypted provider credentials unrecoverable.
+- `N2API_PUBLIC_URL` to the externally visible origin, including `https://`
+  when TLS terminates in front of N2API.
+
+Keep `.env` readable only by its owner, validate the Compose model without
+printing the resolved secrets, then pull and start the release:
+
+```bash
+chmod 600 .env
+docker compose -f deploy/compose.release.yaml --env-file .env config --quiet
+docker compose -f deploy/compose.release.yaml --env-file .env pull
+docker compose -f deploy/compose.release.yaml --env-file .env up -d
+docker compose -f deploy/compose.release.yaml --env-file .env ps
+curl -fsS http://127.0.0.1:3000/healthz
+curl -fsS http://127.0.0.1:3000/api/admin/health
+docker image inspect "ghcr.io/knowsky404/n2api:${N2API_VERSION}" --format '{{.Os}}/{{.Architecture}}'
+```
+
+The final command must print `linux/arm64` on an ARM64 host. The release Compose
+file publishes port `3000` on the host. Restrict that port with the host
+firewall or an operator-provided ingress configuration when direct public
+access is not intended.
+
+After the stack is healthy, sign in, connect and test a provider account,
+enable its supported models, create a client API key, and verify `/v1/models`
+and one streaming `/v1/responses` request with that key.
+
+## Back Up and Upgrade
+
+Create a PostgreSQL custom-format backup before every upgrade:
+
+```bash
+mkdir -p backups
+docker compose -f deploy/compose.release.yaml --env-file .env exec -T postgres \
+  sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  > "backups/n2api-$(date +%Y%m%d-%H%M%S).dump"
+```
+
+Keep backups outside the Compose volume and periodically verify them with
+`pg_restore --list backups/n2api-YYYYMMDD-HHMMSS.dump`.
+
+For an upgrade or rollback, change `N2API_IMAGE` to the target CalVer, then pull
+and recreate the stack:
 
 ```bash
 docker compose -f deploy/compose.release.yaml --env-file .env pull
