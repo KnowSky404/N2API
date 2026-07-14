@@ -72,6 +72,42 @@ docker compose -f deploy/compose.yaml --env-file .env up --build
 
 After the stack is up, open `http://localhost:3000`, sign in with the admin credentials from `.env`, and use **Provider accounts** to add Codex/OpenAI OAuth accounts or API-key upstream accounts. Adding or reauthorizing an OAuth account generates an authorization link; open it manually, finish the provider login, then paste the resulting callback URL back into the admin UI to complete the account connection.
 
+## Downstream Codex CLI
+
+Create a client key on the **API Keys** page after at least one enabled provider
+account has the requested model enabled. Keep the client key outside
+`config.toml` and expose it to Codex through an environment variable:
+
+```bash
+export N2API_API_KEY="the client key created by N2API"
+```
+
+Add a user-level Codex provider. Use the N2API address that is reachable from
+the downstream machine; this local example uses the Compose port directly:
+
+```toml
+[model_providers.n2api]
+name = "N2API"
+base_url = "http://127.0.0.1:3000/v1"
+env_key = "N2API_API_KEY"
+wire_api = "responses"
+
+[profiles.n2api]
+model_provider = "n2api"
+model = "gpt-5.4-mini"
+```
+
+Run Codex with the profile:
+
+```bash
+codex -p n2api
+```
+
+The configured model must be allowed globally, visible to the client key, and
+enabled on at least one schedulable provider account in the key's routing pool.
+Codex OAuth exits use the Responses API path; `/v1/chat/completions` is provided
+for API-key-compatible upstream accounts and is not the Codex OAuth transport.
+
 ## Provider Accounts
 
 Provider accounts are gateway exits. N2API supports Codex OAuth accounts and API-key upstream accounts. Both account types share enabled state, priority, load factor, health status, and per-account model lists.

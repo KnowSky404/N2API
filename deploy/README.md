@@ -13,6 +13,33 @@ docker compose -f deploy/compose.yaml --env-file .env up --build
 
 The default app URL is `http://localhost:3000`.
 
+## Downstream Codex CLI
+
+After connecting and testing a Codex OAuth provider account, enable the models
+that account can serve and create a client key on the API Keys page. Configure
+the downstream Codex CLI with an environment-backed key:
+
+```bash
+export N2API_API_KEY="the client key created by N2API"
+```
+
+```toml
+[model_providers.n2api]
+name = "N2API"
+base_url = "http://127.0.0.1:3000/v1"
+env_key = "N2API_API_KEY"
+wire_api = "responses"
+
+[profiles.n2api]
+model_provider = "n2api"
+model = "gpt-5.4-mini"
+```
+
+Use `codex -p n2api`. Replace the base URL when Codex runs on another machine.
+Verify `GET /v1/models` with the client key before troubleshooting model
+requests; the list reflects global model policy, per-key policy, account model
+capability, routing-pool scope, enabled state, and account health.
+
 ## Provider Accounts
 
 Start the stack, log in as admin, and use Provider accounts to connect one or more Codex OAuth accounts or API-key upstream accounts. Provider accounts are gateway exits. N2API supports Codex OAuth accounts and API-key upstream accounts. Both account types share enabled state, priority, health status, and per-account model lists.
