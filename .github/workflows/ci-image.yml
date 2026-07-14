@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -31,7 +31,7 @@ jobs:
         run: go test ./...
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: latest
 
@@ -58,35 +58,46 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: write
+      id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - name: Normalize image name
-        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - name: Set image coordinates
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,prefix=sha-
-            type=ref,event=branch
+            type=raw,value=main
+            type=raw,value=sha-${{ env.SHORT_SHA }}
 
-      - name: Build image for smoke test
-        uses: docker/build-push-action@v7
+      - name: Build image once
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: deploy/Dockerfile
           load: true
           tags: n2api:ci
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Start PostgreSQL for smoke test
+        shell: bash
         run: |
+          set -euo pipefail
           docker network create n2api-ci
           docker run -d --name n2api-ci-postgres \
             --network n2api-ci \
@@ -110,7 +121,9 @@ jobs:
           done
 
       - name: Run image
+        shell: bash
         run: |
+          set -euo pipefail
           docker run -d --name n2api-ci \
             --network n2api-ci \
             -e N2API_HOST=127.0.0.1 \
@@ -124,7 +137,9 @@ jobs:
             n2api:ci
 
       - name: Smoke test image
+        shell: bash
         run: |
+          set -euo pipefail
           for attempt in $(seq 1 30); do
             if docker exec n2api-ci wget -qO /tmp/health.json http://127.0.0.1:3000/healthz; then
               break
@@ -145,26 +160,95 @@ jobs:
           grep '<!doctype html>' /tmp/index.html
           grep '/_app/immutable/entry/app' /tmp/index.html
 
-      - name: Stop smoke test container
+      - name: Stop smoke test containers
         if: always()
+        shell: bash
         run: |
           docker rm -f n2api-ci n2api-ci-postgres || true
           docker network rm n2api-ci || true
 
       - name: Login to GitHub Container Registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v4
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Push tested image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v7
+        id: push
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}"
+          main_ref="${image}:main"
+          sha_ref="${image}:sha-${SHORT_SHA}"
+          local_config_digest="$(docker image inspect --format '{{.Id}}' n2api:ci)"
+          if [[ ! "$local_config_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve the tested local image config digest" >&2
+            exit 1
+          fi
+
+          digest_for() {
+            docker buildx imagetools inspect "$1" \
+              | sed -n 's/^Digest:[[:space:]]*//p' \
+              | head -n 1
+          }
+
+          if sha_inspect="$(docker buildx imagetools inspect "$sha_ref" 2>/dev/null)"; then
+            sha_digest="$(
+              printf '%s\n' "$sha_inspect" \
+                | sed -n 's/^Digest:[[:space:]]*//p' \
+                | head -n 1
+            )"
+            echo "$sha_ref already exists; preserving its immutable digest"
+          else
+            docker tag n2api:ci "$sha_ref"
+            docker push "$sha_ref"
+            sha_digest="$(digest_for "$sha_ref")"
+          fi
+
+          remote_config_digest="$(
+            docker buildx imagetools inspect --raw "$sha_ref" \
+              | jq -r '.config.digest // empty'
+          )"
+          if [ "$remote_config_digest" != "$local_config_digest" ]; then
+            echo "$sha_ref does not match the image that passed the smoke test" >&2
+            exit 1
+          fi
+
+          if [[ ! "$sha_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve the pushed manifest digest for $sha_ref" >&2
+            exit 1
+          fi
+
+          latest_main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [[ ! "$latest_main_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve the current origin/main commit" >&2
+            exit 1
+          fi
+          if [ "$latest_main_sha" = "$GITHUB_SHA" ]; then
+            docker buildx imagetools create \
+              --prefer-index=false \
+              --tag "$main_ref" \
+              "${image}@${sha_digest}"
+            main_digest="$(digest_for "$main_ref")"
+            if [ "$main_digest" != "$sha_digest" ]; then
+              echo "main and sha tags resolved to different digests" >&2
+              exit 1
+            fi
+          else
+            echo "A newer main commit exists; leaving the main tag unchanged"
+          fi
+
+          echo "digest=$sha_digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Attest pushed image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
-          context: .
-          file: deploy/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          subject-name: ${{ steps.push.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
