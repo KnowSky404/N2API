@@ -31,6 +31,7 @@ jobs:
     outputs:
       image: ${{ steps.prepare.outputs.image }}
       source_digest: ${{ steps.prepare.outputs.source_digest }}
+      source_platforms: ${{ steps.prepare.outputs.source_platforms }}
       source_sha: ${{ steps.prepare.outputs.source_sha }}
       source_tag: ${{ steps.prepare.outputs.source_tag }}
       resume: ${{ steps.prepare.outputs.resume }}
@@ -86,6 +87,16 @@ jobs:
             echo "The tested source image $source_ref does not exist or has no valid manifest digest" >&2
             exit 1
           fi
+          source_platforms="$(
+            docker buildx imagetools inspect --raw "$source_ref" \
+              | jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)"' \
+              | sort
+          )"
+          if [ "$source_platforms" != $'linux/amd64\nlinux/arm64' ]; then
+            echo "The tested source image must contain exactly linux/amd64 and linux/arm64" >&2
+            printf '%s\n' "$source_platforms" >&2
+            exit 1
+          fi
 
           mapfile -t sha_versions < <(
             while IFS= read -r tag; do
@@ -132,6 +143,7 @@ jobs:
 
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "source_digest=$source_digest" >> "$GITHUB_OUTPUT"
+          echo "source_platforms=linux/amd64, linux/arm64" >> "$GITHUB_OUTPUT"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "source_tag=$source_tag" >> "$GITHUB_OUTPUT"
           echo "resume=$resume" >> "$GITHUB_OUTPUT"
@@ -161,6 +173,7 @@ jobs:
         env:
           IMAGE: ${{ steps.prepare.outputs.image }}
           SOURCE_DIGEST: ${{ steps.prepare.outputs.source_digest }}
+          SOURCE_PLATFORMS: ${{ steps.prepare.outputs.source_platforms }}
           SOURCE_SHA: ${{ steps.prepare.outputs.source_sha }}
           SOURCE_TAG: ${{ steps.prepare.outputs.source_tag }}
           VERSION: ${{ steps.prepare.outputs.version }}
@@ -183,7 +196,8 @@ jobs:
             printf -- '- Stable: `%s:latest`\n' "$IMAGE"
             printf -- '- Tested source: `%s:%s`\n' "$IMAGE" "$SOURCE_TAG"
             printf -- '- Source commit: `%s`\n' "$SOURCE_SHA"
-            printf -- '- Manifest digest: `%s`\n\n' "$SOURCE_DIGEST"
+            printf -- '- Manifest digest: `%s`\n' "$SOURCE_DIGEST"
+            printf -- '- Platforms: `%s`\n\n' "$SOURCE_PLATFORMS"
             printf '%s\n' \
               '## Upgrade' \
               '' \
@@ -307,7 +321,6 @@ jobs:
           fi
 
           docker buildx imagetools create \
-            --prefer-index=false \
             --tag "$version_ref" \
             "${IMAGE}@${SOURCE_DIGEST}"
 
@@ -366,7 +379,6 @@ jobs:
           fi
 
           docker buildx imagetools create \
-            --prefer-index=false \
             --tag "${IMAGE}:latest" \
             "${IMAGE}@${SOURCE_DIGEST}"
 
@@ -382,4 +394,5 @@ jobs:
             printf -- '- Source: `%s`\n' "$SOURCE_SHA"
             printf -- '- Image: `%s:%s`\n' "${{ needs.prepare.outputs.image }}" "$VERSION"
             printf -- '- Digest: `%s`\n' "${{ needs.prepare.outputs.source_digest }}"
+            printf -- '- Platforms: `%s`\n' "${{ needs.prepare.outputs.source_platforms }}"
           } >> "$GITHUB_STEP_SUMMARY"

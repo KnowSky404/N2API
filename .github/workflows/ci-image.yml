@@ -52,17 +52,26 @@ jobs:
         run: bun run build
 
   image:
-    name: Build and smoke test image
+    name: Build and smoke test image (${{ matrix.platform }})
     runs-on: ubuntu-latest
     needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+          - platform: linux/arm64
+            suffix: arm64
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
@@ -83,16 +92,17 @@ jobs:
             type=raw,value=main
             type=raw,value=sha-${{ env.SHORT_SHA }}
 
-      - name: Build image once
+      - name: Build platform image once
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: deploy/Dockerfile
+          platforms: ${{ matrix.platform }}
           load: true
-          tags: n2api:ci
+          tags: n2api:ci-${{ matrix.suffix }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=image-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.suffix }}
 
       - name: Start PostgreSQL for smoke test
         shell: bash
@@ -125,6 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name n2api-ci \
+            --platform "${{ matrix.platform }}" \
             --network n2api-ci \
             -e N2API_HOST=127.0.0.1 \
             -e N2API_PORT=3000 \
@@ -134,7 +145,7 @@ jobs:
             -e N2API_ADMIN_PASSWORD=ci-admin-password \
             -e N2API_ENCRYPTION_SECRET=ci-encryption-secret-with-enough-length \
             -e OPENAI_API_BASE_URL=https://api.openai.com \
-            n2api:ci
+            n2api:ci-${{ matrix.suffix }}
 
       - name: Smoke test image
         shell: bash
@@ -175,16 +186,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push tested image
+      - name: Push tested platform image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: push
         shell: bash
         run: |
           set -euo pipefail
           image="${REGISTRY}/${IMAGE_NAME}"
-          main_ref="${image}:main"
-          sha_ref="${image}:sha-${SHORT_SHA}"
-          local_config_digest="$(docker image inspect --format '{{.Id}}' n2api:ci)"
+          platform_ref="${image}:sha-${SHORT_SHA}-${{ matrix.suffix }}"
+          local_image="n2api:ci-${{ matrix.suffix }}"
+          local_config_digest="$(docker image inspect --format '{{.Id}}' "$local_image")"
           if [[ ! "$local_config_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Could not resolve the tested local image config digest" >&2
             exit 1
@@ -196,30 +206,142 @@ jobs:
               | head -n 1
           }
 
-          if sha_inspect="$(docker buildx imagetools inspect "$sha_ref" 2>/dev/null)"; then
-            sha_digest="$(
-              printf '%s\n' "$sha_inspect" \
-                | sed -n 's/^Digest:[[:space:]]*//p' \
-                | head -n 1
-            )"
-            echo "$sha_ref already exists; preserving its immutable digest"
+          if docker buildx imagetools inspect "$platform_ref" >/dev/null 2>&1; then
+            echo "$platform_ref already exists; preserving its immutable digest"
           else
-            docker tag n2api:ci "$sha_ref"
-            docker push "$sha_ref"
-            sha_digest="$(digest_for "$sha_ref")"
+            docker tag "$local_image" "$platform_ref"
+            docker push "$platform_ref"
           fi
 
           remote_config_digest="$(
-            docker buildx imagetools inspect --raw "$sha_ref" \
+            docker buildx imagetools inspect --raw "$platform_ref" \
               | jq -r '.config.digest // empty'
           )"
           if [ "$remote_config_digest" != "$local_config_digest" ]; then
-            echo "$sha_ref does not match the image that passed the smoke test" >&2
+            echo "$platform_ref does not match the image that passed the smoke test" >&2
             exit 1
           fi
 
+          platform_digest="$(digest_for "$platform_ref")"
+          if [[ ! "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve the pushed manifest digest for $platform_ref" >&2
+            exit 1
+          fi
+
+          mkdir -p /tmp/n2api-digests
+          printf '%s\n' "$platform_digest" > "/tmp/n2api-digests/${{ matrix.suffix }}"
+
+      - name: Upload platform digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: image-digest-${{ matrix.suffix }}
+          path: /tmp/n2api-digests/${{ matrix.suffix }}
+          if-no-files-found: error
+          retention-days: 1
+
+  manifest:
+    name: Publish multi-platform image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: image
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Set image coordinates
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download platform digests
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: image-digest-*
+          path: /tmp/n2api-digests
+          merge-multiple: true
+
+      - name: Publish tested multi-platform image
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}"
+          sha_ref="${image}:sha-${SHORT_SHA}"
+          main_ref="${image}:main"
+          refs=()
+          expected_digests=()
+
+          for suffix in amd64 arm64; do
+            digest_file="/tmp/n2api-digests/${suffix}"
+            if [ ! -f "$digest_file" ]; then
+              echo "Missing platform digest artifact: $suffix" >&2
+              exit 1
+            fi
+            digest="$(tr -d '[:space:]' < "$digest_file")"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Invalid platform digest for $suffix: $digest" >&2
+              exit 1
+            fi
+            refs+=("${image}@${digest}")
+            expected_digests+=("$digest")
+          done
+
+          digest_for() {
+            docker buildx imagetools inspect "$1" \
+              | sed -n 's/^Digest:[[:space:]]*//p' \
+              | head -n 1
+          }
+
+          validate_manifest() {
+            local ref="$1"
+            local raw actual_platforms actual_digests expected
+            raw="$(docker buildx imagetools inspect --raw "$ref")"
+            actual_platforms="$(
+              jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)"' <<< "$raw" \
+                | sort
+            )"
+            if [ "$actual_platforms" != $'linux/amd64\nlinux/arm64' ]; then
+              echo "$ref has unexpected platforms:" >&2
+              printf '%s\n' "$actual_platforms" >&2
+              exit 1
+            fi
+            actual_digests="$(jq -r '.manifests[].digest' <<< "$raw" | sort)"
+            expected="$(printf '%s\n' "${expected_digests[@]}" | sort)"
+            if [ "$actual_digests" != "$expected" ]; then
+              echo "$ref does not contain the tested platform digests" >&2
+              exit 1
+            fi
+          }
+
+          if docker buildx imagetools inspect "$sha_ref" >/dev/null 2>&1; then
+            echo "$sha_ref already exists; preserving its immutable digest"
+            validate_manifest "$sha_ref"
+          else
+            docker buildx imagetools create --tag "$sha_ref" "${refs[@]}"
+            validate_manifest "$sha_ref"
+          fi
+
+          sha_digest="$(digest_for "$sha_ref")"
           if [[ ! "$sha_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Could not resolve the pushed manifest digest for $sha_ref" >&2
+            echo "Could not resolve the multi-platform digest for $sha_ref" >&2
             exit 1
           fi
 
@@ -230,7 +352,6 @@ jobs:
           fi
           if [ "$latest_main_sha" = "$GITHUB_SHA" ]; then
             docker buildx imagetools create \
-              --prefer-index=false \
               --tag "$main_ref" \
               "${image}@${sha_digest}"
             main_digest="$(digest_for "$main_ref")"
@@ -238,6 +359,7 @@ jobs:
               echo "main and sha tags resolved to different digests" >&2
               exit 1
             fi
+            validate_manifest "$main_ref"
           else
             echo "A newer main commit exists; leaving the main tag unchanged"
           fi
@@ -246,9 +368,8 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
       - name: Attest pushed image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
-          subject-name: ${{ steps.push.outputs.image }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-name: ${{ steps.publish.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
