@@ -491,9 +491,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer releaseAccount()
 				defer upstreamResp.Body.Close()
 
+				streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
 				copyResponseHeaders(recorder.Header(), upstreamResp.Header)
+				if streamResponse {
+					recorder.Header().Set("Content-Type", "text/event-stream")
+				}
 				recorder.WriteHeader(upstreamResp.StatusCode)
-				observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
+				observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
 				return
 			}
 			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
@@ -509,9 +513,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer releaseAccount()
 		defer upstreamResp.Body.Close()
 
+		streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
 		copyResponseHeaders(recorder.Header(), upstreamResp.Header)
+		if streamResponse {
+			recorder.Header().Set("Content-Type", "text/event-stream")
+		}
 		recorder.WriteHeader(upstreamResp.StatusCode)
-		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path)
+		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
 		return
 	}
 }
@@ -996,11 +1004,11 @@ func secondsUntilNextMinute(now time.Time) int {
 	return seconds
 }
 
-func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string) Usage {
+func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string, stream bool) Usage {
 	if resp == nil || resp.Body == nil {
 		return Usage{Source: "missing"}
 	}
-	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+	if stream {
 		return copyStreamingResponse(w, resp.Body, route)
 	}
 	body, err := io.ReadAll(resp.Body)
@@ -1236,7 +1244,7 @@ func captureFailureMessage(resp *http.Response) string {
 }
 
 func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, body io.ReadCloser) (*http.Request, error) {
-	useCodexEndpoint := selected.AccountType == provider.AccountTypeCodexOAuth && r.Method == http.MethodPost && r.URL.Path == "/v1/responses" && strings.TrimSpace(selected.ChatGPTAccountID) != ""
+	useCodexEndpoint := usesCodexResponsesEndpoint(r, selected)
 	upstreamPath := r.URL.Path
 	upstreamBaseURL := p.upstreamBaseURL
 	if useCodexEndpoint {
@@ -1283,6 +1291,26 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 	}
 
 	return req, nil
+}
+
+func usesCodexResponsesEndpoint(r *http.Request, selected SelectedAccount) bool {
+	return r != nil &&
+		selected.AccountType == provider.AccountTypeCodexOAuth &&
+		r.Method == http.MethodPost &&
+		r.URL.Path == "/v1/responses" &&
+		strings.TrimSpace(selected.ChatGPTAccountID) != ""
+}
+
+func shouldStreamUpstreamResponse(r *http.Request, selected SelectedAccount, resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+		return true
+	}
+	return resp.StatusCode >= http.StatusOK &&
+		resp.StatusCode < http.StatusMultipleChoices &&
+		usesCodexResponsesEndpoint(r, selected)
 }
 
 func upstreamURLBaseAndPath(baseURL, routePath string) (string, string) {

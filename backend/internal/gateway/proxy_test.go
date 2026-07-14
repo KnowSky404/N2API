@@ -160,6 +160,35 @@ func (l *fakeRequestLogger) CreateRequestLog(_ context.Context, entry RequestLog
 	return nil
 }
 
+type flushRecordingResponseWriter struct {
+	header  http.Header
+	body    strings.Builder
+	status  int
+	flushes int
+}
+
+func (w *flushRecordingResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *flushRecordingResponseWriter) WriteHeader(status int) {
+	w.status = status
+}
+
+func (w *flushRecordingResponseWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(data)
+}
+
+func (w *flushRecordingResponseWriter) Flush() {
+	w.flushes++
+}
+
 func assertLastLoggedError(t *testing.T, logger *fakeRequestLogger, want string) {
 	t.Helper()
 	if len(logger.entries) == 0 {
@@ -2152,6 +2181,105 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 	message, ok := input[0].(map[string]any)
 	if !ok || message["type"] != "message" || message["role"] != "user" || message["content"] != "hi" {
 		t.Fatalf("input message = %#v", input[0])
+	}
+}
+
+func TestProxyTreatsSuccessfulOAuthResponsesAsSSEWithoutUpstreamSSEHeader(t *testing.T) {
+	const stream = "event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.4-mini\",\"usage\":{\"input_tokens\":11,\"output_tokens\":2,\"total_tokens\":13,\"input_tokens_details\":{\"cached_tokens\":3},\"output_tokens_details\":{\"reasoning_tokens\":1}}}}\n\n"
+	logger := &fakeRequestLogger{}
+	pricer := &fakeUsagePricer{estimate: UsageCostEstimate{
+		Matched:      true,
+		CostMicrousd: 14,
+		Snapshot: map[string]any{
+			"matched": true,
+			"model":   "gpt-5.4-mini",
+		},
+	}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+			Body:       io.NopCloser(strings.NewReader(stream)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+			AccountID:          14,
+			AccountType:        provider.AccountTypeCodexOAuth,
+			AuthorizationToken: "oauth-access-token",
+			ChatGPTAccountID:   "acct_chatgpt",
+			DisplayName:        "free0",
+		}}},
+		Config{
+			CodexResponsesBaseURL: "https://chatgpt.example.test/backend-api/codex",
+			Logger:                logger,
+			UsagePricer:           pricer,
+		},
+		client,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4-mini","input":"hi","stream":true}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := &flushRecordingResponseWriter{}
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.status != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.status, recorder.body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", got)
+	}
+	if recorder.body.String() != stream {
+		t.Fatalf("stream body = %q, want exact upstream bytes", recorder.body.String())
+	}
+	if recorder.flushes == 0 {
+		t.Fatal("flushes = 0, want streamed chunks to flush")
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.UsageSource != "stream" || entry.InputTokens != 11 || entry.OutputTokens != 2 || entry.TotalTokens != 13 || entry.CachedInputTokens != 3 || entry.ReasoningTokens != 1 {
+		t.Fatalf("logged usage = %+v, want parsed Codex stream usage", entry)
+	}
+	if pricer.usage != (Usage{Model: "gpt-5.4-mini", InputTokens: 11, OutputTokens: 2, TotalTokens: 13, CachedInputTokens: 3, ReasoningTokens: 1, Source: "stream"}) {
+		t.Fatalf("priced usage = %+v, want parsed Codex stream usage", pricer.usage)
+	}
+	if entry.EstimatedCostMicrousd != 14 || entry.PricingSnapshot["matched"] != true || entry.PricingSnapshot["model"] != "gpt-5.4-mini" {
+		t.Fatalf("logged pricing = %d/%+v, want matched Codex stream pricing", entry.EstimatedCostMicrousd, entry.PricingSnapshot)
+	}
+}
+
+func TestShouldStreamUpstreamResponseDoesNotRelabelErrorsOrAPIUpstreams(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	oauth := SelectedAccount{
+		AccountType:      provider.AccountTypeCodexOAuth,
+		ChatGPTAccountID: "acct_chatgpt",
+	}
+	plainSuccess := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+	}
+	plainError := &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+	apiUpstream := SelectedAccount{AccountType: provider.AccountTypeAPIUpstream}
+
+	if !shouldStreamUpstreamResponse(req, oauth, plainSuccess) {
+		t.Fatal("successful Codex OAuth response should stream")
+	}
+	if shouldStreamUpstreamResponse(req, oauth, plainError) {
+		t.Fatal("Codex OAuth error response should keep its error content type")
+	}
+	if shouldStreamUpstreamResponse(req, apiUpstream, plainSuccess) {
+		t.Fatal("plain API upstream response should not be relabeled as SSE")
 	}
 }
 
