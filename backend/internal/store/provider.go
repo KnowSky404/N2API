@@ -41,8 +41,18 @@ const routingPoolProviderAccountColumns = `
 `
 
 const providerAccountModelColumns = `
-	id, account_id, provider, model, enabled, source, last_seen_at, last_error, metadata, created_at, updated_at
+	id, account_id, provider, model, enabled, source, last_seen_at, last_error,
+	last_test_at, last_test_status, last_test_http_status, last_test_latency_ms,
+	metadata, created_at, updated_at
 `
+
+type accountModelTestState struct {
+	lastError          string
+	lastTestAt         *time.Time
+	lastTestStatus     string
+	lastTestHTTPStatus int
+	lastTestLatencyMS  int64
+}
 
 func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 	var account provider.Account
@@ -104,6 +114,10 @@ func scanProviderAccountModel(row pgx.Row) (provider.AccountModel, error) {
 		&model.Source,
 		&model.LastSeenAt,
 		&model.LastError,
+		&model.LastTestAt,
+		&model.LastTestStatus,
+		&model.LastTestHTTPStatus,
+		&model.LastTestLatencyMS,
 		&model.Metadata,
 		&model.CreatedAt,
 		&model.UpdatedAt,
@@ -739,6 +753,41 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 	return saved, nil
 }
 
+func (r *ProviderRepository) UpdateOAuthCredential(ctx context.Context, providerName string, accountID int64, credential provider.AccountCredential) error {
+	var updatedID int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE provider_account_credentials c
+		SET
+			encrypted_access_token = $3,
+			encrypted_refresh_token = $4,
+			encrypted_id_token = $5,
+			access_token_expires_at = $6,
+			last_refresh_at = $7,
+			last_refresh_error = $8,
+			last_refresh_error_at = $9,
+			metadata = c.metadata || $10::jsonb,
+			updated_at = now()
+		FROM provider_accounts a
+		WHERE a.id = c.account_id
+			AND a.provider = $1
+			AND c.account_id = $2
+		RETURNING c.account_id
+	`, providerName, accountID,
+		credential.EncryptedAccessToken,
+		credential.EncryptedRefreshToken,
+		credential.EncryptedIDToken,
+		credential.AccessTokenExpiresAt,
+		credential.LastRefreshAt,
+		credential.LastRefreshError,
+		credential.LastRefreshErrorAt,
+		metadataJSON(credential.Metadata),
+	).Scan(&updatedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	return err
+}
+
 func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName string, id int64, update provider.AccountUpdate) (provider.Account, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -979,6 +1028,28 @@ func (r *ProviderRepository) RecordAccountTestResult(ctx context.Context, provid
 	return tx.Commit(ctx)
 }
 
+func (r *ProviderRepository) RecordAccountModelTestResult(ctx context.Context, providerName string, result provider.AccountModelTestResult) error {
+	var updatedID int64
+	err := r.pool.QueryRow(ctx, `
+		UPDATE provider_account_models
+		SET
+			last_test_at = $4,
+			last_test_status = $5,
+			last_test_http_status = $6,
+			last_test_latency_ms = $7,
+			last_error = $8,
+			updated_at = now()
+		WHERE provider = $1
+			AND account_id = $2
+			AND model = $3
+		RETURNING id
+	`, providerName, result.AccountID, result.Model, result.CheckedAt, result.Status, result.HTTPStatus, result.LatencyMS, result.Message).Scan(&updatedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	return err
+}
+
 func (r *ProviderRepository) ListAccountTestResults(ctx context.Context, providerName string, accountID int64, limit int) ([]provider.AccountTestResult, error) {
 	var exists int
 	err := r.pool.QueryRow(ctx, `
@@ -1056,11 +1127,13 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 		return nil, provider.AccountModelSyncSummary{}, err
 	}
 
-	// Collect existing upstream enabled state and manual model names.
+	// Collect existing upstream enabled and diagnostic state, plus manual model names.
 	upstreamEnabled := map[string]bool{}
+	upstreamTests := map[string]accountModelTestState{}
 	manualModels := map[string]bool{}
 	rows, err := tx.Query(ctx, `
-		SELECT model, enabled, source
+		SELECT model, enabled, source, last_error, last_test_at, last_test_status,
+			last_test_http_status, last_test_latency_ms
 		FROM provider_account_models
 		WHERE provider = $1
 			AND account_id = $2
@@ -1072,12 +1145,23 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 		var model string
 		var enabled bool
 		var source string
-		if err := rows.Scan(&model, &enabled, &source); err != nil {
+		var testState accountModelTestState
+		if err := rows.Scan(
+			&model,
+			&enabled,
+			&source,
+			&testState.lastError,
+			&testState.lastTestAt,
+			&testState.lastTestStatus,
+			&testState.lastTestHTTPStatus,
+			&testState.lastTestLatencyMS,
+		); err != nil {
 			rows.Close()
 			return nil, provider.AccountModelSyncSummary{}, err
 		}
 		if source == provider.AccountModelSourceUpstream {
 			upstreamEnabled[model] = enabled
+			upstreamTests[model] = testState
 		}
 		if source == provider.AccountModelSourceManual || source == "" {
 			manualModels[model] = true
@@ -1114,10 +1198,18 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO provider_account_models (
-				account_id, provider, model, enabled, source, last_seen_at, metadata, updated_at
+				account_id, provider, model, enabled, source, last_seen_at, last_error,
+				last_test_at, last_test_status, last_test_http_status, last_test_latency_ms,
+				metadata, updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb, now())
-		`, accountID, providerName, model.Model, enabled, provider.AccountModelSourceUpstream, seenAt)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '{}'::jsonb, now())
+		`, accountID, providerName, model.Model, enabled, provider.AccountModelSourceUpstream, seenAt,
+			upstreamTests[model.Model].lastError,
+			upstreamTests[model.Model].lastTestAt,
+			upstreamTests[model.Model].lastTestStatus,
+			upstreamTests[model.Model].lastTestHTTPStatus,
+			upstreamTests[model.Model].lastTestLatencyMS,
+		)
 		if err != nil {
 			return nil, provider.AccountModelSyncSummary{}, err
 		}
@@ -1216,6 +1308,39 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 	if err != nil {
 		return nil, err
 	}
+	manualTests := map[string]accountModelTestState{}
+	rows, err := tx.Query(ctx, `
+		SELECT model, last_error, last_test_at, last_test_status,
+			last_test_http_status, last_test_latency_ms
+		FROM provider_account_models
+		WHERE provider = $1
+			AND account_id = $2
+			AND source = $3
+	`, providerName, accountID, provider.AccountModelSourceManual)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var model string
+		var state accountModelTestState
+		if err := rows.Scan(
+			&model,
+			&state.lastError,
+			&state.lastTestAt,
+			&state.lastTestStatus,
+			&state.lastTestHTTPStatus,
+			&state.lastTestLatencyMS,
+		); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		manualTests[model] = state
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
 
 	_, err = tx.Exec(ctx, `
 		DELETE FROM provider_account_models
@@ -1228,18 +1353,27 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 	}
 
 	for _, model := range models {
+		testState := manualTests[model.Model]
 		_, err = tx.Exec(ctx, `
 			INSERT INTO provider_account_models (
-				account_id, provider, model, enabled, source, metadata, updated_at
+				account_id, provider, model, enabled, source, last_error,
+				last_test_at, last_test_status, last_test_http_status, last_test_latency_ms,
+				metadata, updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, '{}'::jsonb, now())
-		`, accountID, providerName, model.Model, model.Enabled, provider.AccountModelSourceManual)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '{}'::jsonb, now())
+		`, accountID, providerName, model.Model, model.Enabled, provider.AccountModelSourceManual,
+			testState.lastError,
+			testState.lastTestAt,
+			testState.lastTestStatus,
+			testState.lastTestHTTPStatus,
+			testState.lastTestLatencyMS,
+		)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	rows, err := tx.Query(ctx, `
+	rows, err = tx.Query(ctx, `
 		SELECT `+providerAccountModelColumns+`
 		FROM provider_account_models
 		WHERE provider = $1

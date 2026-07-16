@@ -1334,6 +1334,156 @@ func TestTestAccountPassesConfiguredProxyURLToProbe(t *testing.T) {
 	}
 }
 
+func TestTestAccountModelUsesExactAPIUpstreamAndPersistsFailureWithoutChangingHealth(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 3, "unused-oauth-token")
+	account.AccountType = AccountTypeAPIUpstream
+	account.Credential.CredentialType = CredentialTypeAPIKey
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "upstream-secret")
+	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", "http://proxy.example.test:8080")
+	account.Credential.BaseURL = "https://upstream.example.test/v1"
+	account.Status = AccountStatusCircuitOpen
+	account.StatusReason = "existing health state"
+	account.LastError = "existing health state"
+	until := time.Now().Add(time.Hour)
+	account.CircuitOpenUntil = &until
+	account.FailureCount = 4
+	profileID := int64(9)
+	account.FingerprintProfileID = &profileID
+	repo.accounts = []Account{account}
+	repo.fingerprintProfiles[profileID] = FingerprintProfileData{
+		UserAgent:      "model-probe-agent",
+		TLSFingerprint: "chrome",
+		Headers:        map[string]string{"X-Probe": "profile"},
+	}
+	_, err := repo.ReplaceAccountModels(context.Background(), "openai", account.ID, []AccountModelInput{{Model: "gpt-test", Enabled: false}})
+	if err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+	prober := &captureAccountModelProber{result: modelProbeResult{
+		statusCode: http.StatusTooManyRequests,
+		errorCode:  "rate_limited",
+		message:    " quota upstream-secret  window\nreached ",
+	}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	service.modelProber = prober
+
+	result, err := service.TestAccountModel(context.Background(), account.ID, " gpt-test ")
+	if err != nil {
+		t.Fatalf("TestAccountModel returned error: %v", err)
+	}
+	if prober.model != "gpt-test" || prober.selected.AccountID != account.ID || prober.selected.AuthorizationToken != "upstream-secret" || prober.selected.BaseURL != "https://upstream.example.test/v1" || prober.selected.ProxyURL != "http://proxy.example.test:8080" {
+		t.Fatalf("model probe selected account = %+v model=%q", prober.selected, prober.model)
+	}
+	if prober.selected.FingerprintUA != "model-probe-agent" || prober.selected.FingerprintTLS != "chrome" || prober.selected.FingerprintHeaders["X-Probe"] != "profile" {
+		t.Fatalf("model probe fingerprint = ua:%q tls:%q headers:%v", prober.selected.FingerprintUA, prober.selected.FingerprintTLS, prober.selected.FingerprintHeaders)
+	}
+	if result.Status != AccountTestStatusFailed || result.ErrorCode != "rate_limited" || result.HTTPStatus != http.StatusTooManyRequests || result.Message != "quota [redacted] window reached" || result.CheckedAt.IsZero() {
+		t.Fatalf("result = %+v", result)
+	}
+	models, err := repo.ListAccountModels(context.Background(), "openai", account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountModels returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].LastTestStatus != AccountTestStatusFailed || models[0].LastTestHTTPStatus != http.StatusTooManyRequests || models[0].LastError != "quota [redacted] window reached" || models[0].LastTestAt == nil {
+		t.Fatalf("persisted model result = %+v", models)
+	}
+	unchanged, err := repo.FindAccountByID(context.Background(), "openai", account.ID)
+	if err != nil {
+		t.Fatalf("FindAccountByID returned error: %v", err)
+	}
+	if unchanged.Status != AccountStatusCircuitOpen || unchanged.StatusReason != "existing health state" || unchanged.FailureCount != 4 || unchanged.CircuitOpenUntil == nil {
+		t.Fatalf("account health mutated by model diagnostic: %+v", unchanged)
+	}
+}
+
+func TestTestAccountModelRejectsModelsNotConfiguredForAccount(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 3, "access-token")}
+	_, err := repo.ReplaceAccountModels(context.Background(), "openai", 7, []AccountModelInput{{Model: "configured", Enabled: true}})
+	if err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+	prober := &captureAccountModelProber{}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	service.modelProber = prober
+
+	_, err = service.TestAccountModel(context.Background(), 7, "other-model")
+	if !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("TestAccountModel error = %v, want ErrNotConnected", err)
+	}
+	if prober.calls != 0 {
+		t.Fatalf("model prober calls = %d, want 0", prober.calls)
+	}
+}
+
+func TestTestAccountModelRefreshFailureDoesNotChangeAccountHealth(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(-time.Minute)
+	account := testExpiredAccount(t, 7, true, 3, "expired-access", "refresh-token", expiresAt)
+	account.Status = AccountStatusActive
+	repo.accounts = []Account{account}
+	_, err := repo.ReplaceAccountModels(context.Background(), "openai", 7, []AccountModelInput{{Model: "gpt-test", Enabled: true}})
+	if err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh unavailable")})
+
+	_, err = service.TestAccountModel(context.Background(), 7, "gpt-test")
+	if err == nil {
+		t.Fatal("TestAccountModel returned nil error, want refresh failure")
+	}
+	unchanged, err := repo.FindAccountByID(context.Background(), "openai", 7)
+	if err != nil {
+		t.Fatalf("FindAccountByID returned error: %v", err)
+	}
+	if unchanged.Status != AccountStatusActive || unchanged.FailureCount != 0 || unchanged.LastRefreshError != "" {
+		t.Fatalf("refresh failure changed diagnostic account health: %+v", unchanged)
+	}
+}
+
+func TestTestAccountModelSuccessfulRefreshUpdatesOnlyCredentialState(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(-time.Minute)
+	account := testExpiredAccount(t, 7, true, 3, "expired-access", "refresh-token", expiresAt)
+	account.Status = AccountStatusCircuitOpen
+	account.StatusReason = "existing health state"
+	account.LastError = "existing health state"
+	account.FailureCount = 4
+	until := time.Now().Add(time.Hour)
+	account.CircuitOpenUntil = &until
+	repo.accounts = []Account{account}
+	_, err := repo.ReplaceAccountModels(context.Background(), "openai", 7, []AccountModelInput{{Model: "gpt-test", Enabled: true}})
+	if err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+	prober := &captureAccountModelProber{result: modelProbeResult{statusCode: http.StatusOK}}
+	service := newConfiguredService(repo, fakeOAuthClient{refresh: TokenResponse{
+		AccessToken:  "refreshed-access",
+		RefreshToken: "refreshed-refresh",
+		ExpiresIn:    3600,
+	}})
+	service.modelProber = prober
+
+	if _, err := service.TestAccountModel(context.Background(), 7, "gpt-test"); err != nil {
+		t.Fatalf("TestAccountModel returned error: %v", err)
+	}
+	if prober.selected.AuthorizationToken != "refreshed-access" {
+		t.Fatalf("model probe token = %q, want refreshed-access", prober.selected.AuthorizationToken)
+	}
+	unchanged, err := repo.FindAccountByID(context.Background(), "openai", 7)
+	if err != nil {
+		t.Fatalf("FindAccountByID returned error: %v", err)
+	}
+	if unchanged.Status != AccountStatusCircuitOpen || unchanged.StatusReason != "existing health state" || unchanged.LastError != "existing health state" || unchanged.FailureCount != 4 || unchanged.CircuitOpenUntil == nil {
+		t.Fatalf("successful diagnostic refresh changed account health: %+v", unchanged)
+	}
+	refreshedToken, err := secret.DecryptString("encryption-secret", unchanged.Credential.EncryptedAccessToken)
+	if err != nil || refreshedToken != "refreshed-access" {
+		t.Fatalf("refreshed credential token = %q error=%v", refreshedToken, err)
+	}
+}
+
 func TestListAccountTestResultsValidatesAndNormalizesLimit(t *testing.T) {
 	baseTime := time.Now().UTC().Truncate(time.Second)
 	repo := newMemoryRepo()
@@ -3703,6 +3853,56 @@ func (r *memoryRepo) RecordAccountTestResult(ctx context.Context, providerName s
 	return ErrNotConnected
 }
 
+func (r *memoryRepo) UpdateOAuthCredential(_ context.Context, providerName string, accountID int64, credential AccountCredential) error {
+	for i := range r.accounts {
+		if r.accounts[i].Provider != providerName || r.accounts[i].ID != accountID {
+			continue
+		}
+		account := normalizeAccountCredentialFields(r.accounts[i])
+		account.Credential.EncryptedAccessToken = credential.EncryptedAccessToken
+		account.Credential.EncryptedRefreshToken = credential.EncryptedRefreshToken
+		account.Credential.EncryptedIDToken = credential.EncryptedIDToken
+		account.Credential.AccessTokenExpiresAt = credential.AccessTokenExpiresAt
+		account.Credential.LastRefreshAt = credential.LastRefreshAt
+		account.Credential.LastRefreshError = credential.LastRefreshError
+		account.Credential.LastRefreshErrorAt = credential.LastRefreshErrorAt
+		if account.Credential.Metadata == nil {
+			account.Credential.Metadata = map[string]string{}
+		}
+		for key, value := range credential.Metadata {
+			account.Credential.Metadata[key] = value
+		}
+		account.EncryptedAccessToken = credential.EncryptedAccessToken
+		account.EncryptedRefreshToken = credential.EncryptedRefreshToken
+		account.EncryptedIDToken = credential.EncryptedIDToken
+		account.AccessTokenExpiresAt = credential.AccessTokenExpiresAt
+		account.LastRefreshAt = credential.LastRefreshAt
+		account.LastRefreshError = credential.LastRefreshError
+		account.LastRefreshErrorAt = credential.LastRefreshErrorAt
+		account.Metadata = account.Credential.Metadata
+		r.accounts[i] = normalizeAccountCredentialFields(account)
+		return nil
+	}
+	return ErrNotConnected
+}
+
+func (r *memoryRepo) RecordAccountModelTestResult(ctx context.Context, providerName string, result AccountModelTestResult) error {
+	models := r.accountModels[result.AccountID]
+	for i := range models {
+		if models[i].Provider == providerName && models[i].Model == result.Model {
+			checkedAt := result.CheckedAt
+			models[i].LastTestAt = &checkedAt
+			models[i].LastTestStatus = result.Status
+			models[i].LastTestHTTPStatus = result.HTTPStatus
+			models[i].LastTestLatencyMS = result.LatencyMS
+			models[i].LastError = result.Message
+			r.accountModels[result.AccountID] = models
+			return nil
+		}
+	}
+	return ErrNotConnected
+}
+
 func (r *memoryRepo) ListAccountTestResults(ctx context.Context, providerName string, accountID int64, limit int) ([]AccountTestResult, error) {
 	if _, err := r.FindAccountByID(ctx, providerName, accountID); err != nil {
 		return nil, err
@@ -4130,6 +4330,20 @@ type captureProbeOAuthClient struct {
 	gotConfig       Config
 	gotAccessToken  string
 	gotAccessTokens []string
+}
+
+type captureAccountModelProber struct {
+	result   modelProbeResult
+	selected SelectedAccount
+	model    string
+	calls    int
+}
+
+func (p *captureAccountModelProber) ProbeAccountModel(_ context.Context, _ Config, selected SelectedAccount, model string) modelProbeResult {
+	p.calls++
+	p.selected = selected
+	p.model = model
+	return p.result
 }
 
 func (c *captureProbeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {

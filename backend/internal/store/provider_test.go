@@ -726,6 +726,64 @@ func TestListAccountModelsDistinguishesMissingAccountFromNoModels(t *testing.T) 
 	}
 }
 
+func TestRecordAccountModelTestResultPersistsLatestFields(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	ctx := context.Background()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "model-test-result",
+		DisplayName:           "Model Test Result",
+		EncryptedAccessToken:  "access",
+		EncryptedRefreshToken: "refresh",
+		Enabled:               true,
+		Status:                provider.AccountStatusActive,
+	})
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{{Model: "gpt-test", Enabled: false}}); err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+	checkedAt := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	result := provider.AccountModelTestResult{
+		AccountID:  account.ID,
+		Model:      "gpt-test",
+		Status:     provider.AccountTestStatusFailed,
+		ErrorCode:  "rate_limited",
+		HTTPStatus: 429,
+		LatencyMS:  842,
+		Message:    "quota window",
+		CheckedAt:  checkedAt,
+	}
+	if err := repo.RecordAccountModelTestResult(ctx, "openai", result); err != nil {
+		t.Fatalf("RecordAccountModelTestResult returned error: %v", err)
+	}
+	models, err := repo.ListAccountModels(ctx, "openai", account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountModels returned error: %v", err)
+	}
+	if len(models) != 1 || models[0].LastTestAt == nil || !models[0].LastTestAt.Equal(checkedAt) || models[0].LastTestStatus != provider.AccountTestStatusFailed || models[0].LastTestHTTPStatus != 429 || models[0].LastTestLatencyMS != 842 || models[0].LastError != "quota window" {
+		t.Fatalf("persisted model result = %+v", models)
+	}
+	result.Status = provider.AccountTestStatusPassed
+	result.HTTPStatus = 200
+	result.LatencyMS = 110
+	result.Message = ""
+	result.CheckedAt = checkedAt.Add(time.Minute)
+	if err := repo.RecordAccountModelTestResult(ctx, "openai", result); err != nil {
+		t.Fatalf("RecordAccountModelTestResult pass returned error: %v", err)
+	}
+	models, err = repo.ListAccountModels(ctx, "openai", account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountModels after pass returned error: %v", err)
+	}
+	if models[0].LastTestStatus != provider.AccountTestStatusPassed || models[0].LastTestHTTPStatus != 200 || models[0].LastTestLatencyMS != 110 || models[0].LastError != "" {
+		t.Fatalf("latest passed model result = %+v", models[0])
+	}
+	if err := repo.RecordAccountModelTestResult(ctx, "openai", provider.AccountModelTestResult{AccountID: account.ID, Model: "missing", CheckedAt: checkedAt}); !errors.Is(err, provider.ErrNotConnected) {
+		t.Fatalf("missing model error = %v, want ErrNotConnected", err)
+	}
+}
+
 func TestSyncAccountModelsPreservesManualRowsAndDisablesNewUpstreamRows(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

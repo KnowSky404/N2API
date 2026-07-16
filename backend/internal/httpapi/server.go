@@ -91,6 +91,7 @@ type ProviderService interface {
 	ListAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
+	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
 	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
@@ -1355,6 +1356,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleSyncProviderAccountModels(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/model-tests", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleTestProviderAccountModel(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleRefreshProviderAccount(w, r, providers)
 	}))
@@ -2295,6 +2300,31 @@ func handleSyncProviderAccountModels(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": models, "synced": summary})
+}
+
+func handleTestProviderAccountModel(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	result, err := providers.TestAccountModel(r.Context(), id, req.Model)
+	if err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]provider.AccountModelTestResult{"result": result})
 }
 
 func handleRefreshProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {

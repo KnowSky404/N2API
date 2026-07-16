@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHTTPClientExchangeCodePostsAuthorizationCodeGrant(t *testing.T) {
@@ -202,10 +203,181 @@ func TestHTTPClientProbeDoesNotReadSuccessfulCodexStream(t *testing.T) {
 	}
 }
 
+func TestHTTPClientProbeAccountModelRequiresCodexCompletedEvent(t *testing.T) {
+	tests := []struct {
+		name      string
+		stream    string
+		wantCode  string
+		wantError string
+	}{
+		{
+			name:   "completed",
+			stream: "event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+		},
+		{
+			name:      "failed",
+			stream:    "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"model failed\"}}}\n\n",
+			wantCode:  "upstream_error",
+			wantError: "model failed",
+		},
+		{
+			name:      "incomplete",
+			stream:    "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{}}\n\n",
+			wantCode:  "invalid_response",
+			wantError: "upstream response was incomplete",
+		},
+		{
+			name:      "missing completion",
+			stream:    "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n",
+			wantCode:  "invalid_response",
+			wantError: "upstream stream ended before response.completed",
+		},
+		{
+			name:      "malformed terminal",
+			stream:    "event: response.completed\ndata: not-json\n\n",
+			wantCode:  "invalid_response",
+			wantError: "upstream returned malformed terminal event",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var gotPath string
+			var gotModel string
+			var gotAccountID string
+			client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				gotPath = r.URL.Path
+				gotAccountID = r.Header.Get("chatgpt-account-id")
+				var payload struct {
+					Model  string `json:"model"`
+					Stream bool   `json:"stream"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode model probe request: %v", err)
+				}
+				gotModel = payload.Model
+				if !payload.Stream {
+					t.Fatal("Codex model probe stream = false, want true")
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(test.stream)),
+					Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+					Request:    r,
+				}, nil
+			})})
+
+			result := client.ProbeAccountModel(context.Background(), Config{
+				CodexResponsesBaseURL: "https://chatgpt.example.test/backend-api/codex",
+			}, SelectedAccount{
+				AccountType:        AccountTypeCodexOAuth,
+				AuthorizationToken: "oauth-token",
+				ChatGPTAccountID:   "acct-chatgpt",
+			}, "gpt-test")
+
+			if result.statusCode != http.StatusOK || result.errorCode != test.wantCode || result.message != test.wantError {
+				t.Fatalf("ProbeAccountModel result = %+v, want code=%q error=%q", result, test.wantCode, test.wantError)
+			}
+			if gotPath != "/backend-api/codex/responses" || gotModel != "gpt-test" || gotAccountID != "acct-chatgpt" {
+				t.Fatalf("request path=%q model=%q account=%q", gotPath, gotModel, gotAccountID)
+			}
+		})
+	}
+}
+
+func TestHTTPClientProbeAccountModelClassifiesCodexStreamDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       &contextDeadlineBody{ctx: r.Context()},
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Request:    r,
+		}, nil
+	})})
+
+	result := client.ProbeAccountModel(ctx, Config{
+		CodexResponsesBaseURL: "https://chatgpt.example.test/backend-api/codex",
+	}, SelectedAccount{
+		AccountType:        AccountTypeCodexOAuth,
+		AuthorizationToken: "oauth-token",
+		ChatGPTAccountID:   "acct-chatgpt",
+	}, "gpt-test")
+
+	if result.statusCode != http.StatusOK || result.errorCode != "timeout" || result.message != "model test timed out" {
+		t.Fatalf("ProbeAccountModel result = %+v, want timeout", result)
+	}
+}
+
+func TestHTTPClientProbeAccountModelValidatesAPIUpstreamJSON(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantCode   string
+	}{
+		{name: "valid", statusCode: http.StatusOK, body: `{"choices":[]}`},
+		{name: "invalid json", statusCode: http.StatusOK, body: `not-json`, wantCode: "invalid_response"},
+		{name: "missing choices", statusCode: http.StatusOK, body: `{"object":"chat.completion"}`, wantCode: "invalid_response"},
+		{name: "error envelope with success status", statusCode: http.StatusOK, body: `{"error":{"message":"model failed"}}`, wantCode: "invalid_response"},
+		{name: "model missing", statusCode: http.StatusNotFound, body: `{"error":{"message":"model not found"}}`, wantCode: "model_not_found"},
+		{name: "rate limited", statusCode: http.StatusTooManyRequests, body: `{"error":{"message":"slow down"}}`, wantCode: "rate_limited"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var gotPath string
+			var gotAuthorization string
+			var gotUserAgent string
+			var gotHeader string
+			client := NewHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				gotPath = r.URL.Path
+				gotAuthorization = r.Header.Get("Authorization")
+				gotUserAgent = r.Header.Get("User-Agent")
+				gotHeader = r.Header.Get("X-Fingerprint")
+				return &http.Response{
+					StatusCode: test.statusCode,
+					Body:       io.NopCloser(strings.NewReader(test.body)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Request:    r,
+				}, nil
+			})})
+
+			result := client.ProbeAccountModel(context.Background(), Config{}, SelectedAccount{
+				AccountType:        AccountTypeAPIUpstream,
+				AuthorizationToken: "api-secret",
+				BaseURL:            "https://upstream.example.test/v1",
+				FingerprintUA:      "profile-agent",
+				FingerprintHeaders: map[string]string{"X-Fingerprint": "profile"},
+			}, "gpt-test")
+
+			if result.statusCode != test.statusCode || result.errorCode != test.wantCode {
+				t.Fatalf("ProbeAccountModel result = %+v, want status=%d code=%q", result, test.statusCode, test.wantCode)
+			}
+			if gotPath != "/v1/chat/completions" || gotAuthorization != "Bearer api-secret" || gotUserAgent != "profile-agent" || gotHeader != "profile" {
+				t.Fatalf("request path=%q auth=%q ua=%q fingerprint=%q", gotPath, gotAuthorization, gotUserAgent, gotHeader)
+			}
+		})
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+type contextDeadlineBody struct {
+	ctx context.Context
+}
+
+func (b *contextDeadlineBody) Read([]byte) (int, error) {
+	<-b.ctx.Done()
+	return 0, b.ctx.Err()
+}
+
+func (b *contextDeadlineBody) Close() error {
+	return nil
 }
 
 type failOnReadBody struct {

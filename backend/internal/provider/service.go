@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -94,8 +96,11 @@ const (
 	AccountModelSourceManual   = "manual"
 	AccountModelSourceUpstream = "upstream"
 
-	maxAccountModels = 100
-	maxModelNameLen  = 128
+	maxAccountModels        = 100
+	maxModelNameLen         = 128
+	accountModelTestTimeout = 20 * time.Second
+	maxModelProbeBody       = 4 << 20
+	maxModelProbeErrorBody  = 64 << 10
 )
 
 var (
@@ -271,22 +276,37 @@ type AccountCredential struct {
 }
 
 type AccountModel struct {
-	ID         int64             `json:"id"`
-	AccountID  int64             `json:"accountId"`
-	Provider   string            `json:"provider"`
-	Model      string            `json:"model"`
-	Enabled    bool              `json:"enabled"`
-	Source     string            `json:"source"`
-	LastSeenAt *time.Time        `json:"lastSeenAt"`
-	LastError  string            `json:"lastError"`
-	Metadata   map[string]string `json:"metadata"`
-	CreatedAt  time.Time         `json:"createdAt"`
-	UpdatedAt  time.Time         `json:"updatedAt"`
+	ID                 int64             `json:"id"`
+	AccountID          int64             `json:"accountId"`
+	Provider           string            `json:"provider"`
+	Model              string            `json:"model"`
+	Enabled            bool              `json:"enabled"`
+	Source             string            `json:"source"`
+	LastSeenAt         *time.Time        `json:"lastSeenAt"`
+	LastError          string            `json:"lastError"`
+	LastTestAt         *time.Time        `json:"lastTestAt"`
+	LastTestStatus     string            `json:"lastTestStatus"`
+	LastTestHTTPStatus int               `json:"lastTestHttpStatus"`
+	LastTestLatencyMS  int64             `json:"lastTestLatencyMs"`
+	Metadata           map[string]string `json:"metadata"`
+	CreatedAt          time.Time         `json:"createdAt"`
+	UpdatedAt          time.Time         `json:"updatedAt"`
 }
 
 type AccountModelInput struct {
 	Model   string `json:"model"`
 	Enabled bool   `json:"enabled"`
+}
+
+type AccountModelTestResult struct {
+	AccountID  int64     `json:"accountId"`
+	Model      string    `json:"model"`
+	Status     string    `json:"status"`
+	ErrorCode  string    `json:"errorCode"`
+	HTTPStatus int       `json:"httpStatus"`
+	LatencyMS  int64     `json:"latencyMs"`
+	Message    string    `json:"message"`
+	CheckedAt  time.Time `json:"checkedAt"`
 }
 
 // AccountModelSyncSummary describes what happened during a sync operation.
@@ -427,6 +447,7 @@ type Repository interface {
 	FindAccountByID(ctx context.Context, provider string, id int64) (Account, error)
 	FindAccountByIdentity(ctx context.Context, provider string, identities AccountIdentities) (Account, error)
 	SaveAccount(ctx context.Context, account Account) (Account, error)
+	UpdateOAuthCredential(ctx context.Context, provider string, accountID int64, credential AccountCredential) error
 	UpdateAccount(ctx context.Context, provider string, id int64, update AccountUpdate) (Account, error)
 	DeleteAccount(ctx context.Context, provider string, id int64) error
 	DeleteAccounts(ctx context.Context, provider string) error
@@ -439,6 +460,7 @@ type Repository interface {
 	RecordAccountTestResult(ctx context.Context, provider string, id int64, status, message string, at time.Time) error
 	ListAccountTestResults(ctx context.Context, provider string, accountID int64, limit int) ([]AccountTestResult, error)
 	ListAccountModels(ctx context.Context, provider string, accountID int64) ([]AccountModel, error)
+	RecordAccountModelTestResult(ctx context.Context, provider string, result AccountModelTestResult) error
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	SyncAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
 	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
@@ -472,9 +494,19 @@ type accountStatusProber interface {
 	ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error)
 }
 
+type accountModelProber interface {
+	ProbeAccountModel(ctx context.Context, cfg Config, selected SelectedAccount, model string) modelProbeResult
+}
+
 type probeResult struct {
 	statusCode int
 	retryAfter string
+	message    string
+}
+
+type modelProbeResult struct {
+	statusCode int
+	errorCode  string
 	message    string
 }
 
@@ -486,6 +518,7 @@ type Service struct {
 	repo         Repository
 	client       OAuthClient
 	prober       accountStatusProber
+	modelProber  accountModelProber
 	cfg          Config
 	refreshMu    sync.Mutex
 	refreshLocks map[int64]*sync.Mutex
@@ -555,12 +588,14 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		cfg.RefreshWindow = defaultRefreshWindow
 	}
 	prober, _ := client.(accountStatusProber)
+	httpClient := NewHTTPClient(nil)
 	return &Service{
 		repo:         repo,
 		client:       client,
 		prober:       prober,
+		modelProber:  httpClient,
 		cfg:          cfg,
-		httpClient:   NewHTTPClient(nil),
+		httpClient:   httpClient,
 		refreshLocks: make(map[int64]*sync.Mutex),
 	}
 }
@@ -620,6 +655,298 @@ func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken, proxy
 		retryAfter: resp.Header.Get("Retry-After"),
 		message:    readErrorMessage(resp.Body, resp.StatusCode),
 	}, nil
+}
+
+func (c *HTTPClient) ProbeAccountModel(ctx context.Context, cfg Config, selected SelectedAccount, model string) modelProbeResult {
+	model = strings.TrimSpace(model)
+	var targetURL string
+	var payload any
+	if selected.AccountType == AccountTypeCodexOAuth {
+		baseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
+		if baseURL == "" {
+			baseURL = "https://chatgpt.com/backend-api/codex"
+		}
+		targetURL = baseURL + "/responses"
+		payload = map[string]any{
+			"model":        model,
+			"instructions": "You are Codex, a coding agent.",
+			"input": []map[string]string{{
+				"type":    "message",
+				"role":    "user",
+				"content": "Reply with OK only.",
+			}},
+			"stream": true,
+			"store":  false,
+		}
+	} else {
+		targetURL = upstreamChatCompletionsURL(selected.BaseURL)
+		payload = map[string]any{
+			"model": model,
+			"messages": []map[string]string{{
+				"role":    "user",
+				"content": "Reply with OK only.",
+			}},
+			"stream": false,
+		}
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return modelProbeResult{errorCode: "invalid_response", message: "could not encode model probe request"}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(body))
+	if err != nil {
+		return modelProbeResult{errorCode: "network_error", message: "could not create model probe request"}
+	}
+	for key, value := range selected.FingerprintHeaders {
+		if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Host") {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
+	if strings.TrimSpace(selected.FingerprintUA) != "" {
+		req.Header.Set("User-Agent", strings.TrimSpace(selected.FingerprintUA))
+	}
+	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
+	req.Header.Set("Content-Type", "application/json")
+	if selected.AccountType == AccountTypeCodexOAuth {
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
+		req.Header.Set("OpenAI-Beta", "responses=experimental")
+		req.Header.Set("originator", DefaultCodexFingerprintOriginator)
+		req.Header.Set("Version", DefaultCodexFingerprintVersion)
+		if strings.TrimSpace(selected.FingerprintUA) == "" {
+			req.Header.Set("User-Agent", DefaultCodexFingerprintUserAgent)
+		}
+	} else {
+		req.Header.Set("Accept", "application/json")
+	}
+	probeClient := c.clientForProxy(selected.ProxyURL)
+	if strings.TrimSpace(selected.ProxyURL) == "" && strings.TrimSpace(selected.FingerprintTLS) != "" {
+		cloned := *probeClient
+		cloned.Transport = newModelProbeTLSFingerprintTransport(probeClient.Transport)
+		probeClient = &cloned
+		req = req.WithContext(contextWithModelProbeTLSFingerprint(req.Context(), selected.FingerprintTLS))
+	}
+
+	resp, err := probeClient.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return modelProbeResult{errorCode: "timeout", message: "model test timed out"}
+		}
+		return modelProbeResult{errorCode: "network_error", message: "could not reach upstream"}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		message := readModelProbeError(resp.Body, resp.StatusCode)
+		return modelProbeResult{
+			statusCode: resp.StatusCode,
+			errorCode:  classifyModelProbeHTTPError(resp.StatusCode, message),
+			message:    message,
+		}
+	}
+
+	if selected.AccountType == AccountTypeCodexOAuth {
+		result := consumeResponsesSSE(resp.Body)
+		if result.errorCode != "" && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return modelProbeResult{statusCode: resp.StatusCode, errorCode: "timeout", message: "model test timed out"}
+		}
+		result.statusCode = resp.StatusCode
+		return result
+	}
+	raw, tooLarge, err := readBoundedBody(resp.Body, maxModelProbeBody)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return modelProbeResult{statusCode: resp.StatusCode, errorCode: "timeout", message: "model test timed out"}
+		}
+		return modelProbeResult{statusCode: resp.StatusCode, errorCode: "invalid_response", message: "could not read upstream response"}
+	}
+	var responsePayload struct {
+		Choices []json.RawMessage `json:"choices"`
+	}
+	if tooLarge || json.Unmarshal(raw, &responsePayload) != nil || responsePayload.Choices == nil {
+		return modelProbeResult{statusCode: resp.StatusCode, errorCode: "invalid_response", message: "upstream returned invalid JSON"}
+	}
+	return modelProbeResult{statusCode: resp.StatusCode}
+}
+
+func upstreamChatCompletionsURL(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(trimmed, "/v1") {
+		return trimmed + "/chat/completions"
+	}
+	return trimmed + "/v1/chat/completions"
+}
+
+func consumeResponsesSSE(body io.Reader) modelProbeResult {
+	limited := &io.LimitedReader{R: body, N: maxModelProbeBody + 1}
+	scanner := bufio.NewScanner(limited)
+	scanner.Buffer(make([]byte, 64<<10), maxModelProbeBody)
+	eventType := ""
+	data := bytes.Buffer{}
+	processEvent := func() (modelProbeResult, bool) {
+		event := strings.TrimSpace(eventType)
+		raw := bytes.TrimSpace(data.Bytes())
+		if event == "" && len(raw) == 0 {
+			return modelProbeResult{}, false
+		}
+		var payload struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+			Response *struct {
+				Error *struct {
+					Message string `json:"message"`
+				} `json:"error"`
+			} `json:"response"`
+		}
+		if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
+			switch event {
+			case "response.completed", "response.failed", "response.incomplete", "error":
+				return modelProbeResult{errorCode: "invalid_response", message: "upstream returned malformed terminal event"}, true
+			default:
+				return modelProbeResult{}, false
+			}
+		}
+		kind := strings.TrimSpace(payload.Type)
+		if kind == "" {
+			kind = event
+		}
+		message := strings.TrimSpace(payload.Message)
+		if payload.Error != nil && strings.TrimSpace(payload.Error.Message) != "" {
+			message = payload.Error.Message
+		}
+		if payload.Response != nil && payload.Response.Error != nil && strings.TrimSpace(payload.Response.Error.Message) != "" {
+			message = payload.Response.Error.Message
+		}
+		message = sanitizeDiagnosticMessage(message)
+		switch kind {
+		case "response.completed":
+			return modelProbeResult{}, true
+		case "response.failed", "error":
+			if message == "" {
+				message = "upstream response failed"
+			}
+			return modelProbeResult{errorCode: "upstream_error", message: message}, true
+		case "response.incomplete":
+			if message == "" {
+				message = "upstream response was incomplete"
+			}
+			return modelProbeResult{errorCode: "invalid_response", message: message}, true
+		default:
+			return modelProbeResult{}, false
+		}
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if result, terminal := processEvent(); terminal {
+				return result
+			}
+			eventType = ""
+			data.Reset()
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			continue
+		}
+		if strings.HasPrefix(line, "data:") {
+			if data.Len() > 0 {
+				data.WriteByte('\n')
+			}
+			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if result, terminal := processEvent(); terminal {
+		return result
+	}
+	if scanner.Err() != nil || limited.N <= 0 {
+		return modelProbeResult{errorCode: "invalid_response", message: "upstream response exceeded the size limit"}
+	}
+	return modelProbeResult{errorCode: "invalid_response", message: "upstream stream ended before response.completed"}
+}
+
+func readBoundedBody(body io.Reader, limit int64) ([]byte, bool, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(raw)) > limit {
+		return raw[:limit], true, nil
+	}
+	return raw, false, nil
+}
+
+func readModelProbeError(body io.Reader, statusCode int) string {
+	raw, _, err := readBoundedBody(body, maxModelProbeErrorBody)
+	if err != nil {
+		return http.StatusText(statusCode)
+	}
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return http.StatusText(statusCode)
+	}
+	message := payload.Error.Message
+	if strings.TrimSpace(message) == "" {
+		message = payload.Message
+	}
+	message = sanitizeDiagnosticMessage(message)
+	if message == "" {
+		return http.StatusText(statusCode)
+	}
+	return message
+}
+
+func classifyModelProbeHTTPError(statusCode int, message string) string {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "unauthorized"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusNotFound:
+		return "model_not_found"
+	}
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "model") && (strings.Contains(lower, "not found") || strings.Contains(lower, "does not exist") || strings.Contains(lower, "unknown") || strings.Contains(lower, "unsupported")) {
+		return "model_not_found"
+	}
+	return "upstream_error"
+}
+
+func sanitizeDiagnosticMessage(message string) string {
+	message = strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
+	const maxLen = 512
+	if len(message) > maxLen {
+		message = message[:maxLen]
+	}
+	return message
+}
+
+func redactModelProbeSecrets(message string, selected SelectedAccount) string {
+	secrets := []string{strings.TrimSpace(selected.AuthorizationToken)}
+	if parsed, err := url.Parse(strings.TrimSpace(selected.ProxyURL)); err == nil && parsed.User != nil {
+		if password, ok := parsed.User.Password(); ok {
+			secrets = append(secrets, password)
+		}
+	}
+	for _, value := range selected.FingerprintHeaders {
+		secrets = append(secrets, strings.TrimSpace(value))
+	}
+	for _, value := range secrets {
+		if len(value) >= 4 {
+			message = strings.ReplaceAll(message, value, "[redacted]")
+		}
+	}
+	return sanitizeDiagnosticMessage(message)
 }
 
 func readErrorMessage(body io.Reader, statusCode int) string {
@@ -1093,6 +1420,62 @@ func (s *Service) ListAccountModels(ctx context.Context, accountID int64) ([]Acc
 	return s.repo.ListAccountModels(ctx, s.cfg.Provider, accountID)
 }
 
+func (s *Service) TestAccountModel(ctx context.Context, accountID int64, model string) (AccountModelTestResult, error) {
+	model = strings.TrimSpace(model)
+	if accountID <= 0 || model == "" || len(model) > maxModelNameLen {
+		return AccountModelTestResult{}, ErrInvalidInput
+	}
+	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
+	if err != nil {
+		return AccountModelTestResult{}, err
+	}
+	models, err := s.repo.ListAccountModels(ctx, s.cfg.Provider, accountID)
+	if err != nil {
+		return AccountModelTestResult{}, err
+	}
+	configured := false
+	for _, accountModel := range models {
+		if accountModel.Model == model {
+			configured = true
+			break
+		}
+	}
+	if !configured {
+		return AccountModelTestResult{}, ErrNotConnected
+	}
+
+	selected, err := s.selectedAccountForDiagnostic(ctx, account)
+	if err != nil {
+		return AccountModelTestResult{}, err
+	}
+	if s.modelProber == nil {
+		return AccountModelTestResult{}, errors.New("account model prober is unavailable")
+	}
+
+	startedAt := time.Now()
+	probeCtx, cancel := context.WithTimeout(ctx, accountModelTestTimeout)
+	defer cancel()
+	probe := s.modelProber.ProbeAccountModel(probeCtx, s.cfg, selected, model)
+	checkedAt := time.Now().UTC()
+	result := AccountModelTestResult{
+		AccountID:  accountID,
+		Model:      model,
+		Status:     AccountTestStatusPassed,
+		HTTPStatus: probe.statusCode,
+		LatencyMS:  time.Since(startedAt).Milliseconds(),
+		CheckedAt:  checkedAt,
+	}
+	if probe.errorCode != "" {
+		result.Status = AccountTestStatusFailed
+		result.ErrorCode = probe.errorCode
+		result.Message = redactModelProbeSecrets(probe.message, selected)
+	}
+	if err := s.repo.RecordAccountModelTestResult(ctx, s.cfg.Provider, result); err != nil {
+		return AccountModelTestResult{}, err
+	}
+	return result, nil
+}
+
 func (s *Service) ReplaceAccountModels(ctx context.Context, accountID int64, models []AccountModelInput) ([]AccountModel, error) {
 	if accountID <= 0 {
 		return nil, ErrInvalidInput
@@ -1440,6 +1823,10 @@ func (s *Service) AccessToken(ctx context.Context) (string, error) {
 }
 
 func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (string, error) {
+	return s.accessTokenForAccount(ctx, account, true)
+}
+
+func (s *Service) accessTokenForAccount(ctx context.Context, account Account, recordRefreshFailure bool) (string, error) {
 	account = normalizeAccountCredentialFields(account)
 	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
 		return secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
@@ -1468,7 +1855,7 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 	refreshCfg.ProxyURL = s.accountProxyURL(account)
 	tokens, err := s.client.RefreshToken(ctx, refreshCfg, refreshToken)
 	if err != nil {
-		if account.ID > 0 {
+		if recordRefreshFailure && account.ID > 0 {
 			now := time.Now()
 			var openUntil *time.Time
 			if account.FailureCount+1 >= refreshFailureCircuitThreshold {
@@ -1481,7 +1868,12 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 		}
 		return "", err
 	}
-	refreshed, err := s.storeTokenResponse(ctx, tokens, &account)
+	var refreshed Account
+	if recordRefreshFailure {
+		refreshed, err = s.storeTokenResponse(ctx, tokens, &account)
+	} else {
+		refreshed, err = s.storeTokenResponseForDiagnostic(ctx, tokens, &account)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -2140,6 +2532,14 @@ func (s *Service) RecordAccountUsed(ctx context.Context, accountID int64) error 
 }
 
 func (s *Service) selectedAccount(ctx context.Context, account Account) (SelectedAccount, error) {
+	return s.selectedAccountWithRefreshFailureRecording(ctx, account, true)
+}
+
+func (s *Service) selectedAccountForDiagnostic(ctx context.Context, account Account) (SelectedAccount, error) {
+	return s.selectedAccountWithRefreshFailureRecording(ctx, account, false)
+}
+
+func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context, account Account, recordRefreshFailure bool) (SelectedAccount, error) {
 	account = normalizeAccountCredentialFields(account)
 	accountType := strings.TrimSpace(account.AccountType)
 	if accountType == "" {
@@ -2162,7 +2562,7 @@ func (s *Service) selectedAccount(ctx context.Context, account Account) (Selecte
 	}
 	switch accountType {
 	case AccountTypeCodexOAuth:
-		token, err := s.AccessTokenForAccount(ctx, account)
+		token, err := s.accessTokenForAccount(ctx, account, recordRefreshFailure)
 		if err != nil {
 			return SelectedAccount{}, err
 		}
@@ -2479,6 +2879,14 @@ func (s *Service) lockAccountRefresh(accountID int64) func() {
 }
 
 func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, previous *Account) (Account, error) {
+	return s.storeTokenResponseWithMode(ctx, tokens, previous, false)
+}
+
+func (s *Service) storeTokenResponseForDiagnostic(ctx context.Context, tokens TokenResponse, previous *Account) (Account, error) {
+	return s.storeTokenResponseWithMode(ctx, tokens, previous, true)
+}
+
+func (s *Service) storeTokenResponseWithMode(ctx context.Context, tokens TokenResponse, previous *Account, credentialOnly bool) (Account, error) {
 	if strings.TrimSpace(tokens.AccessToken) == "" {
 		return Account{}, errors.New("oauth token response missing access token")
 	}
@@ -2576,6 +2984,15 @@ func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, 
 		LastRefreshError:      "",
 		LastRefreshErrorAt:    nil,
 		Metadata:              tokenMetadata(tokens, previous),
+	}
+	if credentialOnly {
+		if previous == nil || previous.ID <= 0 {
+			return Account{}, ErrInvalidInput
+		}
+		if err := s.repo.UpdateOAuthCredential(ctx, s.cfg.Provider, previous.ID, account.Credential); err != nil {
+			return Account{}, err
+		}
+		return s.repo.FindAccountByID(ctx, s.cfg.Provider, previous.ID)
 	}
 	saved, err := s.repo.SaveAccount(ctx, account)
 	if err != nil {

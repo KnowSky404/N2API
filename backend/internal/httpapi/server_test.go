@@ -118,6 +118,10 @@ type fakeProviderService struct {
 	accounts               []provider.Account
 	accountModels          map[int64][]provider.AccountModel
 	accountTestResults     []provider.AccountTestResult
+	accountModelTestResult provider.AccountModelTestResult
+	accountModelTestErr    error
+	testedModelAccountID   int64
+	testedModel            string
 	exposedModels          []provider.ExposedModel
 	selectionPreview       provider.SelectionPreview
 	previewModel           string
@@ -684,6 +688,22 @@ func (s *fakeProviderService) ListAccountTestResults(_ context.Context, accountI
 		}
 	}
 	return results, nil
+}
+
+func (s *fakeProviderService) TestAccountModel(_ context.Context, accountID int64, model string) (provider.AccountModelTestResult, error) {
+	s.testedModelAccountID = accountID
+	s.testedModel = model
+	if s.accountModelTestErr != nil {
+		return provider.AccountModelTestResult{}, s.accountModelTestErr
+	}
+	result := s.accountModelTestResult
+	if result.AccountID == 0 {
+		result.AccountID = accountID
+	}
+	if result.Model == "" {
+		result.Model = strings.TrimSpace(model)
+	}
+	return result, nil
 }
 
 func (s *fakeProviderService) ReplaceAccountModels(_ context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error) {
@@ -2189,6 +2209,7 @@ func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
 		{name: "list test results", method: http.MethodGet, path: "/api/admin/provider-accounts/7/test-results?limit=2"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
+		{name: "test model", method: http.MethodPost, path: "/api/admin/provider-accounts/7/model-tests", body: `{"model":"gpt-5"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
@@ -2223,6 +2244,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 		{name: "list test results", method: http.MethodGet, path: "/api/admin/provider-accounts/7/test-results?limit=2"},
 		{name: "list models", method: http.MethodGet, path: "/api/admin/provider-accounts/7/models"},
 		{name: "replace models", method: http.MethodPut, path: "/api/admin/provider-accounts/7/models", body: `{"models":[{"model":"gpt-5","enabled":true}]}`},
+		{name: "test model", method: http.MethodPost, path: "/api/admin/provider-accounts/7/model-tests", body: `{"model":"gpt-5"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
@@ -3788,6 +3810,84 @@ func TestSyncProviderAccountModelsMapsProviderErrors(t *testing.T) {
 			}
 			if body["error"] != tc.code {
 				t.Fatalf("error = %q, want %s", body["error"], tc.code)
+			}
+		})
+	}
+}
+
+func TestTestProviderAccountModelReturnsDiagnosticResult(t *testing.T) {
+	checkedAt := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	providers := newFakeProviderService()
+	providers.accountModelTestResult = provider.AccountModelTestResult{
+		AccountID:  7,
+		Model:      "gpt-test",
+		Status:     provider.AccountTestStatusFailed,
+		ErrorCode:  "rate_limited",
+		HTTPStatus: http.StatusTooManyRequests,
+		LatencyMS:  842,
+		Message:    "quota window",
+		CheckedAt:  checkedAt,
+	}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/model-tests", strings.NewReader(`{"model":"gpt-test"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.testedModelAccountID != 7 || providers.testedModel != "gpt-test" {
+		t.Fatalf("test call account=%d model=%q", providers.testedModelAccountID, providers.testedModel)
+	}
+	var body struct {
+		Result provider.AccountModelTestResult `json:"result"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Result.Status != provider.AccountTestStatusFailed || body.Result.ErrorCode != "rate_limited" || body.Result.HTTPStatus != http.StatusTooManyRequests || !body.Result.CheckedAt.Equal(checkedAt) {
+		t.Fatalf("result = %+v", body.Result)
+	}
+}
+
+func TestTestProviderAccountModelValidatesInputAndMapsNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+		err  error
+		want int
+		code string
+	}{
+		{name: "bad id", path: "/api/admin/provider-accounts/nope/model-tests", body: `{"model":"gpt-test"}`, want: http.StatusBadRequest, code: "bad_request"},
+		{name: "bad body", path: "/api/admin/provider-accounts/7/model-tests", body: `{`, want: http.StatusBadRequest, code: "bad_request"},
+		{name: "invalid model", path: "/api/admin/provider-accounts/7/model-tests", body: `{"model":""}`, err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "missing model", path: "/api/admin/provider-accounts/7/model-tests", body: `{"model":"missing"}`, err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.accountModelTestErr = test.err
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != test.want {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), test.want)
+			}
+			var response struct {
+				Error string `json:"error"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if response.Error != test.code {
+				t.Fatalf("error = %q, want %q", response.Error, test.code)
 			}
 		})
 	}

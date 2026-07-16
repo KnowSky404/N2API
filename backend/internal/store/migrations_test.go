@@ -184,6 +184,25 @@ func TestDefaultCodexFingerprintSeedMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestProviderAccountModelTestsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00035_provider_account_model_tests.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ADD COLUMN IF NOT EXISTS last_test_at TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS last_test_status TEXT NOT NULL DEFAULT ''",
+		"ADD COLUMN IF NOT EXISTS last_test_http_status INTEGER NOT NULL DEFAULT 0",
+		"ADD COLUMN IF NOT EXISTS last_test_latency_ms BIGINT NOT NULL DEFAULT 0",
+		"DROP COLUMN IF EXISTS last_test_latency_ms",
+		"DROP COLUMN IF EXISTS last_test_at",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAccountModelsMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00007_oauth_account_models.sql")
 	if err != nil {
@@ -621,10 +640,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 34 {
-		t.Fatalf("migration sources = %d, want 34", len(sources))
+	if len(sources) != 35 {
+		t.Fatalf("migration sources = %d, want 35", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[33].Path != "00034_seed_default_codex_fingerprint.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[34].Path != "00035_provider_account_model_tests.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
