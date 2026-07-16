@@ -3,6 +3,8 @@ import { describe, test } from 'node:test';
 
 import { copyText } from './clipboard.js';
 
+const unavailableClipboard = /** @type {Clipboard} */ (/** @type {unknown} */ ({}));
+
 describe('copyText', () => {
   test('falls back to a selected textarea when clipboard is unavailable', async () => {
     const textarea = {
@@ -46,7 +48,7 @@ describe('copyText', () => {
     };
 
     const copied = await copyText('oauth-link', {
-      clipboard: undefined,
+      clipboard: unavailableClipboard,
       document: /** @type {Document} */ (/** @type {unknown} */ (document))
     });
 
@@ -92,7 +94,7 @@ describe('copyText', () => {
     };
 
     const copied = await copyText('oauth-link', {
-      clipboard: undefined,
+      clipboard: unavailableClipboard,
       document: /** @type {Document} */ (/** @type {unknown} */ (document))
     });
 
