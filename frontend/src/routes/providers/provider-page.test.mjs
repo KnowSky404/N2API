@@ -337,7 +337,7 @@ test('provider accounts expose per-account outbound proxy controls', () => {
   assert.match(adminStateSource, /proxyUrl: apiUpstreamForm\.proxyUrl/);
   assert.match(source, /Proxy URL/);
   assert.match(source, /name="proxyUrl"/);
-  assert.match(source, /patch\.proxyUrl = proxyUrl/);
+  assert.match(source, /credentialPatch\.proxyUrl = draft\.proxyUrl\.trim\(\)/);
 });
 
 test('provider account create forms can bind fingerprint profiles', () => {
@@ -364,8 +364,8 @@ test('provider account create forms can bind fingerprint profiles', () => {
   assert.match(apiUpstreamSlice, /<option value="0">Default API upstream \(pass-through\)<\/option>/);
 
   const editAccountSlice = source.slice(
-    source.lastIndexOf('value={account.fingerprintProfileId ?? 0}'),
-    source.lastIndexOf('value={account.fingerprintProfileId ?? 0}') + 500
+    source.lastIndexOf('bind:value={draft.fingerprintProfileId}'),
+    source.lastIndexOf('bind:value={draft.fingerprintProfileId}') + 500
   );
   assert.match(editAccountSlice, /account\.accountType === 'api_upstream'/);
   assert.match(editAccountSlice, /Default API upstream \(pass-through\)/);
@@ -855,8 +855,8 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /role="dialog" aria-modal="true" aria-label=\{`Edit \$\{accountLabel\(account\)\}`\}/);
   assert.match(source, /title="Edit account"/);
   assert.match(source, /toggleDeleteConfirmation\(account\)/);
-  assert.match(source, /async.*await.*createAPIUpstreamAccount/s);
-  assert.match(source, /addAccountModalOpen = false/);
+  assert.match(source, /async function saveAddAccount[\s\S]*?await createAPIUpstreamAccount/);
+  assert.match(source, /function closeAddAccountModal/);
   assert.match(source, /Delete this account\?/);
   assert.match(source, /role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-label=\{`Confirm deleting \$\{accountLabel\(account\)\}`\}/);
   assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
@@ -872,8 +872,8 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /Active/);
   assert.match(source, /account\.currentConcurrentRequests/);
   assert.match(source, /account\.effectiveMaxConcurrentRequests/);
-  assert.match(source, /updateProviderAccountLoadFactor/);
-  assert.match(source, /updateProviderAccountMaxConcurrentRequests/);
+  assert.match(source, /bind:value=\{draft\.loadFactor\}/);
+  assert.match(source, /bind:value=\{draft\.maxConcurrentRequests\}/);
   assert.match(source, /provider-account-max-concurrency/);
   assert.match(source, /testProviderAccount/);
   assert.match(source, /href=\{`\/request-logs\?providerAccountId=\$\{account\.id\}`\}/);
@@ -953,10 +953,11 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /name="baseUrl"/);
   assert.match(source, /name="apiKey"/);
   assert.match(source, /Leave blank to keep current key/);
-  assert.match(source, /Save upstream/);
+  assert.doesNotMatch(source, /Save upstream/);
+  assert.match(source, /saveEditingProviderAccount/);
   assert.match(source, /loadFactor/);
-  assert.match(source, /updateAPIUpstreamCredential\(account, event\)/);
-  assert.match(source, /updateProviderAccountName\(account, event\)/);
+  assert.match(source, /credentialPatch\.baseUrl/);
+  assert.match(source, /bind:value=\{draft\.name\}/);
   assert.match(source, /provider-account-name-\$\{account\.id\}/);
   assert.match(source, /Rename \$\{accountLabel\(account\)\}/);
   assert.match(source, /Manual models/);
@@ -967,8 +968,8 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /disconnectProviderAccount\(account\)/);
   assert.match(source, /confirmDisconnectProviderAccount\(account\)/);
   assert.match(source, /toggleDeleteConfirmation\(account\)/);
-  assert.match(source, /async.*await.*createAPIUpstreamAccount/s);
-  assert.match(source, /addAccountModalOpen = false/);
+  assert.match(source, /async function saveAddAccount[\s\S]*?await createAPIUpstreamAccount/);
+  assert.match(source, /function closeAddAccountModal/);
 });
 
 test('admin state can reset provider account local status', () => {
@@ -1413,10 +1414,16 @@ test('syncAccountModels stale response does not overwrite newer result', async (
 });
 test('provider account edit modal exposes account model sync controls', () => {
   assert.match(source, /Sync from upstream/);
-  assert.match(source, /Save manual/);
+  assert.doesNotMatch(source, /Save manual/);
+  assert.match(source, /saveEditingProviderAccount[\s\S]*?saveAccountModels/);
   assert.match(source, /accountModelSummary/);
+  assert.match(source, /bind:checked=\{draft\.syncModelsOnSave\}/);
   assert.match(source, /syncAccountModels\(account\.id\)/);
+  assert.doesNotMatch(source, /onclick=\{\(\) => syncAccountModels/);
   assert.match(source, /sourceBadgeLabel\(configuredModel\)/);
+  assert.match(source, /const priorModelItems = modelState\.items\.map/);
+  assert.match(source, /modelState\.items = priorModelItems/);
+  assert.match(source, /Account settings were saved, but models failed/);
 });
 
 test('provider account model list only offers remove for manual models', () => {

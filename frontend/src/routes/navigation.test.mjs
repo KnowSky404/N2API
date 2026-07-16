@@ -24,6 +24,8 @@ const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
 const gatewayPage = readFileSync('src/routes/gateway/+page.svelte', 'utf8');
 const providersPage = readFileSync('src/routes/providers/+page.svelte', 'utf8');
 const apiKeysPage = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
+const routingPoolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
+const layoutPage = readFileSync('src/routes/+layout.svelte', 'utf8');
 const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
 const opsPage = readFileSync('src/routes/ops/+page.svelte', 'utf8');
 const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
@@ -46,7 +48,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Pricing', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Update', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Pricing', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -57,6 +59,8 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   assert.match(layout, /changePasswordForm\.currentPassword/);
   assert.match(layout, /changePasswordForm\.newPassword/);
   assert.match(layout, /onsubmit={handleChangePassword}/);
+  assert.match(layout, /aria-label="Close change password modal"/);
+  assert.doesNotMatch(layout, /setTimeout\(\(\) => closePasswordModal/);
 });
 
 test('primary navigation moves model policy ownership to API keys', () => {
@@ -66,6 +70,45 @@ test('primary navigation moves model policy ownership to API keys', () => {
   assert.doesNotMatch(layout, /label:\s*'Routing'/);
   assert.match(layout, /href:\s*'\/gateway'/);
   assert.match(layout, /href:\s*'\/api-keys'/);
+});
+
+test('editable modals use explicit close controls and persistent unified saves', () => {
+  for (const label of [
+    'Close change password modal',
+    'Close create routing pool modal',
+    'Close edit pool modal',
+    'Close create API key modal',
+    'Close bulk edit API keys modal',
+    'Close edit API key modal',
+    'Close pricing model dialog',
+    'Close add account modal',
+    'Close edit account modal'
+  ]) {
+    const combined = [layoutPage, routingPoolsPage, apiKeysPage, pricingPage, providersPage].join('\n');
+    assert.match(combined, new RegExp(label.replaceAll(' ', '\\s+')), `missing explicit close control: ${label}`);
+  }
+
+  assert.match(routingPoolsPage, /editingRoutingPoolDraft/);
+  assert.match(apiKeysPage, /editingKeyDraft/);
+  assert.match(providersPage, /editingProviderAccountDraft/);
+  assert.match(pricingPage, /addPricingOriginalModel/);
+
+  assert.doesNotMatch(routingPoolsPage, /Save membership/);
+  assert.doesNotMatch(providersPage, /Save upstream|Save proxy|Save manual/);
+  assert.doesNotMatch(apiKeysPage, /Confirm changes|Apply changes/);
+
+  assert.doesNotMatch(layoutPage, /passwordModalOpen[\s\S]*?setTimeout\(\(\) => closePasswordModal/);
+  assert.doesNotMatch(routingPoolsPage, /event\.target === event\.currentTarget && closeRoutingPoolEditor/);
+  assert.doesNotMatch(apiKeysPage, /e\.target === e\.currentTarget && close(?:CreateKey|BulkEdit|Edit)Modal/);
+  assert.doesNotMatch(providersPage, /event\.target === event\.currentTarget && closeAccountEditor/);
+  assert.doesNotMatch(pricingPage, /handlePricingModalKeydown/);
+
+  const createPoolSubmit = routingPoolsPage.match(/async function submitCreatePool[\s\S]*?\n  \}/)?.[0] ?? '';
+  const createKeySubmit = apiKeysPage.match(/async function submitCreateKey[\s\S]*?\n  \}/)?.[0] ?? '';
+  const editKeySubmit = apiKeysPage.match(/async function submitEditKey[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.doesNotMatch(createPoolSubmit, /closeCreatePoolModal|showCreateModal = false/);
+  assert.doesNotMatch(createKeySubmit, /closeCreateKeyModal|createKeyModalOpen = false/);
+  assert.doesNotMatch(editKeySubmit, /closeEditModal|editingKeyDraft = null/);
 });
 
 test('routing pools page manages account pools', () => {
@@ -82,7 +125,7 @@ test('routing pools page manages account pools', () => {
   assert.match(poolsPage, /showCreateModal/);
 
   // Opener button visible in header (not inside the modal if block)
-  assert.match(poolsPage, /<button[\s\S]*?onclick[\s\S]*?showCreateModal\s*=\s*true/);
+  assert.match(poolsPage, /onclick=\{openCreatePoolModal\}/);
 
   // Cancel button in modal
   assert.match(poolsPage, new RegExp("Cancel"));
@@ -90,8 +133,9 @@ test('routing pools page manages account pools', () => {
   // Form is guarded by {#if showCreateModal}
   // Single container dialog with aria-modal="true" (Providers modal pattern)
   assert.match(poolsPage, /aria-modal="true"/);
-  // Backdrop close uses event target guard
-  assert.match(poolsPage, /e\.target\s*===\s*e\.currentTarget/);
+  // Editing modals only close through Cancel or the header X.
+  assert.doesNotMatch(poolsPage, /e\.target\s*===\s*e\.currentTarget/);
+  assert.match(poolsPage, /aria-label="Close create routing pool modal"/);
 
 
   // Create modal form must not use responsive multi-column grid
@@ -128,15 +172,18 @@ test('routing pools page manages account pools', () => {
   // Opener button is NOT inside {#if showCreateModal} (it should be before the if block)
   assert.match(poolsPage, /Create\s+pool[\s\S]*\{#if\s+showCreateModal\}/);
 
-  // On successful create, close modal: showCreateModal = false
-  assert.match(poolsPage, /showCreateModal\s*=\s*false/);
+  // Save keeps the modal open; only the explicit close helper changes visibility.
+  assert.match(poolsPage, /function closeCreatePoolModal\(\)[\s\S]*?showCreateModal = false/);
+  const createSubmit = poolsPage.match(/async function submitCreatePool[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.doesNotMatch(createSubmit, /showCreateModal\s*=\s*false/);
 
   // submit handler uses await (not void)
   assert.match(poolsPage, /await\s+createRoutingPool/);
 
   // Legacy assertions still hold
   assert.match(poolsPage, /Pool accounts/);
-  assert.match(poolsPage, /Save membership/);
+  assert.doesNotMatch(poolsPage, /Save membership/);
+  assert.match(poolsPage, /onsubmit=\{saveRoutingPool\}/);
 
 
   assert.match(poolsPage, /loadKeys/);
@@ -207,8 +254,12 @@ test('routing pools page manages account pools', () => {
   const editModalCount = (poolsPage.match(/aria-modal="true"/g) ?? []).length;
   assert.ok(editModalCount >= 2, `edit and create modals both have aria-modal, found ${editModalCount}`);
 
-  // Save membership inside edit modal (after the modal opening)
-  assert.match(poolsPage, /editingRoutingPool[\s\S]*Save membership/);
+  // The edit modal uses a detached draft and one shared Save action.
+  assert.match(poolsPage, /editingRoutingPoolDraft/);
+  assert.match(poolsPage, /await updateRoutingPool\(draft\)[\s\S]*?await replaceRoutingPoolAccounts/);
+  assert.match(poolsPage, /onclick=\{closeRoutingPoolEditor\}[\s\S]*?>Cancel</);
+  assert.match(poolsPage, /Pool details were saved, but membership failed/);
+  assert.match(poolsPage, /role="alert">\{routingPools\.error\}<\/p>/);
 
   assert.match(adminState, /loadRoutingPools/);
   assert.match(adminState, /createRoutingPool/);
@@ -911,12 +962,16 @@ test('route UI uses the pricing-derived shared component contract', () => {
 
 test('api keys page renames keys without rotating secrets', () => {
   assert.match(apiKeysPage, /updateAPIKeyName/);
+  assert.match(apiKeysPage, /editingKeyDraft/);
   assert.match(apiKeysPage, /bind:value=\{editingKey\.name\}/);
   assert.match(adminState, /export async function updateAPIKeyName/);
   assert.match(adminState, /\/api\/admin\/keys\/\$\{keyId\}/);
   assert.match(adminState, /method: 'PATCH'/);
-  // Unified edit modal: single confirm button, error display, no per-section save
-  assert.match(apiKeysPage, /Confirm changes/);
+  // Unified edit modal: one Save action, error display, no per-section save
+  assert.match(apiKeysPage, /onsubmit=\{submitEditKey\}/);
+  assert.match(apiKeysPage, /editKeySaving \? 'Saving' : 'Save'/);
+  const editSubmit = apiKeysPage.match(/async function submitEditKey[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.doesNotMatch(editSubmit, /closeEditModal/);
   assert.doesNotMatch(apiKeysPage, /Save name/);
   assert.doesNotMatch(apiKeysPage, /Save model access/);
   assert.doesNotMatch(apiKeysPage, /Save routing pool/);
@@ -1233,7 +1288,7 @@ test('api keys page has a bulk edit modal with opt-in sections', () => {
     'Apply limits',
     'Apply budgets',
     'Leave unchanged',
-    'Apply changes'
+    'Save'
   ]) {
     assert.match(apiKeysPage, new RegExp(label.replaceAll(' ', '\\s+')), `bulk edit modal should include ${label}`);
   }
@@ -1246,6 +1301,10 @@ test('api keys page has a bulk edit modal with opt-in sections', () => {
   assert.match(apiKeysPage, /bulkEditForm\.applyBudgets/);
   assert.match(apiKeysPage, /submitBulkEdit/);
   assert.match(apiKeysPage, /bulkUpdateSelectedAPIKeys/);
+  assert.match(apiKeysPage, /const selectedIds = \[\.\.\.selectedEditableAPIKeys\]/);
+  assert.match(apiKeysPage, /selectedAPIKeyIds\[String\(id\)\] = true/);
+  const bulkSubmit = apiKeysPage.match(/async function submitBulkEdit[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.doesNotMatch(bulkSubmit, /closeBulkEditModal/);
 });
 
 test('api key batch helpers reuse existing per-key endpoints', () => {
@@ -1344,10 +1403,11 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(pricingPage, /let showAddPricingModal = \$state\(false\)/);
   assert.match(pricingPage, /onclick=\{openAddPricingModal\}/);
   assert.match(pricingPage, /\{#if showAddPricingModal\}[\s\S]*?aria-labelledby="add-pricing-title"[\s\S]*?<form[\s\S]*?onsubmit=\{submitAddPricingModel\}/);
-  assert.match(pricingPage, /id="add-pricing-title"[\s\S]*?>Add pricing model</);
-  assert.match(pricingPage, /submitAddPricingModel[\s\S]*?Model name is required\.[\s\S]*?already exists\.[\s\S]*?usagePricing\.rows = \[\.\.\.priorRows, row\][\s\S]*?await savePricingRows\(\)[\s\S]*?usagePricing\.rows = priorRows/);
+  assert.match(pricingPage, /id="add-pricing-title"[\s\S]*?addPricingOriginalModel \? 'Edit pricing model' : 'Add pricing model'/);
+  assert.match(pricingPage, /submitAddPricingModel[\s\S]*?Model name is required\.[\s\S]*?already exists\.[\s\S]*?addPricingOriginalModel[\s\S]*?await savePricingRows\(\)[\s\S]*?usagePricing\.rows = priorRows/);
   assert.match(pricingPage, /closeAddPricingModal[\s\S]*?showAddPricingModal = false/);
-  assert.match(pricingPage, /showAddPricingModal[\s\S]*?handlePricingModalKeydown/);
+  assert.doesNotMatch(pricingPage, /handlePricingModalKeydown/);
+  assert.match(pricingPage, /aria-label="Close pricing model dialog"/);
   assert.match(pricingPage, /bind:value=\{newPricingRow\.model\}/);
   for (const field of [
     'inputMicrousdPerMillion',
@@ -1418,7 +1478,7 @@ test('usage pricing supports official OpenAI sync', () => {
 
 test('usage pricing table defaults to per-row editing with sticky actions', () => {
   // Per-row editing replaces global pricingEditMode; no Edit pricing toggle
-  assert.doesNotMatch(pricingPage, /Edit pricing/);
+  assert.doesNotMatch(pricingPage, />Edit pricing</);
   assert.doesNotMatch(pricingPage, /Done editing/);
   assert.doesNotMatch(pricingPage, /let pricingEditMode = \$state\(false\)/);
 

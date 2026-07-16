@@ -26,6 +26,7 @@
     resetProviderAccountStatus,
     saveAccountModels,
     accountModelSummary,
+    accountModelsText,
     session,
     selectedProviderAccountIds,
     sourceBadgeLabel,
@@ -38,11 +39,6 @@
     toggleAccountTestHistory,
     toggleProviderAccountSelection,
     updateProviderAccount,
-    updateProviderAccountLoadFactor,
-    updateProviderAccountMaxConcurrentRequests,
-    updateProviderAccountName,
-    updateProviderAccountPriority,
-    updateProviderAccountFingerprintProfile,
     fingerprintProfiles,
     loadFingerprintProfiles
   } from '$lib/admin-state.svelte.js';
@@ -62,6 +58,8 @@
   let fingerprintProfilesRequested = $state(false);
   let appliedProviderAccountSearch = $state('');
   let editingProviderAccountId = $state(0);
+  let editingProviderAccountDraft = $state(/** @type {{ name: string, enabled: boolean, priority: number, loadFactor: number, maxConcurrentRequests: number, fingerprintProfileId: number, baseUrl: string, proxyUrl: string, apiKey: string, modelsText: string, modelItems: import('$lib/admin-state.svelte.js').AccountModel[], syncModelsOnSave: boolean } | null} */ (null));
+  let editingProviderAccountError = $state('');
   let deletingProviderAccountId = $state(0);
   let modelTestAccountId = $state(0);
   let modelTestSearch = $state('');
@@ -314,17 +312,214 @@
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function openAccountEditor(account) {
+    const modelState = getAccountModelsState(account.id);
+    modelState.saved = false;
+    modelState.error = '';
+    editingProviderAccountDraft = createAccountDraft(account, modelState);
+    editingProviderAccountError = '';
+    providerAccounts.error = '';
     editingProviderAccountId = account.id;
     deletingProviderAccountId = 0;
     modelTestAccountId = 0;
   }
 
   function closeAccountEditor() {
+    const modelState = editingProviderAccountId ? getAccountModelsState(editingProviderAccountId) : null;
+    if (providerAccounts.saving || modelState?.saving || modelState?.syncing) return;
     editingProviderAccountId = 0;
+    editingProviderAccountDraft = null;
+    editingProviderAccountError = '';
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {ReturnType<typeof getAccountModelsState>} modelState
+   */
+  function createAccountDraft(account, modelState) {
+    return {
+      name: accountLabel(account),
+      enabled: Boolean(account.enabled),
+      priority: Number(account.priority ?? 0),
+      loadFactor: Number(account.loadFactor || 1),
+      maxConcurrentRequests: Number(account.maxConcurrentRequests || 0),
+      fingerprintProfileId: Number(account.fingerprintProfileId ?? 0),
+      baseUrl: account.baseUrl || '',
+      proxyUrl: account.proxyUrlSummary || '',
+      apiKey: '',
+      modelsText: modelState.text,
+      modelItems: modelState.items.map((item) => ({ ...item })),
+      syncModelsOnSave: false
+    };
+  }
+
+  /** @param {number} accountId */
+  function refreshAccountDraft(accountId) {
+    const account = providerAccounts.items.find((item) => item.id === accountId);
+    if (!account || editingProviderAccountId !== accountId) return;
+    editingProviderAccountDraft = createAccountDraft(account, getAccountModelsState(accountId));
+  }
+
+  function addAccountBusy() {
+    return provider.connecting || providerOAuth.completing || apiUpstreamForm.submitting;
+  }
+
+  function resetAddAccountDraft() {
+    Object.assign(providerConnectForm, {
+      name: '',
+      priority: 100,
+      enabled: true,
+      fingerprintProfileId: '0'
+    });
+    Object.assign(providerOAuth, {
+      authorizationUrl: '',
+      callbackUrl: '',
+      completing: false,
+      copied: false
+    });
+    Object.assign(apiUpstreamForm, {
+      name: '',
+      baseUrl: '',
+      apiKey: '',
+      proxyUrl: '',
+      priority: 100,
+      loadFactor: 1,
+      enabled: true,
+      fingerprintProfileId: '0',
+      modelsText: '',
+      submitting: false,
+      error: ''
+    });
+    provider.error = '';
+    providerAccounts.error = '';
+  }
+
+  function openAddAccountModal() {
+    resetAddAccountDraft();
+    addAccountModalTab = 'oauth';
+    addAccountModalOpen = true;
+  }
+
+  function closeAddAccountModal() {
+    if (addAccountBusy()) return;
+    addAccountModalOpen = false;
+    resetAddAccountDraft();
+  }
+
+  /** @param {SubmitEvent} event */
+  async function saveAddAccount(event) {
+    event.preventDefault();
+    if (addAccountModalTab === 'api_upstream') {
+      await createAPIUpstreamAccount();
+      return;
+    }
+    if (providerOAuth.authorizationUrl) {
+      await completeProviderCallback();
+      return;
+    }
+    await connectProvider();
+  }
+
+  function addAccountSaveLabel() {
+    if (addAccountModalTab === 'api_upstream') return apiUpstreamForm.submitting ? 'Saving' : 'Save';
+    if (providerOAuth.authorizationUrl) return providerOAuth.completing ? 'Saving' : 'Save';
+    return provider.connecting ? 'Saving' : 'Save';
+  }
+
+  function addAccountSaveDisabled() {
+    if (addAccountModalTab === 'api_upstream') return apiUpstreamForm.submitting;
+    if (providerOAuth.authorizationUrl) return providerOAuth.completing || !providerOAuth.callbackUrl.trim();
+    return provider.loading || !provider.data?.configured || provider.connecting;
+  }
+
+  async function saveEditingProviderAccount() {
+    const account = editingProviderAccount;
+    const draft = editingProviderAccountDraft;
+    if (!account || !draft || providerAccounts.saving) return;
+
+    editingProviderAccountError = '';
+    providerAccounts.error = '';
+    const name = draft.name.trim();
+    if (!name) {
+      editingProviderAccountError = 'Account name cannot be empty';
+      return;
+    }
+    if (!Number.isInteger(Number(draft.priority)) || Number(draft.priority) < 0) {
+      editingProviderAccountError = 'Priority must be a non-negative whole number';
+      return;
+    }
+    if (!Number.isInteger(Number(draft.loadFactor)) || Number(draft.loadFactor) < 1 || Number(draft.loadFactor) > 100) {
+      editingProviderAccountError = 'Load factor must be a whole number from 1 to 100';
+      return;
+    }
+    if (!Number.isInteger(Number(draft.maxConcurrentRequests)) || Number(draft.maxConcurrentRequests) < 0) {
+      editingProviderAccountError = 'Max concurrency must be a non-negative whole number';
+      return;
+    }
+
+    await updateProviderAccount(account, {
+      name,
+      enabled: draft.enabled,
+      priority: Number(draft.priority),
+      loadFactor: Number(draft.loadFactor),
+      maxConcurrentRequests: Number(draft.maxConcurrentRequests),
+      fingerprintProfileId: Number(draft.fingerprintProfileId) || null
+    });
+    if (providerAccounts.error) {
+      editingProviderAccountError = providerAccounts.error;
+      refreshAccountDraft(account.id);
+      return;
+    }
+
+    /** @type {{ baseUrl?: string, apiKey?: string, proxyUrl?: string }} */
+    const credentialPatch = {};
+    if (draft.proxyUrl.trim() !== (account.proxyUrlSummary || '').trim()) {
+      credentialPatch.proxyUrl = draft.proxyUrl.trim();
+    }
+    if (account.accountType === 'api_upstream') {
+      if (draft.baseUrl.trim() !== (account.baseUrl || '').trim()) {
+        credentialPatch.baseUrl = draft.baseUrl.trim();
+      }
+      if (draft.apiKey.trim()) credentialPatch.apiKey = draft.apiKey.trim();
+    }
+    if (Object.keys(credentialPatch).length > 0) {
+      await updateProviderAccount(account, credentialPatch);
+      if (providerAccounts.error) {
+        editingProviderAccountError = `Account settings were saved, but credentials failed: ${providerAccounts.error}`;
+        refreshAccountDraft(account.id);
+        return;
+      }
+    }
+
+    const modelState = getAccountModelsState(account.id);
+    if (draft.syncModelsOnSave && account.accountType === 'api_upstream') {
+      await syncAccountModels(account.id);
+      if (modelState.syncError) {
+        editingProviderAccountError = `Account settings were saved, but model sync failed: ${modelState.syncError}`;
+        refreshAccountDraft(account.id);
+        return;
+      }
+      draft.modelItems = [
+        ...modelState.items.filter((item) => item.source === 'upstream').map((item) => ({ ...item })),
+        ...draft.modelItems.filter((item) => item.source !== 'upstream').map((item) => ({ ...item }))
+      ];
+    }
+    const priorModelItems = modelState.items.map((item) => ({ ...item }));
+    const priorModelsText = modelState.text;
+    modelState.items = draft.modelItems.map((item) => ({ ...item }));
+    await saveAccountModels(account.id, draft.modelsText);
+    if (modelState.error) {
+      modelState.items = priorModelItems;
+      modelState.text = priorModelsText;
+      editingProviderAccountError = `Account settings were saved, but models failed: ${modelState.error}`;
+      refreshAccountDraft(account.id);
+      return;
+    }
+    refreshAccountDraft(account.id);
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function toggleDeleteConfirmation(account) {
+    providerAccounts.error = '';
     editingProviderAccountId = 0;
     modelTestAccountId = 0;
     deletingProviderAccountId = deletingProviderAccountId === account.id ? 0 : account.id;
@@ -487,39 +682,7 @@
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   async function confirmDisconnectProviderAccount(account) {
     await disconnectProviderAccount(account);
-    deletingProviderAccountId = 0;
-  }
-
-  /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
-   * @param {SubmitEvent & { currentTarget: HTMLFormElement }} event
-   */
-  async function updateAPIUpstreamCredential(account, event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const data = new FormData(form);
-    const baseUrl = String(data.get('baseUrl') ?? '');
-    const apiKey = String(data.get('apiKey') ?? '');
-    const proxyUrl = String(data.get('proxyUrl') ?? '');
-    /** @type {{ baseUrl?: string, apiKey?: string, proxyUrl?: string }} */
-    const patch = {};
-
-    if (baseUrl.trim() && baseUrl.trim() !== (account.baseUrl ?? '').trim()) {
-      patch.baseUrl = baseUrl;
-    }
-    if (apiKey.trim()) {
-      patch.apiKey = apiKey;
-    }
-    if (proxyUrl.trim() !== (account.proxyUrlSummary ?? '').trim()) {
-      patch.proxyUrl = proxyUrl;
-    }
-    if (Object.keys(patch).length === 0) return;
-
-    await updateProviderAccount(account, patch);
-    const apiKeyInput = form.elements.namedItem('apiKey');
-    if (apiKeyInput instanceof HTMLInputElement) {
-      apiKeyInput.value = '';
-    }
+    if (!providerAccounts.error) deletingProviderAccountId = 0;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -595,7 +758,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   <button
     class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60 inline-flex items-center gap-1.5"
     type="button"
-    onclick={() => { addAccountModalOpen = true; }}
+    onclick={openAddAccountModal}
   >
     <Plus class="size-4" />
     Add account
@@ -604,7 +767,7 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
   <!-- Add account modal -->
   {#if addAccountModalOpen}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
-    <div class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh] overflow-y-auto" onclick={(e) => e.target === e.currentTarget && (addAccountModalOpen = false)} role="dialog" aria-modal="true" aria-label="Add account">
+    <div class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh] overflow-y-auto" role="dialog" aria-modal="true" aria-label="Add account">
       <div class="ui-modal-panel ui-modal-panel--lg ui-modal-panel--flush w-full max-w-xl rounded-xl border border-[#ededed] bg-white shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
         <!-- Header -->
         <div class="flex items-center justify-between border-b border-[#ededed] px-6 py-4">
@@ -612,10 +775,12 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
           <button
             class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
             type="button"
-            onclick={() => { addAccountModalOpen = false; }}
-            aria-label="Close"
+            disabled={addAccountBusy()}
+            onclick={closeAddAccountModal}
+            aria-label="Close add account modal"
+            title="Close"
           >
-            <X class="size-4" />
+            <X class="size-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -643,11 +808,9 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
             <p class="text-sm text-[#6e6e6e]">Generate a Codex OAuth authorization link to connect a new account.</p>
 
             <form
+              id="add-account-oauth-generate-form"
               class="mt-4 grid gap-4"
-              onsubmit={(event) => {
-                event.preventDefault();
-                connectProvider();
-              }}
+              onsubmit={saveAddAccount}
             >
               <div class="grid gap-4 sm:grid-cols-2">
                 <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
@@ -709,33 +872,14 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
                   </code>
                 </div>
               {/if}
-
-              <div class="flex items-center gap-3">
-                <button
-                  class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  type="submit"
-                  disabled={provider.loading || !provider.data?.configured || provider.connecting}
-                >
-                  {provider.connecting ? 'Generating link' : 'Generate OAuth link'}
-                </button>
-                <button
-                  class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                  type="button"
-                  onclick={() => { addAccountModalOpen = false; }}
-                >
-                  Cancel
-                </button>
-              </div>
             </form>
 
             <!-- Callback completion (appears after OAuth flow) -->
             {#if providerOAuth.authorizationUrl}
               <form
+                id="add-account-oauth-complete-form"
                 class="mt-4 grid gap-3"
-                onsubmit={(event) => {
-                  event.preventDefault();
-                  completeProviderCallback();
-                }}
+                onsubmit={saveAddAccount}
               >
                 <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
                   Callback URL
@@ -747,16 +891,10 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
                     required
                   />
                 </label>
-                <div class="flex items-center gap-3">
-                  <button
-                    class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    type="submit"
-                    disabled={providerOAuth.completing || !providerOAuth.callbackUrl.trim()}
-                  >
-                    {providerOAuth.completing ? 'Completing' : 'Complete OAuth'}
-                  </button>
-                </div>
               </form>
+            {/if}
+            {#if provider.error}
+              <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{provider.error}</p>
             {/if}
           </div>
 
@@ -766,13 +904,9 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
             <p class="text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
 
             <form
+              id="add-account-api-upstream-form"
               class="mt-4 grid gap-4"
-              onsubmit={async (event) => {
-                event.preventDefault();
-                if (await createAPIUpstreamAccount()) {
-                  addAccountModalOpen = false;
-                }
-              }}
+              onsubmit={saveAddAccount}
             >
               <div class="grid gap-4 sm:grid-cols-2">
                 <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
@@ -881,31 +1015,36 @@ Last refresh: {formatDate(provider.data?.lastRefreshAt)}
                   {apiUpstreamForm.error}
                 </p>
               {/if}
-
-              <div class="flex items-center gap-3">
-                <button
-                  class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  type="submit"
-                  disabled={apiUpstreamForm.submitting}
-                >
-                  {apiUpstreamForm.submitting ? 'Adding' : 'Add API upstream'}
-                </button>
-                <button
-                  class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                  type="button"
-                  onclick={() => { addAccountModalOpen = false; }}
-                >
-                  Cancel
-                </button>
-              </div>
             </form>
           </div>
         {/if}
+        <div class="flex items-center justify-end gap-3 border-t border-[#ededed] px-6 py-4">
+          <button
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            disabled={addAccountBusy()}
+            onclick={closeAddAccountModal}
+          >
+            Cancel
+          </button>
+          <button
+            class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            type="submit"
+            form={addAccountModalTab === 'api_upstream'
+              ? 'add-account-api-upstream-form'
+              : providerOAuth.authorizationUrl
+                ? 'add-account-oauth-complete-form'
+                : 'add-account-oauth-generate-form'}
+            disabled={addAccountSaveDisabled()}
+          >
+            {addAccountSaveLabel()}
+          </button>
+        </div>
       </div>
     </div>
   {/if}
 
-  {#if provider.error}
+  {#if provider.error && !addAccountModalOpen}
     <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
 {provider.error}
     </p>
@@ -1347,18 +1486,33 @@ Enabled
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
       class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-      onclick={() => { deletingProviderAccountId = 0; }}
       role="dialog"
       aria-modal="true"
       aria-label={`Confirm deleting ${accountLabel(account)}`}
     >
-      <div class="ui-modal-panel ui-modal-panel--sm w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" onclick={(e) => e.stopPropagation()}>
-        <p class="text-sm font-medium text-[#0d0d0d]">Delete this account?</p>
+      <div class="ui-modal-panel ui-modal-panel--sm w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+        <div class="flex items-start justify-between gap-3">
+          <p class="text-sm font-medium text-[#0d0d0d]">Delete this account?</p>
+          <button
+            class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            disabled={providerAccounts.saving}
+            onclick={() => { deletingProviderAccountId = 0; }}
+            aria-label="Close delete account modal"
+            title="Close"
+          >
+            <X class="size-4" aria-hidden="true" />
+          </button>
+        </div>
         <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{accountLabel(account)}</p>
+        {#if providerAccounts.error}
+          <p class="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{providerAccounts.error}</p>
+        {/if}
         <div class="mt-4 flex justify-end gap-2">
           <button
-            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
+            disabled={providerAccounts.saving}
             onclick={() => { deletingProviderAccountId = 0; }}
           >
             Cancel
@@ -1376,16 +1530,16 @@ Enabled
     </div>
   {/if}
 
-{#if editingProviderAccount}
+{#if editingProviderAccount && editingProviderAccountDraft}
   {@const account = editingProviderAccount}
+  {@const draft = editingProviderAccountDraft}
   {@const modelState = getAccountModelsState(account.id)}
   {@const historyState = getAccountTestResultsState(account.id)}
-  {@const enabledModels = enabledAccountModelCount(modelState.items)}
-  {@const modelSummary = accountModelSummary(modelState.items)}
+  {@const enabledModels = enabledAccountModelCount(draft.modelItems)}
+  {@const modelSummary = accountModelSummary(draft.modelItems)}
   <div
     class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
     role="presentation"
-    onclick={(event) => event.target === event.currentTarget && closeAccountEditor()}
   >
     <div class="ui-modal-panel ui-modal-panel--xl grid w-full max-w-5xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${accountLabel(account)}`}>
       <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
@@ -1396,6 +1550,7 @@ Enabled
         <button
           class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
+          disabled={providerAccounts.saving || modelState.saving || modelState.syncing}
           onclick={closeAccountEditor}
           aria-label="Close edit account modal"
           title="Close"
@@ -1412,28 +1567,23 @@ Enabled
             <input
               id={`provider-account-name-${account.id}`}
               class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
-              value={accountLabel(account)}
+              bind:value={draft.name}
               disabled={providerAccounts.saving}
               aria-label={`Rename ${accountLabel(account)}`}
-              onchange={(event) => updateProviderAccountName(account, event)}
             />
           </label>
           <div class="grid gap-3 sm:grid-cols-3">
-            <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={account.enabled ? 'Enabled' : 'Disabled'}>
+            <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={draft.enabled ? 'Enabled' : 'Disabled'}>
               <input
                 class="peer sr-only"
                 type="checkbox"
                 role="switch"
-                checked={account.enabled}
+                bind:checked={draft.enabled}
                 disabled={providerAccounts.saving}
-                aria-label={`Set ${accountLabel(account)} ${account.enabled ? 'disabled' : 'enabled'}`}
-                onchange={(event) =>
-                  updateProviderAccount(account, {
-                    enabled: event.currentTarget.checked
-                  })}
+                aria-label={`Set ${accountLabel(account)} ${draft.enabled ? 'disabled' : 'enabled'}`}
               />
               <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
-              <span class="text-xs text-[#6e6e6e]">{account.enabled ? 'Enabled' : 'Disabled'}</span>
+              <span class="text-xs text-[#6e6e6e]">{draft.enabled ? 'Enabled' : 'Disabled'}</span>
             </label>
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-priority-${account.id}`}>
               Priority
@@ -1443,9 +1593,8 @@ Enabled
                 type="number"
                 min="0"
                 step="1"
-                value={account.priority}
+                bind:value={draft.priority}
                 disabled={providerAccounts.saving}
-                onchange={(event) => updateProviderAccountPriority(account, event)}
               />
             </label>
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-load-factor-${account.id}`}>
@@ -1457,9 +1606,8 @@ Enabled
                 min="1"
                 max="100"
                 step="1"
-                value={account.loadFactor || 1}
+                bind:value={draft.loadFactor}
                 disabled={providerAccounts.saving}
-                onchange={(event) => updateProviderAccountLoadFactor(account, event)}
               />
             </label>
           </div>
@@ -1472,9 +1620,8 @@ Enabled
                 type="number"
                 min="0"
                 step="1"
-                value={account.maxConcurrentRequests || 0}
+                bind:value={draft.maxConcurrentRequests}
                 disabled={providerAccounts.saving}
-                onchange={(event) => updateProviderAccountMaxConcurrentRequests(account, event)}
               />
               <span class="text-xs text-[#6e6e6e]">Active {account.currentConcurrentRequests || 0} / {concurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}</span>
             </label>
@@ -1483,11 +1630,7 @@ Enabled
               <select
                 class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5]"
                 disabled={providerAccounts.saving}
-                value={account.fingerprintProfileId ?? 0}
-                onchange={(event) => {
-                  const target = /** @type {HTMLSelectElement} */ (event.target);
-                  updateProviderAccountFingerprintProfile(account, target.value);
-                }}
+                bind:value={draft.fingerprintProfileId}
               >
                 <option value="0">{account.accountType === 'api_upstream' ? 'Default API upstream (pass-through)' : 'Default Codex CLI'}</option>
                 {#each fingerprintProfiles.items as fp}
@@ -1517,57 +1660,47 @@ Enabled
 
       <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
         {#if account.accountType === 'api_upstream'}
-          <form class="grid gap-2" onsubmit={(event) => updateAPIUpstreamCredential(account, event)}>
+          <div class="grid gap-2">
             <h3 class="text-sm font-semibold text-[#0d0d0d]">Upstream credential</h3>
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
               Base URL
-              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="baseUrl" type="url" value={account.baseUrl || ''} placeholder="https://api.openai.com/v1" disabled={providerAccounts.saving} />
+              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="baseUrl" type="url" bind:value={draft.baseUrl} placeholder="https://api.openai.com/v1" disabled={providerAccounts.saving} />
             </label>
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
               Proxy URL
-              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" value={account.proxyUrlSummary || ''} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
+              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" bind:value={draft.proxyUrl} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
             </label>
-            <div class="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+            <div class="grid gap-2">
               <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
                 API key
-                <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="apiKey" type="password" autocomplete="off" placeholder="Leave blank to keep current key" disabled={providerAccounts.saving} />
+                <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="apiKey" type="password" autocomplete="off" bind:value={draft.apiKey} placeholder="Leave blank to keep current key" disabled={providerAccounts.saving} />
               </label>
-              <button class="ui-button ui-button--sm ui-button--secondary self-end rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save upstream</button>
             </div>
-          </form>
+          </div>
         {:else}
-          <form class="grid content-start gap-2" onsubmit={(event) => updateAPIUpstreamCredential(account, event)}>
+          <div class="grid content-start gap-2">
             <h3 class="text-sm font-semibold text-[#0d0d0d]">Proxy</h3>
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
               Proxy URL
-              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" value={account.proxyUrlSummary || ''} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
+              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" bind:value={draft.proxyUrl} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
             </label>
-            <button class="ui-button ui-button--sm ui-button--secondary justify-self-start rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="submit" disabled={providerAccounts.saving}>Save proxy</button>
-          </form>
+          </div>
         {/if}
-        <form
-          class="grid gap-2"
-          onsubmit={(event) => {
-            event.preventDefault();
-            saveAccountModels(account.id, modelState.text);
-          }}
-        >
+        <div class="grid gap-2">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="text-sm font-semibold text-[#0d0d0d]">Models</h3>
             <div class="flex flex-wrap items-center gap-2">
               {#if account.accountType === 'api_upstream'}
-                <button
-                  class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-                  type="button"
-                  disabled={modelState.loading || modelState.saving || modelState.syncing}
-                  onclick={() => syncAccountModels(account.id)}
-                >{modelState.syncing ? 'Syncing' : 'Sync from upstream'}</button>
+                <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
+                  <input
+                    class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
+                    type="checkbox"
+                    bind:checked={draft.syncModelsOnSave}
+                    disabled={modelState.loading || modelState.saving || modelState.syncing}
+                  />
+                  Sync from upstream on Save
+                </label>
               {/if}
-              <button
-                class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-                type="submit"
-                disabled={modelState.loading || modelState.saving || modelState.syncing}
-              >{modelState.saving ? 'Saving' : 'Save manual'}</button>
             </div>
           </div>
           <p class="text-xs text-[#6e6e6e]">{modelSummary.total} total &middot; {modelSummary.synced} synced &middot; {modelSummary.manual} manual &middot; {modelSummary.enabled} enabled</p>
@@ -1577,13 +1710,13 @@ Enabled
               id={`provider-account-models-${account.id}`}
               class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
               placeholder={'gpt-4.1\ngpt-4.1-mini'}
-              bind:value={modelState.text}
+              bind:value={draft.modelsText}
               disabled={modelState.loading || modelState.saving || modelState.syncing}
             ></textarea>
           </label>
-          {#if modelState.items.length > 0}
+          {#if draft.modelItems.length > 0}
             <div class="grid max-h-44 gap-1 overflow-y-auto rounded-lg border border-[#ededed] bg-[#fafafa] p-2">
-              {#each modelState.items as configuredModel (configuredModel.model)}
+              {#each draft.modelItems as configuredModel (configuredModel.model)}
                 <div class="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2">
                   <label class="inline-flex min-w-0 items-center gap-2 text-xs text-[#3c3c3c]">
                     <input
@@ -1593,7 +1726,7 @@ Enabled
                       disabled={modelState.loading || modelState.saving || modelState.syncing || configuredModel.source === 'upstream'}
                       aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
                       onchange={(event) => {
-                        modelState.items = setAccountModelEnabled(modelState.items, configuredModel.model, event.currentTarget.checked);
+                        draft.modelItems = setAccountModelEnabled(draft.modelItems, configuredModel.model, event.currentTarget.checked);
                         modelState.saved = false;
                       }}
                     />
@@ -1607,7 +1740,8 @@ Enabled
                       type="button"
                       disabled={modelState.loading || modelState.saving || modelState.syncing}
                       onclick={() => {
-                        modelState.items = removeAccountModel(modelState.items, configuredModel.model);
+                        draft.modelItems = removeAccountModel(draft.modelItems, configuredModel.model);
+                        draft.modelsText = accountModelsText(draft.modelItems);
                         modelState.saved = false;
                       }}
                     >Remove</button>
@@ -1625,7 +1759,7 @@ Enabled
           {#if modelState.error}<p class="text-xs text-red-700">{modelState.error}</p>{/if}
           {#if modelState.syncMessage}<p class="text-xs text-[#0a7a5e]">{modelState.syncMessage}</p>{/if}
           {#if modelState.syncError}<p class="text-xs text-red-700">{modelState.syncError}</p>{/if}
-        </form>
+        </div>
       </div>
 
       {#if historyState.expanded}
@@ -1670,6 +1804,31 @@ Enabled
           {/if}
         </div>
       {/if}
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-[#ededed] pt-4">
+        <div class="min-w-0 flex-1">
+          {#if editingProviderAccountError}
+            <p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{editingProviderAccountError}</p>
+          {/if}
+        </div>
+        <div class="flex items-center gap-3">
+          <button
+            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            disabled={providerAccounts.saving || modelState.saving || modelState.syncing}
+            onclick={closeAccountEditor}
+          >
+            Cancel
+          </button>
+          <button
+            class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            disabled={providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing}
+            onclick={saveEditingProviderAccount}
+          >
+            {providerAccounts.saving || modelState.saving ? 'Saving' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 {/if}

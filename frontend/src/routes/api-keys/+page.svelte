@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { Copy, Pencil, ScrollText, SquareCheckBig, Trash2 } from 'lucide-svelte';
+  import { Copy, Pencil, ScrollText, SquareCheckBig, Trash2, X } from 'lucide-svelte';
   import {
     apiKeys,
     apiKeyModelWarnings,
@@ -46,7 +46,9 @@
   let modelRoutingRequested = $state(false);
   let createKeyModalOpen = $state(false);
   let editingKeyId = $state(0);
-  const editingKey = $derived(apiKeys.items.find((key) => key.id === editingKeyId) ?? null);
+  let editingKeyDraft = $state(/** @type {import('$lib/admin-state.svelte.js').APIKey | null} */ (null));
+  let editKeySaving = $state(false);
+  const editingKey = $derived(editingKeyDraft);
   let logsKeyId = $state(0);
   const logsKey = $derived(apiKeys.items.find((key) => key.id === logsKeyId) ?? null);
   let deleteConfirmKeyPopover = $state(/** @type {{key: import('$lib/admin-state.svelte.js').APIKey|null, bulkAction: 'revoke'|'purge'|null, top: number, left: number}|null} */ (null));
@@ -188,10 +190,12 @@
   function openCreateKeyModal() {
     apiKeys.error = '';
     apiKeys.newKeyName = '';
+    apiKeys.oneTimeSecret = '';
     createKeyModalOpen = true;
   }
 
   function closeCreateKeyModal() {
+    if (apiKeys.creating) return;
     createKeyModalOpen = false;
     apiKeys.error = '';
     apiKeys.newKeyName = '';
@@ -200,11 +204,21 @@
   /** @param {number} keyId */
   function openEditModal(keyId) {
     apiKeys.error = '';
+    const key = apiKeys.items.find((item) => item.id === keyId);
+    if (!key) return;
     editingKeyId = keyId;
+    editingKeyDraft = {
+      ...key,
+      allowedModels: [...(key.allowedModels ?? [])],
+      allowedModelsText: key.allowedModelsText ?? modelListText(key.allowedModels ?? [])
+    };
   }
 
   function closeEditModal() {
+    if (editKeySaving) return;
     editingKeyId = 0;
+    editingKeyDraft = null;
+    apiKeys.error = '';
   }
 
   function openBulkEditModal() {
@@ -230,12 +244,14 @@
   }
 
   function closeBulkEditModal() {
+    if (apiKeys.saving) return;
     bulkEditModalOpen = false;
   }
 
   /** @param {SubmitEvent} event */
   async function submitBulkEdit(event) {
     event.preventDefault();
+    const selectedIds = [...selectedEditableAPIKeys];
     /** @type {{
      *   applyStatus?: boolean,
      *   targetDisabled?: boolean,
@@ -294,7 +310,13 @@
       return;
     }
     await bulkUpdateSelectedAPIKeys(patch);
-    if (!apiKeys.error) closeBulkEditModal();
+    const bulkError = apiKeys.error;
+    for (const id of selectedIds) {
+      if (apiKeys.items.some((key) => key.id === id && !key.revokedAt)) {
+        selectedAPIKeyIds[String(id)] = true;
+      }
+    }
+    if (bulkError) apiKeys.error = `Bulk save may have partially applied: ${bulkError}`;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
@@ -382,7 +404,71 @@
   /** @param {SubmitEvent} event */
   async function submitCreateKey(event) {
     await createKey(event);
-    if (!apiKeys.error) closeCreateKeyModal();
+  }
+
+  /** @param {SubmitEvent} event */
+  async function submitEditKey(event) {
+    event.preventDefault();
+    if (!editingKeyDraft || editKeySaving) return;
+
+    const snap = {
+      id: editingKeyDraft.id,
+      name: String(editingKeyDraft.name ?? '').trim(),
+      revokedAt: editingKeyDraft.revokedAt,
+      modelPolicy: editingKeyDraft.modelPolicy || 'all',
+      allowedModelsText: editingKeyDraft.allowedModelsText ?? modelListText(editingKeyDraft.allowedModels ?? []),
+      routingPoolId: editingKeyDraft.routingPoolId ?? 0,
+      requestsPerMinute: editingKeyDraft.requestsPerMinute ?? 0,
+      tokensPerMinute: editingKeyDraft.tokensPerMinute ?? 0,
+      requestBudget24h: editingKeyDraft.requestBudget24h ?? 0,
+      tokenBudget24h: editingKeyDraft.tokenBudget24h ?? 0,
+      costBudgetMicrousd24h: editingKeyDraft.costBudgetMicrousd24h ?? 0,
+      requestBudget30d: editingKeyDraft.requestBudget30d ?? 0,
+      tokenBudget30d: editingKeyDraft.tokenBudget30d ?? 0,
+      costBudgetMicrousd30d: editingKeyDraft.costBudgetMicrousd30d ?? 0,
+    };
+    if (snap.revokedAt) return;
+    if (!snap.name) {
+      apiKeys.error = 'API key name cannot be empty';
+      return;
+    }
+
+    editKeySaving = true;
+    try {
+      await updateAPIKeyName(snap.id, snap.name);
+      if (apiKeys.error) return;
+      await updateAPIKeyModelPolicy(snap.id, snap.modelPolicy, snap.allowedModelsText);
+      if (apiKeys.error) {
+        apiKeys.error = `Name was saved, but model access failed: ${apiKeys.error}`;
+        return;
+      }
+      await updateAPIKeyRoutingPool(snap.id, snap.routingPoolId);
+      if (apiKeys.error) {
+        apiKeys.error = `Earlier sections were saved, but routing pool failed: ${apiKeys.error}`;
+        return;
+      }
+      await updateAPIKeyLimits(snap.id, snap.requestsPerMinute, snap.tokensPerMinute);
+      if (apiKeys.error) {
+        apiKeys.error = `Earlier sections were saved, but limits failed: ${apiKeys.error}`;
+        return;
+      }
+      await updateAPIKeyBudgets(
+        snap.id,
+        snap.requestBudget24h,
+        snap.tokenBudget24h,
+        snap.costBudgetMicrousd24h,
+        snap.requestBudget30d,
+        snap.tokenBudget30d,
+        snap.costBudgetMicrousd30d
+      );
+      if (apiKeys.error) {
+        apiKeys.error = `Earlier sections were saved, but budgets failed: ${apiKeys.error}`;
+        return;
+      }
+      openEditModal(snap.id);
+    } finally {
+      editKeySaving = false;
+    }
   }
 
   $effect(() => {
@@ -597,7 +683,6 @@
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
       class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-      onclick={(e) => e.target === e.currentTarget && closeCreateKeyModal()}
       role="dialog"
       aria-modal="true"
       aria-label="Create API key"
@@ -606,11 +691,14 @@
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Create API key</h3>
           <button
-            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
             type="button"
+            disabled={apiKeys.creating}
             onclick={closeCreateKeyModal}
+            aria-label="Close create API key modal"
+            title="Close"
           >
-            Cancel
+            <X class="size-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -620,19 +708,33 @@
           </p>
         {/if}
 
-        <form class="space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={submitCreateKey}>
-          <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
-            New key name
-            <input
-              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-              bind:value={apiKeys.newKeyName}
-              placeholder="Codex workstation"
-              required
-            />
-          </label>
-          <button class="ui-button ui-button--sm ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={apiKeys.creating}>
-            {apiKeys.creating ? 'Creating' : 'Create key'}
-          </button>
+        <form class="space-y-4" onsubmit={submitCreateKey}>
+          <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
+              New key name
+              <input
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                bind:value={apiKeys.newKeyName}
+                placeholder="Codex workstation"
+                required
+              />
+            </label>
+          </div>
+          {#if apiKeys.oneTimeSecret}
+            <div class="rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <p class="text-sm font-medium text-[#0a7a5e]">Copy this key before saving another one.</p>
+                <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={copySecret}>Copy</button>
+              </div>
+              <code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]">{apiKeys.oneTimeSecret}</code>
+            </div>
+          {/if}
+          <div class="ui-modal-actions flex justify-end gap-3">
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={apiKeys.creating} onclick={closeCreateKeyModal}>Cancel</button>
+            <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={apiKeys.creating}>
+              {apiKeys.creating ? 'Saving' : 'Save'}
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -642,7 +744,6 @@
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
       class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-      onclick={(e) => e.target === e.currentTarget && closeBulkEditModal()}
       role="dialog"
       aria-modal="true"
       aria-label="Bulk edit API keys"
@@ -651,11 +752,14 @@
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Bulk edit API keys</h3>
           <button
-            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
             type="button"
+            disabled={apiKeys.saving}
             onclick={closeBulkEditModal}
+            aria-label="Close bulk edit API keys modal"
+            title="Close"
           >
-            Cancel
+            <X class="size-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -669,7 +773,8 @@
           </p>
         {/if}
 
-        <form class="space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={submitBulkEdit}>
+        <form class="space-y-4" onsubmit={submitBulkEdit}>
+          <div class="space-y-4 rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
           <label class="flex items-center gap-3 text-sm font-medium text-[#3c3c3c]">
             <input
               class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
@@ -860,13 +965,17 @@
             </div>
           {/if}
 
-          <button
-            class="ui-button ui-button--sm ui-button--primary w-full rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-            type="submit"
-            disabled={apiKeys.saving || selectedEditableAPIKeys.length === 0}
-          >
-            {apiKeys.saving ? 'Applying' : 'Apply changes'}
-          </button>
+          </div>
+          <div class="ui-modal-actions flex justify-end gap-3">
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={apiKeys.saving} onclick={closeBulkEditModal}>Cancel</button>
+            <button
+              class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+              type="submit"
+              disabled={apiKeys.saving || selectedEditableAPIKeys.length === 0}
+            >
+              {apiKeys.saving ? 'Saving' : 'Save'}
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -875,7 +984,6 @@
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div
       class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-      onclick={(e) => e.target === e.currentTarget && closeEditModal()}
       role="dialog"
       aria-modal="true"
       aria-label="Edit API key"
@@ -884,78 +992,20 @@
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Edit key &middot; {editingKey.name}</h3>
           <button
-            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+            class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
             type="button"
+            disabled={editKeySaving}
             onclick={closeEditModal}
+            aria-label="Close edit API key modal"
+            title="Close"
           >
-            Close
+            <X class="size-4" aria-hidden="true" />
           </button>
         </div>
 
         <form
           class="space-y-4"
-          onsubmit={async (event) => {
-            event.preventDefault();
-
-            // Snapshot all editable fields before any await in case
-            // a successful API call replaces editingKey in apiKeys.items.
-            const snap = {
-              id: editingKey.id,
-              name: String(editingKey.name ?? '').trim(),
-              revokedAt: editingKey.revokedAt,
-              modelPolicy: editingKey.modelPolicy || 'all',
-              allowedModelsText: editingKey.allowedModelsText ?? modelListText(editingKey.allowedModels ?? []),
-              routingPoolId: editingKey.routingPoolId ?? 0,
-              requestsPerMinute: editingKey.requestsPerMinute ?? 0,
-              tokensPerMinute: editingKey.tokensPerMinute ?? 0,
-              requestBudget24h: editingKey.requestBudget24h ?? 0,
-              tokenBudget24h: editingKey.tokenBudget24h ?? 0,
-              costBudgetMicrousd24h: editingKey.costBudgetMicrousd24h ?? 0,
-              requestBudget30d: editingKey.requestBudget30d ?? 0,
-              tokenBudget30d: editingKey.tokenBudget30d ?? 0,
-              costBudgetMicrousd30d: editingKey.costBudgetMicrousd30d ?? 0,
-            };
-
-            if (snap.revokedAt) return;
-
-            if (!snap.name) {
-              apiKeys.error = 'API key name cannot be empty';
-              return;
-            }
-
-            await updateAPIKeyName(snap.id, snap.name);
-            if (apiKeys.error) return;
-
-            await updateAPIKeyModelPolicy(
-              snap.id,
-              snap.modelPolicy,
-              snap.allowedModelsText
-            );
-            if (apiKeys.error) return;
-
-            await updateAPIKeyRoutingPool(snap.id, snap.routingPoolId);
-            if (apiKeys.error) return;
-
-            await updateAPIKeyLimits(
-              snap.id,
-              snap.requestsPerMinute,
-              snap.tokensPerMinute
-            );
-            if (apiKeys.error) return;
-
-            await updateAPIKeyBudgets(
-              snap.id,
-              snap.requestBudget24h,
-              snap.tokenBudget24h,
-              snap.costBudgetMicrousd24h,
-              snap.requestBudget30d,
-              snap.tokenBudget30d,
-              snap.costBudgetMicrousd30d
-            );
-            if (apiKeys.error) return;
-
-            closeEditModal();
-          }}
+          onsubmit={submitEditKey}
         >
           <!-- Name section -->
           <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
@@ -1283,13 +1333,21 @@
             <p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{apiKeys.error}</p>
           {/if}
 
-          <div class="flex items-center justify-end">
+          <div class="ui-modal-actions flex items-center justify-end gap-3">
             <button
-              class="ui-button ui-button--sm ui-button--primary rounded-md border border-[#10a37f] bg-[#10a37f] px-4 py-2 text-sm font-medium text-white hover:bg-[#0a7a5e] disabled:cursor-not-allowed disabled:opacity-60"
-              type="submit"
-              disabled={Boolean(editingKey.revokedAt)}
+              class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              disabled={editKeySaving}
+              onclick={closeEditModal}
             >
-              Confirm changes
+              Cancel
+            </button>
+            <button
+              class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60"
+              type="submit"
+              disabled={editKeySaving || Boolean(editingKey.revokedAt)}
+            >
+              {editKeySaving ? 'Saving' : 'Save'}
             </button>
           </div>
         </form>

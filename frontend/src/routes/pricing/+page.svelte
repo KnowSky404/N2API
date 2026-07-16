@@ -7,7 +7,7 @@
     usagePricing,
   } from '$lib/admin-state.svelte.js';
   import AuthGate from '$lib/AuthGate.svelte';
-  import { LoaderCircle, TriangleAlert } from 'lucide-svelte';
+  import { LoaderCircle, TriangleAlert, X } from 'lucide-svelte';
 
   function emptyPricingRow() {
     return {
@@ -33,6 +33,7 @@
   let showAddPricingModal = $state(false);
   let addPricingError = $state('');
   let newPricingRow = $state(emptyPricingRow());
+  let addPricingOriginalModel = $state('');
   let selectedShutdownModels = $state(/** @type {string[]} */ ([]));
 
   /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
@@ -206,6 +207,7 @@
 
   function openAddPricingModal() {
     newPricingRow = emptyPricingRow();
+    addPricingOriginalModel = '';
     addPricingError = '';
     showAddPricingModal = true;
   }
@@ -215,6 +217,7 @@
     showAddPricingModal = false;
     addPricingError = '';
     newPricingRow = emptyPricingRow();
+    addPricingOriginalModel = '';
   }
 
   /** @param {SubmitEvent} event */
@@ -227,7 +230,12 @@
       addPricingError = 'Model name is required.';
       return;
     }
-    if ((usagePricing.rows || []).some((row) => String(row.model ?? '').trim() === model)) {
+    if (
+      (usagePricing.rows || []).some((row) => {
+        const rowModel = String(row.model ?? '').trim();
+        return rowModel === model && rowModel !== addPricingOriginalModel;
+      })
+    ) {
       addPricingError = 'A pricing row for this model already exists.';
       return;
     }
@@ -235,7 +243,18 @@
     addPricingError = '';
     const priorRows = [...(usagePricing.rows || [])];
     const row = { ...newPricingRow, model };
-    usagePricing.rows = [...priorRows, row];
+    if (addPricingOriginalModel) {
+      const originalIndex = priorRows.findIndex(
+        (item) => String(item.model ?? '').trim() === addPricingOriginalModel
+      );
+      if (originalIndex < 0) {
+        addPricingError = 'The pricing row changed on the server. Reopen the dialog and try again.';
+        return;
+      }
+      usagePricing.rows = priorRows.map((item, index) => (index === originalIndex ? row : item));
+    } else {
+      usagePricing.rows = [...priorRows, row];
+    }
 
     if (!(await savePricingRows())) {
       usagePricing.rows = priorRows;
@@ -246,11 +265,17 @@
     pricingSearch = '';
     const sortedIndex = sortedPricingRows.findIndex((item) => item.model === model);
     pricingPage = sortedIndex >= 0 ? Math.floor(sortedIndex / pricingPageSize) + 1 : 1;
-    closeAddPricingModal();
+    const savedRow = (usagePricing.rows || []).find((item) => String(item.model ?? '').trim() === model);
+    newPricingRow = savedRow ? { ...savedRow } : row;
+    addPricingOriginalModel = model;
   }
 
   function openSyncConfirmModal() {
     showSyncConfirmModal = true;
+  }
+
+  function closeSyncConfirmModal() {
+    if (!pricingBusy) showSyncConfirmModal = false;
   }
 
   function openUpcomingIgnoreModal() {
@@ -268,21 +293,21 @@
     }
   }
 
-  /** @param {KeyboardEvent} event */
-  function handlePricingModalKeydown(event) {
-    if (event.key !== 'Escape' || pricingBusy) return;
-    if (showAddPricingModal) closeAddPricingModal();
-    if (showUpcomingIgnoreModal) showUpcomingIgnoreModal = false;
-  }
-
   function openShutdownRemovalModal() {
     selectedShutdownModels = (usagePricing.deletionCandidates || []).map((item) => item.model);
     showShutdownRemovalModal = true;
   }
 
+  function closeShutdownRemovalModal() {
+    if (pricingBusy) return;
+    showShutdownRemovalModal = false;
+    selectedShutdownModels = [];
+  }
+
   async function confirmSyncOfficial() {
-    showSyncConfirmModal = false;
-    await syncOfficialUsagePricing();
+    if (await syncOfficialUsagePricing()) {
+      showSyncConfirmModal = false;
+    }
   }
 
   /** @param {Event & { currentTarget: HTMLInputElement }} event */
@@ -297,8 +322,7 @@
 
   async function confirmShutdownRemoval() {
     if (await removeShutdownUsagePricing(selectedShutdownModels)) {
-      showShutdownRemovalModal = false;
-      selectedShutdownModels = [];
+      closeShutdownRemovalModal();
     }
   }
 </script>
@@ -307,7 +331,7 @@
   <title>N2API Pricing</title>
 </svelte:head>
 
-<svelte:window onscroll={closeDeleteConfirmPricingPopover} onresize={closeDeleteConfirmPricingPopover} onkeydown={handlePricingModalKeydown} />
+<svelte:window onscroll={closeDeleteConfirmPricingPopover} onresize={closeDeleteConfirmPricingPopover} />
 
 <AuthGate>
 <div class="space-y-6">
@@ -539,11 +563,20 @@
   {/if}
 
   {#if showSyncConfirmModal}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_interactive_supports_focus -->
-    <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => { if (e.target === e.currentTarget) showSyncConfirmModal = false; }} onkeydown={(e) => { if (e.key === 'Escape') showSyncConfirmModal = false; }}>
+    <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="sync-pricing-title">
       <div class="ui-modal-panel ui-modal-panel--sm mx-4 w-full max-w-md rounded-xl border border-[#ededed] bg-white p-6 shadow-lg">
-        <h3 class="text-lg font-semibold text-[#0d0d0d]">Sync official OpenAI pricing</h3>
+        <div class="flex items-start justify-between gap-4">
+          <h3 id="sync-pricing-title" class="text-lg font-semibold text-[#0d0d0d]">Sync official OpenAI pricing</h3>
+          <button
+            class="ui-button grid h-8 w-8 shrink-0 place-items-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            aria-label="Close sync pricing dialog"
+            disabled={pricingBusy}
+            onclick={closeSyncConfirmModal}
+          >
+            <X class="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
         <p class="mt-3 text-sm text-[#3c3c3c]">
           Compatible OpenAI Standard prices will be added or updated. Local-only pricing rows remain unchanged.
         </p>
@@ -556,7 +589,8 @@
           <button
             class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
             type="button"
-            onclick={() => showSyncConfirmModal = false}
+            disabled={pricingBusy}
+            onclick={closeSyncConfirmModal}
           >
             Cancel
           </button>
@@ -574,21 +608,29 @@
   {/if}
 
   {#if showAddPricingModal}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_interactive_supports_focus -->
     <div
       class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-pricing-title"
-      tabindex="-1"
-      onclick={(event) => event.target === event.currentTarget && closeAddPricingModal()}
-      onkeydown={handlePricingModalKeydown}
     >
       <form class="ui-modal-panel ui-modal-panel--lg max-h-[calc(100vh-2rem)] w-full max-w-2xl overflow-y-auto rounded-lg border border-[#ededed] bg-white p-5 shadow-xl sm:p-6" onsubmit={submitAddPricingModel}>
-        <div>
-          <h3 id="add-pricing-title" class="text-lg font-semibold text-[#0d0d0d]">Add pricing model</h3>
-          <p class="mt-1 text-sm text-[#6e6e6e]">Enter prices in USD per 1M tokens.</p>
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h3 id="add-pricing-title" class="text-lg font-semibold text-[#0d0d0d]">{addPricingOriginalModel ? 'Edit pricing model' : 'Add pricing model'}</h3>
+            <p class="mt-1 text-sm text-[#6e6e6e]">
+              {addPricingOriginalModel ? 'Update this saved model and save again.' : 'Enter prices in USD per 1M tokens.'}
+            </p>
+          </div>
+          <button
+            class="ui-button grid h-8 w-8 shrink-0 place-items-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            aria-label="Close pricing model dialog"
+            disabled={pricingBusy}
+            onclick={closeAddPricingModal}
+          >
+            <X class="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
 
         <div class="mt-5 grid gap-4 sm:grid-cols-2">
@@ -628,7 +670,7 @@
 
         <div class="ui-modal-actions mt-6 flex justify-end gap-3">
           <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={closeAddPricingModal}>Cancel</button>
-          <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={pricingBusy}>{usagePricing.saving ? 'Adding' : 'Add model'}</button>
+          <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-2.5 py-1.5 text-xs font-medium text-white hover:bg-[#3c3c3c] disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={pricingBusy}>{usagePricing.saving ? 'Saving' : 'Save'}</button>
         </div>
       </form>
     </div>
@@ -640,19 +682,27 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="upcoming-ignore-title"
-      tabindex="-1"
-      onclick={(event) => event.target === event.currentTarget && closeUpcomingIgnoreModal()}
-      onkeydown={handlePricingModalKeydown}
     >
       <div class="ui-modal-panel ui-modal-panel--md grid w-full max-w-lg gap-4 rounded-lg bg-white p-5 shadow-xl">
-        <div class="flex items-start gap-3">
-          <div class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-800">
-            <TriangleAlert class="h-5 w-5" aria-hidden="true" />
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-start gap-3">
+            <div class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-50 text-amber-800">
+              <TriangleAlert class="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <h3 id="upcoming-ignore-title" class="text-lg font-semibold text-[#0d0d0d]">Upcoming model shutdowns</h3>
+              <p class="mt-1 text-sm text-[#6e6e6e]">Remove and keep these models out of future official pricing syncs.</p>
+            </div>
           </div>
-          <div>
-            <h3 id="upcoming-ignore-title" class="text-lg font-semibold text-[#0d0d0d]">Upcoming model shutdowns</h3>
-            <p class="mt-1 text-sm text-[#6e6e6e]">Remove and keep these models out of future official pricing syncs.</p>
-          </div>
+          <button
+            class="ui-button grid h-8 w-8 shrink-0 place-items-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            aria-label="Close upcoming shutdowns dialog"
+            disabled={pricingBusy}
+            onclick={closeUpcomingIgnoreModal}
+          >
+            <X class="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
         <div class="max-h-72 overflow-y-auto rounded-lg border border-[#ededed]">
           {#each usagePricing.upcomingShutdowns as item (item.model)}
@@ -689,7 +739,18 @@
   {#if showShutdownRemovalModal}
     <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/40" role="dialog" aria-modal="true" aria-labelledby="shutdown-removal-title">
       <div class="ui-modal-panel ui-modal-panel--md mx-4 w-full max-w-lg rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
-        <h3 id="shutdown-removal-title" class="text-lg font-semibold text-[#0d0d0d]">Remove shut-down models</h3>
+        <div class="flex items-start justify-between gap-4">
+          <h3 id="shutdown-removal-title" class="text-lg font-semibold text-[#0d0d0d]">Remove shut-down models</h3>
+          <button
+            class="ui-button grid h-8 w-8 shrink-0 place-items-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+            type="button"
+            aria-label="Close shut-down model removal dialog"
+            disabled={pricingBusy}
+            onclick={closeShutdownRemovalModal}
+          >
+            <X class="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
         <div class="mt-4 max-h-[50vh] overflow-y-auto rounded-lg border border-[#ededed] divide-y divide-[#ededed]">
           {#each usagePricing.deletionCandidates as item (item.model)}
             <label class="flex items-start gap-3 px-4 py-3 text-sm">
@@ -702,7 +763,7 @@
           {/each}
         </div>
         <div class="ui-modal-actions mt-6 flex justify-end gap-3">
-          <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={() => showShutdownRemovalModal = false}>Cancel</button>
+          <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={closeShutdownRemovalModal}>Cancel</button>
           <button class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy || selectedShutdownModels.length === 0} onclick={confirmShutdownRemoval}>Remove {selectedShutdownModels.length} models</button>
         </div>
       </div>

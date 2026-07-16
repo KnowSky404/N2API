@@ -27,7 +27,8 @@
     ChevronDown,
     Lock,
     LogOut,
-    Menu
+    Menu,
+    X
   } from 'lucide-svelte';
 
   let { children } = $props();
@@ -81,6 +82,7 @@
   }
 
   function closePasswordModal() {
+    if (changePasswordForm.submitting) return;
     passwordModalOpen = false;
     changePasswordForm.currentPassword = '';
     changePasswordForm.newPassword = '';
@@ -91,18 +93,11 @@
   /** @param {SubmitEvent} event */
   async function handleChangePassword(event) {
     await changePassword(event);
-    if (!changePasswordForm.error) {
-      setTimeout(() => closePasswordModal(), 800);
-    }
   }
 
   /** @param {KeyboardEvent} e */
   function handleGlobalKeydown(e) {
     if (e.key !== 'Escape') return;
-    if (passwordModalOpen) {
-      closePasswordModal();
-      return;
-    }
     if (userDropdownOpen) {
       closeUserDropdown();
       return;
@@ -390,10 +385,20 @@
 
 <!-- Password change modal -->
 {#if passwordModalOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
-  <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30" role="dialog" aria-modal="true" aria-labelledby="change-password-title" tabindex="-1" onclick={(e) => e.target === e.currentTarget && closePasswordModal()} onkeydown={(e) => e.key === 'Escape' && closePasswordModal()}>
+  <div class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
     <div class="ui-modal-panel ui-modal-panel--sm w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
-      <h2 id="change-password-title" class="text-lg font-semibold text-[#0d0d0d]">Change password</h2>
+      <div class="flex items-center justify-between gap-3">
+        <h2 id="change-password-title" class="text-lg font-semibold text-[#0d0d0d]">Change password</h2>
+        <button
+          class="ui-button ui-button--icon flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+          type="button"
+          aria-label="Close change password modal"
+          disabled={changePasswordForm.submitting}
+          onclick={closePasswordModal}
+        >
+          <X class="h-4 w-4" />
+        </button>
+      </div>
       <form class="mt-4" onsubmit={handleChangePassword}>
         <label class="block text-xs font-medium text-[#6e6e6e]">
           Current password
@@ -422,17 +427,19 @@
         {/if}
         <div class="mt-4 flex gap-2">
           <button
-            class="ui-button ui-button--sm ui-button--secondary flex-1 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            class="ui-button ui-button--sm ui-button--secondary flex-1 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
+            disabled={changePasswordForm.submitting}
             onclick={closePasswordModal}
           >
             Cancel
           </button>
           <button
             class="ui-button ui-button--sm ui-button--primary flex-1 rounded-md bg-[#0d0d0d] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+            type="submit"
             disabled={changePasswordForm.submitting}
           >
-            {changePasswordForm.submitting ? 'Saving...' : 'Update'}
+            {changePasswordForm.submitting ? 'Saving...' : 'Save'}
           </button>
         </div>
       </form>
