@@ -202,7 +202,23 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} enabled
  * @property {string} source
  * @property {string | null} lastSeenAt
+ * @property {string | null} lastTestAt
+ * @property {string} lastTestStatus
+ * @property {number} lastTestHttpStatus
+ * @property {number} lastTestLatencyMs
  * @property {string} lastError
+ */
+
+/**
+ * @typedef {object} AccountModelTestResult
+ * @property {number} accountId
+ * @property {string} model
+ * @property {'passed' | 'failed'} status
+ * @property {string} errorCode
+ * @property {number} httpStatus
+ * @property {number} latencyMs
+ * @property {string} message
+ * @property {string} checkedAt
  */
 
 /**
@@ -1393,6 +1409,25 @@ export function getAccountModelsState(accountId) {
   return ensureAccountModelsState(accountId);
 }
 
+/**
+ * @param {AccountModel[]} models
+ * @param {AccountModelTestResult} result
+ */
+export function applyAccountModelTestResult(models, result) {
+  return models.map((item) =>
+    item.model === result.model
+      ? {
+          ...item,
+          lastTestAt: result.checkedAt,
+          lastTestStatus: result.status,
+          lastTestHttpStatus: result.httpStatus,
+          lastTestLatencyMs: result.latencyMs,
+          lastError: result.status === 'passed' ? '' : result.message
+        }
+      : item
+  );
+}
+
 /** @param {number} accountId */
 export function getAccountTestResultsState(accountId) {
   return ensureAccountTestResultsState(accountId);
@@ -1447,6 +1482,41 @@ export async function loadAccountModels(accountId) {
       state.loading = false;
     }
   }
+}
+
+/**
+ * @param {number} accountId
+ * @param {string} model
+ * @returns {Promise<AccountModelTestResult>}
+ */
+export async function testProviderAccountModel(accountId, model) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) {
+    throw new Error('Authentication required');
+  }
+
+  const normalizedModel = String(model ?? '').trim();
+  if (!normalizedModel) {
+    throw new Error('Model is required');
+  }
+
+  const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/model-tests`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: normalizedModel })
+  });
+  if (!isCurrentAuthenticated(version)) {
+    throw new Error('Authentication required');
+  }
+
+  const result = /** @type {AccountModelTestResult | undefined} */ (payload.result);
+  if (!result) {
+    throw new Error('Model test returned no result');
+  }
+
+  const state = ensureAccountModelsState(accountId);
+  state.items = applyAccountModelTestResult(state.items, result);
+  return result;
 }
 
 /**

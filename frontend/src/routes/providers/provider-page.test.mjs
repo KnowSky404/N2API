@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mock } from 'bun:test';
+import { runModelTestsWithConcurrency } from '../../lib/model-test-queue.js';
 
 globalThis.$state = (value) => value;
 mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
@@ -12,6 +13,7 @@ const {
   apiKeyModelWarnings,
   accountModelSummary,
   accountModelsText,
+  applyAccountModelTestResult,
   getAccountModelsState,
   futureTimeRemainingLabel,
   getAccountTestResultsState,
@@ -43,6 +45,7 @@ const {
   shouldApplyAccountTestResultsResponse,
   sourceBadgeLabel,
   syncAccountModels,
+  testProviderAccountModel,
   toggleProviderAccountSelection,
   updateAPIKeyRoutingPool,
   updateAPIKeyLimits,
@@ -58,6 +61,117 @@ const modelsSource = readFileSync('src/routes/models/+page.svelte', 'utf8');
 const apiKeysSource = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
 const routingPoolsSource = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
 const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+
+test('model test queue runs only requested models with at most three concurrent tasks', async () => {
+  const requested = ['gpt-5', 'gpt-5-mini', 'codex-mini', 'o1', 'o3'];
+  const seen = [];
+  let active = 0;
+  let peak = 0;
+
+  await runModelTestsWithConcurrency(requested, async (model) => {
+    seen.push(model);
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+  });
+
+  assert.deepEqual(seen.sort(), [...requested].sort());
+  assert.equal(peak, 3);
+});
+
+test('account model test result updates only the matching shared model row', () => {
+  const models = [
+    { model: 'gpt-5', enabled: true, lastError: 'old' },
+    { model: 'gpt-5-mini', enabled: false, lastError: '' }
+  ];
+  const updated = applyAccountModelTestResult(models, {
+    accountId: 7,
+    model: 'gpt-5',
+    status: 'passed',
+    errorCode: '',
+    httpStatus: 200,
+    latencyMs: 842,
+    message: '',
+    checkedAt: '2026-07-16T10:00:00Z'
+  });
+
+  assert.deepEqual(updated[0], {
+    model: 'gpt-5',
+    enabled: true,
+    lastError: '',
+    lastTestAt: '2026-07-16T10:00:00Z',
+    lastTestStatus: 'passed',
+    lastTestHttpStatus: 200,
+    lastTestLatencyMs: 842
+  });
+  assert.equal(updated[1], models[1]);
+});
+
+test('testProviderAccountModel posts one selected model and refreshes shared model state', async () => {
+  session.authenticated = true;
+  const state = getAccountModelsState(71);
+  state.items = [{ model: 'gpt-5-mini', enabled: false, lastError: '' }];
+  let request = null;
+  globalThis.fetch = async (path, options = {}) => {
+    request = { path, options };
+    return new Response(JSON.stringify({
+      result: {
+        accountId: 71,
+        model: 'gpt-5-mini',
+        status: 'failed',
+        errorCode: 'model_not_found',
+        httpStatus: 404,
+        latencyMs: 91,
+        message: 'Model was not found',
+        checkedAt: '2026-07-16T10:01:00Z'
+      }
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  const result = await testProviderAccountModel(71, ' gpt-5-mini ');
+
+  assert.equal(request.path, '/api/admin/provider-accounts/71/model-tests');
+  assert.equal(request.options.method, 'POST');
+  assert.deepEqual(JSON.parse(request.options.body), { model: 'gpt-5-mini' });
+  assert.equal(result.errorCode, 'model_not_found');
+  assert.deepEqual(state.items[0], {
+    model: 'gpt-5-mini',
+    enabled: false,
+    lastError: 'Model was not found',
+    lastTestAt: '2026-07-16T10:01:00Z',
+    lastTestStatus: 'failed',
+    lastTestHttpStatus: 404,
+    lastTestLatencyMs: 91
+  });
+});
+
+test('providers model test modal supports filtered persistent selection and row tests', () => {
+  assert.match(source, /title="Test models"/);
+  assert.match(source, /aria-label=\{`Model tests for \$\{accountLabel\(account\)\}`\}/);
+  assert.match(source, /placeholder="Model name"/);
+  assert.match(source, /bind:value=\{modelTestEnabledFilter\}/);
+  assert.match(source, /bind:value=\{modelTestStatusFilter\}/);
+  assert.match(source, /indeterminate=\{someFilteredModelTestsSelected\}/);
+  assert.match(source, /Test selected \(\{selectedModelTestCount\}\)/);
+  assert.match(source, /disabled=\{selectedModelTestCount === 0 \|\| modelTestRunActive\}/);
+  assert.match(source, /runModelTestsWithConcurrency\(models,[\s\S]*?, 3\)/);
+
+  const openSource = source.slice(source.indexOf('function openModelTests'), source.indexOf('function closeModelTests'));
+  assert.match(openSource, /selectedModelTests = \{\}/);
+  assert.match(openSource, /loadAccountModels\(account\.id\)/);
+
+  const filteredSelectionSource = source.slice(
+    source.indexOf('function toggleFilteredModelTestSelection'),
+    source.indexOf('function clearModelTestSelection')
+  );
+  assert.match(filteredSelectionSource, /for \(const model of filteredModelTestModels\)/);
+  assert.doesNotMatch(filteredSelectionSource, /modelTestModels/);
+
+  const rowTestSource = source.slice(source.indexOf('function testOneModel'), source.indexOf('</script>'));
+  assert.match(rowTestSource, /runModelTestQueue\(modelTestAccount\.id, \[model\]\)/);
+  assert.doesNotMatch(rowTestSource, /selectedModelTests/);
+});
 
 test('parseAccountModelsText trims blanks and dedupes by first occurrence', () => {
   assert.deepEqual(parseAccountModelsText('  gpt-5\n\n gpt-5-mini \ngpt-5\n codex-mini \n'), [

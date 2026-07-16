@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { Pencil, Plus, Trash2, X } from 'lucide-svelte';
+  import { FlaskConical, LoaderCircle, Pencil, Plus, Trash2, X } from 'lucide-svelte';
   import {
     accountLabel,
     accountTypeLabel,
@@ -13,6 +13,7 @@
     getAccountModelsState,
     getAccountTestResultsState,
     getProviderStateLabel,
+    loadAccountModels,
     loadProviderAccounts,
     apiUpstreamForm,
     provider,
@@ -33,6 +34,7 @@
     statusLabel,
     testAllProviderAccounts,
     testProviderAccount,
+    testProviderAccountModel,
     toggleAccountTestHistory,
     toggleProviderAccountSelection,
     updateProviderAccount,
@@ -46,6 +48,7 @@
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
+  import { runModelTestsWithConcurrency } from '$lib/model-test-queue.js';
   let accountSearch = $state('');
   let accountStatusFilter = $state('all');
   let accountTypeFilter = $state('all');
@@ -60,6 +63,15 @@
   let appliedProviderAccountSearch = $state('');
   let editingProviderAccountId = $state(0);
   let deletingProviderAccountId = $state(0);
+  let modelTestAccountId = $state(0);
+  let modelTestSearch = $state('');
+  let modelTestEnabledFilter = $state('all');
+  let modelTestStatusFilter = $state('all');
+  /** @type {Record<string, boolean>} */
+  let selectedModelTests = $state({});
+  /** @type {Record<string, { status: string, errorCode: string, httpStatus: number, latencyMs: number, message: string, checkedAt: string }>} */
+  let modelTestRuns = $state({});
+  let modelTestRunActive = $state(false);
 
   const providerStateLabel = $derived(getProviderStateLabel());
   const selectedProviderAccountCount = $derived(Object.keys(selectedProviderAccountIds).length);
@@ -68,6 +80,34 @@
   );
   const deletingProviderAccount = $derived(
     providerAccounts.items.find((account) => account.id === deletingProviderAccountId) ?? null
+  );
+  const modelTestAccount = $derived(
+    providerAccounts.items.find((account) => account.id === modelTestAccountId) ?? null
+  );
+  const modelTestModels = $derived(
+    modelTestAccount ? getAccountModelsState(modelTestAccount.id).items : []
+  );
+  const filteredModelTestModels = $derived(
+    modelTestModels.filter((model) => {
+      const query = modelTestSearch.trim().toLowerCase();
+      if (query && !model.model.toLowerCase().includes(query)) return false;
+      if (modelTestEnabledFilter === 'enabled' && !model.enabled) return false;
+      if (modelTestEnabledFilter === 'disabled' && model.enabled) return false;
+      if (modelTestStatusFilter === 'not_tested' && model.lastTestStatus) return false;
+      if (modelTestStatusFilter === 'passed' && model.lastTestStatus !== 'passed') return false;
+      if (modelTestStatusFilter === 'failed' && model.lastTestStatus !== 'failed') return false;
+      return true;
+    })
+  );
+  const selectedModelTestCount = $derived(Object.keys(selectedModelTests).length);
+  const filteredSelectedModelTestCount = $derived(
+    filteredModelTestModels.filter((model) => selectedModelTests[model.model]).length
+  );
+  const allFilteredModelTestsSelected = $derived(
+    filteredModelTestModels.length > 0 && filteredSelectedModelTestCount === filteredModelTestModels.length
+  );
+  const someFilteredModelTestsSelected = $derived(
+    filteredSelectedModelTestCount > 0 && !allFilteredModelTestsSelected
   );
   const filteredProviderAccounts = $derived(
     sortProviderAccounts(
@@ -276,6 +316,7 @@
   function openAccountEditor(account) {
     editingProviderAccountId = account.id;
     deletingProviderAccountId = 0;
+    modelTestAccountId = 0;
   }
 
   function closeAccountEditor() {
@@ -285,7 +326,162 @@
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function toggleDeleteConfirmation(account) {
     editingProviderAccountId = 0;
+    modelTestAccountId = 0;
     deletingProviderAccountId = deletingProviderAccountId === account.id ? 0 : account.id;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  function openModelTests(account) {
+    editingProviderAccountId = 0;
+    deletingProviderAccountId = 0;
+    modelTestAccountId = account.id;
+    modelTestSearch = '';
+    modelTestEnabledFilter = 'all';
+    modelTestStatusFilter = 'all';
+    selectedModelTests = {};
+    modelTestRuns = {};
+    void loadAccountModels(account.id);
+  }
+
+  function closeModelTests() {
+    modelTestAccountId = 0;
+  }
+
+  /** @param {string} model */
+  function toggleModelTestSelection(model) {
+    if (selectedModelTests[model]) {
+      delete selectedModelTests[model];
+      return;
+    }
+    selectedModelTests[model] = true;
+  }
+
+  function toggleFilteredModelTestSelection() {
+    if (allFilteredModelTestsSelected) {
+      for (const model of filteredModelTestModels) {
+        delete selectedModelTests[model.model];
+      }
+      return;
+    }
+    for (const model of filteredModelTestModels) {
+      selectedModelTests[model.model] = true;
+    }
+  }
+
+  function clearModelTestSelection() {
+    selectedModelTests = {};
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  function displayedModelTestStatus(model) {
+    return modelTestRuns[model.model]?.status || model.lastTestStatus || 'not_tested';
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  function displayedModelTestLatency(model) {
+    const run = modelTestRuns[model.model];
+    return run?.latencyMs ?? model.lastTestLatencyMs ?? 0;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  function displayedModelTestCheckedAt(model) {
+    return modelTestRuns[model.model]?.checkedAt || model.lastTestAt || null;
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  function modelTestDetail(model) {
+    const run = modelTestRuns[model.model];
+    const httpStatus = run?.httpStatus ?? model.lastTestHttpStatus ?? 0;
+    return [
+      httpStatus > 0 ? `HTTP ${httpStatus}` : '',
+      run?.errorCode || '',
+      run?.message || model.lastError || ''
+    ].filter(Boolean).join(' · ');
+  }
+
+  /** @param {string} status */
+  function modelTestStatusLabel(status) {
+    if (status === 'not_tested') return 'Not tested';
+    return status.charAt(0).toUpperCase() + status.slice(1);
+  }
+
+  /** @param {string} status */
+  function modelTestStatusClass(status) {
+    if (status === 'passed') return 'bg-[#e8f5f0] text-[#0a7a5e]';
+    if (status === 'failed' || status === 'timeout') return 'bg-red-50 text-red-700';
+    if (status === 'queued' || status === 'testing') return 'bg-blue-50 text-blue-700';
+    return 'bg-[#f5f5f5] text-[#6e6e6e]';
+  }
+
+  /**
+   * @param {number} accountId
+   * @param {string} model
+   */
+  async function executeModelTest(accountId, model) {
+    modelTestRuns[model] = {
+      status: 'testing',
+      errorCode: '',
+      httpStatus: 0,
+      latencyMs: 0,
+      message: '',
+      checkedAt: ''
+    };
+    try {
+      const result = await testProviderAccountModel(accountId, model);
+      modelTestRuns[model] = {
+        ...result,
+        status: result.status === 'failed' && result.errorCode === 'timeout' ? 'timeout' : result.status
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Model test failed';
+      modelTestRuns[model] = {
+        status: message.toLowerCase().includes('timeout') ? 'timeout' : 'failed',
+        errorCode: '',
+        httpStatus: 0,
+        latencyMs: 0,
+        message,
+        checkedAt: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * @param {number} accountId
+   * @param {string[]} models
+   */
+  async function runModelTestQueue(accountId, models) {
+    if (modelTestRunActive || models.length === 0) return;
+    modelTestRunActive = true;
+    for (const model of models) {
+      modelTestRuns[model] = {
+        status: 'queued',
+        errorCode: '',
+        httpStatus: 0,
+        latencyMs: 0,
+        message: '',
+        checkedAt: ''
+      };
+    }
+
+    try {
+      await runModelTestsWithConcurrency(models, (model) => executeModelTest(accountId, model), 3);
+    } finally {
+      modelTestRunActive = false;
+    }
+  }
+
+  function testSelectedModels() {
+    if (!modelTestAccount) return;
+    const models = modelTestModels
+      .filter((model) => selectedModelTests[model.model])
+      .map((model) => model.model);
+    void runModelTestQueue(modelTestAccount.id, models);
+  }
+
+  /** @param {string} model */
+  function testOneModel(model) {
+    if (!modelTestAccount) return;
+    void runModelTestQueue(modelTestAccount.id, [model]);
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -888,6 +1084,17 @@ Enabled
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
+              disabled={providerAccounts.saving || modelTestRunActive}
+              onclick={() => openModelTests(account)}
+              title="Test models"
+              aria-label="Test models"
+            >
+              <FlaskConical class="size-4" aria-hidden="true" />
+              <span class="sr-only">Test models</span>
+            </button>
+            <button
+              class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
               disabled={providerAccounts.saving}
               onclick={() => openAccountEditor(account)}
               title="Edit account"
@@ -961,6 +1168,179 @@ Enabled
     </div>
   </div>
 </section>
+
+  {#if modelTestAccount}
+    {@const account = modelTestAccount}
+    {@const modelState = getAccountModelsState(account.id)}
+    <div
+      class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
+      role="presentation"
+      onclick={(event) => event.target === event.currentTarget && closeModelTests()}
+    >
+      <div class="ui-modal-panel ui-modal-panel--xl grid w-full max-w-5xl gap-4 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Model tests for ${accountLabel(account)}`}>
+        <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
+          <div class="min-w-0">
+            <h2 class="truncate text-lg font-semibold text-[#0d0d0d]">Model tests</h2>
+            <p class="mt-1 truncate text-sm text-[#6e6e6e]">{accountLabel(account)} &middot; {accountTypeLabel(account)}</p>
+          </div>
+          <button
+            class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
+            type="button"
+            onclick={closeModelTests}
+            aria-label="Close model tests modal"
+            title="Close"
+          >
+            <X class="size-4" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-3">
+          <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
+            Search
+            <input
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              type="search"
+              placeholder="Model name"
+              bind:value={modelTestSearch}
+            />
+          </label>
+          <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
+            Enabled
+            <select
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelTestEnabledFilter}
+            >
+              <option value="all">All</option>
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label>
+          <label class="grid min-w-0 gap-1 text-xs font-medium text-[#3c3c3c]">
+            Latest result
+            <select
+              class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={modelTestStatusFilter}
+            >
+              <option value="all">All</option>
+              <option value="not_tested">Not tested</option>
+              <option value="passed">Passed</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm text-[#6e6e6e]">
+            {filteredModelTestModels.length} shown &middot; {selectedModelTestCount} selected
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+              type="button"
+              disabled={selectedModelTestCount === 0 || modelTestRunActive}
+              onclick={clearModelTestSelection}
+            >Clear selection</button>
+            <button
+              class="ui-button ui-button--sm ui-button--primary inline-flex items-center gap-1.5 rounded-md bg-[#0d0d0d] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60"
+              type="button"
+              disabled={selectedModelTestCount === 0 || modelTestRunActive}
+              onclick={testSelectedModels}
+            >
+              {#if modelTestRunActive}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
+              Test selected ({selectedModelTestCount})
+            </button>
+          </div>
+        </div>
+
+        {#if modelState.error}
+          <p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{modelState.error}</p>
+        {/if}
+
+        <div class="ui-table-shell max-h-[55vh] overflow-auto rounded-lg border border-[#ededed]">
+          <table class="ui-table w-full min-w-[840px] text-left text-sm">
+            <thead class="sticky top-0 z-10 border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+              <tr>
+                <th class="w-12 px-3 py-2 font-medium">
+                  <label class="inline-flex items-center">
+                    <input
+                      class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
+                      type="checkbox"
+                      checked={allFilteredModelTestsSelected}
+                      indeterminate={someFilteredModelTestsSelected}
+                      aria-checked={someFilteredModelTestsSelected ? 'mixed' : allFilteredModelTestsSelected}
+                      aria-label="Select filtered models"
+                      disabled={filteredModelTestModels.length === 0 || modelTestRunActive}
+                      onchange={toggleFilteredModelTestSelection}
+                    />
+                    <span class="sr-only">Select filtered models</span>
+                  </label>
+                </th>
+                <th class="px-3 py-2 font-medium">Model</th>
+                <th class="w-24 px-3 py-2 font-medium">Enabled</th>
+                <th class="w-32 px-3 py-2 font-medium">Last result</th>
+                <th class="w-24 px-3 py-2 font-medium">Latency</th>
+                <th class="w-44 px-3 py-2 font-medium">Checked</th>
+                <th class="w-20 px-3 py-2 text-right font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#ededed]">
+              {#if modelState.loading}
+                <tr><td class="ui-table-empty ui-table-empty--loading px-3 py-5 text-[#6e6e6e]" colspan="7">Loading models...</td></tr>
+              {:else if modelState.items.length === 0}
+                <tr><td class="ui-table-empty px-3 py-5 text-[#6e6e6e]" colspan="7">No configured models.</td></tr>
+              {:else if filteredModelTestModels.length === 0}
+                <tr><td class="ui-table-empty px-3 py-5 text-[#6e6e6e]" colspan="7">No models match the current filters.</td></tr>
+              {:else}
+                {#each filteredModelTestModels as configuredModel (configuredModel.model)}
+                  {@const displayedStatus = displayedModelTestStatus(configuredModel)}
+                  {@const displayedLatency = displayedModelTestLatency(configuredModel)}
+                  <tr class="bg-white">
+                    <td class="px-3 py-2 align-middle">
+                      <label class="inline-flex items-center">
+                        <input
+                          class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
+                          type="checkbox"
+                          checked={Boolean(selectedModelTests[configuredModel.model])}
+                          disabled={modelTestRunActive}
+                          aria-label={`Select ${configuredModel.model}`}
+                          onchange={() => toggleModelTestSelection(configuredModel.model)}
+                        />
+                        <span class="sr-only">Select {configuredModel.model}</span>
+                      </label>
+                    </td>
+                    <td class="max-w-[24rem] px-3 py-2 align-middle">
+                      <p class="truncate font-mono text-[13px] text-[#0d0d0d]" title={configuredModel.model}>{configuredModel.model}</p>
+                    </td>
+                    <td class="px-3 py-2 align-middle text-[#3c3c3c]">{configuredModel.enabled ? 'Enabled' : 'Disabled'}</td>
+                    <td class="px-3 py-2 align-middle" title={modelTestDetail(configuredModel)}>
+                      <span class={['inline-flex rounded-full px-2 py-0.5 text-xs font-medium', modelTestStatusClass(displayedStatus)]}>
+                        {#if displayedStatus === 'testing'}<LoaderCircle class="mr-1 size-3 animate-spin" aria-hidden="true" />{/if}
+                        {modelTestStatusLabel(displayedStatus)}
+                      </span>
+                    </td>
+                    <td class="whitespace-nowrap px-3 py-2 align-middle tabular-nums text-[#3c3c3c]">{displayedLatency > 0 ? `${displayedLatency} ms` : '-'}</td>
+                    <td class="whitespace-nowrap px-3 py-2 align-middle text-[#6e6e6e]">{formatDate(displayedModelTestCheckedAt(configuredModel))}</td>
+                    <td class="px-3 py-2 text-right align-middle">
+                      <button
+                        class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                        type="button"
+                        disabled={modelTestRunActive}
+                        onclick={() => testOneModel(configuredModel.model)}
+                        title={`Test ${configuredModel.model}`}
+                        aria-label={`Test ${configuredModel.model}`}
+                      >
+                        <FlaskConical class="size-4" aria-hidden="true" />
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if deletingProviderAccount}
     {@const account = deletingProviderAccount}
