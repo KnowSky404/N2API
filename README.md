@@ -118,6 +118,8 @@ Selected rows can also receive shared scheduling parameters. Set **Bulk priority
 
 Configure model capability on each provider account row. The API Keys page controls the gateway default model, the global routable model list, and client-key model access; these settings do not grant capability to accounts that do not list that model.
 
+Use the Providers table **Test models** action to diagnose configured models against one exact account. The modal starts with no selection and supports one, multiple, or all currently filtered models through row checkboxes and the tri-state header checkbox. Tests use that account's stored OAuth token or API-upstream key, run with bounded concurrency, and never fall back to another account. Latest status, latency, and failure details are persisted per model. Model diagnostics do not enable or disable models and do not change account scheduling health; use **Test account** for account-level health updates.
+
 Selected provider accounts can also receive the same model capability list. Enter one model per line in **Bulk models**, then use **Apply models** to replace the selected accounts' manual model lists together; this controls which models the scheduler can route to those accounts.
 
 Use the Provider accounts page to add or remove selected provider accounts from a routing pool without opening the pool editor. Choose **Bulk routing pool**, set **Pool priority** for new pool members, then use **Apply pool** to add the selected accounts to that pool or **Remove pool** to remove them while leaving the pool's other members unchanged.
