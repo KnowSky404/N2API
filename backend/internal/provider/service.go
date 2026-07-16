@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
+	utls "github.com/refraction-networking/utls"
 )
 
 const (
@@ -511,7 +513,9 @@ type modelProbeResult struct {
 }
 
 type HTTPClient struct {
-	client *http.Client
+	client                   *http.Client
+	modelProbeTLSConfig      *utls.Config
+	modelProbeProxyTLSConfig *tls.Config
 }
 
 type Service struct {
@@ -722,9 +726,16 @@ func (c *HTTPClient) ProbeAccountModel(ctx context.Context, cfg Config, selected
 		req.Header.Set("Accept", "application/json")
 	}
 	probeClient := c.clientForProxy(selected.ProxyURL)
-	if strings.TrimSpace(selected.ProxyURL) == "" && strings.TrimSpace(selected.FingerprintTLS) != "" {
+	if strings.TrimSpace(selected.FingerprintTLS) != "" {
 		cloned := *probeClient
-		cloned.Transport = newModelProbeTLSFingerprintTransport(probeClient.Transport)
+		transport := newModelProbeTLSFingerprintTransport(probeClient.Transport, selected.ProxyURL).(*modelProbeTLSFingerprintTransport)
+		if c.modelProbeTLSConfig != nil {
+			transport.tlsConfig = c.modelProbeTLSConfig.Clone()
+		}
+		if c.modelProbeProxyTLSConfig != nil {
+			transport.proxyTLSConfig = c.modelProbeProxyTLSConfig.Clone()
+		}
+		cloned.Transport = transport
 		probeClient = &cloned
 		req = req.WithContext(contextWithModelProbeTLSFingerprint(req.Context(), selected.FingerprintTLS))
 	}

@@ -1,14 +1,21 @@
 package provider
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	utls "github.com/refraction-networking/utls"
 )
 
 func TestHTTPClientExchangeCodePostsAuthorizationCodeGrant(t *testing.T) {
@@ -307,6 +314,115 @@ func TestHTTPClientProbeAccountModelClassifiesCodexStreamDeadline(t *testing.T) 
 
 	if result.statusCode != http.StatusOK || result.errorCode != "timeout" || result.message != "model test timed out" {
 		t.Fatalf("ProbeAccountModel result = %+v, want timeout", result)
+	}
+}
+
+func TestHTTPClientProbeAccountModelUsesTLSFingerprintThroughProxy(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		proxyTLS bool
+	}{
+		{name: "HTTP proxy"},
+		{name: "HTTPS proxy", proxyTLS: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstreamReached := make(chan struct{}, 1)
+			upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamReached <- struct{}{}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"choices":[]}`)
+			}))
+			defer upstream.Close()
+
+			var mu sync.Mutex
+			var gotMethod string
+			var gotTarget string
+			var gotProxyAuthorization string
+			proxy := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				gotMethod = r.Method
+				gotTarget = r.Host
+				gotProxyAuthorization = r.Header.Get("Proxy-Authorization")
+				mu.Unlock()
+				if r.Method != http.MethodConnect {
+					http.Error(w, "CONNECT required", http.StatusMethodNotAllowed)
+					return
+				}
+				upstreamConn, err := net.Dial("tcp", r.Host)
+				if err != nil {
+					http.Error(w, "upstream unavailable", http.StatusBadGateway)
+					return
+				}
+				hijacker, ok := w.(http.Hijacker)
+				if !ok {
+					upstreamConn.Close()
+					http.Error(w, "hijacking unavailable", http.StatusInternalServerError)
+					return
+				}
+				clientConn, buffered, err := hijacker.Hijack()
+				if err != nil {
+					upstreamConn.Close()
+					return
+				}
+				defer clientConn.Close()
+				defer upstreamConn.Close()
+				if _, err := buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+					return
+				}
+				if err := buffered.Flush(); err != nil {
+					return
+				}
+				copyDone := make(chan struct{}, 1)
+				go func() {
+					_, _ = io.Copy(upstreamConn, buffered)
+					copyDone <- struct{}{}
+				}()
+				_, _ = io.Copy(clientConn, bufio.NewReader(upstreamConn))
+				<-copyDone
+			}))
+			if tc.proxyTLS {
+				proxy.StartTLS()
+			} else {
+				proxy.Start()
+			}
+			defer proxy.Close()
+
+			proxyURL, err := url.Parse(proxy.URL)
+			if err != nil {
+				t.Fatalf("Parse proxy URL returned error: %v", err)
+			}
+			proxyURL.User = url.UserPassword("proxy-user", "proxy-pass")
+			client := NewHTTPClient(&http.Client{})
+			client.modelProbeTLSConfig = &utls.Config{InsecureSkipVerify: true}
+			if tc.proxyTLS {
+				client.modelProbeProxyTLSConfig = &tls.Config{InsecureSkipVerify: true}
+			}
+
+			result := client.ProbeAccountModel(context.Background(), Config{}, SelectedAccount{
+				AccountType:        AccountTypeAPIUpstream,
+				AuthorizationToken: "api-secret",
+				BaseURL:            upstream.URL + "/v1",
+				ProxyURL:           proxyURL.String(),
+				FingerprintTLS:     "chrome",
+			}, "gpt-test")
+
+			if result.statusCode != http.StatusOK || result.errorCode != "" {
+				t.Fatalf("ProbeAccountModel result = %+v, want success", result)
+			}
+			select {
+			case <-upstreamReached:
+			case <-time.After(time.Second):
+				t.Fatal("TLS upstream was not reached through proxy tunnel")
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if gotMethod != http.MethodConnect || gotTarget != strings.TrimPrefix(upstream.URL, "https://") {
+				t.Fatalf("proxy request method=%q target=%q, want CONNECT %q", gotMethod, gotTarget, strings.TrimPrefix(upstream.URL, "https://"))
+			}
+			if gotProxyAuthorization != "Basic cHJveHktdXNlcjpwcm94eS1wYXNz" {
+				t.Fatalf("Proxy-Authorization = %q, want Basic credentials", gotProxyAuthorization)
+			}
+		})
 	}
 }
 
