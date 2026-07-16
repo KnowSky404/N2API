@@ -100,6 +100,7 @@
     editingRoutingPoolId = pool.id;
     editingRoutingPoolDraft = {
       ...pool,
+      fallbackPoolId: Number(pool.fallbackPoolId ?? 0),
       accounts: (pool.accounts ?? []).map((account) => ({ ...account })),
       accountIds: [...(pool.accountIds ?? [])]
     };

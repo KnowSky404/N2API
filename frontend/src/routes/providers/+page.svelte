@@ -1632,7 +1632,7 @@ Enabled
                 disabled={providerAccounts.saving}
                 bind:value={draft.fingerprintProfileId}
               >
-                <option value="0">{account.accountType === 'api_upstream' ? 'Default API upstream (pass-through)' : 'Default Codex CLI'}</option>
+                <option value={0}>{account.accountType === 'api_upstream' ? 'Default API upstream (pass-through)' : 'Default Codex CLI'}</option>
                 {#each fingerprintProfiles.items as fp}
                   <option value={fp.id}>{fp.name}</option>
                 {/each}

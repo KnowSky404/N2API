@@ -64,7 +64,8 @@
 
   $effect(() => {
     const candidates = usagePricing.deletionCandidates || [];
-    if (candidates.length > 0 && !usagePricing.syncing) {
+    const syncMessage = usagePricing.syncMessage;
+    if (candidates.length > 0 && syncMessage && !usagePricing.syncing) {
       selectedShutdownModels = candidates.map((item) => item.model);
       showShutdownRemovalModal = true;
     }
@@ -271,19 +272,25 @@
   }
 
   function openSyncConfirmModal() {
+    usagePricing.error = '';
     showSyncConfirmModal = true;
   }
 
   function closeSyncConfirmModal() {
-    if (!pricingBusy) showSyncConfirmModal = false;
+    if (pricingBusy) return;
+    showSyncConfirmModal = false;
+    usagePricing.error = '';
   }
 
   function openUpcomingIgnoreModal() {
+    usagePricing.error = '';
     showUpcomingIgnoreModal = true;
   }
 
   function closeUpcomingIgnoreModal() {
-    if (!pricingBusy) showUpcomingIgnoreModal = false;
+    if (pricingBusy) return;
+    showUpcomingIgnoreModal = false;
+    usagePricing.error = '';
   }
 
   async function confirmUpcomingIgnore() {
@@ -294,6 +301,7 @@
   }
 
   function openShutdownRemovalModal() {
+    usagePricing.error = '';
     selectedShutdownModels = (usagePricing.deletionCandidates || []).map((item) => item.model);
     showShutdownRemovalModal = true;
   }
@@ -302,6 +310,7 @@
     if (pricingBusy) return;
     showShutdownRemovalModal = false;
     selectedShutdownModels = [];
+    usagePricing.error = '';
   }
 
   async function confirmSyncOfficial() {
@@ -393,7 +402,7 @@
       </div>
     </div>
 
-    {#if usagePricing.error}
+    {#if usagePricing.error && !showSyncConfirmModal && !showUpcomingIgnoreModal && !showShutdownRemovalModal}
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usagePricing.error}</p>
     {:else if usagePricing.saved}
       <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">Pricing saved.</p>
@@ -585,6 +594,9 @@
           <p><a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/pricing" target="_blank" rel="noopener noreferrer">Standard pricing</a></p>
           <p><a class="text-[#0a7a5e] underline hover:text-[#08694a]" href="https://developers.openai.com/api/docs/deprecations" target="_blank" rel="noopener noreferrer">Deprecations</a></p>
         </div>
+        {#if usagePricing.error}
+          <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{usagePricing.error}</p>
+        {/if}
         <div class="ui-modal-actions mt-6 flex justify-end gap-3">
           <button
             class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
@@ -714,6 +726,9 @@
             </div>
           {/each}
         </div>
+        {#if usagePricing.error}
+          <p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{usagePricing.error}</p>
+        {/if}
         <div class="ui-modal-actions flex justify-end gap-2">
           <button
             class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:opacity-60"
@@ -762,6 +777,9 @@
             </label>
           {/each}
         </div>
+        {#if usagePricing.error}
+          <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{usagePricing.error}</p>
+        {/if}
         <div class="ui-modal-actions mt-6 flex justify-end gap-3">
           <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={closeShutdownRemovalModal}>Cancel</button>
           <button class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy || selectedShutdownModels.length === 0} onclick={confirmShutdownRemoval}>Remove {selectedShutdownModels.length} models</button>

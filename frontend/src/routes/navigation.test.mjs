@@ -120,6 +120,7 @@ test('routing pools page manages account pools', () => {
     assert.match(poolsPage, new RegExp(label.replace(' ', '\\s+')), `routing pools page should include ${label}`);
   }
   assert.match(poolsPage, /apiKeys/);
+  assert.match(poolsPage, /fallbackPoolId: Number\(pool\.fallbackPoolId \?\? 0\)/);
 
   // Modal state exists
   assert.match(poolsPage, /showCreateModal/);
@@ -1396,6 +1397,26 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(pricingPage, /type="checkbox"/);
   assert.match(pricingPage, /Remove \{selectedShutdownModels\.length\} models/);
   assert.match(pricingPage, /usagePricing\.removingShutdown/);
+  assert.match(pricingPage, /const syncMessage = usagePricing\.syncMessage;[\s\S]*?candidates\.length > 0 && syncMessage && !usagePricing\.syncing/);
+  const syncConfirmModal = pricingPage.slice(
+    pricingPage.indexOf('{#if showSyncConfirmModal}'),
+    pricingPage.indexOf('{#if showAddPricingModal}')
+  );
+  const upcomingIgnoreModal = pricingPage.slice(
+    pricingPage.indexOf('{#if showUpcomingIgnoreModal}'),
+    pricingPage.indexOf('{#if showShutdownRemovalModal}')
+  );
+  const shutdownRemovalModal = pricingPage.slice(
+    pricingPage.indexOf('{#if showShutdownRemovalModal}'),
+    pricingPage.indexOf('</section>', pricingPage.indexOf('{#if showShutdownRemovalModal}'))
+  );
+  for (const [name, modal] of [
+    ['sync confirmation', syncConfirmModal],
+    ['upcoming shutdown confirmation', upcomingIgnoreModal],
+    ['shutdown removal confirmation', shutdownRemovalModal]
+  ]) {
+    assert.match(modal, /role="alert">\{usagePricing\.error\}<\/p>/, `${name} should show request failures inside the dialog`);
+  }
   // Search state for pricing rows
   assert.match(pricingPage, /pricingSearch/);
   assert.match(pricingPage, /filteredPricingRows/);

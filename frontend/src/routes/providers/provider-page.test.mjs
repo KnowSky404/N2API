@@ -370,6 +370,7 @@ test('provider account create forms can bind fingerprint profiles', () => {
   assert.match(editAccountSlice, /account\.accountType === 'api_upstream'/);
   assert.match(editAccountSlice, /Default API upstream \(pass-through\)/);
   assert.match(editAccountSlice, /Default Codex CLI/);
+  assert.match(editAccountSlice, /<option value=\{0\}>/);
 });
 
 test('provider account state sends fingerprint profile on new account creation', async () => {
