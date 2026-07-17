@@ -15,8 +15,8 @@
 **Files:**
 - Create: `frontend/src/routes/navigation.test.mjs`
 
-- [ ] Add a Node test that asserts the intended route files and shared state module exist.
-- [ ] Run `node --test src/routes/navigation.test.mjs` from `frontend/` and confirm it fails before implementation because the new route files are missing.
+- [ ] Add a Bun test that asserts the intended route files and shared state module exist.
+- [ ] Run `bun test src/routes/navigation.test.mjs` from `frontend/` and confirm it fails before implementation because the new route files are missing.
 
 ### Task 2: Shared Admin State
 
@@ -47,7 +47,7 @@
 **Files:**
 - Verify only.
 
-- [ ] Run `node --test src/routes/navigation.test.mjs` from `frontend/`.
+- [ ] Run `bun test src/routes/navigation.test.mjs` from `frontend/`.
 - [ ] Run `bun run check` from `frontend/`.
 - [ ] Run `bun run build` from `frontend/`.
 - [ ] Smoke the rendered app route structure with Playwright or HTTP checks against the running local stack/dev server.

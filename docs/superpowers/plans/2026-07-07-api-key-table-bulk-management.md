@@ -6,7 +6,7 @@
 
 **Architecture:** Keep API key bulk behavior in the frontend for this slice. Add selection state and batch helpers in `admin-state.svelte.js`, then update `api-keys/+page.svelte` to render filters, selection, action buttons, and a bulk edit modal that sequentially reuses existing per-key admin APIs.
 
-**Tech Stack:** SvelteKit/Svelte 5 runes, Bun, Tailwind CSS, existing source-level `node:test` assertions.
+**Tech Stack:** SvelteKit/Svelte 5 runes, Bun, Tailwind CSS, existing source-level `bun:test` assertions.
 
 ---
 

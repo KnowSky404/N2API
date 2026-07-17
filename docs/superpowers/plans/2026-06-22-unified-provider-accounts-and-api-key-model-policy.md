@@ -1094,8 +1094,8 @@ test('providers page is account-oriented and supports api upstream accounts', ()
   assert.match(source, /Manual models/);
 });
 
-test('api keys page owns model policy and gateway default model', () => {
-  const apiKeysSource = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
+test('api keys page owns model policy and gateway default model', async () => {
+  const apiKeysSource = await Bun.file('src/routes/api-keys/+page.svelte').text();
   assert.match(apiKeysSource, /Gateway default model/);
   assert.match(apiKeysSource, /Model access/);
   assert.match(apiKeysSource, /All routable models/);

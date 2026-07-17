@@ -6,7 +6,7 @@
 
 **Architecture:** Store `ignoredModels` beside `models` in the existing PostgreSQL-backed `usage_pricing` JSON document. Add a lifecycle-validating admin operation for atomic upcoming-model removal, make official sync skip ignored identifiers, and make the normal pricing update path treat an explicitly submitted model as a restore. Keep the frontend lifecycle list ephemeral while the backend owns durable ignore state.
 
-**Tech Stack:** Go, PostgreSQL JSON settings repository, `net/http`, Bun, SvelteKit 2, Svelte 5 runes, Tailwind CSS 4, Lucide Svelte, Node/Bun source-contract tests, Docker Compose.
+**Tech Stack:** Go, PostgreSQL JSON settings repository, `net/http`, Bun, SvelteKit 2, Svelte 5 runes, Tailwind CSS 4, Lucide Svelte, Bun source-contract tests, Docker Compose.
 
 ---
 

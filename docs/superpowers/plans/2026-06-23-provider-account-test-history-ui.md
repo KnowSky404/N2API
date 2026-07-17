@@ -39,8 +39,8 @@ const {
 Add these tests:
 
 ```js
-test('provider account state uses unified test-results endpoint', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+test('provider account state uses unified test-results endpoint', async () => {
+  const adminStateSource = await Bun.file('src/lib/admin-state.svelte.js').text();
 
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{accountId\}\/test-results\?limit=20/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{accountId\}\/test-results/);

@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { test } from 'bun:test';
+import assert from '../test/assert.js';
+import { preloadFileExistence, preloadTextFiles } from '../test/files.js';
 
 const expectedFiles = [
   'src/lib/AuthGate.svelte',
@@ -18,43 +18,57 @@ const expectedFiles = [
   'src/routes/fingerprints/+page.svelte'
 ];
 
-const requestLogsPage = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
-const pricingPage = readFileSync('src/routes/pricing/+page.svelte', 'utf8');
-const modelsPage = readFileSync('src/routes/models/+page.svelte', 'utf8');
-const gatewayPage = readFileSync('src/routes/gateway/+page.svelte', 'utf8');
-const providersPage = readFileSync('src/routes/providers/+page.svelte', 'utf8');
-const apiKeysPage = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
-const routingPoolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
-const layoutPage = readFileSync('src/routes/+layout.svelte', 'utf8');
-const dashboardPage = readFileSync('src/routes/+page.svelte', 'utf8');
-const opsPage = readFileSync('src/routes/ops/+page.svelte', 'utf8');
-const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-const authGate = readFileSync('src/lib/AuthGate.svelte', 'utf8');
-const uiStyles = readFileSync('src/app.css', 'utf8');
-const appHtml = readFileSync('src/app.html', 'utf8');
-const designSystem = readFileSync('../DESIGN.md', 'utf8');
-const readme = readFileSync('../README.md', 'utf8');
+const readText = await preloadTextFiles([
+  ...expectedFiles,
+  'src/app.css',
+  'src/app.html',
+  '../DESIGN.md',
+  '../README.md'
+]);
+const fileExists = await preloadFileExistence([
+  ...expectedFiles,
+  'static/n2api-logo.svg',
+  'static/favicon.svg',
+  'src/routes/error-passthrough/+page.svelte'
+]);
+
+const requestLogsPage = readText('src/routes/request-logs/+page.svelte');
+const pricingPage = readText('src/routes/pricing/+page.svelte');
+const modelsPage = readText('src/routes/models/+page.svelte');
+const gatewayPage = readText('src/routes/gateway/+page.svelte');
+const providersPage = readText('src/routes/providers/+page.svelte');
+const apiKeysPage = readText('src/routes/api-keys/+page.svelte');
+const routingPoolsPage = readText('src/routes/routing-pools/+page.svelte');
+const layoutPage = readText('src/routes/+layout.svelte');
+const dashboardPage = readText('src/routes/+page.svelte');
+const opsPage = readText('src/routes/ops/+page.svelte');
+const adminState = readText('src/lib/admin-state.svelte.js');
+const authGate = readText('src/lib/AuthGate.svelte');
+const uiStyles = readText('src/app.css');
+const appHtml = readText('src/app.html');
+const designSystem = readText('../DESIGN.md');
+const readme = readText('../README.md');
 
 test('brand assets provide the README logo and website favicon', () => {
-  assert.equal(existsSync('static/n2api-logo.svg'), true, 'README logo should exist');
-  assert.equal(existsSync('static/favicon.svg'), true, 'favicon should exist');
+  assert.equal(fileExists('static/n2api-logo.svg'), true, 'README logo should exist');
+  assert.equal(fileExists('static/favicon.svg'), true, 'favicon should exist');
   assert.match(appHtml, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg" \/>/);
   assert.match(readme, /frontend\/static\/n2api-logo\.svg/);
 });
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {
   for (const file of expectedFiles) {
-    assert.equal(existsSync(file), true, `${file} should exist`);
+    assert.equal(fileExists(file), true, `${file} should exist`);
   }
 
-  const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
+  const layout = readText('src/routes/+layout.svelte');
   for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Pricing', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
   assert.doesNotMatch(layout, /label:\s*'Error rules'/);
   assert.match(layout, /href:\s*'\/pricing'/);
-  assert.equal(existsSync('src/routes/error-passthrough/+page.svelte'), false, 'error rules page should be removed');
+  assert.equal(fileExists('src/routes/error-passthrough/+page.svelte'), false, 'error rules page should be removed');
   assert.match(layout, /changePassword/);
   assert.match(layout, /changePasswordForm\.currentPassword/);
   assert.match(layout, /changePasswordForm\.newPassword/);
@@ -64,7 +78,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
 });
 
 test('primary navigation moves model policy ownership to API keys', () => {
-  const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
+  const layout = readText('src/routes/+layout.svelte');
 
   assert.doesNotMatch(layout, /href:\s*'\/models'/);
   assert.doesNotMatch(layout, /label:\s*'Routing'/);
@@ -112,8 +126,8 @@ test('editable modals use explicit close controls and persistent unified saves',
 });
 
 test('routing pools page manages account pools', () => {
-  const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  const poolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
+  const layout = readText('src/routes/+layout.svelte');
+  const poolsPage = readText('src/routes/routing-pools/+page.svelte');
 
   assert.match(layout, /href:\s*'\/routing-pools'/);
   for (const label of ['Routing pools', 'Enabled', 'Fallback pool', 'No fallback', 'Pool priority', 'Bound API keys', 'Schedulable members', 'Search pools', 'Status filter', 'All pools', 'Enabled pools', 'Disabled pools', 'Pools with fallback', 'Bound key pools', 'Empty pools']) {
@@ -938,7 +952,7 @@ test('route UI uses the pricing-derived shared component contract', () => {
   assert.match(designSystem, /pricing-page[\s\S]*?`Add model` button is the canonical reference/);
 
   for (const file of expectedFiles.filter((path) => path.endsWith('.svelte'))) {
-    const source = readFileSync(file, 'utf8');
+    const source = readText(file);
     for (const match of source.matchAll(/<button[^>]*class="([^"]+)"/g)) {
       assert.match(match[1], /(?:^|\s)ui-button(?:\s|$)/, `${file} button should use ui-button`);
       if (/ui-button--(?:primary|secondary|danger|danger-filled|warning)/.test(match[1]) && !match[1].includes('ui-button--icon')) {
@@ -1192,8 +1206,8 @@ test('admin state preserves every request log filter across session resets', () 
 });
 
 test('shared AuthGate component owns loading and sign-in shell', () => {
-  assert.equal(existsSync('src/lib/AuthGate.svelte'), true, 'AuthGate.svelte should exist');
-  const authGateSrc = readFileSync('src/lib/AuthGate.svelte', 'utf8');
+  assert.equal(fileExists('src/lib/AuthGate.svelte'), true, 'AuthGate.svelte should exist');
+  const authGateSrc = readText('src/lib/AuthGate.svelte');
   assert.match(authGateSrc, /import.*login.*loginForm.*session.*from.*admin-state/);
   assert.match(authGateSrc, /session\.loading/);
   assert.match(authGateSrc, /!session\.authenticated/);
@@ -1224,7 +1238,7 @@ test('route pages use shared AuthGate instead of duplicate login forms', () => {
     { name: 'fingerprints', path: 'src/routes/fingerprints/+page.svelte' },
   ];
   for (const page of pages) {
-    const src = readFileSync(page.path, 'utf8');
+    const src = readText(page.path);
     assert.match(src, /AuthGate/, `${page.name} page should import AuthGate`);
     assert.doesNotMatch(src, /Admin access/, `${page.name} page should not repeat 'Admin access' heading`);
     assert.doesNotMatch(src, /Admin sign in/, `${page.name} page should not repeat 'Admin sign in' heading`);
@@ -1349,7 +1363,7 @@ test('api key batch helpers reuse existing per-key endpoints', () => {
 
 
 test('pricing is isolated from request logs behind its own navigation route', () => {
-  const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
+  const layout = readText('src/routes/+layout.svelte');
 
   assert.match(layout, /href:\s*'\/pricing'/);
   assert.match(layout, /label:\s*'Pricing'/);

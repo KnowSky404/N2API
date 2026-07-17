@@ -1500,19 +1500,18 @@ git commit -m "feat: expose usage admin api"
 Create `frontend/src/lib/usage-format.test.mjs`:
 
 ```js
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { expect, test } from 'bun:test';
 import { formatCostMicrousd, formatTokens } from './admin-state.svelte.js';
 
 test('formatTokens uses compact tabular-friendly counts', () => {
-  assert.equal(formatTokens(0), '0');
-  assert.equal(formatTokens(1234), '1,234');
+  expect(formatTokens(0)).toBe('0');
+  expect(formatTokens(1234)).toBe('1,234');
 });
 
 test('formatCostMicrousd renders approximate USD', () => {
-  assert.equal(formatCostMicrousd(0), '$0.0000');
-  assert.equal(formatCostMicrousd(1234), '$0.0012');
-  assert.equal(formatCostMicrousd(1234567), '$1.2346');
+  expect(formatCostMicrousd(0)).toBe('$0.0000');
+  expect(formatCostMicrousd(1234)).toBe('$0.0012');
+  expect(formatCostMicrousd(1234567)).toBe('$1.2346');
 });
 ```
 
@@ -1618,8 +1617,8 @@ git commit -m "feat: add usage admin state"
 In `frontend/src/routes/navigation.test.mjs`, add assertions that request logs page contains usage UI labels:
 
 ```js
-test('request logs page includes usage accounting UI', () => {
-  const page = readFileSync('src/routes/request-logs/+page.svelte', 'utf8');
+test('request logs page includes usage accounting UI', async () => {
+  const page = await Bun.file('src/routes/request-logs/+page.svelte').text();
   for (const label of ['Usage summary', 'Estimated cost', 'Input tokens', 'Output tokens', 'Pricing']) {
     assert.match(page, new RegExp(label.replace(' ', '\\s+')), `request logs page should include ${label}`);
   }

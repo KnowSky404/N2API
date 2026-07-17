@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { test } from 'bun:test';
+import assert from '../../test/assert.js';
 import { runModelTestsWithConcurrency } from '../../lib/model-test-queue.js';
 
 globalThis.$state = (value) => value;
@@ -54,11 +53,11 @@ const {
   validateProviderAccountPauseDuration
 } = await import('../../lib/admin-state.svelte.js');
 
-const source = readFileSync('src/routes/providers/+page.svelte', 'utf8');
-const modelsSource = readFileSync('src/routes/models/+page.svelte', 'utf8');
-const apiKeysSource = readFileSync('src/routes/api-keys/+page.svelte', 'utf8');
-const routingPoolsSource = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
-const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+const source = await Bun.file('src/routes/providers/+page.svelte').text();
+const modelsSource = await Bun.file('src/routes/models/+page.svelte').text();
+const apiKeysSource = await Bun.file('src/routes/api-keys/+page.svelte').text();
+const routingPoolsSource = await Bun.file('src/routes/routing-pools/+page.svelte').text();
+const adminStateSource = await Bun.file('src/lib/admin-state.svelte.js').text();
 
 test('model test queue runs only requested models with at most three concurrent tasks', async () => {
   const requested = ['gpt-5', 'gpt-5-mini', 'codex-mini', 'o1', 'o3'];
@@ -321,8 +320,6 @@ test('provider account bulk selection state toggles, clears, and prunes ids', ()
 });
 
 test('provider account state can bulk update selected account enabled state', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /bulkUpdateSelectedProviderAccounts/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-update/);
   assert.match(adminStateSource, /accountIds/);
@@ -421,8 +418,6 @@ test('provider account state sends fingerprint profile on new account creation',
 });
 
 test('provider account state can bulk update selected scheduling fields', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /providerAccountBulkSchedulingForm/);
   assert.match(adminStateSource, /bulkUpdateSelectedProviderAccountScheduling/);
   assert.match(adminStateSource, /priority/);
@@ -434,8 +429,6 @@ test('provider account state can bulk update selected scheduling fields', () => 
 });
 
 test('provider account state can test selected accounts', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /testSelectedProviderAccounts/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-test/);
   assert.match(adminStateSource, /accountIds/);
@@ -443,8 +436,6 @@ test('provider account state can test selected accounts', () => {
 });
 
 test('provider account state can refresh selected accounts', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /refreshSelectedProviderAccounts/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-refresh/);
   assert.match(adminStateSource, /accountIds/);
@@ -453,8 +444,6 @@ test('provider account state can refresh selected accounts', () => {
 });
 
 test('provider account state can disconnect selected accounts', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /disconnectSelectedProviderAccounts/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-disconnect/);
   assert.match(adminStateSource, /accountIds/);
@@ -464,8 +453,6 @@ test('provider account state can disconnect selected accounts', () => {
 });
 
 test('provider account state can bulk pause and reset selected accounts', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /pauseSelectedProviderAccounts/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-pause/);
   assert.match(adminStateSource, /resetSelectedProviderAccountStatus/);
@@ -474,8 +461,6 @@ test('provider account state can bulk pause and reset selected accounts', () => 
 });
 
 test('provider account state can bulk replace selected account models', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /providerAccountBulkModelsForm/);
   assert.match(adminStateSource, /bulkReplaceSelectedProviderAccountModels/);
   assert.match(adminStateSource, /parseAccountModelsText/);
@@ -740,8 +725,6 @@ test('provider page has a unified add account entry point with tabbed modal', ()
 });
 
 test('provider account state uses unified codex oauth connect endpoint', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/status/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/connect/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai'/);
@@ -749,22 +732,16 @@ test('provider account state uses unified codex oauth connect endpoint', () => {
 });
 
 test('provider account state uses unified account refresh endpoint', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}\/refresh/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{account\.id\}\/refresh/);
 });
 
 test('provider account state uses unified test-results endpoint', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{accountId\}\/test-results\?limit=20/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{accountId\}\/test-results/);
 });
 
 test('provider account pause duration defaults and validates before request', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.equal(providerAccountPauseForm.durationSeconds, 300);
   assert.match(adminStateSource, /providerAccountPauseForm = \$state\(\{ durationSeconds: 300 \}\)/);
   assert.match(adminStateSource, /export function validateProviderAccountPauseDuration/);
@@ -779,14 +756,10 @@ test('provider account pause duration defaults and validates before request', ()
 });
 
 test('provider account state preinitializes test history state outside templates', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /for \(const account of providerAccounts\.items\) \{\s*ensureAccountTestResultsState\(account\.id\);\s*\}/);
 });
 
 test('provider account state uses unified codex oauth callback endpoint', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/callback/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/callback/);
 });
@@ -972,8 +945,6 @@ test('providers page is account-oriented and supports api upstream accounts', ()
 });
 
 test('admin state can reset provider account local status', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /resetProviderAccountStatus/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}\/reset-status/);
   assert.match(adminStateSource, /Account status reset failed/);
@@ -981,15 +952,12 @@ test('admin state can reset provider account local status', () => {
 });
 
 test('admin state can update provider account local name', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /updateProviderAccountName/);
   assert.match(adminStateSource, /Account name cannot be empty/);
   assert.match(adminStateSource, /updateProviderAccount\(account, \{ name \}\)/);
 });
 
 test('admin state refreshes model routing after provider account scheduling changes', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
   const updateProviderAccountSource = adminStateSource.match(
     /export async function updateProviderAccount\(account, patch\) \{[\s\S]*?\n\}/
   )?.[0] ?? '';
@@ -1023,8 +991,6 @@ test('api keys page owns model policy and gateway default model', () => {
   assert.doesNotMatch(apiKeysSource, />Model access<\/th>/);
 });
 test('api keys page loads gateway settings for per-key limit fallback', () => {
-  const adminStateSource = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
-
   assert.match(adminStateSource, /gatewaySettings/);
   assert.match(adminStateSource, /\/api\/admin\/gateway-settings/);
   // Gateway runtime limits UI section removed; gateway settings still loaded for per-key fallback

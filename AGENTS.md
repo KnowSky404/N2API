@@ -42,7 +42,10 @@
 ## Frontend Constraints
 - Follow the root `DESIGN.md` for all N2API UI design, styling, layout, and component decisions.
 - Treat `DESIGN.md` as the source of truth for UI visual style. Do not introduce a competing design system unless the user explicitly approves replacing it.
-- Use Bun for frontend dependency install and script execution.
+- Use Bun for all frontend dependency installation, script execution, tests, development servers, builds, and one-off package CLIs.
+- Prefer `bun`, `bun run`, `bun test`, and `bunx` for their corresponding workflows.
+- Use Node.js, npm, npx, pnpm, or yarn only after the equivalent Bun command is unavailable or demonstrably incompatible. Record the failed Bun path and explain the fallback when reporting the work.
+- Keep frontend documentation, automation, and CI examples Bun-first. Do not add non-Bun lockfiles.
 - Build the SvelteKit admin UI as static assets that can be served by the Go backend.
 - Use Tailwind CSS for styling.
 - The admin UI is an operational dashboard, not a landing page.
@@ -51,7 +54,7 @@
 - Prefer `go test ./...` for backend verification.
 - Prefer `bun run check` and `bun run build` for frontend verification.
 - Prefer Docker Compose for local full-stack verification.
-- Do not introduce npm or yarn unless Bun cannot support a required package or workflow.
+- Do not introduce Node.js, npm, npx, pnpm, or yarn unless Bun cannot support a required package or workflow.
 
 ## Repository Hygiene
 - Keep generated dependencies and build outputs out of git.

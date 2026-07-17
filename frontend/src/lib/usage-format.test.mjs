@@ -1,5 +1,5 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { test } from 'bun:test';
+import assert from '../test/assert.js';
 
 globalThis.$state = (value) => value;
 const { formatCostMicrousd, formatRequestLogCost, formatTokens } = await import('./admin-state.svelte.js');

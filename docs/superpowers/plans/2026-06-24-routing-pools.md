@@ -804,10 +804,10 @@ git commit -m "feat: expose routing pool endpoints"
 In `frontend/src/routes/navigation.test.mjs`, add:
 
 ```js
-test('routing pools page manages account pools', () => {
-  const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
-  const poolsPage = readFileSync('src/routes/routing-pools/+page.svelte', 'utf8');
-  const adminState = readFileSync('src/lib/admin-state.svelte.js', 'utf8');
+test('routing pools page manages account pools', async () => {
+  const layout = await Bun.file('src/routes/+layout.svelte').text();
+  const poolsPage = await Bun.file('src/routes/routing-pools/+page.svelte').text();
+  const adminState = await Bun.file('src/lib/admin-state.svelte.js').text();
 
   assert.match(layout, /href:\s*'\/routing-pools'/);
   for (const label of ['Routing pools', 'Create pool', 'Pool accounts', 'Save membership', 'Enabled']) {

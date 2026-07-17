@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
+import { test } from 'bun:test';
+import assert from '../../test/assert.js';
 
-const source = readFileSync('src/routes/fingerprints/+page.svelte', 'utf8');
+const source = await Bun.file('src/routes/fingerprints/+page.svelte').text();
 
 test('fingerprint profiles expose the system default and seed new profiles from it', () => {
   for (const label of [
