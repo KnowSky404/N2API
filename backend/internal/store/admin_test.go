@@ -11,8 +11,17 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const truncateStoreTestDataSQL = `TRUNCATE
+	system_events, request_logs, provider_account_test_results, provider_session_bindings,
+	routing_pool_accounts, routing_pools, client_api_key_models, client_api_keys,
+	provider_account_models, provider_account_credentials, provider_accounts,
+	oauth_account_models, oauth_accounts, oauth_states, admin_sessions, admins,
+	error_passthrough_rules, fingerprint_profiles, settings
+	RESTART IDENTITY CASCADE`
 
 func TestAdminRepositoryImplementsInterface(t *testing.T) {
 	var _ admin.Repository = (*AdminRepository)(nil)
@@ -610,11 +619,66 @@ func newTestAdminRepository(t *testing.T) *AdminRepository {
 		t.Fatalf("pgxpool.New returned error: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	if err := RunMigrations(context.Background(), pool); err != nil {
+		t.Fatalf("RunMigrations returned error: %v", err)
+	}
 
-	if _, err := pool.Exec(context.Background(), "TRUNCATE client_api_key_models, request_logs, client_api_keys, provider_account_models, provider_account_credentials, provider_accounts, admin_sessions, admins, settings RESTART IDENTITY CASCADE"); err != nil {
+	if _, err := pool.Exec(context.Background(), truncateStoreTestDataSQL); err != nil {
 		t.Fatalf("test database cleanup failed: %v", err)
 	}
 	return NewAdminRepository(pool)
+}
+
+func TestAdminRepositoryMutationCommitsSystemEventAtomically(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := systemevent.WithRequestContext(context.Background(), systemevent.RequestContext{
+		CorrelationID: "admin-atomic-success",
+		Actor:         systemevent.Actor{Type: systemevent.ActorAdmin, ID: 1, Name: "admin"},
+	})
+	ctx = systemevent.WithIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionAPIKeyCreated,
+		Outcome:  systemevent.OutcomeSuccess,
+	})
+
+	key, err := repo.CreateAPIKey(ctx, "atomic key", "atomic-hash", "n2api_", "encrypted")
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	var targetID, targetName string
+	if err := repo.pool.QueryRow(context.Background(), `
+		SELECT target_id, target_name FROM system_events WHERE action = $1
+	`, systemevent.ActionAPIKeyCreated).Scan(&targetID, &targetName); err != nil {
+		t.Fatalf("query system event: %v", err)
+	}
+	if targetID != strconv.FormatInt(key.ID, 10) || targetName != "atomic key" {
+		t.Fatalf("event target = %q/%q, want %d/atomic key", targetID, targetName, key.ID)
+	}
+}
+
+func TestAdminRepositoryInvalidSystemEventRollsBackMutation(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionAPIKeyCreated,
+		Outcome:  systemevent.OutcomeSuccess,
+		Metadata: map[string]any{"access_token": "must-not-be-stored"},
+	})
+
+	if _, err := repo.CreateAPIKey(ctx, "rollback key", "rollback-hash", "n2api_", "encrypted"); err == nil {
+		t.Fatal("CreateAPIKey returned nil error, want invalid system event error")
+	}
+
+	var count int
+	if err := repo.pool.QueryRow(context.Background(), `SELECT count(*) FROM client_api_keys WHERE name = 'rollback key'`).Scan(&count); err != nil {
+		t.Fatalf("count client API keys: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("client API key count = %d, want rollback", count)
+	}
 }
 
 func insertProviderAccount(t *testing.T, pool *pgxpool.Pool, providerName, accountType, name string) int64 {

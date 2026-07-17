@@ -1,6 +1,8 @@
 package config
 
 import (
+	"maps"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +29,42 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	}
 	if cfg.Addr() != "0.0.0.0:3000" {
 		t.Fatalf("Addr() = %q, want 0.0.0.0:3000", cfg.Addr())
+	}
+}
+
+func TestLoadSystemEventRetentionDays(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "encryption-secret", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	cfg, err := Load(mapLookup(base))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if cfg.SystemEventRetentionDays != 365 {
+		t.Fatalf("SystemEventRetentionDays = %d, want 365", cfg.SystemEventRetentionDays)
+	}
+	for _, value := range []string{"0", "30", "3650"} {
+		t.Run("valid_"+value, func(t *testing.T) {
+			values := maps.Clone(base)
+			values["N2API_SYSTEM_EVENT_RETENTION_DAYS"] = value
+			cfg, err := Load(mapLookup(values))
+			if err != nil {
+				t.Fatalf("Load returned error: %v", err)
+			}
+			want, _ := strconv.Atoi(value)
+			if cfg.SystemEventRetentionDays != want {
+				t.Fatalf("SystemEventRetentionDays = %d, want %d", cfg.SystemEventRetentionDays, want)
+			}
+		})
+	}
+	for _, value := range []string{"bad", "-1", "1", "29", "3651"} {
+		t.Run("invalid_"+value, func(t *testing.T) {
+			values := maps.Clone(base)
+			values["N2API_SYSTEM_EVENT_RETENTION_DAYS"] = value
+			if _, err := Load(mapLookup(values)); err == nil {
+				t.Fatal("Load returned nil error")
+			}
+		})
 	}
 }
 

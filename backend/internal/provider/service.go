@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	utls "github.com/refraction-networking/utls"
 )
 
@@ -41,6 +42,99 @@ const (
 	defaultOpenAIOAuthTokenURL      = "https://auth.openai.com/oauth/token"
 	defaultOpenAIOAuthScopes        = "openid profile email offline_access"
 	defaultOpenAIOAuthRefreshScopes = "openid profile email"
+)
+
+func withProviderEventIntent(ctx context.Context, intent systemevent.EventIntent) context.Context {
+	if parent, ok := systemevent.IntentFromContext(ctx); ok {
+		if batchID, ok := parent.Metadata["batch_id"].(string); ok && strings.TrimSpace(batchID) != "" {
+			if intent.Metadata == nil {
+				intent.Metadata = map[string]any{}
+			}
+			intent.Metadata["batch_id"] = batchID
+		}
+	}
+	return systemevent.WithIntent(ctx, intent)
+}
+
+func providerAccountTarget(id int64, name string) systemevent.Target {
+	target := systemevent.Target{Type: "provider_account", Name: strings.TrimSpace(name)}
+	if id > 0 {
+		target.ID = strconv.FormatInt(id, 10)
+	}
+	return target
+}
+
+func providerAuditIntent(action systemevent.Action, id int64, name string) systemevent.EventIntent {
+	return systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   action,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   providerAccountTarget(id, name),
+	}
+}
+
+func oauthRefreshIntent(account Account, trigger RefreshTrigger, succeeded bool, circuitOpenUntil *time.Time) systemevent.EventIntent {
+	action := systemevent.ActionOAuthRefreshAutomaticFailed
+	severity := systemevent.SeverityWarning
+	outcome := systemevent.OutcomeFailure
+	if trigger == RefreshTriggerManual {
+		action = systemevent.ActionOAuthRefreshManualFailed
+	}
+	if succeeded {
+		severity = systemevent.SeverityInfo
+		outcome = systemevent.OutcomeSuccess
+		if trigger == RefreshTriggerManual {
+			action = systemevent.ActionOAuthRefreshManualSucceeded
+		} else {
+			action = systemevent.ActionOAuthRefreshAutomaticSucceeded
+		}
+	}
+	metadata := map[string]any{
+		"trigger":       string(trigger),
+		"failure_count": account.FailureCount,
+	}
+	if account.AccessTokenExpiresAt != nil {
+		metadata["expiry_at"] = account.AccessTokenExpiresAt.UTC()
+	}
+	if circuitOpenUntil != nil {
+		metadata["circuit_open_until"] = circuitOpenUntil.UTC()
+	}
+	return systemevent.EventIntent{
+		Category:  systemevent.CategoryOAuth,
+		Severity:  severity,
+		Action:    action,
+		Outcome:   outcome,
+		Target:    providerAccountTarget(account.ID, accountDisplayName(account)),
+		ErrorCode: map[bool]string{true: "", false: "oauth_refresh_failed"}[succeeded],
+		Metadata:  metadata,
+	}
+}
+
+func runtimeAccountIntent(action systemevent.Action, id int64, status string) systemevent.EventIntent {
+	severity := systemevent.SeverityWarning
+	if action == systemevent.ActionProviderAccountRecovered {
+		severity = systemevent.SeverityInfo
+	}
+	return systemevent.EventIntent{
+		Category: systemevent.CategoryRuntime,
+		Severity: severity,
+		Action:   action,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   providerAccountTarget(id, ""),
+		Metadata: map[string]any{"status": status},
+	}
+}
+
+type RefreshTrigger string
+
+const (
+	RefreshTriggerManual         RefreshTrigger = "manual"
+	RefreshTriggerGatewayRequest RefreshTrigger = "gateway_request"
+	RefreshTriggerAccountTest    RefreshTrigger = "account_test"
+	RefreshTriggerModelTest      RefreshTrigger = "model_test"
+	RefreshTriggerModelSync      RefreshTrigger = "model_sync"
+	RefreshTriggerStatusProbe    RefreshTrigger = "status_probe"
 )
 
 const (
@@ -499,6 +593,10 @@ type Repository interface {
 	UpsertSessionBindingInRoutingPool(ctx context.Context, provider string, routingPoolID int64, model string, sessionID string, accountID int64) error
 	CreateState(ctx context.Context, state OAuthState) error
 	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
+}
+
+type oauthRefreshFailureEventRecorder interface {
+	RecordOAuthRefreshFailureEvent(ctx context.Context, provider string, accountID int64) error
 }
 
 type AccountIdentities struct {
@@ -1133,7 +1231,14 @@ func (s *Service) StartConnect(ctx context.Context, options ConnectOptions) (Con
 		return ConnectResult{}, fmt.Errorf("encrypt code verifier: %w", err)
 	}
 
-	if err := s.repo.CreateState(ctx, OAuthState{
+	connectCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryOAuth,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionOAuthConnectStarted,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   systemevent.Target{Type: "oauth_connection", ID: s.cfg.Provider, Name: s.cfg.Provider},
+	})
+	if err := s.repo.CreateState(connectCtx, OAuthState{
 		Provider:                    s.cfg.Provider,
 		StateHash:                   secret.HashAPIKey(state),
 		RedirectAfter:               options.RedirectAfter,
@@ -1260,7 +1365,10 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 			return Account{}, ErrInvalidInput
 		}
 	}
-	if update.APIUpstreamBaseURL != nil || update.APIUpstreamAPIKey != nil {
+	baseURLChanged := update.APIUpstreamBaseURL != nil
+	apiKeyChanged := update.APIUpstreamAPIKey != nil
+	proxyChanged := update.ProxyURL != nil
+	if baseURLChanged || apiKeyChanged {
 		account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
 		if err != nil {
 			return Account{}, err
@@ -1310,7 +1418,44 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil || update.EncryptedProxyURL != nil {
 		update.ClearStatus = true
 	}
-	account, err := s.repo.UpdateAccount(ctx, s.cfg.Provider, id, update)
+	intent := providerAuditIntent(systemevent.ActionProviderAccountUpdated, id, "")
+	changed := make([]string, 0, 9)
+	if update.Enabled != nil {
+		changed = append(changed, "enabled")
+	}
+	if update.Priority != nil {
+		changed = append(changed, "priority")
+	}
+	if update.LoadFactor != nil {
+		changed = append(changed, "load_factor")
+	}
+	if update.MaxConcurrentRequests != nil {
+		changed = append(changed, "max_concurrent_requests")
+	}
+	if update.Name != nil {
+		changed = append(changed, "name")
+	}
+	if baseURLChanged {
+		changed = append(changed, "base_url")
+	}
+	if apiKeyChanged {
+		changed = append(changed, "api_key")
+	}
+	if proxyChanged {
+		changed = append(changed, "proxy_url")
+	}
+	if update.FingerprintProfileIDSet {
+		changed = append(changed, "fingerprint_profile_id")
+	}
+	intent.Metadata = map[string]any{
+		"changed_fields":  changed,
+		"api_key_changed": apiKeyChanged,
+		"proxy_changed":   proxyChanged,
+	}
+	if parent, ok := systemevent.IntentFromContext(ctx); ok && parent.Action == systemevent.ActionProviderAccountStatusReset {
+		intent = parent
+	}
+	account, err := s.repo.UpdateAccount(withProviderEventIntent(ctx, intent), s.cfg.Provider, id, update)
 	if err != nil {
 		return Account{}, err
 	}
@@ -1318,6 +1463,7 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 }
 
 func (s *Service) ResetAccountStatus(ctx context.Context, id int64) (Account, error) {
+	ctx = withProviderEventIntent(ctx, providerAuditIntent(systemevent.ActionProviderAccountStatusReset, id, ""))
 	return s.UpdateAccount(ctx, id, AccountUpdate{ClearStatus: true})
 }
 
@@ -1363,7 +1509,8 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	if input.Enabled != nil {
 		enabled = *input.Enabled
 	}
-	account, err := s.repo.SaveAccount(ctx, Account{
+	createCtx := withProviderEventIntent(ctx, providerAuditIntent(systemevent.ActionProviderAccountCreated, 0, name))
+	account, err := s.repo.SaveAccount(createCtx, Account{
 		Provider:             s.cfg.Provider,
 		AccountType:          AccountTypeAPIUpstream,
 		Name:                 name,
@@ -1393,7 +1540,7 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 			})
 		}
 		if _, err := s.ReplaceAccountModels(ctx, account.ID, models); err != nil {
-			if deleteErr := s.repo.DeleteAccount(ctx, s.cfg.Provider, account.ID); deleteErr != nil {
+			if deleteErr := s.DisconnectAccount(ctx, account.ID); deleteErr != nil {
 				return Account{}, fmt.Errorf("replace account models: %w; cleanup account: %v", err, deleteErr)
 			}
 			return Account{}, err
@@ -1414,10 +1561,18 @@ func (s *Service) DisconnectAccount(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return ErrInvalidInput
 	}
+	ctx = withProviderEventIntent(ctx, providerAuditIntent(systemevent.ActionProviderAccountDisconnected, id, ""))
 	return s.repo.DeleteAccount(ctx, s.cfg.Provider, id)
 }
 
 func (s *Service) Disconnect(ctx context.Context) error {
+	ctx = withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionProviderAccountDisconnectAll,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   systemevent.Target{Type: "provider", ID: s.cfg.Provider, Name: s.cfg.Provider},
+	})
 	return s.repo.DeleteAccounts(ctx, s.cfg.Provider)
 }
 
@@ -1505,7 +1660,24 @@ func (s *Service) TestAccountModel(ctx context.Context, accountID int64, model s
 		result.ErrorCode = probe.errorCode
 		result.Message = redactModelProbeSecrets(probe.message, selected)
 	}
-	if err := s.repo.RecordAccountModelTestResult(ctx, s.cfg.Provider, result); err != nil {
+	testSeverity := systemevent.SeverityInfo
+	testOutcome := systemevent.OutcomeSuccess
+	testErrorCode := ""
+	if result.Status != AccountTestStatusPassed {
+		testSeverity = systemevent.SeverityWarning
+		testOutcome = systemevent.OutcomeFailure
+		testErrorCode = "provider_account_model_test_failed"
+	}
+	testCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category:  systemevent.CategoryAudit,
+		Severity:  testSeverity,
+		Action:    systemevent.ActionProviderAccountModelTested,
+		Outcome:   testOutcome,
+		Target:    providerAccountTarget(accountID, accountDisplayName(account)),
+		ErrorCode: testErrorCode,
+		Metadata:  map[string]any{"model": model, "test_status": result.Status, "http_status": result.HTTPStatus},
+	})
+	if err := s.repo.RecordAccountModelTestResult(testCtx, s.cfg.Provider, result); err != nil {
 		return AccountModelTestResult{}, err
 	}
 	return result, nil
@@ -1519,6 +1691,14 @@ func (s *Service) ReplaceAccountModels(ctx context.Context, accountID int64, mod
 	if err != nil {
 		return nil, err
 	}
+	ctx = withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionProviderAccountModelsReplaced,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   providerAccountTarget(accountID, ""),
+		Metadata: map[string]any{"model_count": len(normalized)},
+	})
 	return s.repo.ReplaceAccountModels(ctx, s.cfg.Provider, accountID, normalized)
 }
 
@@ -1535,7 +1715,7 @@ func (s *Service) SyncUpstreamAccountModels(ctx context.Context, accountID int64
 	if account.AccountType != AccountTypeAPIUpstream {
 		return nil, AccountModelSyncSummary{}, ErrInvalidInput
 	}
-	selected, err := s.selectedAccount(ctx, account)
+	selected, err := s.selectedAccountForModelSync(ctx, account)
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
 	}
@@ -1591,7 +1771,15 @@ func (s *Service) SyncUpstreamAccountModels(ctx context.Context, accountID int64
 		return nil, AccountModelSyncSummary{}, err
 	}
 
-	return s.repo.SyncAccountModels(ctx, s.cfg.Provider, accountID, normalized, time.Now().UTC())
+	syncCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionProviderAccountModelsSynced,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   providerAccountTarget(accountID, accountDisplayName(account)),
+		Metadata: map[string]any{"upstream_model_count": len(normalized)},
+	})
+	return s.repo.SyncAccountModels(syncCtx, s.cfg.Provider, accountID, normalized, time.Now().UTC())
 }
 
 func upstreamModelsURL(baseURL string) string {
@@ -1640,13 +1828,16 @@ func (s *Service) RecordAccountFailure(ctx context.Context, accountID int64, sta
 	switch {
 	case statusCode == http.StatusTooManyRequests:
 		until := retryAfterTime(retryAfter, now, time.Minute)
+		ctx = withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountRateLimited, accountID, AccountStatusRateLimited))
 		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusRateLimited, reason, now, &until, nil)
 	case statusCode == http.StatusForbidden && isEndpointPermissionError(reason):
 		return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
 	case statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden:
+		ctx = withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountExpired, accountID, AccountStatusExpired))
 		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusExpired, reason, now, nil, nil)
 	case statusCode >= http.StatusInternalServerError:
 		until := now.Add(defaultCircuitOpen)
+		ctx = withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountCircuitOpened, accountID, AccountStatusCircuitOpen))
 		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusCircuitOpen, reason, now, nil, &until)
 	default:
 		return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
@@ -1691,12 +1882,13 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 			until := now.Add(defaultCircuitOpen)
 			openUntil = &until
 		}
-		if markErr := s.repo.RecordRefreshFailure(ctx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
+		failureCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, RefreshTriggerManual, false, openUntil))
+		if markErr := s.repo.RecordRefreshFailure(failureCtx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
 			return Account{}, markErr
 		}
 		return Account{}, err
 	}
-	refreshed, err := s.storeTokenResponse(ctx, tokens, &account)
+	refreshed, err := s.storeTokenResponse(ctx, tokens, &account, RefreshTriggerManual)
 	if err != nil {
 		return Account{}, err
 	}
@@ -1713,10 +1905,10 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 		return Account{}, err
 	}
 
-	selected, err := s.selectedAccount(ctx, account)
+	selected, err := s.selectedAccountForAccountTest(ctx, account)
 	if err != nil {
 		now := time.Now()
-		if markErr := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusFailed, err.Error(), now); markErr != nil {
+		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, err.Error(), now); markErr != nil {
 			return Account{}, markErr
 		}
 		if markErr := s.recordSelectionFailure(ctx, account.ID, err); markErr != nil {
@@ -1743,10 +1935,11 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	if err != nil {
 		now := time.Now()
 		until := now.Add(defaultCircuitOpen)
-		if markErr := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusFailed, err.Error(), now); markErr != nil {
+		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, err.Error(), now); markErr != nil {
 			return Account{}, markErr
 		}
-		if markErr := s.repo.RecordAccountStatus(ctx, s.cfg.Provider, account.ID, AccountStatusCircuitOpen, err.Error(), now, nil, &until); markErr != nil {
+		statusCtx := withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountCircuitOpened, account.ID, AccountStatusCircuitOpen))
+		if markErr := s.repo.RecordAccountStatus(statusCtx, s.cfg.Provider, account.ID, AccountStatusCircuitOpen, err.Error(), now, nil, &until); markErr != nil {
 			return Account{}, markErr
 		}
 		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
@@ -1757,7 +1950,7 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 		if message == "" {
 			message = http.StatusText(result.statusCode)
 		}
-		if markErr := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusFailed, message, now); markErr != nil {
+		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, message, now); markErr != nil {
 			return Account{}, markErr
 		}
 		if err := s.RecordAccountFailure(ctx, account.ID, result.statusCode, result.retryAfter, result.message); err != nil {
@@ -1765,10 +1958,36 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 		}
 		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 	}
-	if err := s.repo.RecordAccountTestResult(ctx, s.cfg.Provider, account.ID, AccountTestStatusPassed, "", time.Now()); err != nil {
+	if err := s.recordAccountTestResult(ctx, account, AccountTestStatusPassed, "", time.Now()); err != nil {
 		return Account{}, err
 	}
-	return s.ResetAccountStatus(ctx, account.ID)
+	recoveryCtx := withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountRecovered, account.ID, AccountStatusActive))
+	recovered, err := s.repo.UpdateAccount(recoveryCtx, s.cfg.Provider, account.ID, AccountUpdate{ClearStatus: true})
+	if err != nil {
+		return Account{}, err
+	}
+	return s.withProxySummary(recovered), nil
+}
+
+func (s *Service) recordAccountTestResult(ctx context.Context, account Account, status, message string, at time.Time) error {
+	severity := systemevent.SeverityInfo
+	outcome := systemevent.OutcomeSuccess
+	errorCode := ""
+	if status != AccountTestStatusPassed {
+		severity = systemevent.SeverityWarning
+		outcome = systemevent.OutcomeFailure
+		errorCode = "provider_account_test_failed"
+	}
+	testCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category:  systemevent.CategoryAudit,
+		Severity:  severity,
+		Action:    systemevent.ActionProviderAccountTested,
+		Outcome:   outcome,
+		Target:    providerAccountTarget(account.ID, accountDisplayName(account)),
+		ErrorCode: errorCode,
+		Metadata:  map[string]any{"test_status": status},
+	})
+	return s.repo.RecordAccountTestResult(testCtx, s.cfg.Provider, account.ID, status, message, at)
 }
 
 func (s *Service) logAccountTestRequest(ctx context.Context, selected SelectedAccount, model, route, method string, statusCode int, errorCode string, startedAt time.Time) {
@@ -1879,15 +2098,27 @@ func (s *Service) TestAccounts(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 	tested := make([]Account, 0, len(accounts))
-	for _, account := range accounts {
+	for index, account := range accounts {
 		updated, err := s.TestAccount(ctx, account.ID)
 		if err != nil {
-			return nil, err
+			return tested, &accountBatchError{
+				Err: err, Requested: len(accounts), Attempted: index + 1,
+				Succeeded: len(tested), Failed: 1, Skipped: len(accounts) - index - 1,
+			}
 		}
 		tested = append(tested, updated)
 	}
 	return tested, nil
 }
+
+type accountBatchError struct {
+	Err                                     error
+	Requested, Attempted, Succeeded, Failed int
+	Skipped                                 int
+}
+
+func (e *accountBatchError) Error() string { return e.Err.Error() }
+func (e *accountBatchError) Unwrap() error { return e.Err }
 
 func (s *Service) ListAccountTestResults(ctx context.Context, id int64, limit int) ([]AccountTestResult, error) {
 	if id <= 0 {
@@ -1920,7 +2151,8 @@ func (s *Service) PauseAccountScheduling(ctx context.Context, id int64, duration
 	}
 	now := time.Now()
 	until := now.Add(duration)
-	if err := s.repo.RecordAccountStatus(ctx, s.cfg.Provider, id, AccountStatusCircuitOpen, "manually paused", now, nil, &until); err != nil {
+	pauseCtx := withProviderEventIntent(ctx, providerAuditIntent(systemevent.ActionProviderAccountPaused, id, ""))
+	if err := s.repo.RecordAccountStatus(pauseCtx, s.cfg.Provider, id, AccountStatusCircuitOpen, "manually paused", now, nil, &until); err != nil {
 		return Account{}, err
 	}
 	return s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
@@ -1962,10 +2194,10 @@ func (s *Service) AccessToken(ctx context.Context) (string, error) {
 }
 
 func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (string, error) {
-	return s.accessTokenForAccount(ctx, account, true)
+	return s.accessTokenForAccount(ctx, account, RefreshTriggerGatewayRequest, true)
 }
 
-func (s *Service) accessTokenForAccount(ctx context.Context, account Account, recordRefreshFailure bool) (string, error) {
+func (s *Service) accessTokenForAccount(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, error) {
 	account = normalizeAccountCredentialFields(account)
 	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
 		return secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
@@ -2001,17 +2233,25 @@ func (s *Service) accessTokenForAccount(ctx context.Context, account Account, re
 				until := now.Add(defaultCircuitOpen)
 				openUntil = &until
 			}
-			if markErr := s.repo.RecordRefreshFailure(ctx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
+			failureCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, false, openUntil))
+			if markErr := s.repo.RecordRefreshFailure(failureCtx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
 				return "", markErr
+			}
+		} else if account.ID > 0 {
+			failureCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, false, nil))
+			if recorder, ok := s.repo.(oauthRefreshFailureEventRecorder); ok {
+				if recordErr := recorder.RecordOAuthRefreshFailureEvent(failureCtx, s.cfg.Provider, account.ID); recordErr != nil {
+					return "", recordErr
+				}
 			}
 		}
 		return "", err
 	}
 	var refreshed Account
 	if recordRefreshFailure {
-		refreshed, err = s.storeTokenResponse(ctx, tokens, &account)
+		refreshed, err = s.storeTokenResponse(ctx, tokens, &account, trigger)
 	} else {
-		refreshed, err = s.storeTokenResponseForDiagnostic(ctx, tokens, &account)
+		refreshed, err = s.storeTokenResponseForDiagnostic(ctx, tokens, &account, trigger)
 	}
 	if err != nil {
 		return "", err
@@ -2658,6 +2898,7 @@ func (s *Service) recordSelectionFailure(ctx context.Context, accountID int64, e
 	}
 	if errors.Is(err, ErrInvalidInput) {
 		until := now.Add(defaultCircuitOpen)
+		ctx = withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountCircuitOpened, accountID, AccountStatusCircuitOpen))
 		return s.repo.RecordAccountStatus(ctx, s.cfg.Provider, accountID, AccountStatusCircuitOpen, reason, now, nil, &until)
 	}
 	return s.repo.MarkAccountError(ctx, s.cfg.Provider, accountID, reason, now)
@@ -2667,18 +2908,27 @@ func (s *Service) RecordAccountUsed(ctx context.Context, accountID int64) error 
 	if accountID <= 0 {
 		return ErrInvalidInput
 	}
+	ctx = withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountRecovered, accountID, AccountStatusActive))
 	return s.repo.MarkAccountUsed(ctx, s.cfg.Provider, accountID, time.Now())
 }
 
 func (s *Service) selectedAccount(ctx context.Context, account Account) (SelectedAccount, error) {
-	return s.selectedAccountWithRefreshFailureRecording(ctx, account, true)
+	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerGatewayRequest, true)
+}
+
+func (s *Service) selectedAccountForAccountTest(ctx context.Context, account Account) (SelectedAccount, error) {
+	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerAccountTest, true)
+}
+
+func (s *Service) selectedAccountForModelSync(ctx context.Context, account Account) (SelectedAccount, error) {
+	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerModelSync, true)
 }
 
 func (s *Service) selectedAccountForDiagnostic(ctx context.Context, account Account) (SelectedAccount, error) {
-	return s.selectedAccountWithRefreshFailureRecording(ctx, account, false)
+	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerModelTest, false)
 }
 
-func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context, account Account, recordRefreshFailure bool) (SelectedAccount, error) {
+func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (SelectedAccount, error) {
 	account = normalizeAccountCredentialFields(account)
 	accountType := strings.TrimSpace(account.AccountType)
 	if accountType == "" {
@@ -2701,7 +2951,7 @@ func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context
 	}
 	switch accountType {
 	case AccountTypeCodexOAuth:
-		token, err := s.accessTokenForAccount(ctx, account, recordRefreshFailure)
+		token, err := s.accessTokenForAccount(ctx, account, trigger, recordRefreshFailure)
 		if err != nil {
 			return SelectedAccount{}, err
 		}
@@ -3017,15 +3267,15 @@ func (s *Service) lockAccountRefresh(accountID int64) func() {
 	return lock.Unlock
 }
 
-func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, previous *Account) (Account, error) {
-	return s.storeTokenResponseWithMode(ctx, tokens, previous, false)
+func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger) (Account, error) {
+	return s.storeTokenResponseWithMode(ctx, tokens, previous, trigger, false)
 }
 
-func (s *Service) storeTokenResponseForDiagnostic(ctx context.Context, tokens TokenResponse, previous *Account) (Account, error) {
-	return s.storeTokenResponseWithMode(ctx, tokens, previous, true)
+func (s *Service) storeTokenResponseForDiagnostic(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger) (Account, error) {
+	return s.storeTokenResponseWithMode(ctx, tokens, previous, trigger, true)
 }
 
-func (s *Service) storeTokenResponseWithMode(ctx context.Context, tokens TokenResponse, previous *Account, credentialOnly bool) (Account, error) {
+func (s *Service) storeTokenResponseWithMode(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger, credentialOnly bool) (Account, error) {
 	if strings.TrimSpace(tokens.AccessToken) == "" {
 		return Account{}, errors.New("oauth token response missing access token")
 	}
@@ -3128,12 +3378,14 @@ func (s *Service) storeTokenResponseWithMode(ctx context.Context, tokens TokenRe
 		if previous == nil || previous.ID <= 0 {
 			return Account{}, ErrInvalidInput
 		}
-		if err := s.repo.UpdateOAuthCredential(ctx, s.cfg.Provider, previous.ID, account.Credential); err != nil {
+		refreshCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, true, nil))
+		if err := s.repo.UpdateOAuthCredential(refreshCtx, s.cfg.Provider, previous.ID, account.Credential); err != nil {
 			return Account{}, err
 		}
 		return s.repo.FindAccountByID(ctx, s.cfg.Provider, previous.ID)
 	}
-	saved, err := s.repo.SaveAccount(ctx, account)
+	refreshCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, true, nil))
+	saved, err := s.repo.SaveAccount(refreshCtx, account)
 	if err != nil {
 		return Account{}, err
 	}
@@ -3165,7 +3417,14 @@ func (s *Service) storeCallbackTokenResponse(ctx context.Context, tokens TokenRe
 		return Account{}, err
 	}
 	applyOAuthStateToAccount(&account, state, previous)
-	return s.repo.SaveAccount(ctx, account)
+	callbackCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryOAuth,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionOAuthCallbackCompleted,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   providerAccountTarget(account.ID, accountDisplayName(account)),
+	})
+	return s.repo.SaveAccount(callbackCtx, account)
 }
 
 func AccountSchedulable(account Account, now time.Time) bool {

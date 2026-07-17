@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 func TestStatusReportsConfigurationAndConnection(t *testing.T) {
@@ -3550,6 +3551,117 @@ func TestRecordAccountUsedReturnsMarkAccountUsedFailure(t *testing.T) {
 	}
 }
 
+func TestProviderServiceAttachesLifecycleIntentsAndPreservesBatchID(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{testAccount(t, 7, true, 3, "access-token")}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	ctx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Metadata: map[string]any{"batch_id": "batch-123"},
+	})
+	enabled := false
+	if _, err := service.UpdateAccount(ctx, 7, AccountUpdate{Enabled: &enabled}); err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if len(repo.intents) != 1 {
+		t.Fatalf("captured intents = %d, want 1", len(repo.intents))
+	}
+	intent := repo.intents[0]
+	if intent.Action != systemevent.ActionProviderAccountUpdated || intent.Target.ID != "7" || intent.Metadata["batch_id"] != "batch-123" {
+		t.Fatalf("intent = %+v, want provider update with batch ID", intent)
+	}
+	if err := systemevent.ValidateIntent(intent); err != nil {
+		t.Fatalf("ValidateIntent returned error: %v", err)
+	}
+}
+
+func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testing.T) {
+	expired := time.Now().Add(-time.Minute)
+	for _, testCase := range []struct {
+		name        string
+		refresh     func(*Service, Account) error
+		wantAction  systemevent.Action
+		wantTrigger string
+	}{
+		{
+			name: "manual",
+			refresh: func(service *Service, account Account) error {
+				_, err := service.RefreshAccount(context.Background(), account.ID)
+				return err
+			},
+			wantAction:  systemevent.ActionOAuthRefreshManualFailed,
+			wantTrigger: string(RefreshTriggerManual),
+		},
+		{
+			name: "gateway request",
+			refresh: func(service *Service, account Account) error {
+				_, err := service.AccessTokenForAccount(context.Background(), account)
+				return err
+			},
+			wantAction:  systemevent.ActionOAuthRefreshAutomaticFailed,
+			wantTrigger: string(RefreshTriggerGatewayRequest),
+		},
+		{
+			name: "model test",
+			refresh: func(service *Service, account Account) error {
+				_, err := service.selectedAccountForDiagnostic(context.Background(), account)
+				return err
+			},
+			wantAction:  systemevent.ActionOAuthRefreshAutomaticFailed,
+			wantTrigger: string(RefreshTriggerModelTest),
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
+			repo.accounts = []Account{account}
+			service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("raw upstream refresh failure")})
+			if err := testCase.refresh(service, account); err == nil {
+				t.Fatal("refresh returned nil error, want upstream failure")
+			}
+			if len(repo.intents) == 0 {
+				t.Fatal("refresh did not attach an event intent")
+			}
+			intent := repo.intents[len(repo.intents)-1]
+			if intent.Action != testCase.wantAction || intent.Metadata["trigger"] != testCase.wantTrigger {
+				t.Fatalf("intent = %+v, want action %q trigger %q", intent, testCase.wantAction, testCase.wantTrigger)
+			}
+			encoded, err := json.Marshal(intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{"raw upstream refresh failure", "old-access", "old-refresh"} {
+				if strings.Contains(string(encoded), forbidden) {
+					t.Fatalf("intent contains sensitive/raw value %q: %s", forbidden, encoded)
+				}
+			}
+			if err := systemevent.ValidateIntent(intent); err != nil {
+				t.Fatalf("ValidateIntent returned error: %v", err)
+			}
+		})
+	}
+}
+
+func TestStartConnectAttachesOAuthIntentWithoutAuthorizationMaterial(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.defaultFingerprintProfileID = 9
+	service := newConfiguredService(repo, fakeOAuthClient{})
+	if _, err := service.StartConnect(context.Background(), ConnectOptions{}); err != nil {
+		t.Fatalf("StartConnect returned error: %v", err)
+	}
+	if len(repo.intents) != 1 || repo.intents[0].Action != systemevent.ActionOAuthConnectStarted {
+		t.Fatalf("intents = %+v, want oauth connect started", repo.intents)
+	}
+	encoded, err := json.Marshal(repo.intents[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"authorize", "state", "verifier", "challenge"} {
+		if strings.Contains(strings.ToLower(string(encoded)), forbidden) {
+			t.Fatalf("connect intent contains forbidden material %q: %s", forbidden, encoded)
+		}
+	}
+}
+
 type memoryRepo struct {
 	accounts            []Account
 	accountModels       map[int64][]AccountModel
@@ -3568,6 +3680,13 @@ type memoryRepo struct {
 	markAccountUsedErr                   error
 	replaceModelsErr                     error
 	lastSavedAccount                     Account
+	intents                              []systemevent.EventIntent
+}
+
+func (r *memoryRepo) captureIntent(ctx context.Context) {
+	if intent, ok := systemevent.IntentFromContext(ctx); ok {
+		r.intents = append(r.intents, intent)
+	}
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -3665,6 +3784,7 @@ func (r *memoryRepo) FindAccountByIdentity(ctx context.Context, providerName str
 }
 
 func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account, error) {
+	r.captureIntent(ctx)
 	r.saveCount++
 	r.lastSavedAccount = account
 	normalizeMemoryAccount(&account)
@@ -3760,6 +3880,7 @@ func normalizeMemoryAccount(account *Account) {
 }
 
 func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id int64, update AccountUpdate) (Account, error) {
+	r.captureIntent(ctx)
 	for i := range r.accounts {
 		if r.accounts[i].Provider != providerName || r.accounts[i].ID != id {
 			continue
@@ -3809,6 +3930,7 @@ func (r *memoryRepo) UpdateAccount(ctx context.Context, providerName string, id 
 }
 
 func (r *memoryRepo) DeleteAccount(ctx context.Context, providerName string, id int64) error {
+	r.captureIntent(ctx)
 	for i := range r.accounts {
 		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
 			r.accounts = append(r.accounts[:i], r.accounts[i+1:]...)
@@ -3819,6 +3941,7 @@ func (r *memoryRepo) DeleteAccount(ctx context.Context, providerName string, id 
 }
 
 func (r *memoryRepo) DeleteAccounts(ctx context.Context, providerName string) error {
+	r.captureIntent(ctx)
 	kept := r.accounts[:0]
 	for _, account := range r.accounts {
 		if account.Provider != providerName {
@@ -3882,6 +4005,7 @@ func (r *memoryRepo) MarkAccountError(ctx context.Context, providerName string, 
 }
 
 func (r *memoryRepo) RecordRefreshFailure(ctx context.Context, providerName string, id int64, message string, at time.Time, openUntil *time.Time) error {
+	r.captureIntent(ctx)
 	for i := range r.accounts {
 		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
 			r.accounts[i].FailureCount++
@@ -3898,7 +4022,13 @@ func (r *memoryRepo) RecordRefreshFailure(ctx context.Context, providerName stri
 	return ErrNotConnected
 }
 
+func (r *memoryRepo) RecordOAuthRefreshFailureEvent(ctx context.Context, _ string, _ int64) error {
+	r.captureIntent(ctx)
+	return nil
+}
+
 func (r *memoryRepo) RecordAccountStatus(ctx context.Context, providerName string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error {
+	r.captureIntent(ctx)
 	for i := range r.accounts {
 		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
 			r.accounts[i].Status = status
@@ -3917,6 +4047,7 @@ func (r *memoryRepo) RecordAccountStatus(ctx context.Context, providerName strin
 }
 
 func (r *memoryRepo) RecordAccountTestResult(ctx context.Context, providerName string, id int64, status, message string, at time.Time) error {
+	r.captureIntent(ctx)
 	for i := range r.accounts {
 		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
 			r.accounts[i].LastTestAt = &at
@@ -3971,6 +4102,7 @@ func (r *memoryRepo) UpdateOAuthCredential(_ context.Context, providerName strin
 }
 
 func (r *memoryRepo) RecordAccountModelTestResult(ctx context.Context, providerName string, result AccountModelTestResult) error {
+	r.captureIntent(ctx)
 	models := r.accountModels[result.AccountID]
 	for i := range models {
 		if models[i].Provider == providerName && models[i].Model == result.Model {
@@ -4024,6 +4156,7 @@ func (r *memoryRepo) ListAccountModels(ctx context.Context, providerName string,
 }
 
 func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput) ([]AccountModel, error) {
+	r.captureIntent(ctx)
 	if r.replaceModelsErr != nil {
 		return nil, r.replaceModelsErr
 	}
@@ -4050,6 +4183,7 @@ func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName stri
 }
 
 func (r *memoryRepo) SyncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error) {
+	r.captureIntent(ctx)
 	normalized, err := normalizeAccountModelInputs(inputs)
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
@@ -4352,6 +4486,7 @@ func routingPoolSessionBindingKey(providerName string, routingPoolID int64, mode
 }
 
 func (r *memoryRepo) CreateState(ctx context.Context, state OAuthState) error {
+	r.captureIntent(ctx)
 	if state.CodeVerifier != "" && state.CodeVerifierHash == "" {
 		panic("state with code verifier must also include code verifier hash")
 	}

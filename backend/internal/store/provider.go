@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,6 +20,51 @@ type ProviderRepository struct {
 
 func NewProviderRepository(pool *pgxpool.Pool) *ProviderRepository {
 	return &ProviderRepository{pool: pool}
+}
+
+func insertProviderIntent(ctx context.Context, tx pgx.Tx, target systemevent.Target, _ time.Time) error {
+	return insertIntentSystemEvent(ctx, tx, target, nil)
+}
+
+func providerAccountEventTarget(id int64, name string) systemevent.Target {
+	return systemevent.Target{
+		Type: "provider_account",
+		ID:   strconv.FormatInt(id, 10),
+		Name: strings.TrimSpace(name),
+	}
+}
+
+func providerAccountEventTargetTx(ctx context.Context, tx pgx.Tx, providerName string, id int64) (systemevent.Target, error) {
+	var name string
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(name, ''), display_name)
+		FROM provider_accounts
+		WHERE provider = $1 AND id = $2
+	`, providerName, id).Scan(&name)
+	if err != nil {
+		return systemevent.Target{}, err
+	}
+	return providerAccountEventTarget(id, name), nil
+}
+
+func withRefreshExpiryMetadata(ctx context.Context, previous, current *time.Time) context.Context {
+	intent, ok := systemevent.IntentFromContext(ctx)
+	if !ok || (intent.Action != systemevent.ActionOAuthRefreshManualSucceeded && intent.Action != systemevent.ActionOAuthRefreshAutomaticSucceeded) {
+		return ctx
+	}
+	metadata := make(map[string]any, len(intent.Metadata)+2)
+	for key, value := range intent.Metadata {
+		metadata[key] = value
+	}
+	delete(metadata, "expiry_at")
+	if previous != nil {
+		metadata["previous_expiry_at"] = previous.UTC()
+	}
+	if current != nil {
+		metadata["new_expiry_at"] = current.UTC()
+	}
+	intent.Metadata = metadata
+	return systemevent.WithIntent(ctx, intent)
 }
 
 const providerAccountColumns = `
@@ -610,6 +657,7 @@ func (r *ProviderRepository) UpsertSessionBindingInRoutingPool(ctx context.Conte
 }
 
 func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.Account) (provider.Account, error) {
+	started := time.Now()
 	normalizeAccountForSave(&account)
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -618,8 +666,18 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 	defer tx.Rollback(ctx)
 
 	if account.ID > 0 {
+		var previousExpiry *time.Time
+		err = tx.QueryRow(ctx, `
+			SELECT access_token_expires_at
+			FROM provider_account_credentials
+			WHERE account_id = $1
+			FOR UPDATE
+		`, account.ID).Scan(&previousExpiry)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return provider.Account{}, err
+		}
 		var updatedID int64
-		err := tx.QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
 			UPDATE provider_accounts
 			SET
 				account_type = $3,
@@ -672,6 +730,14 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			return provider.Account{}, err
 		}
 		if err := upsertProviderAccountCredential(ctx, tx, account); err != nil {
+			return provider.Account{}, err
+		}
+		targetName := account.Name
+		if strings.TrimSpace(targetName) == "" {
+			targetName = account.DisplayName
+		}
+		eventCtx := withRefreshExpiryMetadata(ctx, previousExpiry, account.AccessTokenExpiresAt)
+		if err := insertProviderIntent(eventCtx, tx, providerAccountEventTarget(account.ID, targetName), started); err != nil {
 			return provider.Account{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -743,6 +809,13 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 	if err := upsertProviderAccountCredential(ctx, tx, account); err != nil {
 		return provider.Account{}, err
 	}
+	targetName := account.Name
+	if strings.TrimSpace(targetName) == "" {
+		targetName = account.DisplayName
+	}
+	if err := insertProviderIntent(ctx, tx, providerAccountEventTarget(savedID, targetName), started); err != nil {
+		return provider.Account{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return provider.Account{}, err
 	}
@@ -754,8 +827,29 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 }
 
 func (r *ProviderRepository) UpdateOAuthCredential(ctx context.Context, providerName string, accountID int64, credential provider.AccountCredential) error {
+	started := time.Now()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var previousExpiry *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT c.access_token_expires_at
+		FROM provider_account_credentials c
+		JOIN provider_accounts a ON a.id = c.account_id
+		WHERE a.provider = $1 AND c.account_id = $2
+		FOR UPDATE
+	`, providerName, accountID).Scan(&previousExpiry)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	if err != nil {
+		return err
+	}
+
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE provider_account_credentials c
 		SET
 			encrypted_access_token = $3,
@@ -785,15 +879,42 @@ func (r *ProviderRepository) UpdateOAuthCredential(ctx context.Context, provider
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.ErrNotConnected
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	target, err := providerAccountEventTargetTx(ctx, tx, providerName, accountID)
+	if err != nil {
+		return err
+	}
+	eventCtx := withRefreshExpiryMetadata(ctx, previousExpiry, credential.AccessTokenExpiresAt)
+	if err := insertProviderIntent(eventCtx, tx, target, started); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName string, id int64, update provider.AccountUpdate) (provider.Account, error) {
+	started := time.Now()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return provider.Account{}, err
 	}
 	defer tx.Rollback(ctx)
+	var previousStatus, previousLastError string
+	var previousFailureCount int
+	var previousCircuitOpenUntil, previousRateLimitedUntil *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT status, last_error, failure_count, circuit_open_until, rate_limited_until
+		FROM provider_accounts
+		WHERE provider = $1 AND id = $2
+		FOR UPDATE
+	`, providerName, id).Scan(&previousStatus, &previousLastError, &previousFailureCount, &previousCircuitOpenUntil, &previousRateLimitedUntil)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.Account{}, provider.ErrNotConnected
+	}
+	if err != nil {
+		return provider.Account{}, err
+	}
 
 	row := tx.QueryRow(ctx, `
 		UPDATE provider_accounts
@@ -838,6 +959,19 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 			return provider.Account{}, err
 		}
 	}
+	target, err := providerAccountEventTargetTx(ctx, tx, providerName, updatedID)
+	if err != nil {
+		return provider.Account{}, err
+	}
+	emitEvent := true
+	if intent, ok := systemevent.IntentFromContext(ctx); ok && intent.Category == systemevent.CategoryRuntime && update.ClearStatus {
+		emitEvent = previousStatus != provider.AccountStatusActive || previousLastError != "" || previousFailureCount != 0 || previousCircuitOpenUntil != nil || previousRateLimitedUntil != nil
+	}
+	if emitEvent {
+		if err := insertProviderIntent(ctx, tx, target, started); err != nil {
+			return provider.Account{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return provider.Account{}, err
 	}
@@ -845,33 +979,106 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 }
 
 func (r *ProviderRepository) DeleteAccount(ctx context.Context, providerName string, id int64) error {
-	var deletedID int64
-	err := r.pool.QueryRow(ctx, `
-		DELETE FROM provider_accounts
-		WHERE provider = $1
-			AND id = $2
-		RETURNING id
-	`, providerName, id).Scan(&deletedID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return provider.ErrNotConnected
-	}
-	return err
-}
-
-func (r *ProviderRepository) DeleteAccounts(ctx context.Context, providerName string) error {
-	_, err := r.pool.Exec(ctx, `
-		DELETE FROM provider_accounts
-		WHERE provider = $1
-	`, providerName)
-	return err
-}
-
-func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {
+	started := time.Now()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	var deletedID int64
+	var deletedName string
+	err = tx.QueryRow(ctx, `
+		DELETE FROM provider_accounts
+		WHERE provider = $1
+			AND id = $2
+		RETURNING id, COALESCE(NULLIF(name, ''), display_name)
+	`, providerName, id).Scan(&deletedID, &deletedName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	if err != nil {
+		return err
+	}
+	if err := insertProviderIntent(ctx, tx, providerAccountEventTarget(deletedID, deletedName), started); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *ProviderRepository) DeleteAccounts(ctx context.Context, providerName string) error {
+	started := time.Now()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, `
+		DELETE FROM provider_accounts
+		WHERE provider = $1
+		RETURNING id
+	`, providerName)
+	if err != nil {
+		return err
+	}
+	deletedIDs := make([]int64, 0)
+	deletedCount := 0
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		deletedCount++
+		if len(deletedIDs) < 100 {
+			deletedIDs = append(deletedIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if intent, ok := systemevent.IntentFromContext(ctx); ok {
+		metadata := make(map[string]any, len(intent.Metadata)+2)
+		for key, value := range intent.Metadata {
+			metadata[key] = value
+		}
+		metadata["deleted_count"] = deletedCount
+		metadata["target_ids"] = deletedIDs
+		intent.Metadata = metadata
+		ctx = systemevent.WithIntent(ctx, intent)
+	}
+	if err := insertProviderIntent(ctx, tx, systemevent.Target{Type: "provider", ID: providerName, Name: providerName}, started); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {
+	started := time.Now()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var targetName, previousStatus, previousLastError string
+	var previousFailureCount int
+	var previousCircuitOpenUntil, previousRateLimitedUntil *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(name, ''), display_name), status, last_error, failure_count,
+			circuit_open_until, rate_limited_until
+		FROM provider_accounts
+		WHERE provider = $1 AND id = $2
+		FOR UPDATE
+	`, providerName, id).Scan(&targetName, &previousStatus, &previousLastError, &previousFailureCount, &previousCircuitOpenUntil, &previousRateLimitedUntil)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	if err != nil {
+		return err
+	}
 
 	var updatedID int64
 	err = tx.QueryRow(ctx, `
@@ -907,6 +1114,12 @@ func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName s
 	if err != nil {
 		return err
 	}
+	stateChanged := previousStatus != provider.AccountStatusActive || previousLastError != "" || previousFailureCount != 0 || previousCircuitOpenUntil != nil || previousRateLimitedUntil != nil
+	if stateChanged {
+		if err := insertProviderIntent(ctx, tx, providerAccountEventTarget(id, targetName), started); err != nil {
+			return err
+		}
+	}
 	return tx.Commit(ctx)
 }
 
@@ -929,11 +1142,26 @@ func (r *ProviderRepository) MarkAccountError(ctx context.Context, providerName 
 }
 
 func (r *ProviderRepository) RecordRefreshFailure(ctx context.Context, providerName string, id int64, message string, at time.Time, openUntil *time.Time) error {
+	started := time.Now()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var targetName, previousStatus string
+	var previousFailureCount int
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(name, ''), display_name), status, failure_count
+		FROM provider_accounts
+		WHERE provider = $1 AND id = $2
+		FOR UPDATE
+	`, providerName, id).Scan(&targetName, &previousStatus, &previousFailureCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	if err != nil {
+		return err
+	}
 
 	var updatedID int64
 	err = tx.QueryRow(ctx, `
@@ -965,12 +1193,80 @@ func (r *ProviderRepository) RecordRefreshFailure(ctx context.Context, providerN
 	if err != nil {
 		return err
 	}
+	if intent, ok := systemevent.IntentFromContext(ctx); ok {
+		metadata := make(map[string]any, len(intent.Metadata)+1)
+		for key, value := range intent.Metadata {
+			metadata[key] = value
+		}
+		metadata["failure_count"] = previousFailureCount + 1
+		intent.Metadata = metadata
+		ctx = systemevent.WithIntent(ctx, intent)
+	}
+	target := providerAccountEventTarget(id, targetName)
+	if err := insertProviderIntent(ctx, tx, target, started); err != nil {
+		return err
+	}
+	if openUntil != nil && previousStatus != provider.AccountStatusCircuitOpen {
+		runtimeIntent := systemevent.EventIntent{
+			Category: systemevent.CategoryRuntime,
+			Severity: systemevent.SeverityWarning,
+			Action:   systemevent.ActionProviderAccountCircuitOpened,
+			Outcome:  systemevent.OutcomeSuccess,
+			Target:   target,
+			Metadata: map[string]any{"status": provider.AccountStatusCircuitOpen, "circuit_open_until": openUntil.UTC()},
+		}
+		runtimeEvent := systemevent.BuildEvent(ctx, runtimeIntent, target, time.Now().UTC(), time.Since(started))
+		if err := InsertSystemEventTx(ctx, tx, runtimeEvent); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *ProviderRepository) RecordOAuthRefreshFailureEvent(ctx context.Context, providerName string, accountID int64) error {
+	started := time.Now()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	target, err := providerAccountEventTargetTx(ctx, tx, providerName, accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	if err != nil {
+		return err
+	}
+	if err := insertProviderIntent(ctx, tx, target, started); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerName string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error {
+	started := time.Now()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var targetName, previousStatus string
+	var previousRateLimitedUntil, previousCircuitOpenUntil *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(name, ''), display_name), status, rate_limited_until, circuit_open_until
+		FROM provider_accounts
+		WHERE provider = $1 AND id = $2
+		FOR UPDATE
+	`, providerName, id).Scan(&targetName, &previousStatus, &previousRateLimitedUntil, &previousCircuitOpenUntil)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return provider.ErrNotConnected
+	}
+	if err != nil {
+		return err
+	}
+
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE provider_accounts
 		SET
 			status = $3,
@@ -988,10 +1284,27 @@ func (r *ProviderRepository) RecordAccountStatus(ctx context.Context, providerNa
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.ErrNotConnected
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	stateChanged := previousStatus != status || !sameOptionalTime(previousRateLimitedUntil, rateLimitedUntil) || !sameOptionalTime(previousCircuitOpenUntil, circuitOpenUntil)
+	if stateChanged {
+		if err := insertProviderIntent(ctx, tx, providerAccountEventTarget(id, targetName), started); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func sameOptionalTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.UTC().Truncate(time.Microsecond).Equal(right.UTC().Truncate(time.Microsecond))
 }
 
 func (r *ProviderRepository) RecordAccountTestResult(ctx context.Context, providerName string, id int64, status, message string, at time.Time) error {
+	started := time.Now()
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -1025,12 +1338,26 @@ func (r *ProviderRepository) RecordAccountTestResult(ctx context.Context, provid
 	if err != nil {
 		return err
 	}
+	target, err := providerAccountEventTargetTx(ctx, tx, providerName, id)
+	if err != nil {
+		return err
+	}
+	if err := insertProviderIntent(ctx, tx, target, started); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) RecordAccountModelTestResult(ctx context.Context, providerName string, result provider.AccountModelTestResult) error {
+	started := time.Now()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE provider_account_models
 		SET
 			last_test_at = $4,
@@ -1047,7 +1374,17 @@ func (r *ProviderRepository) RecordAccountModelTestResult(ctx context.Context, p
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.ErrNotConnected
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	target, err := providerAccountEventTargetTx(ctx, tx, providerName, result.AccountID)
+	if err != nil {
+		return err
+	}
+	if err := insertProviderIntent(ctx, tx, target, started); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) ListAccountTestResults(ctx context.Context, providerName string, accountID int64, limit int) ([]provider.AccountTestResult, error) {
@@ -1098,6 +1435,7 @@ func (r *ProviderRepository) ListAccountTestResults(ctx context.Context, provide
 }
 
 func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput, seenAt time.Time) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	started := time.Now()
 	models, err := normalizeAccountModelInputs(inputs)
 	if err != nil {
 		return nil, provider.AccountModelSyncSummary{}, err
@@ -1238,6 +1576,25 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 	if err := rows.Err(); err != nil {
 		return nil, provider.AccountModelSyncSummary{}, err
 	}
+	target, err := providerAccountEventTargetTx(ctx, tx, providerName, accountID)
+	if err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
+	if intent, ok := systemevent.IntentFromContext(ctx); ok {
+		metadata := make(map[string]any, len(intent.Metadata)+4)
+		for key, value := range intent.Metadata {
+			metadata[key] = value
+		}
+		metadata["total"] = summary.Total
+		metadata["new"] = summary.New
+		metadata["preserved"] = summary.Preserved
+		metadata["skipped_manual"] = summary.SkippedManual
+		intent.Metadata = metadata
+		ctx = systemevent.WithIntent(ctx, intent)
+	}
+	if err := insertProviderIntent(ctx, tx, target, started); err != nil {
+		return nil, provider.AccountModelSyncSummary{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, provider.AccountModelSyncSummary{}, err
 	}
@@ -1283,6 +1640,7 @@ func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName
 }
 
 func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput) ([]provider.AccountModel, error) {
+	started := time.Now()
 	models, err := normalizeAccountModelInputs(inputs)
 	if err != nil {
 		return nil, err
@@ -1394,6 +1752,13 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 		saved = append(saved, model)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	target, err := providerAccountEventTargetTx(ctx, tx, providerName, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertProviderIntent(ctx, tx, target, started); err != nil {
 		return nil, err
 	}
 
@@ -1551,7 +1916,13 @@ func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, p
 }
 
 func (r *ProviderRepository) CreateState(ctx context.Context, state provider.OAuthState) error {
-	_, err := r.pool.Exec(ctx, `
+	started := time.Now()
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		INSERT INTO oauth_states (
 			provider, state_hash, redirect_after, expires_at, encrypted_code_verifier, code_verifier_hash,
 			client_id, target_account_id, pending_account_name, pending_priority, pending_enabled,
@@ -1559,7 +1930,13 @@ func (r *ProviderRepository) CreateState(ctx context.Context, state provider.OAu
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, 0), $9, $10, $11, $12, $13, $14, $15)
 	`, state.Provider, state.StateHash, state.RedirectAfter, state.ExpiresAt, state.EncryptedCodeVerifier, state.CodeVerifierHash, state.ClientID, state.TargetAccountID, state.PendingAccountName, state.PendingPriority, state.PendingEnabled, state.PendingFingerprintProfileID, state.FingerprintHash, state.UserAgentHash, state.IPHash)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := insertProviderIntent(ctx, tx, systemevent.Target{Type: "oauth_connection", ID: state.Provider, Name: state.Provider}, started); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *ProviderRepository) ClaimState(ctx context.Context, providerName, stateHash string, now time.Time) (provider.OAuthState, error) {

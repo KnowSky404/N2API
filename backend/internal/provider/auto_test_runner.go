@@ -2,14 +2,21 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 type autoTestService interface {
 	TestAccounts(ctx context.Context) ([]Account, error)
+}
+
+type SystemEventRecorder interface {
+	Insert(ctx context.Context, event systemevent.Event) error
 }
 
 type AutoTestRunnerConfig struct {
@@ -28,13 +35,20 @@ type AutoTestStatus struct {
 type AutoTestRunnerConfigSource func(ctx context.Context) (AutoTestRunnerConfig, error)
 
 type AutoTestRunner struct {
-	service      autoTestService
-	cfg          AutoTestRunnerConfig
-	configSource AutoTestRunnerConfigSource
-	logger       *slog.Logger
-	running      atomic.Bool
-	statusMu     sync.Mutex
-	status       AutoTestStatus
+	service       autoTestService
+	cfg           AutoTestRunnerConfig
+	configSource  AutoTestRunnerConfigSource
+	logger        *slog.Logger
+	eventRecorder SystemEventRecorder
+	running       atomic.Bool
+	statusMu      sync.Mutex
+	status        AutoTestStatus
+}
+
+func (r *AutoTestRunner) SetSystemEventRecorder(recorder SystemEventRecorder) {
+	if r != nil {
+		r.eventRecorder = recorder
+	}
 }
 
 func NewAutoTestRunner(service autoTestService, cfg AutoTestRunnerConfig, logger *slog.Logger) *AutoTestRunner {
@@ -128,18 +142,67 @@ func (r *AutoTestRunner) runCycle(ctx context.Context) {
 
 	started := time.Now()
 	r.setStatusStarted(started)
-	accounts, err := r.service.TestAccounts(ctx)
+	cycleCtx := systemevent.WithRequestContext(ctx, systemevent.RequestContext{
+		CorrelationID: systemevent.NewCorrelationID(),
+		Actor:         systemevent.Actor{Type: systemevent.ActorSystem, Name: "provider_auto_test"},
+	})
+	accounts, err := r.service.TestAccounts(cycleCtx)
 	if err != nil {
 		if ctx.Err() != nil {
-			r.setStatusFinished(time.Now(), 0, ctx.Err().Error())
+			r.setStatusFinished(time.Now(), len(accounts), ctx.Err().Error())
+			r.recordCycleEvent(cycleCtx, started, len(accounts), err)
 			return
 		}
-		r.setStatusFinished(time.Now(), 0, err.Error())
+		r.setStatusFinished(time.Now(), len(accounts), err.Error())
+		r.recordCycleEvent(cycleCtx, started, len(accounts), err)
 		r.logger.Warn("provider account auto test failed", "error", err, "duration", time.Since(started))
 		return
 	}
 	r.setStatusFinished(time.Now(), len(accounts), "")
+	r.recordCycleEvent(cycleCtx, started, len(accounts), nil)
 	r.logger.Info("provider account auto test completed", "accounts", len(accounts), "duration", time.Since(started))
+}
+
+func (r *AutoTestRunner) recordCycleEvent(ctx context.Context, started time.Time, accountCount int, cycleErr error) {
+	if r.eventRecorder == nil {
+		return
+	}
+	severity := systemevent.SeverityInfo
+	outcome := systemevent.OutcomeSuccess
+	errorCode := ""
+	metadata := map[string]any{"account_count": accountCount}
+	if cycleErr != nil {
+		severity = systemevent.SeverityError
+		outcome = systemevent.OutcomeFailure
+		errorCode = "provider_auto_test_failed"
+		var batchErr *accountBatchError
+		if errors.As(cycleErr, &batchErr) {
+			metadata["requested_count"] = batchErr.Requested
+			metadata["attempted_count"] = batchErr.Attempted
+			metadata["succeeded_count"] = batchErr.Succeeded
+			metadata["failed_count"] = batchErr.Failed
+			metadata["skipped_count"] = batchErr.Skipped
+			if batchErr.Succeeded > 0 {
+				outcome = systemevent.OutcomePartial
+				severity = systemevent.SeverityWarning
+			}
+		}
+	}
+	intent := systemevent.EventIntent{
+		Category:  systemevent.CategoryScheduler,
+		Severity:  severity,
+		Action:    systemevent.ActionSchedulerProviderAutoTestCompleted,
+		Outcome:   outcome,
+		Target:    systemevent.Target{Type: "provider_account_scheduler", ID: "auto_test", Name: "Provider account auto test"},
+		ErrorCode: errorCode,
+		Metadata:  metadata,
+	}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	event := systemevent.BuildEvent(recordCtx, intent, intent.Target, time.Now().UTC(), time.Since(started))
+	if err := r.eventRecorder.Insert(recordCtx, event); err != nil {
+		r.logger.Warn("record provider account auto test system event", "error", err)
+	}
 }
 
 func (r *AutoTestRunner) setStatusStarted(started time.Time) {

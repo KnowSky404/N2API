@@ -640,10 +640,25 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 35 {
-		t.Fatalf("migration sources = %d, want 35", len(sources))
+	if len(sources) != 36 {
+		t.Fatalf("migration sources = %d, want 36", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[34].Path != "00035_provider_account_model_tests.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[35].Path != "00036_system_events.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestSystemEventsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00036_system_events.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS system_events", "system_events_category_check", "system_events_metadata_object_check",
+		"system_events_occurred_id_idx", "system_events_category_occurred_id_idx", "system_events_non_success_idx", "DROP TABLE IF EXISTS system_events",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }

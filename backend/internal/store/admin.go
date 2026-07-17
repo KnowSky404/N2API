@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -114,8 +115,13 @@ func (r *AdminRepository) FindAdminByUsername(ctx context.Context, username stri
 }
 
 func (r *AdminRepository) CreateAdmin(ctx context.Context, username, passwordHash string) (admin.Admin, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.Admin{}, err
+	}
+	defer tx.Rollback(ctx)
 	var created admin.Admin
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO admins (username, password_hash)
 		VALUES ($1, $2)
 		RETURNING id, username, password_hash
@@ -123,12 +129,23 @@ func (r *AdminRepository) CreateAdmin(ctx context.Context, username, passwordHas
 	if err != nil {
 		return admin.Admin{}, err
 	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin", ID: strconv.FormatInt(created.ID, 10), Name: created.Username}, nil); err != nil {
+		return admin.Admin{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return admin.Admin{}, err
+	}
 	return created, nil
 }
 
 func (r *AdminRepository) UpdateAdminUsername(ctx context.Context, id int64, username string) (admin.Admin, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.Admin{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updated admin.Admin
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE admins
 		SET username = $2, updated_at = now()
 		WHERE id = $1
@@ -140,30 +157,57 @@ func (r *AdminRepository) UpdateAdminUsername(ctx context.Context, id int64, use
 	if err != nil {
 		return admin.Admin{}, err
 	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin", ID: strconv.FormatInt(updated.ID, 10), Name: updated.Username}, nil); err != nil {
+		return admin.Admin{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return admin.Admin{}, err
+	}
 	return updated, nil
 }
 
 func (r *AdminRepository) UpdateAdminPassword(ctx context.Context, id int64, passwordHash string) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE admins
-		SET password_hash = $2, updated_at = now()
-		WHERE id = $1
-	`, id, passwordHash)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	var username string
+	err = tx.QueryRow(ctx, `
+		UPDATE admins
+		SET password_hash = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING username
+	`, id, passwordHash).Scan(&username)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin", ID: strconv.FormatInt(id, 10), Name: username}, nil); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error {
-	_, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		INSERT INTO admin_sessions (admin_id, token_hash, expires_at)
 		VALUES ($1, $2, $3)
 	`, adminID, tokenHash, expiresAt)
-	return err
+	if err != nil {
+		return err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin", ID: strconv.FormatInt(adminID, 10)}, map[string]any{"expires_at": expiresAt.UTC().Format(time.RFC3339)}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *AdminRepository) FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (admin.Admin, error) {
@@ -186,22 +230,56 @@ func (r *AdminRepository) FindAdminBySessionHash(ctx context.Context, tokenHash 
 }
 
 func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) error {
-	_, err := r.pool.Exec(ctx, `
-		UPDATE admin_sessions
-		SET revoked_at = now()
-		WHERE token_hash = $1
-	`, tokenHash)
-	return err
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var adminID int64
+	var username string
+	err = tx.QueryRow(ctx, `
+		WITH revoked AS (
+			UPDATE admin_sessions
+			SET revoked_at = now()
+			WHERE token_hash = $1
+				AND revoked_at IS NULL
+			RETURNING admin_id
+		)
+		SELECT revoked.admin_id, admins.username
+		FROM revoked
+		JOIN admins ON admins.id = revoked.admin_id
+	`, tokenHash).Scan(&adminID, &username)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin_session", Name: username}, map[string]any{"admin_id": adminID}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string) (admin.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
 	var id int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO client_api_keys (name, key_hash, prefix, encrypted_secret)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id
 	`, name, hash, prefix, encryptedSecret).Scan(&id)
 	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(id, 10), Name: name}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
 	}
 	return r.loadAPIKey(ctx, id)
@@ -255,39 +333,66 @@ func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, erro
 }
 
 func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	var name string
+	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET revoked_at = COALESCE(revoked_at, now())
 		WHERE id = $1
-		RETURNING id
-	`, id).Scan(&updatedID)
+		RETURNING id, name
+	`, id).Scan(&updatedID, &name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
 		return admin.APIKey{}, err
 	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return admin.APIKey{}, err
+	}
 	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) DeleteRevokedAPIKey(ctx context.Context, id int64) error {
-	tag, err := r.pool.Exec(ctx, `
-		DELETE FROM client_api_keys
-		WHERE id = $1
-			AND revoked_at IS NOT NULL
-	`, id)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	var name string
+	err = tx.QueryRow(ctx, `
+		DELETE FROM client_api_keys
+		WHERE id = $1
+			AND revoked_at IS NOT NULL
+		RETURNING name
+	`, id).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(id, 10), Name: name}, nil); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *AdminRepository) PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
 		DELETE FROM client_api_keys
 		WHERE revoked_at IS NOT NULL
 			AND revoked_at <= $1
@@ -295,7 +400,14 @@ func (r *AdminRepository) PurgeRevokedAPIKeys(ctx context.Context, cutoff time.T
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	deleted := tag.RowsAffected()
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key_collection"}, map[string]any{"deleted_count": deleted}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ time.Time) (admin.APIKey, error) {
@@ -325,8 +437,13 @@ func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ t
 }
 
 func (r *AdminRepository) UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET name = $2
 		WHERE id = $1
@@ -339,22 +456,40 @@ func (r *AdminRepository) UpdateAPIKeyName(ctx context.Context, id int64, name s
 	if err != nil {
 		return admin.APIKey{}, err
 	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return admin.APIKey{}, err
+	}
 	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (admin.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	var name string
+	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET disabled_at = CASE WHEN $2 THEN COALESCE(disabled_at, now()) ELSE NULL END
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING id
-	`, id, disabled).Scan(&updatedID)
+		RETURNING id, name
+	`, id, disabled).Scan(&updatedID, &name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
 	}
 	return r.loadAPIKey(ctx, updatedID)
@@ -397,6 +532,9 @@ func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64,
 			return admin.APIKey{}, err
 		}
 	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10)}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
 	}
@@ -404,27 +542,45 @@ func (r *AdminRepository) UpdateAPIKeyModelPolicy(ctx context.Context, id int64,
 }
 
 func (r *AdminRepository) UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	var name string
+	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET requests_per_minute = $2,
 			tokens_per_minute = $3
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING id
-	`, id, requestsPerMinute, tokensPerMinute).Scan(&updatedID)
+		RETURNING id, name
+	`, id, requestsPerMinute, tokensPerMinute).Scan(&updatedID, &name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
 		return admin.APIKey{}, err
 	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return admin.APIKey{}, err
+	}
 	return r.loadAPIKey(ctx, updatedID)
 }
 
 func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (admin.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	var name string
+	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET request_budget_24h = $2,
 			token_budget_24h = $3,
@@ -434,12 +590,18 @@ func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, req
 			cost_budget_microusd_30d = $7
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING id
-	`, id, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d).Scan(&updatedID)
+		RETURNING id, name
+	`, id, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d).Scan(&updatedID, &name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
 	}
 	return r.loadAPIKey(ctx, updatedID)
@@ -483,13 +645,24 @@ func (r *AdminRepository) CreateRoutingPool(ctx context.Context, name, descripti
 	if err := r.validateRoutingPoolFallback(ctx, 0, fallbackPoolID); err != nil {
 		return admin.RoutingPool{}, err
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	defer tx.Rollback(ctx)
 	var id int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO routing_pools (name, description, enabled, fallback_pool_id)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id
 	`, name, description, enabled, fallbackPoolID).Scan(&id)
 	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "routing_pool", ID: strconv.FormatInt(id, 10), Name: name}, nil); err != nil {
+		return admin.RoutingPool{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.RoutingPool{}, err
 	}
 	return r.getRoutingPool(ctx, id)
@@ -499,8 +672,13 @@ func (r *AdminRepository) UpdateRoutingPool(ctx context.Context, id int64, name,
 	if err := r.validateRoutingPoolFallback(ctx, id, fallbackPoolID); err != nil {
 		return admin.RoutingPool{}, err
 	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE routing_pools
 		SET name = $2,
 			description = $3,
@@ -514,6 +692,12 @@ func (r *AdminRepository) UpdateRoutingPool(ctx context.Context, id int64, name,
 		return admin.RoutingPool{}, admin.ErrNotFound
 	}
 	if err != nil {
+		return admin.RoutingPool{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "routing_pool", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+		return admin.RoutingPool{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.RoutingPool{}, err
 	}
 	return r.getRoutingPool(ctx, updatedID)
@@ -556,14 +740,23 @@ func (r *AdminRepository) validateRoutingPoolFallback(ctx context.Context, poolI
 }
 
 func (r *AdminRepository) DeleteRoutingPool(ctx context.Context, id int64) error {
-	tag, err := r.pool.Exec(ctx, `DELETE FROM routing_pools WHERE id = $1`, id)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	var name string
+	err = tx.QueryRow(ctx, `DELETE FROM routing_pools WHERE id = $1 RETURNING name`, id).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "routing_pool", ID: strconv.FormatInt(id, 10), Name: name}, nil); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *AdminRepository) ReplaceRoutingPoolAccounts(ctx context.Context, id int64, accounts []admin.RoutingPoolAccount) (admin.RoutingPool, error) {
@@ -592,6 +785,9 @@ func (r *AdminRepository) ReplaceRoutingPoolAccounts(ctx context.Context, id int
 			return admin.RoutingPool{}, err
 		}
 	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "routing_pool", ID: strconv.FormatInt(id, 10)}, nil); err != nil {
+		return admin.RoutingPool{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return admin.RoutingPool{}, err
 	}
@@ -599,18 +795,30 @@ func (r *AdminRepository) ReplaceRoutingPoolAccounts(ctx context.Context, id int
 }
 
 func (r *AdminRepository) UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (admin.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	defer tx.Rollback(ctx)
 	var updatedID int64
-	err := r.pool.QueryRow(ctx, `
+	var name string
+	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET routing_pool_id = $2
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING id
-	`, id, routingPoolID).Scan(&updatedID)
+		RETURNING id, name
+	`, id, routingPoolID).Scan(&updatedID, &name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
 	}
 	return r.loadAPIKey(ctx, updatedID)
@@ -864,14 +1072,26 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.Requ
 }
 
 func (r *AdminRepository) DeleteRequestLogsBefore(ctx context.Context, before time.Time) (int64, error) {
-	tag, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
 		DELETE FROM request_logs
 		WHERE created_at < $1
 	`, before)
 	if err != nil {
 		return 0, err
 	}
-	return tag.RowsAffected(), nil
+	deleted := tag.RowsAffected()
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "request_log_collection"}, map[string]any{"deleted_count": deleted}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
@@ -1101,7 +1321,12 @@ func (r *AdminRepository) SaveUsagePricing(ctx context.Context, pricing admin.Us
 	if err != nil {
 		return admin.UsagePricing{}, err
 	}
-	_, err = r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.UsagePricing{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		INSERT INTO settings (key, value, updated_at)
 		VALUES ($1, $2, now())
 		ON CONFLICT (key) DO UPDATE
@@ -1109,6 +1334,12 @@ func (r *AdminRepository) SaveUsagePricing(ctx context.Context, pricing admin.Us
 			updated_at = now()
 	`, usagePricingKey, value)
 	if err != nil {
+		return admin.UsagePricing{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "usage_pricing", ID: "default"}, nil); err != nil {
+		return admin.UsagePricing{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.UsagePricing{}, err
 	}
 	return pricing, nil
@@ -1119,7 +1350,12 @@ func (r *AdminRepository) SaveModelSettings(ctx context.Context, settings admin.
 	if err != nil {
 		return admin.ModelSettings{}, err
 	}
-	_, err = r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.ModelSettings{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		INSERT INTO settings (key, value, updated_at)
 		VALUES ($1, $2, now())
 		ON CONFLICT (key) DO UPDATE
@@ -1127,6 +1363,12 @@ func (r *AdminRepository) SaveModelSettings(ctx context.Context, settings admin.
 			updated_at = now()
 	`, modelSettingsKey, value)
 	if err != nil {
+		return admin.ModelSettings{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "model_settings", ID: "default"}, nil); err != nil {
+		return admin.ModelSettings{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.ModelSettings{}, err
 	}
 	return settings, nil
@@ -1158,7 +1400,12 @@ func (r *AdminRepository) SaveGatewaySettings(ctx context.Context, settings admi
 	if err != nil {
 		return admin.GatewaySettings{}, err
 	}
-	_, err = r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.GatewaySettings{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `
 		INSERT INTO settings (key, value, updated_at)
 		VALUES ($1, $2, now())
 		ON CONFLICT (key) DO UPDATE
@@ -1166,6 +1413,12 @@ func (r *AdminRepository) SaveGatewaySettings(ctx context.Context, settings admi
 			updated_at = now()
 	`, gatewaySettingsKey, value)
 	if err != nil {
+		return admin.GatewaySettings{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "gateway_settings", ID: "default"}, nil); err != nil {
+		return admin.GatewaySettings{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return admin.GatewaySettings{}, err
 	}
 	return settings, nil

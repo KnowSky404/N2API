@@ -4,10 +4,22 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
+
+type captureSystemEventRecorder struct {
+	events []systemevent.Event
+}
+
+func (r *captureSystemEventRecorder) Insert(_ context.Context, event systemevent.Event) error {
+	r.events = append(r.events, event)
+	return nil
+}
 
 type fakeAutoTestService struct {
 	calls   atomic.Int64
@@ -85,6 +97,38 @@ func TestAutoTestRunnerStatusTracksFailedCycle(t *testing.T) {
 	status := runner.ProviderAccountAutoTestStatus()
 	if status.Running || status.LastStartedAt == nil || status.LastFinishedAt == nil || status.LastAccountCount != 0 || status.LastError != "probe failed" {
 		t.Fatalf("status = %+v, want failed completed cycle", status)
+	}
+}
+
+func TestAutoTestRunnerRecordsSafeCycleSummaries(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		service     immediateAutoTestService
+		wantOutcome systemevent.Outcome
+		wantCount   int
+	}{
+		{name: "success", service: immediateAutoTestService{accounts: []Account{{ID: 1}, {ID: 2}}}, wantOutcome: systemevent.OutcomeSuccess, wantCount: 2},
+		{name: "failure", service: immediateAutoTestService{err: errors.New("raw provider probe failure")}, wantOutcome: systemevent.OutcomeFailure},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := &captureSystemEventRecorder{}
+			runner := NewAutoTestRunner(testCase.service, AutoTestRunnerConfig{Enabled: true}, slog.Default())
+			runner.SetSystemEventRecorder(recorder)
+			runner.runCycle(context.Background())
+			if len(recorder.events) != 1 {
+				t.Fatalf("events = %d, want 1", len(recorder.events))
+			}
+			event := recorder.events[0]
+			if event.Action != systemevent.ActionSchedulerProviderAutoTestCompleted || event.Outcome != testCase.wantOutcome || event.Metadata["account_count"] != testCase.wantCount {
+				t.Fatalf("event = %+v, want cycle summary", event)
+			}
+			if strings.Contains(event.Message, "raw provider probe failure") || event.Message != "" {
+				t.Fatalf("event message = %q, want no raw error", event.Message)
+			}
+			if err := systemevent.ValidateEvent(event); err != nil {
+				t.Fatalf("ValidateEvent returned error: %v", err)
+			}
+		})
 	}
 }
 

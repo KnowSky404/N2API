@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 const (
@@ -39,6 +40,14 @@ type Config struct {
 	SessionTTL             time.Duration
 	EncryptionSecret       string
 	DefaultGatewaySettings GatewaySettings
+	SystemEvents           SystemEventRepository
+}
+
+type SystemEventFilter = systemevent.Filter
+type SystemEventPage = systemevent.Page
+
+type SystemEventRepository interface {
+	List(ctx context.Context, filter systemevent.Filter) (systemevent.Page, error)
 }
 
 type Admin struct {
@@ -347,6 +356,7 @@ type Service struct {
 	defaultGatewaySettings  GatewaySettings
 	officialDocumentFetcher OfficialDocumentFetcher
 	now                     func() time.Time
+	systemEvents            SystemEventRepository
 }
 
 func NewService(repo Repository, cfg Config) *Service {
@@ -362,7 +372,39 @@ func NewService(repo Repository, cfg Config) *Service {
 		defaultGatewaySettings:  cfg.DefaultGatewaySettings,
 		officialDocumentFetcher: NewHTTPOfficialDocumentFetcher(30 * time.Second),
 		now:                     time.Now,
+		systemEvents:            cfg.SystemEvents,
 	}
+}
+
+func (s *Service) ListSystemEvents(ctx context.Context, filter SystemEventFilter) (SystemEventPage, error) {
+	filter.Cursor = strings.TrimSpace(filter.Cursor)
+	filter.Actor = strings.TrimSpace(filter.Actor)
+	filter.TargetType = strings.TrimSpace(filter.TargetType)
+	filter.TargetID = strings.TrimSpace(filter.TargetID)
+	filter.Query = strings.TrimSpace(filter.Query)
+	if filter.Limit == 0 {
+		filter.Limit = 50
+	}
+	if filter.Limit < 1 || filter.Limit > 100 || len(filter.Cursor) > 1024 || len(filter.Actor) > 128 ||
+		len(filter.TargetType) > 128 || len(filter.TargetID) > 128 || len(filter.Query) > maxRequestLogQueryLen ||
+		(!filter.Since.IsZero() && filter.Since.After(s.now().Add(time.Minute))) ||
+		(filter.Category != "" && !systemevent.IsValidCategory(filter.Category)) ||
+		(filter.Outcome != "" && !systemevent.IsValidOutcome(filter.Outcome)) ||
+		(filter.Severity != "" && !systemevent.IsValidSeverity(filter.Severity)) ||
+		(filter.Action != "" && !systemevent.IsKnownAction(filter.Action)) {
+		return SystemEventPage{}, ErrInvalidInput
+	}
+	if filter.TargetID != "" && filter.TargetType == "" {
+		return SystemEventPage{}, ErrInvalidInput
+	}
+	if s.systemEvents == nil {
+		return SystemEventPage{}, errors.New("system event repository is not configured")
+	}
+	page, err := s.systemEvents.List(ctx, filter)
+	if errors.Is(err, systemevent.ErrInvalidEvent) || errors.Is(err, systemevent.ErrInvalidCursor) {
+		return SystemEventPage{}, ErrInvalidInput
+	}
+	return page, err
 }
 
 func (s *Service) BootstrapAdmin(ctx context.Context, username, password string) error {
@@ -377,6 +419,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, username, password string)
 		if existing.Username == username {
 			return nil
 		}
+		ctx = withSecurityIntent(ctx, systemevent.ActionAuthBootstrapUsernameUpdated, "admin", auditID(existing.ID), username)
 		_, err = s.repo.UpdateAdminUsername(ctx, existing.ID, username)
 		return err
 	}
@@ -389,6 +432,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, username, password string)
 		return fmt.Errorf("hash admin password: %w", err)
 	}
 
+	ctx = withSecurityIntent(ctx, systemevent.ActionAuthBootstrapCreated, "admin", "", username)
 	_, err = s.repo.CreateAdmin(ctx, username, hash)
 	return err
 }
@@ -410,12 +454,14 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	if !secret.VerifyPassword(admin.PasswordHash, password) {
 		return Session{}, ErrUnauthorized
 	}
+	ctx = withAuthenticatedActor(ctx, admin)
 
 	token, err := secret.GenerateToken(sessionTokenName)
 	if err != nil {
 		return Session{}, fmt.Errorf("generate admin session token: %w", err)
 	}
 	expiresAt := time.Now().Add(s.sessionTTL)
+	ctx = withSecurityIntent(ctx, systemevent.ActionAuthLoginSucceeded, "admin", auditID(admin.ID), admin.Username)
 	if err := s.repo.CreateSession(ctx, admin.ID, secret.HashAPIKey(token), expiresAt); err != nil {
 		return Session{}, err
 	}
@@ -463,6 +509,7 @@ func (s *Service) ChangePassword(ctx context.Context, adminID int64, currentPass
 	if hashErr != nil {
 		return fmt.Errorf("hash new password: %w", hashErr)
 	}
+	ctx = withSecurityIntent(ctx, systemevent.ActionAuthPasswordChanged, "admin", auditID(adminID), adminRecord.Username)
 	return s.repo.UpdateAdminPassword(ctx, adminID, newHash)
 }
 
@@ -471,6 +518,15 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
 	}
+	current, err := s.repo.FindAdminBySessionHash(ctx, secret.HashAPIKey(token), time.Now())
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ctx = withAuthenticatedActor(ctx, current)
+	ctx = withSecurityIntent(ctx, systemevent.ActionAuthLogoutSucceeded, "admin_session", "", "")
 	if err := s.repo.RevokeSession(ctx, secret.HashAPIKey(token)); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil
@@ -497,6 +553,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string) (CreatedAPIKey,
 			return CreatedAPIKey{}, fmt.Errorf("encrypt api key: %w", err)
 		}
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyCreated, "client_api_key", "", name, nil)
 	key, err := s.repo.CreateAPIKey(ctx, name, secret.HashAPIKey(token), secret.TokenPrefix(token), encryptedSecret)
 	if err != nil {
 		return CreatedAPIKey{}, err
@@ -521,22 +578,22 @@ func (s *Service) GetAPIKeySecret(ctx context.Context, id int64) (string, error)
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
-	if _, err := s.PurgeExpiredAPIKeys(ctx); err != nil {
-		return nil, err
-	}
 	return s.repo.ListAPIKeys(ctx)
 }
 
 func (s *Service) PurgeExpiredAPIKeys(ctx context.Context) (int64, error) {
 	cutoff := s.now().Add(-APIKeyPhysicalDeleteRetention)
+	ctx = withSchedulerIntent(ctx, systemevent.ActionSchedulerAPIKeyPurgeCompleted, "client_api_key_collection", map[string]any{"cutoff": cutoff.UTC().Format(time.RFC3339)})
 	return s.repo.PurgeRevokedAPIKeys(ctx, cutoff)
 }
 
 func (s *Service) RevokeAPIKey(ctx context.Context, id int64) (APIKey, error) {
+	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyRevoked, "client_api_key", auditID(id), "", nil)
 	return s.repo.RevokeAPIKey(ctx, id)
 }
 
 func (s *Service) DeleteRevokedAPIKey(ctx context.Context, id int64) error {
+	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyDeleted, "client_api_key", auditID(id), "", nil)
 	return s.repo.DeleteRevokedAPIKey(ctx, id)
 }
 
@@ -545,10 +602,16 @@ func (s *Service) UpdateAPIKeyName(ctx context.Context, id int64, name string) (
 	if name == "" {
 		return APIKey{}, ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyRenamed, "client_api_key", auditID(id), name, changedFields("name"))
 	return s.repo.UpdateAPIKeyName(ctx, id, name)
 }
 
 func (s *Service) SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (APIKey, error) {
+	action := systemevent.ActionAPIKeyEnabled
+	if disabled {
+		action = systemevent.ActionAPIKeyDisabled
+	}
+	ctx = withAuditIntent(ctx, action, "client_api_key", auditID(id), "", changedFields("disabled"))
 	return s.repo.SetAPIKeyDisabled(ctx, id, disabled)
 }
 
@@ -556,6 +619,7 @@ func (s *Service) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy 
 	policy = strings.TrimSpace(policy)
 	switch policy {
 	case APIKeyModelPolicyAll:
+		ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyModelPolicyUpdated, "client_api_key", auditID(id), "", map[string]any{"changed_fields": []string{"model_policy"}, "model_count": 0})
 		return s.repo.UpdateAPIKeyModelPolicy(ctx, id, policy, nil)
 	case APIKeyModelPolicySelected:
 		normalized, err := normalizeModelList(models)
@@ -565,6 +629,7 @@ func (s *Service) UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy 
 		if len(normalized) == 0 {
 			return APIKey{}, ErrInvalidInput
 		}
+		ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyModelPolicyUpdated, "client_api_key", auditID(id), "", map[string]any{"changed_fields": []string{"model_policy"}, "model_count": len(normalized)})
 		return s.repo.UpdateAPIKeyModelPolicy(ctx, id, policy, normalized)
 	default:
 		return APIKey{}, ErrInvalidInput
@@ -575,6 +640,7 @@ func (s *Service) UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerM
 	if requestsPerMinute < 0 || tokensPerMinute < 0 {
 		return APIKey{}, ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyLimitsUpdated, "client_api_key", auditID(id), "", changedFields("requests_per_minute", "tokens_per_minute"))
 	return s.repo.UpdateAPIKeyLimits(ctx, id, requestsPerMinute, tokensPerMinute)
 }
 
@@ -582,6 +648,7 @@ func (s *Service) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudg
 	if requestBudget24h < 0 || tokenBudget24h < 0 || costBudgetMicrousd24h < 0 || requestBudget30d < 0 || tokenBudget30d < 0 || costBudgetMicrousd30d < 0 {
 		return APIKey{}, ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyBudgetsUpdated, "client_api_key", auditID(id), "", changedFields("request_budget_24h", "token_budget_24h", "cost_budget_24h", "request_budget_30d", "token_budget_30d", "cost_budget_30d"))
 	return s.repo.UpdateAPIKeyBudgets(ctx, id, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d)
 }
 
@@ -599,6 +666,7 @@ func (s *Service) CreateRoutingPool(ctx context.Context, name, description strin
 	if err != nil {
 		return RoutingPool{}, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionRoutingPoolCreated, "routing_pool", "", name, nil)
 	return s.repo.CreateRoutingPool(ctx, name, description, enabled, normalizedFallbackPoolID)
 }
 
@@ -615,6 +683,7 @@ func (s *Service) UpdateRoutingPool(ctx context.Context, id int64, name, descrip
 	if normalizedFallbackPoolID != nil && *normalizedFallbackPoolID == id {
 		return RoutingPool{}, ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionRoutingPoolUpdated, "routing_pool", auditID(id), name, changedFields("name", "description", "enabled", "fallback_pool"))
 	return s.repo.UpdateRoutingPool(ctx, id, name, description, enabled, normalizedFallbackPoolID)
 }
 
@@ -633,6 +702,7 @@ func (s *Service) DeleteRoutingPool(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionRoutingPoolDeleted, "routing_pool", auditID(id), "", nil)
 	return s.repo.DeleteRoutingPool(ctx, id)
 }
 
@@ -652,6 +722,7 @@ func (s *Service) ReplaceRoutingPoolAccounts(ctx context.Context, id int64, acco
 		seen[account.AccountID] = struct{}{}
 		normalized = append(normalized, account)
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionRoutingPoolAccountsReplaced, "routing_pool", auditID(id), "", map[string]any{"account_count": len(normalized)})
 	return s.repo.ReplaceRoutingPoolAccounts(ctx, id, normalized)
 }
 
@@ -665,6 +736,7 @@ func (s *Service) UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routing
 	if routingPoolID != nil && *routingPoolID == 0 {
 		routingPoolID = nil
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyRoutingPoolUpdated, "client_api_key", auditID(id), "", changedFields("routing_pool"))
 	return s.repo.UpdateAPIKeyRoutingPool(ctx, id, routingPoolID)
 }
 
@@ -905,6 +977,7 @@ func (s *Service) UpdateUsagePricing(ctx context.Context, pricing UsagePricing) 
 		return UsagePricing{}, err
 	}
 	normalized.UpdatedAt = time.Now().UTC()
+	ctx = withAuditIntent(ctx, systemevent.ActionUsagePricingUpdated, "usage_pricing", "default", "", map[string]any{"model_count": len(normalized.Models)})
 	return s.repo.SaveUsagePricing(ctx, normalized)
 }
 
@@ -978,6 +1051,7 @@ func (s *Service) UpdateModelSettings(ctx context.Context, settings ModelSetting
 	if err != nil {
 		return ModelSettings{}, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionModelSettingsUpdated, "model_settings", "default", "", map[string]any{"model_count": len(normalized.AllowedModels)})
 	return s.repo.SaveModelSettings(ctx, normalized)
 }
 
@@ -997,6 +1071,7 @@ func (s *Service) UpdateGatewaySettings(ctx context.Context, settings GatewaySet
 	if err != nil {
 		return GatewaySettings{}, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionGatewaySettingsUpdated, "gateway_settings", "default", "", changedFields("limits", "auto_test", "request_log_retention"))
 	return s.repo.SaveGatewaySettings(ctx, normalized)
 }
 
@@ -1012,6 +1087,7 @@ func (s *Service) CleanupRequestLogs(ctx context.Context, now time.Time) (Reques
 		now = time.Now()
 	}
 	before := now.Add(-time.Duration(settings.RequestLogRetentionDays) * 24 * time.Hour)
+	ctx = withAuditIntent(ctx, systemevent.ActionRequestLogCleanupCompleted, "request_log_collection", "", "", map[string]any{"before": before.UTC().Format(time.RFC3339), "retention_days": settings.RequestLogRetentionDays})
 	deleted, err := s.repo.DeleteRequestLogsBefore(ctx, before)
 	if err != nil {
 		return RequestLogCleanupResult{}, err
@@ -1288,6 +1364,7 @@ func (s *Service) CreateFingerprintProfile(ctx context.Context, input Fingerprin
 	if err := input.Normalize(); err != nil {
 		return FingerprintProfile{}, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionFingerprintProfileCreated, "fingerprint_profile", "", input.Name, nil)
 	return s.repo.CreateFingerprintProfile(ctx, input)
 }
 
@@ -1301,6 +1378,7 @@ func (s *Service) UpdateFingerprintProfile(ctx context.Context, id int64, input 
 	if err := input.Normalize(); err != nil {
 		return FingerprintProfile{}, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionFingerprintProfileUpdated, "fingerprint_profile", auditID(id), input.Name, changedFields("name", "description", "user_agent", "tls_fingerprint", "headers", "enabled"))
 	return s.repo.UpdateFingerprintProfile(ctx, id, input)
 }
 
@@ -1308,6 +1386,7 @@ func (s *Service) DeleteFingerprintProfile(ctx context.Context, id int64) error 
 	if id <= 0 {
 		return ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionFingerprintProfileDeleted, "fingerprint_profile", auditID(id), "", nil)
 	return s.repo.DeleteFingerprintProfile(ctx, id)
 }
 
@@ -1322,6 +1401,7 @@ func (s *Service) CreateErrorPassthroughRule(ctx context.Context, input ErrorPas
 	if !validErrorPassthroughMatchType(input.MatchType) {
 		return ErrorPassthroughRule{}, ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionErrorPassthroughRuleCreated, "error_passthrough_rule", "", "", nil)
 	return s.repo.CreateErrorPassthroughRule(ctx, input)
 }
 
@@ -1335,6 +1415,7 @@ func (s *Service) UpdateErrorPassthroughRule(ctx context.Context, id int64, inpu
 	if !validErrorPassthroughMatchType(input.MatchType) {
 		return ErrorPassthroughRule{}, ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionErrorPassthroughRuleUpdated, "error_passthrough_rule", auditID(id), "", changedFields("match_type", "pattern", "description", "enabled", "priority"))
 	return s.repo.UpdateErrorPassthroughRule(ctx, id, input)
 }
 
@@ -1342,6 +1423,7 @@ func (s *Service) DeleteErrorPassthroughRule(ctx context.Context, id int64) erro
 	if id <= 0 {
 		return ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionErrorPassthroughRuleDeleted, "error_passthrough_rule", auditID(id), "", nil)
 	return s.repo.DeleteErrorPassthroughRule(ctx, id)
 }
 

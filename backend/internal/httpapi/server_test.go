@@ -43,6 +43,9 @@ type fakeAdminService struct {
 	deleteKeyErr         error
 	logs                 []admin.RequestLog
 	requestLogFilter     admin.RequestLogFilter
+	systemEventPage      admin.SystemEventPage
+	systemEventFilter    admin.SystemEventFilter
+	systemEventErr       error
 	errorOnEmptyLogout   bool
 	logoutTokens         []string
 	modelSettings        admin.ModelSettings
@@ -473,6 +476,11 @@ func (s *fakeAdminService) ListRequestLogs(_ context.Context, filter admin.Reque
 		limit = len(s.logs)
 	}
 	return s.logs[:limit], nil
+}
+
+func (s *fakeAdminService) ListSystemEvents(_ context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error) {
+	s.systemEventFilter = filter
+	return s.systemEventPage, s.systemEventErr
 }
 
 func (s *fakeAdminService) GetUsageSummary(_ context.Context, rangeName, groupBy string) (admin.UsageSummary, error) {

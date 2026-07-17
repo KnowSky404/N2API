@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 const (
@@ -551,6 +553,9 @@ func (s *Service) SyncOfficialUsagePricing(ctx context.Context) (UsagePricing, U
 		return UsagePricing{}, UsagePricingSyncSummary{}, err
 	}
 
+	ctx = withAuditIntent(ctx, systemevent.ActionUsagePricingSynced, "usage_pricing", "default", "", map[string]any{
+		"added_count": len(added), "updated_count": len(updated), "model_count": len(normalized.Models),
+	})
 	saved, err := s.repo.SaveUsagePricing(ctx, normalized)
 	if err != nil {
 		return UsagePricing{}, UsagePricingSyncSummary{}, fmt.Errorf("save official pricing: %w", err)
@@ -655,6 +660,7 @@ func (s *Service) RemoveShutdownUsagePricing(ctx context.Context, models []strin
 	if err != nil {
 		return UsagePricing{}, nil, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionUsagePricingShutdownRemoved, "usage_pricing", "default", "", map[string]any{"removed_count": len(requested)})
 	saved, err := s.repo.SaveUsagePricing(ctx, normalized)
 	if err != nil {
 		return UsagePricing{}, nil, fmt.Errorf("save usage pricing after shutdown removal: %w", err)
@@ -716,6 +722,7 @@ func (s *Service) IgnoreUpcomingUsagePricing(ctx context.Context, models []strin
 	if err != nil {
 		return UsagePricing{}, nil, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionUsagePricingUpcomingIgnored, "usage_pricing", "default", "", map[string]any{"ignored_count": len(requested)})
 	saved, err := s.repo.SaveUsagePricing(ctx, normalized)
 	if err != nil {
 		return UsagePricing{}, nil, fmt.Errorf("save usage pricing after upcoming ignore: %w", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 const adminSessionCookieName = "n2api_admin_session"
@@ -51,6 +52,7 @@ type AdminService interface {
 	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (admin.APIKey, error)
 	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
+	ListSystemEvents(ctx context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error)
 	CleanupRequestLogs(ctx context.Context, now time.Time) (admin.RequestLogCleanupResult, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (admin.UsagePricing, error)
@@ -173,6 +175,7 @@ type selectionBlockedReasonCount struct {
 
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
 	mux := http.NewServeMux()
+	systemEvents := systemEventRecorderFromOptions(options...)
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
 	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
@@ -214,6 +217,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	mux.HandleFunc("POST /api/admin/login", func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
 		if admins == nil {
 			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 			return
@@ -231,6 +235,11 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		session, err := admins.Login(r.Context(), req.Username, req.Password)
 		if err != nil {
 			if errors.Is(err, admin.ErrUnauthorized) {
+				_ = recordHTTPSystemEvent(r.Context(), systemEvents, systemevent.EventIntent{
+					Category: systemevent.CategorySecurity, Severity: systemevent.SeverityWarning,
+					Action: systemevent.ActionAuthLoginFailed, Outcome: systemevent.OutcomeFailure,
+					Target: systemevent.Target{Type: "admin", Name: strings.TrimSpace(req.Username)}, ErrorCode: "invalid_credentials",
+				}, http.StatusUnauthorized, time.Since(started))
 				writeError(w, http.StatusUnauthorized, "invalid_credentials")
 				return
 			}
@@ -261,6 +270,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	requireAdmin := func(next func(http.ResponseWriter, *http.Request, admin.Admin)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			started := time.Now()
 			if admins == nil {
 				writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 				return
@@ -273,13 +283,21 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			currentAdmin, err := admins.ValidateSession(r.Context(), token)
 			if err != nil {
 				if errors.Is(err, admin.ErrUnauthorized) {
+					_ = recordHTTPSystemEvent(r.Context(), systemEvents, systemevent.EventIntent{
+						Category: systemevent.CategorySecurity, Severity: systemevent.SeverityWarning,
+						Action: systemevent.ActionAuthSessionRejected, Outcome: systemevent.OutcomeFailure,
+						Target: systemevent.Target{Type: "admin_session"}, ErrorCode: "invalid_session",
+					}, http.StatusUnauthorized, 0)
 					writeError(w, http.StatusUnauthorized, "unauthorized")
 					return
 				}
 				writeError(w, http.StatusInternalServerError, "internal_error")
 				return
 			}
-			next(w, r, currentAdmin)
+			auditedRequest := withAdminEventActor(r, currentAdmin)
+			captured := &statusCapturingResponseWriter{ResponseWriter: w}
+			next(captured, auditedRequest, currentAdmin)
+			recordAdminMutationFailure(auditedRequest.Context(), systemEvents, auditedRequest, captured.statusCode, time.Since(started))
 		}
 	}
 
@@ -372,7 +390,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		})
 	}))
 
-	mux.HandleFunc("GET /api/admin/keys/{id}/secret", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+	mux.HandleFunc("GET /api/admin/keys/{id}/secret", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
 		id, err := parsePositivePathID(r, "id")
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
@@ -384,6 +402,14 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				writeError(w, http.StatusNotFound, "not_found")
 				return
 			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		if err := recordHTTPSystemEvent(r.Context(), systemEvents, systemevent.EventIntent{
+			Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
+			Action: systemevent.ActionAPIKeySecretViewed, Outcome: systemevent.OutcomeSuccess,
+			Target: systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(id, 10)},
+		}, http.StatusOK, 0); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
@@ -813,7 +839,24 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/request-logs/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleExportRequestLogs(w, r, admins)
+		handleExportRequestLogs(w, r, admins, systemEvents)
+	}))
+	mux.HandleFunc("GET /api/admin/system-events", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		filter, err := buildSystemEventFilter(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		page, err := admins.ListSystemEvents(r.Context(), filter)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
 	}))
 	mux.HandleFunc("POST /api/admin/request-logs/cleanup", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		result, err := admins.CleanupRequestLogs(r.Context(), time.Now())
@@ -1293,31 +1336,31 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-update", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkUpdateProviderAccounts(w, r, providers)
+		handleBulkUpdateProviderAccounts(w, r, providers, systemEvents)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkTestProviderAccounts(w, r, providers)
+		handleBulkTestProviderAccounts(w, r, providers, systemEvents)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkRefreshProviderAccounts(w, r, providers)
+		handleBulkRefreshProviderAccounts(w, r, providers, systemEvents)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkDisconnectProviderAccounts(w, r, providers)
+		handleBulkDisconnectProviderAccounts(w, r, providers, systemEvents)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-pause", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkPauseProviderAccountScheduling(w, r, providers)
+		handleBulkPauseProviderAccountScheduling(w, r, providers, systemEvents)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-reset-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkResetProviderAccountStatus(w, r, providers)
+		handleBulkResetProviderAccountStatus(w, r, providers, systemEvents)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkReplaceProviderAccountModels(w, r, providers)
+		handleBulkReplaceProviderAccountModels(w, r, providers, systemEvents)
 	}))
 
 	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -1491,7 +1534,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		_, _ = w.Write([]byte("N2API bootstrap server\n"))
 	})
 
-	return mux
+	return withSystemEventRequestContext(mux, systemEvents)
 }
 
 func parsePositivePathID(r *http.Request, name string) (int64, error) {
@@ -1515,15 +1558,18 @@ func parseOptionalPositiveInt64(raw string) (int64, error) {
 }
 
 func writeProviderAccountError(w http.ResponseWriter, err error) {
+	statusCode, errorCode := providerAccountErrorResponse(err)
+	writeError(w, statusCode, errorCode)
+}
+
+func providerAccountErrorResponse(err error) (int, string) {
 	if errors.Is(err, provider.ErrInvalidInput) {
-		writeError(w, http.StatusBadRequest, "invalid_input")
-		return
+		return http.StatusBadRequest, "invalid_input"
 	}
 	if errors.Is(err, provider.ErrNotConnected) || errors.Is(err, admin.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not_found")
-		return
+		return http.StatusNotFound, "not_found"
 	}
-	writeError(w, http.StatusInternalServerError, "internal_error")
+	return http.StatusInternalServerError, "internal_error"
 }
 
 func apiKeyResponses(keys []admin.APIKey, budgetUsage map[int64]admin.APIKeyBudgetUsage, settings admin.GatewaySettings, concurrency, requestRate, tokenRate map[int64]int) []apiKeyResponse {
@@ -1966,7 +2012,7 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
 }
 
-func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -1992,23 +2038,31 @@ func handleBulkUpdateProviderAccounts(w http.ResponseWriter, r *http.Request, pr
 	}
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
+	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchUpdated, accountIDs)
+	started := time.Now()
+	targetContext := audit.targetContext(r.Context())
 	for _, id := range accountIDs {
-		account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
+		account, err := providers.UpdateAccount(targetContext, id, provider.AccountUpdate{
 			Enabled:               req.Enabled,
 			Priority:              req.Priority,
 			LoadFactor:            req.LoadFactor,
 			MaxConcurrentRequests: req.MaxConcurrentRequests,
 		})
 		if err != nil {
+			statusCode, errorCode := providerAccountErrorResponse(err)
+			audit.failed(id, errorCode)
+			audit.record(r.Context(), recorder, statusCode, time.Since(started))
 			writeProviderAccountError(w, err)
 			return
 		}
+		audit.succeeded(id)
 		accounts = append(accounts, account)
 	}
+	audit.record(r.Context(), recorder, http.StatusOK, time.Since(started))
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
-func handleBulkTestProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleBulkTestProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -2030,14 +2084,22 @@ func handleBulkTestProviderAccounts(w http.ResponseWriter, r *http.Request, prov
 	}
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
+	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchTested, accountIDs)
+	started := time.Now()
+	targetContext := audit.targetContext(r.Context())
 	for _, id := range accountIDs {
-		account, err := providers.TestAccount(r.Context(), id)
+		account, err := providers.TestAccount(targetContext, id)
 		if err != nil {
+			statusCode, errorCode := providerAccountErrorResponse(err)
+			audit.failed(id, errorCode)
+			audit.record(r.Context(), recorder, statusCode, time.Since(started))
 			writeProviderAccountError(w, err)
 			return
 		}
+		audit.succeeded(id)
 		accounts = append(accounts, account)
 	}
+	audit.record(r.Context(), recorder, http.StatusOK, time.Since(started))
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
@@ -2062,7 +2124,7 @@ func parseBulkProviderAccountIDs(w http.ResponseWriter, ids []int64) ([]int64, b
 	return accountIDs, true
 }
 
-func handleBulkRefreshProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleBulkRefreshProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -2080,18 +2142,26 @@ func handleBulkRefreshProviderAccounts(w http.ResponseWriter, r *http.Request, p
 	}
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
+	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchRefreshed, accountIDs)
+	started := time.Now()
+	targetContext := audit.targetContext(r.Context())
 	for _, id := range accountIDs {
-		account, err := providers.RefreshAccount(r.Context(), id)
+		account, err := providers.RefreshAccount(targetContext, id)
 		if err != nil {
+			statusCode, errorCode := providerAccountErrorResponse(err)
+			audit.failed(id, errorCode)
+			audit.record(r.Context(), recorder, statusCode, time.Since(started))
 			writeProviderAccountError(w, err)
 			return
 		}
+		audit.succeeded(id)
 		accounts = append(accounts, account)
 	}
+	audit.record(r.Context(), recorder, http.StatusOK, time.Since(started))
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
-func handleBulkDisconnectProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleBulkDisconnectProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -2108,16 +2178,24 @@ func handleBulkDisconnectProviderAccounts(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchDisconnected, accountIDs)
+	started := time.Now()
+	targetContext := audit.targetContext(r.Context())
 	for _, id := range accountIDs {
-		if err := providers.DisconnectAccount(r.Context(), id); err != nil {
+		if err := providers.DisconnectAccount(targetContext, id); err != nil {
+			statusCode, errorCode := providerAccountErrorResponse(err)
+			audit.failed(id, errorCode)
+			audit.record(r.Context(), recorder, statusCode, time.Since(started))
 			writeProviderAccountError(w, err)
 			return
 		}
+		audit.succeeded(id)
 	}
+	audit.record(r.Context(), recorder, http.StatusNoContent, time.Since(started))
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func handleBulkPauseProviderAccountScheduling(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleBulkPauseProviderAccountScheduling(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -2140,18 +2218,26 @@ func handleBulkPauseProviderAccountScheduling(w http.ResponseWriter, r *http.Req
 	}
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
+	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchPaused, accountIDs)
+	started := time.Now()
+	targetContext := audit.targetContext(r.Context())
 	for _, id := range accountIDs {
-		account, err := providers.PauseAccountScheduling(r.Context(), id, time.Duration(req.DurationSeconds)*time.Second)
+		account, err := providers.PauseAccountScheduling(targetContext, id, time.Duration(req.DurationSeconds)*time.Second)
 		if err != nil {
+			statusCode, errorCode := providerAccountErrorResponse(err)
+			audit.failed(id, errorCode)
+			audit.record(r.Context(), recorder, statusCode, time.Since(started))
 			writeProviderAccountError(w, err)
 			return
 		}
+		audit.succeeded(id)
 		accounts = append(accounts, account)
 	}
+	audit.record(r.Context(), recorder, http.StatusOK, time.Since(started))
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
-func handleBulkResetProviderAccountStatus(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleBulkResetProviderAccountStatus(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -2169,14 +2255,22 @@ func handleBulkResetProviderAccountStatus(w http.ResponseWriter, r *http.Request
 	}
 
 	accounts := make([]provider.Account, 0, len(accountIDs))
+	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchStatusReset, accountIDs)
+	started := time.Now()
+	targetContext := audit.targetContext(r.Context())
 	for _, id := range accountIDs {
-		account, err := providers.ResetAccountStatus(r.Context(), id)
+		account, err := providers.ResetAccountStatus(targetContext, id)
 		if err != nil {
+			statusCode, errorCode := providerAccountErrorResponse(err)
+			audit.failed(id, errorCode)
+			audit.record(r.Context(), recorder, statusCode, time.Since(started))
 			writeProviderAccountError(w, err)
 			return
 		}
+		audit.succeeded(id)
 		accounts = append(accounts, account)
 	}
+	audit.record(r.Context(), recorder, http.StatusOK, time.Since(started))
 	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
@@ -2185,7 +2279,7 @@ type bulkProviderAccountModelsResponse struct {
 	Models    []provider.AccountModel `json:"models"`
 }
 
-func handleBulkReplaceProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+func handleBulkReplaceProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
 		return
@@ -2208,14 +2302,22 @@ func handleBulkReplaceProviderAccountModels(w http.ResponseWriter, r *http.Reque
 	}
 
 	accounts := make([]bulkProviderAccountModelsResponse, 0, len(accountIDs))
+	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchModelsReplaced, accountIDs)
+	started := time.Now()
+	targetContext := audit.targetContext(r.Context())
 	for _, id := range accountIDs {
-		models, err := providers.ReplaceAccountModels(r.Context(), id, req.Models)
+		models, err := providers.ReplaceAccountModels(targetContext, id, req.Models)
 		if err != nil {
+			statusCode, errorCode := providerAccountErrorResponse(err)
+			audit.failed(id, errorCode)
+			audit.record(r.Context(), recorder, statusCode, time.Since(started))
 			writeProviderAccountError(w, err)
 			return
 		}
+		audit.succeeded(id)
 		accounts = append(accounts, bulkProviderAccountModelsResponse{AccountID: id, Models: models})
 	}
+	audit.record(r.Context(), recorder, http.StatusOK, time.Since(started))
 	writeJSON(w, http.StatusOK, map[string][]bulkProviderAccountModelsResponse{"accounts": accounts})
 }
 
@@ -2954,7 +3056,8 @@ func parseLimitParam(r *http.Request, defaultLimit, maxLimit int) (int, error) {
 	return limit, nil
 }
 
-func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins AdminService) {
+func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins AdminService, recorder SystemEventRecorder) {
+	started := time.Now()
 	filter := buildRequestLogFilter(r)
 	format := r.URL.Query().Get("format")
 	if format == "" {
@@ -2971,6 +3074,15 @@ func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins Admi
 			writeError(w, http.StatusBadRequest, "invalid_input")
 			return
 		}
+		writeError(w, http.StatusInternalServerError, "internal_error")
+		return
+	}
+	if err := recordHTTPSystemEvent(r.Context(), recorder, systemevent.EventIntent{
+		Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionRequestLogExported, Outcome: systemevent.OutcomeSuccess,
+		Target:   systemevent.Target{Type: "request_log_collection"},
+		Metadata: map[string]any{"format": format, "row_count": len(logs)},
+	}, http.StatusOK, time.Since(started)); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}

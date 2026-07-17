@@ -17,6 +17,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/store"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 type gatewayAccountProvider struct {
@@ -206,11 +207,13 @@ func main() {
 		slog.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
+	systemEventRepo := store.NewSystemEventRepository(pool, cfg.EncryptionSecret)
 
 	adminRepo := store.NewAdminRepository(pool)
 	adminService := admin.NewService(adminRepo, admin.Config{
 		SessionTTL:       7 * 24 * time.Hour,
 		EncryptionSecret: cfg.EncryptionSecret,
+		SystemEvents:     systemEventRepo,
 		DefaultGatewaySettings: admin.GatewaySettings{
 			MaxConcurrentGatewayRequests:           cfg.GatewayMaxConcurrentRequests,
 			MaxConcurrentRequestsPerAccount:        cfg.GatewayMaxConcurrentRequestsPerAccount,
@@ -226,6 +229,9 @@ func main() {
 		os.Exit(1)
 	}
 	go runAPIKeyCleanup(ctx, adminService, time.Hour)
+	if cfg.SystemEventRetentionDays > 0 {
+		go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour)
+	}
 
 	providerRepo := store.NewProviderRepository(pool)
 	requestLogRepo := store.NewGatewayRepository(pool)
@@ -251,6 +257,7 @@ func main() {
 			Interval: time.Duration(settings.ProviderAccountAutoTestIntervalSeconds) * time.Second,
 		}, nil
 	}, slog.Default())
+	autoTestRunner.SetSystemEventRecorder(systemEventRepo)
 	go autoTestRunner.Run(ctx)
 
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
@@ -273,7 +280,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, os.DirFS("frontend/build")),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, os.DirFS("frontend/build"), systemEventRepo),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -313,6 +320,57 @@ func runAPIKeyCleanup(ctx context.Context, service *admin.Service, interval time
 		}
 	}
 
+	cleanup()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
+	}
+}
+
+type systemEventRetentionStore interface {
+	DeleteBeforeBatch(ctx context.Context, before time.Time, batchSize int) (int64, error)
+	Insert(ctx context.Context, event systemevent.Event) error
+}
+
+func runSystemEventCleanup(ctx context.Context, events systemEventRetentionStore, retentionDays int, interval time.Duration) {
+	cleanup := func() {
+		cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+		var deleted int64
+		for {
+			count, err := events.DeleteBeforeBatch(ctx, cutoff, 1000)
+			if err != nil {
+				if ctx.Err() == nil {
+					slog.Error("system event retention failed", "error_code", "system_event_retention_failed")
+				}
+				return
+			}
+			deleted += count
+			if count < 1000 {
+				break
+			}
+		}
+		metadata, _ := systemevent.SafeMetadata(map[string]any{
+			"cutoff": cutoff.Format(time.RFC3339), "deleted_count": deleted, "retention_days": retentionDays,
+		}, "cutoff", "deleted_count", "retention_days")
+		requestContext := systemevent.RequestContext{
+			CorrelationID: systemevent.NewCorrelationID(), Actor: systemevent.Actor{Type: systemevent.ActorSystem},
+		}
+		event := systemevent.BuildEvent(systemevent.WithRequestContext(ctx, requestContext), systemevent.EventIntent{
+			Category: systemevent.CategoryScheduler, Severity: systemevent.SeverityInfo,
+			Action: systemevent.ActionSchedulerEventRetentionCompleted, Outcome: systemevent.OutcomeSuccess,
+			Target:  systemevent.Target{Type: "system_events", ID: "retention", Name: "System event retention"},
+			Message: "System event retention completed", Metadata: metadata,
+		}, systemevent.Target{}, time.Now().UTC(), 0)
+		if err := events.Insert(ctx, event); err != nil && ctx.Err() == nil {
+			slog.Error("system event retention summary failed", "error_code", "system_event_retention_summary_failed")
+		}
+	}
 	cleanup()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

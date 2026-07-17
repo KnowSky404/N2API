@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,7 @@ type Config struct {
 	GatewayTokensPerMinutePerKey           int
 	ProviderAccountAutoTestEnabled         bool
 	ProviderAccountAutoTestInterval        time.Duration
+	SystemEventRetentionDays               int
 }
 
 const (
@@ -39,6 +41,7 @@ const (
 
 	defaultProviderAccountAutoTestInterval = 5 * time.Minute
 	minProviderAccountAutoTestInterval     = time.Minute
+	defaultSystemEventRetentionDays        = 365
 )
 
 func Load(lookup func(string) string) (Config, error) {
@@ -68,6 +71,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.ProviderAccountAutoTestEnabled = autoTestEnabled
+	retentionDays, err := parseSystemEventRetentionDays(lookup("N2API_SYSTEM_EVENT_RETENTION_DAYS"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.SystemEventRetentionDays = retentionDays
 	autoTestIntervalSeconds, err := parseNonNegativeInt(
 		lookup("N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS"),
 		"N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS",
@@ -173,4 +181,18 @@ func parseBool(value, name string) (bool, error) {
 		return false, fmt.Errorf("%s must be a boolean: %w", name, err)
 	}
 	return parsed, nil
+}
+
+func parseSystemEventRetentionDays(value string) (int, error) {
+	if strings.TrimSpace(value) == "" {
+		return defaultSystemEventRetentionDays, nil
+	}
+	days, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("N2API_SYSTEM_EVENT_RETENTION_DAYS must be a number: %w", err)
+	}
+	if days != 0 && (days < 30 || days > 3650) {
+		return 0, fmt.Errorf("N2API_SYSTEM_EVENT_RETENTION_DAYS must be 0 or between 30 and 3650")
+	}
+	return days, nil
 }

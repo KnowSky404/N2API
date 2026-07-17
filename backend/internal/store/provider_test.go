@@ -5,16 +5,107 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestProviderRepositoryImplementsInterface(t *testing.T) {
 	var _ provider.Repository = (*ProviderRepository)(nil)
+}
+
+func TestProviderRepositoryCommitsProviderMutationWithIntent(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "audit-account",
+		Name: "Audited account", DisplayName: "Audited account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+	})
+	ctx := systemevent.WithRequestContext(context.Background(), systemevent.RequestContext{
+		CorrelationID: "provider-test-request", Actor: systemevent.Actor{Type: systemevent.ActorAdmin, ID: 3, Name: "admin"},
+	})
+	ctx = systemevent.WithIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionProviderAccountUpdated, Outcome: systemevent.OutcomeSuccess,
+		Metadata: map[string]any{"batch_id": "batch-7"},
+	})
+	enabled := false
+	if _, err := repo.UpdateAccount(ctx, "openai", account.ID, provider.AccountUpdate{Enabled: &enabled}); err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	var action, targetID, targetName, correlationID, batchID string
+	if err := repo.pool.QueryRow(context.Background(), `
+		SELECT action, target_id, target_name, correlation_id, metadata->>'batch_id'
+		FROM system_events WHERE action = $1
+	`, systemevent.ActionProviderAccountUpdated).Scan(&action, &targetID, &targetName, &correlationID, &batchID); err != nil {
+		t.Fatalf("query system event returned error: %v", err)
+	}
+	if action != string(systemevent.ActionProviderAccountUpdated) || targetID != strconv.FormatInt(account.ID, 10) || targetName != "Audited account" || correlationID != "provider-test-request" || batchID != "batch-7" {
+		t.Fatalf("event = action %q target %q/%q correlation %q batch %q", action, targetID, targetName, correlationID, batchID)
+	}
+}
+
+func TestProviderRepositoryRollsBackMutationWhenIntentIsInvalid(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "rollback-account",
+		DisplayName: "Rollback account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+	})
+	ctx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.Action("provider_account.unknown"), Outcome: systemevent.OutcomeSuccess,
+	})
+	enabled := false
+	if _, err := repo.UpdateAccount(ctx, "openai", account.ID, provider.AccountUpdate{Enabled: &enabled}); !errors.Is(err, systemevent.ErrInvalidEvent) {
+		t.Fatalf("UpdateAccount error = %v, want invalid system event", err)
+	}
+	found, err := repo.FindAccountByID(context.Background(), "openai", account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found.Enabled {
+		t.Fatal("provider mutation committed despite invalid audit event")
+	}
+}
+
+func TestProviderRuntimeEventOnlyRecordsStateTransitions(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "runtime-account",
+		DisplayName: "Runtime account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+	})
+	ctx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryRuntime, Severity: systemevent.SeverityWarning,
+		Action: systemevent.ActionProviderAccountRateLimited, Outcome: systemevent.OutcomeSuccess,
+	})
+	now := time.Now().UTC()
+	if err := repo.RecordAccountStatus(ctx, "openai", account.ID, provider.AccountStatusActive, "same", now, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	until := now.Add(time.Minute)
+	if err := repo.RecordAccountStatus(ctx, "openai", account.ID, provider.AccountStatusRateLimited, "limited", now, &until, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordAccountStatus(ctx, "openai", account.ID, provider.AccountStatusRateLimited, "limited again", now, &until, nil); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := repo.pool.QueryRow(context.Background(), `SELECT count(*) FROM system_events WHERE action = $1`, systemevent.ActionProviderAccountRateLimited).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("runtime event count = %d, want 1 actual transition", count)
+	}
 }
 
 func TestSaveAccountSubjectConflictPreservesSchedulingFields(t *testing.T) {
@@ -1492,7 +1583,7 @@ func newProviderRepositoryForTest(t *testing.T) (*ProviderRepository, func()) {
 		pool.Close()
 		t.Fatalf("RunMigrations returned error: %v", err)
 	}
-	if _, err := pool.Exec(ctx, "TRUNCATE provider_account_models, provider_account_credentials, provider_accounts, oauth_account_models, oauth_accounts, oauth_states RESTART IDENTITY CASCADE"); err != nil {
+	if _, err := pool.Exec(ctx, truncateStoreTestDataSQL); err != nil {
 		pool.Close()
 		t.Fatalf("TRUNCATE returned error: %v", err)
 	}

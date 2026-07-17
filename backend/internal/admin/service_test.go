@@ -11,9 +11,44 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 type staticRoundTripper func(*http.Request) (*http.Response, error)
+
+type fakeSystemEventRepository struct {
+	filter systemevent.Filter
+	page   systemevent.Page
+	err    error
+}
+
+func (r *fakeSystemEventRepository) List(_ context.Context, filter systemevent.Filter) (systemevent.Page, error) {
+	r.filter = filter
+	return r.page, r.err
+}
+
+func TestListSystemEventsValidatesAndNormalizesFilter(t *testing.T) {
+	events := &fakeSystemEventRepository{page: systemevent.Page{HasMore: true, NextCursor: "next"}}
+	service := NewService(&memoryRepo{}, Config{SystemEvents: events})
+	service.now = func() time.Time { return time.Unix(2000, 0).UTC() }
+	page, err := service.ListSystemEvents(context.Background(), SystemEventFilter{
+		Limit: 25, Category: systemevent.CategoryAudit, TargetType: " api_key ", TargetID: " 7 ", Query: " changed ",
+	})
+	if err != nil {
+		t.Fatalf("ListSystemEvents returned error: %v", err)
+	}
+	if !page.HasMore || events.filter.TargetType != "api_key" || events.filter.TargetID != "7" || events.filter.Query != "changed" {
+		t.Fatalf("page/filter = %+v / %+v", page, events.filter)
+	}
+	for _, filter := range []SystemEventFilter{
+		{Limit: 101}, {Category: "unknown"}, {Action: "unknown.action"}, {TargetID: "7"}, {Query: strings.Repeat("x", 201)},
+	} {
+		if _, err := service.ListSystemEvents(context.Background(), filter); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("filter %+v error = %v, want ErrInvalidInput", filter, err)
+		}
+	}
+}
 
 func (f staticRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
@@ -461,7 +496,7 @@ func TestListAPIKeysReturnsRepositoryKeys(t *testing.T) {
 	}
 }
 
-func TestListAPIKeysPurgesRevokedKeysPastRetention(t *testing.T) {
+func TestListAPIKeysDoesNotPurgeRevokedKeys(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	now := time.Now().UTC()
@@ -493,19 +528,46 @@ func TestListAPIKeysPurgesRevokedKeysPastRetention(t *testing.T) {
 		t.Fatalf("ListAPIKeys returned error: %v", err)
 	}
 
-	for _, key := range keys {
-		if key.ID == 1 {
-			t.Fatalf("old deleted key remained in ListAPIKeys result: %+v", keys)
-		}
+	if len(keys) != 3 {
+		t.Fatalf("ListAPIKeys returned %d keys, want all 3 without read-side cleanup", len(keys))
 	}
-	if _, ok := repo.keys[1]; ok {
-		t.Fatalf("old deleted key remained in repository after purge")
+	if _, ok := repo.keys[1]; !ok {
+		t.Fatal("ListAPIKeys purged an old deleted key")
 	}
 	if _, ok := repo.keys[2]; !ok {
 		t.Fatalf("recent deleted key was purged")
 	}
 	if _, ok := repo.keys[3]; !ok {
 		t.Fatalf("active key was purged")
+	}
+}
+
+func TestPurgeExpiredAPIKeysPurgesRevokedKeysPastRetention(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	now := time.Now().UTC()
+	service.SetNow(func() time.Time { return now })
+	oldRevokedAt := now.Add(-8 * 24 * time.Hour)
+	recentRevokedAt := now.Add(-6 * 24 * time.Hour)
+	repo.keys[1] = memoryAPIKey{APIKey: APIKey{ID: 1, Name: "old deleted", RevokedAt: &oldRevokedAt}}
+	repo.keys[2] = memoryAPIKey{APIKey: APIKey{ID: 2, Name: "recent deleted", RevokedAt: &recentRevokedAt}}
+	repo.keys[3] = memoryAPIKey{APIKey: APIKey{ID: 3, Name: "active"}}
+
+	deleted, err := service.PurgeExpiredAPIKeys(context.Background())
+	if err != nil {
+		t.Fatalf("PurgeExpiredAPIKeys returned error: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("PurgeExpiredAPIKeys deleted = %d, want 1", deleted)
+	}
+	if _, ok := repo.keys[1]; ok {
+		t.Fatal("old deleted key remained after purge")
+	}
+	if _, ok := repo.keys[2]; !ok {
+		t.Fatal("recent deleted key was purged")
+	}
+	if _, ok := repo.keys[3]; !ok {
+		t.Fatal("active key was purged")
 	}
 }
 
