@@ -1683,7 +1683,7 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{confirmSyncOfficial\}/);
 
   assert.match(pricingPage, /let pricingPage = \$state\(1\)/);
-  assert.match(pricingPage, /let pricingPageSize = \$state\(5\)/);
+  assert.match(pricingPage, /let pricingPageSize = \$state\(10\)/);
   assert.match(pricingPage, /pricingPageCount/);
   assert.match(pricingPage, /normalizedPricingPage/);
   assert.match(pricingPage, /paginatedPricingRows/);

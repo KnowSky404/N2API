@@ -147,7 +147,7 @@
 
   let pricingSearch = $state('');
   let pricingPage = $state(1);
-  let pricingPageSize = $state(5);
+  let pricingPageSize = $state(10);
 
   const filteredPricingRows = $derived(
     (usagePricing.rows || []).filter((row) => {
