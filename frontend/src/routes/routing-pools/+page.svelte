@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { X } from 'lucide-svelte';
+  import { Plus, RefreshCw, X } from 'lucide-svelte';
   import {
     apiKeys,
     createRoutingPool,
@@ -315,20 +315,21 @@
 </svelte:head>
 
 <AuthGate>
-  <section class="rounded-lg border border-[#ededed] bg-white p-6">
-    <div class="flex flex-wrap items-center justify-between gap-4">
-      <div>
-        <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Routing pools</h2>
-        <p class="mt-1 text-sm text-[#6e6e6e]">
-          Signed in as {session.username}. {visibleRoutingPools.length} of {routingPools.items.length} configured pools shown.
+  <div class="ui-page min-w-0">
+    <header class="ui-page-header">
+      <div class="ui-page-heading">
+        <h1 class="ui-page-title">Routing pools</h1>
+        <p class="ui-page-description">
+          Group provider accounts into explicit scheduling boundaries. {visibleRoutingPools.length} of {routingPools.items.length} pools shown.
         </p>
       </div>
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="ui-page-actions">
         <button
-          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d]"
+          class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
           type="button"
           onclick={openCreatePoolModal}
         >
+          <Plus class="size-4" aria-hidden="true" />
           Create pool
         </button>
         {#if selectedRoutingPoolId !== 'all'}
@@ -341,14 +342,16 @@
           </button>
         {/if}
         <button
-          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
+          class="ui-button ui-button--icon ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
           disabled={routingPools.loading}
           onclick={() => loadRoutingPools()}
+          aria-label={routingPools.loading ? 'Refreshing routing pools' : 'Refresh routing pools'}
+          title="Refresh routing pools"
         >
-          {routingPools.loading ? 'Refreshing' : 'Refresh'}
+          <RefreshCw class={routingPools.loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
         </button>
       </div>
-    </div>
+    </header>
 
 
     {#if routingPools.error && !showCreateModal}
@@ -555,7 +558,7 @@
         </table>
       </div>
     {/if}
-  </section>
+  </div>
 
 {#if editingRoutingPool}
   {@const pool = editingRoutingPool}

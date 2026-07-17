@@ -334,11 +334,17 @@
 
 
 <AuthGate>
-<div class="space-y-6">
+<div class="ui-page">
+<header class="ui-page-header">
+  <div class="ui-page-heading">
+    <h1 class="ui-page-title">Request logs</h1>
+    <p class="ui-page-description">Inspect gateway usage, routing decisions, latency, and request failures.</p>
+  </div>
+</header>
 <section class="rounded-lg border border-[#ededed] bg-white p-6">
   <div class="flex flex-wrap items-center justify-between gap-4">
     <div>
-<h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Usage summary</h2>
+<h2 class="ui-section-title">Usage summary</h2>
 <p class="mt-1 text-sm text-[#6e6e6e]">Gateway usage by time range and routing dimension.</p>
     </div>
     <div class="flex flex-wrap items-center gap-3">
@@ -463,7 +469,7 @@
 <section class="rounded-lg border border-[#ededed] bg-white p-6">
   <div class="flex flex-wrap items-center justify-between gap-4">
     <div>
-<h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Request logs</h2>
+<h2 class="ui-section-title">Recent requests</h2>
 <p class="mt-1 text-sm text-[#6e6e6e]">
   Recent OpenAI-compatible gateway requests.
 </p>

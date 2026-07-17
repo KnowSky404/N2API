@@ -155,10 +155,17 @@
 </svelte:head>
 
 <AuthGate>
-  <div class="space-y-6">
+  <div class="ui-page">
+    <header class="ui-page-header">
+      <div class="ui-page-heading">
+        <h1 class="ui-page-title">Gateway</h1>
+        <p class="ui-page-description">Routing readiness, scheduler health, runtime limits, and recent traffic distribution.</p>
+      </div>
+    </header>
+
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
       <div>
-        <h3 class="text-base font-semibold text-[#0d0d0d]">Gateway readiness</h3>
+        <h2 class="ui-section-title">Gateway readiness</h2>
         <p class="mt-1 text-sm text-[#6e6e6e]">Core capacity signals required before this gateway can serve daily traffic reliably.</p>
       </div>
       <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-4">
@@ -211,7 +218,7 @@
     <!-- Scheduling health -->
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
       <div>
-        <h3 class="text-base font-semibold text-[#0d0d0d]">Scheduling health</h3>
+        <h2 class="ui-section-title">Scheduling health</h2>
         <p class="mt-1 text-sm text-[#6e6e6e]">Provider account eligibility and local health state used by the gateway scheduler.</p>
       </div>
       <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-3">
@@ -262,7 +269,7 @@
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h3 class="text-base font-semibold text-[#0d0d0d]">Runtime limits</h3>
+          <h2 class="ui-section-title">Runtime limits</h2>
           <p class="mt-1 text-sm text-[#6e6e6e]">Current concurrency and rate guards from the running service.</p>
         </div>
         {#if gatewaySettings.loading}
@@ -381,7 +388,7 @@
     <section class="rounded-lg border border-[#ededed] bg-white p-6">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h3 class="text-base font-semibold text-[#0d0d0d]">24h usage</h3>
+          <h2 class="ui-section-title">24h usage</h2>
           <p class="mt-1 text-sm text-[#6e6e6e]">Traffic distribution across accounts, client keys, and sticky sessions.</p>
         </div>
         {#if usage.loading}

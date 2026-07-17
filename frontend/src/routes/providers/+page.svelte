@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { FlaskConical, LoaderCircle, Pencil, Plus, Trash2, X } from 'lucide-svelte';
+  import { FlaskConical, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
   import {
     accountLabel,
     accountTypeLabel,
@@ -711,58 +711,55 @@
 </svelte:head>
 
 <AuthGate>
-<section class="rounded-lg border border-[#ededed] bg-white p-6">
-  <div class="flex flex-wrap items-start justify-between gap-4">
-    <div>
-<h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Provider accounts</h2>
-<p class="mt-1 text-sm text-[#6e6e6e]">Codex OAuth and API upstream gateway exits</p>
+<section class="ui-page min-w-0">
+  <header class="ui-page-header">
+    <div class="ui-page-heading">
+      <h1 class="ui-page-title">Provider accounts</h1>
+      <p class="ui-page-description">Codex OAuth and API upstream gateway exits. Last refresh: {formatDate(provider.data?.lastRefreshAt)}.</p>
     </div>
+    <div class="ui-page-actions">
     <span
 class={[
-  'inline-flex rounded-full px-2.5 py-1 text-xs font-medium capitalize',
+  'inline-flex items-center gap-2 text-xs font-medium capitalize',
   provider.data?.connected
-    ? 'bg-[#e8f5f0] text-[#0a7a5e]'
+    ? 'text-[#0a7a5e]'
     : provider.data?.configured
-      ? 'bg-[#f5f5f5] text-[#3c3c3c]'
-      : 'bg-red-50 text-red-700'
+      ? 'text-[#3c3c3c]'
+      : 'text-red-700'
 ]}
     >
+      <span class={provider.data?.connected ? 'size-2 rounded-full bg-[#10a37f]' : 'size-2 rounded-full bg-amber-500'}></span>
 {provider.loading ? 'Checking' : providerStateLabel}
     </span>
-  </div>
-
-  <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
-    <p class="text-sm text-[#6e6e6e]">
-Last refresh: {formatDate(provider.data?.lastRefreshAt)}
-    </p>
-    <div class="flex flex-wrap gap-2">
+      <button
+        class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60"
+        type="button"
+        onclick={openAddAccountModal}
+      >
+        <Plus class="size-4" aria-hidden="true" />
+        Add account
+      </button>
 <button
   class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
   type="button"
   disabled={providerAccounts.loading || providerAccounts.saving || providerAccounts.items.length === 0}
   onclick={testAllProviderAccounts}
 >
+  <FlaskConical class="size-4" aria-hidden="true" />
   Test all accounts
 </button>
 <button
-  class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+  class="ui-button ui-button--icon ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
   type="button"
   disabled={providerAccounts.loading}
   onclick={loadProviderAccounts}
+  aria-label={providerAccounts.loading ? 'Refreshing provider accounts' : 'Refresh provider accounts'}
+  title="Refresh provider accounts"
 >
-  {providerAccounts.loading ? 'Refreshing' : 'Refresh'}
+  <RefreshCw class={providerAccounts.loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
 </button>
     </div>
-  </div>
-
-  <button
-    class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60 inline-flex items-center gap-1.5"
-    type="button"
-    onclick={openAddAccountModal}
-  >
-    <Plus class="size-4" />
-    Add account
-  </button>
+  </header>
 
   <!-- Add account modal -->
   {#if addAccountModalOpen}

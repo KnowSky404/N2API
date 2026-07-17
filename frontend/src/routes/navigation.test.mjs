@@ -86,6 +86,27 @@ test('primary navigation moves model policy ownership to API keys', () => {
   assert.match(layout, /href:\s*'\/api-keys'/);
 });
 
+test('admin routes share the dashboard page heading hierarchy', () => {
+  const routeTitles = {
+    gateway: 'Gateway',
+    providers: 'Provider accounts',
+    'routing-pools': 'Routing pools',
+    models: 'Routing diagnostics',
+    'api-keys': 'API keys',
+    'request-logs': 'Request logs',
+    pricing: 'Pricing',
+    ops: 'Operations monitor',
+    fingerprints: 'Fingerprint profiles'
+  };
+
+  for (const [route, title] of Object.entries(routeTitles)) {
+    const source = readText(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /class="ui-page-header"/);
+    assert.match(source, new RegExp(`<h1 class="ui-page-title">${title}<\\/h1>`));
+    assert.equal((source.match(/<h1\b/g) ?? []).length, 1, `${route} should have one page-level h1`);
+  }
+});
+
 test('editable modals use explicit close controls and persistent unified saves', () => {
   for (const label of [
     'Close change password modal',
@@ -1368,11 +1389,11 @@ test('pricing is isolated from request logs behind its own navigation route', ()
   assert.match(layout, /href:\s*'\/pricing'/);
   assert.match(layout, /label:\s*'Pricing'/);
   assert.match(pricingPage, /<title>N2API Pricing<\/title>/);
-  assert.match(pricingPage, /<h2[^>]*>Pricing<\/h2>/);
+  assert.match(pricingPage, /<h1[^>]*>Pricing<\/h1>/);
   assert.doesNotMatch(requestLogsPage, /usagePricing/);
   assert.doesNotMatch(requestLogsPage, /savePricingRows/);
   assert.doesNotMatch(requestLogsPage, /syncOfficialUsagePricing/);
-  assert.doesNotMatch(requestLogsPage, /<h2[^>]*>Pricing<\/h2>/);
+  assert.doesNotMatch(requestLogsPage, /<h1[^>]*>Pricing<\/h1>/);
 });
 
 test('usage pricing supports official OpenAI sync', () => {
@@ -1550,7 +1571,7 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(pricingPage, /commitPricingRow/);
 
   // Header pricing actions stay pinned to the right side of the section
-  assert.match(pricingPage, /ml-auto flex flex-wrap items-center justify-end gap-3/);
+  assert.match(pricingPage, /class="ui-page-actions"/);
 
   // Biaxial scroll container with sticky header
   assert.match(pricingPage, /overflow-auto max-h-\[65vh\]/);

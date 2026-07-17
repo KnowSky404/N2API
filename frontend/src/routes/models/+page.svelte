@@ -290,47 +290,48 @@
 </svelte:head>
 
 <AuthGate>
-  <div class="space-y-5">
-    <section class="rounded-lg border border-[#ededed] bg-white p-6">
-      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Routing diagnostics</h2>
-          <p class="mt-2 max-w-2xl text-sm leading-6 text-[#3c3c3c]">
-            Gateway default model and API key model access are managed from API Keys. Per-account manual models are managed from Provider accounts. This page shows scheduler-visible routing candidates and block reasons.
+  <div class="ui-page">
+    <header class="ui-page-header">
+      <div class="ui-page-heading">
+        <h1 class="ui-page-title">Routing diagnostics</h1>
+        <p class="ui-page-description">
+          Inspect scheduler-visible candidates, selection order, and block reasons without sending upstream traffic.
+        </p>
+        {#if modelDiagnosticClientKeyId}
+          <p class="mt-2 text-sm text-[#6e6e6e]">
+            API key scope
+            {#if selectedDiagnosticAPIKey}
+              <a
+                class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
+                href={diagnosticAPIKeyHref(selectedDiagnosticAPIKey)}
+                aria-label="View API key"
+              >
+                {selectedDiagnosticAPIKey.name || `Key ${selectedDiagnosticAPIKey.id}`}
+              </a>
+            {:else}
+              Key {modelDiagnosticClientKeyId}
+            {/if}
           </p>
-          {#if modelDiagnosticClientKeyId}
-            <p class="mt-3 text-sm text-[#6e6e6e]">
-              API key scope
-              {#if selectedDiagnosticAPIKey}
-                <a
-                  class="font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
-                  href={diagnosticAPIKeyHref(selectedDiagnosticAPIKey)}
-                  aria-label="View API key"
-                >
-                  {selectedDiagnosticAPIKey.name || `Key ${selectedDiagnosticAPIKey.id}`}
-                </a>
-              {:else}
-                Key {modelDiagnosticClientKeyId}
-              {/if}
-            </p>
-          {/if}
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <a
-            class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
-            href="/api-keys"
-          >
-            Open API Keys
-          </a>
-          <a
-            class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-            href="/providers"
-          >
-            Open Provider accounts
-          </a>
-        </div>
+        {/if}
       </div>
-      <div class="mt-5 grid gap-3 sm:grid-cols-3">
+      <div class="ui-page-actions">
+        <a
+          class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
+          href="/api-keys"
+        >
+          Open API Keys
+        </a>
+        <a
+          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+          href="/providers"
+        >
+          Open provider accounts
+        </a>
+      </div>
+    </header>
+
+    <section class="rounded-lg border border-[#ededed] bg-white p-6">
+      <div class="grid gap-3 sm:grid-cols-3">
         <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
           <p class="text-xs font-medium text-[#6e6e6e]">Default</p>
           <p class="mt-2 truncate text-sm font-semibold text-[#0d0d0d]">{modelRouting.defaultModel || 'Not set'}</p>

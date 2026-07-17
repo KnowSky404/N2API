@@ -8,6 +8,7 @@
     session,
     updateFingerprintProfile,
   } from '$lib/admin-state.svelte.js';
+  import { Plus } from 'lucide-svelte';
 
   import AuthGate from '$lib/AuthGate.svelte';
 
@@ -147,25 +148,23 @@
 </svelte:head>
 
 <AuthGate>
-  <div class="space-y-6">
-    <!-- Header -->
-    <section class="rounded-lg border border-[#ededed] bg-white p-6">
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Fingerprint profiles</h2>
-          <p class="mt-2 text-sm text-[#6e6e6e]">
-            TLS and User-Agent fingerprint profiles for provider connection simulation.
-          </p>
-        </div>
+  <div class="ui-page">
+    <header class="ui-page-header">
+      <div class="ui-page-heading">
+        <h1 class="ui-page-title">Fingerprint profiles</h1>
+        <p class="ui-page-description">TLS and User-Agent identities applied to provider connections.</p>
+      </div>
+      <div class="ui-page-actions">
         <button
           class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
           onclick={openCreateForm}
           disabled={fingerprintProfiles.loading}
         >
+          <Plus class="size-4" aria-hidden="true" />
           New profile
         </button>
       </div>
-    </section>
+    </header>
 
     {#if fingerprintProfiles.error}
       <section class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -175,7 +174,7 @@
 
     <section class="rounded-lg border border-[#ededed] bg-white">
       <div class="border-b border-[#ededed] px-4 py-3">
-        <h3 class="text-base font-semibold text-[#0d0d0d]">System sending defaults</h3>
+        <h2 class="ui-section-title">System sending defaults</h2>
       </div>
       <div class="ui-table-shell overflow-x-auto">
         <table class="ui-table w-full min-w-[720px] text-sm">

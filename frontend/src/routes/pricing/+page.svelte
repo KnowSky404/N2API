@@ -343,8 +343,8 @@
 <svelte:window onscroll={closeDeleteConfirmPricingPopover} onresize={closeDeleteConfirmPricingPopover} />
 
 <AuthGate>
-<div class="space-y-6">
-<section class="relative rounded-lg border border-[#ededed] bg-white p-6">
+<div class="ui-page">
+<section class="relative">
   <div>
     {#if pricingBusy}
       <div class="ui-loading-overlay absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-lg bg-white/85 backdrop-blur-[2px]" aria-label="Pricing operation in progress">
@@ -352,12 +352,12 @@
         <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
       </div>
     {/if}
-    <div class="flex flex-wrap items-center justify-between gap-4">
-      <div>
-        <h2 class="text-xl font-semibold leading-tight text-[#0d0d0d]">Pricing</h2>
-      <p class="mt-1 text-sm text-[#6e6e6e]">Official OpenAI Standard pricing — prices shown in USD per 1M tokens for historical estimates.</p>
+    <header class="ui-page-header">
+      <div class="ui-page-heading">
+        <h1 class="ui-page-title">Pricing</h1>
+        <p class="ui-page-description">Official OpenAI Standard pricing; prices shown in USD per 1M tokens for historical cost estimates.</p>
       </div>
-      <div class="ml-auto flex flex-wrap items-center justify-end gap-3">
+      <div class="ui-page-actions">
         {#if usagePricing.deletionCandidates?.length}
           <button
             class="ui-button ui-button--sm ui-button--warning rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
@@ -400,7 +400,7 @@
           Add model
         </button>
       </div>
-    </div>
+    </header>
 
     {#if usagePricing.error && !showSyncConfirmModal && !showUpcomingIgnoreModal && !showShutdownRemovalModal}
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usagePricing.error}</p>

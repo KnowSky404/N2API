@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { Copy, Pencil, ScrollText, SquareCheckBig, Trash2, X } from 'lucide-svelte';
+  import { Copy, Pencil, Plus, ScrollText, SquareCheckBig, Trash2, X } from 'lucide-svelte';
   import {
     apiKeys,
     apiKeyModelWarnings,
@@ -631,25 +631,26 @@
 </svelte:head>
 
 <AuthGate>
-<section class="min-w-0 max-w-full overflow-x-hidden rounded-lg border border-[#ededed] bg-white p-6">
-  <div class="flex flex-wrap items-center justify-between gap-4">
-    <div>
-<h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">API keys</h2>
-<p class="mt-1 text-sm text-[#6e6e6e]">
-  Signed in as {session.username}. {activeKeys.length} active
-  {activeKeys.length === 1 ? 'key' : 'keys'}.
-</p>
+<div class="ui-page min-w-0 max-w-full overflow-x-hidden">
+  <header class="ui-page-header">
+    <div class="ui-page-heading">
+      <h1 class="ui-page-title">API keys</h1>
+      <p class="ui-page-description">
+        Client access, routing policy, usage limits, and budgets. {activeKeys.length} active
+        {activeKeys.length === 1 ? ' key' : ' keys'}.
+      </p>
     </div>
-    <div>
+    <div class="ui-page-actions">
       <button
         class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white"
         type="button"
         onclick={openCreateKeyModal}
       >
+        <Plus class="size-4" aria-hidden="true" />
         Create key
       </button>
     </div>
-  </div>
+  </header>
 
   {#if apiKeys.oneTimeSecret}
     <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
@@ -1691,7 +1692,7 @@
       </button>
     </div>
   </div>
-</section>
+</div>
 
 {#if deleteConfirmKeyPopover}
   <div

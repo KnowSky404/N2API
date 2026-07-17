@@ -129,16 +129,13 @@
 </svelte:head>
 
 <AuthGate>
-  <div class="space-y-6">
-    <!-- Header -->
-    <section class="rounded-lg border border-[#ededed] bg-white p-6">
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 class="text-2xl font-semibold leading-tight text-[#0d0d0d]">Operations monitor</h2>
-          <p class="mt-2 text-sm text-[#6e6e6e]">
-            Gateway error rates, throughput trends, latency distribution, and health signals.
-          </p>
-        </div>
+  <div class="ui-page">
+    <header class="ui-page-header">
+      <div class="ui-page-heading">
+        <h1 class="ui-page-title">Operations monitor</h1>
+        <p class="ui-page-description">Gateway error rates, throughput trends, latency distribution, and health signals.</p>
+      </div>
+      <div class="ui-page-actions">
         <div class="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white p-0.5">
           {#each rangeOptions as option}
             <button
@@ -150,7 +147,7 @@
           {/each}
         </div>
       </div>
-    </section>
+    </header>
 
     {#if opsMonitor.loading && !opsMonitor.stats}
       <section class="rounded-lg border border-[#ededed] bg-white p-6 text-sm text-[#6e6e6e]">
