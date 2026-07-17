@@ -636,8 +636,8 @@
     <div class="ui-page-heading">
       <h1 class="ui-page-title">API keys</h1>
       <p class="ui-page-description">
-        Client access, routing policy, usage limits, and budgets. {activeKeys.length} active
-        {activeKeys.length === 1 ? ' key' : ' keys'}.
+        Client access, routing policy, usage limits, and budgets.
+        {#if apiKeys.loading}Loading keys.{:else}{activeKeys.length} active{activeKeys.length === 1 ? ' key' : ' keys'}.{/if}
       </p>
     </div>
     <div class="ui-page-actions">

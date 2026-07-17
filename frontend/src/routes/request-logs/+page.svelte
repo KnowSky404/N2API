@@ -21,11 +21,13 @@
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
+  import { Download, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
 
   let providerAccountsRequested = $state(false);
   let routingPoolsRequested = $state(false);
   let apiKeysRequested = $state(false);
   let appliedRequestLogSearch = $state('');
+  let showAdvancedFilters = $state(false);
 
   /** @param {string} search */
   function applyRequestLogURLFilters(search) {
@@ -124,6 +126,11 @@
     if (gatewayFallbacks === '1' || gatewayFallbacks === 'true') {
       requestLogs.gatewayFallbacks = true;
     }
+
+    showAdvancedFilters = [
+      'requestId', 'providerAccountId', 'routingPoolId', 'clientKeyId', 'model', 'sessionId',
+      'error', 'usageSource', 'statusCode', 'since', 'routingPoolError', 'routingPoolChain', 'gatewayFallbacks'
+    ].some((key) => params.has(key));
   }
   /** @param {string} [format] */
   function exportRequestLogsURL(format) {
@@ -467,18 +474,20 @@
 
 
 <section class="rounded-lg border border-[#ededed] bg-white p-6">
-  <div class="flex flex-wrap items-center justify-between gap-4">
+  <div class="flex flex-wrap items-start justify-between gap-4">
     <div>
 <h2 class="ui-section-title">Recent requests</h2>
 <p class="mt-1 text-sm text-[#6e6e6e]">
   Recent OpenAI-compatible gateway requests.
 </p>
-      <div class="flex items-center gap-2 mt-2">
+    </div>
+      <div class="flex flex-wrap items-center gap-2">
         <a
           class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
           href={exportRequestLogsURL("csv")}
           target="_blank" rel="noopener noreferrer"
         >
+          <Download class="size-4" aria-hidden="true" />
           Export CSV
         </a>
         <a
@@ -486,6 +495,7 @@
           href={exportRequestLogsURL("json")}
           target="_blank" rel="noopener noreferrer"
         >
+          <Download class="size-4" aria-hidden="true" />
           Export JSON
         </a>
         <a
@@ -493,55 +503,25 @@
           href={exportRequestLogsURL("jsonl")}
           target="_blank" rel="noopener noreferrer"
         >
+          <Download class="size-4" aria-hidden="true" />
           Export JSONL
         </a>
       </div>
-    </div>
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+  </div>
+
+    <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_12rem_auto_auto] lg:items-end">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Search
         <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.query}
           placeholder="key, account, model, route, error"
         />
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
-        Request ID filter
-        <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={requestLogs.requestId}
-          placeholder="req_..."
-        />
-      </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
-        Model filter
-        <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={requestLogs.model}
-          placeholder="gpt-5"
-        />
-      </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
-        Session filter
-        <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={requestLogs.sessionId}
-          placeholder="workspace-123"
-        />
-      </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
-        Error code filter
-        <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={requestLogs.errorCode}
-          placeholder="api_key_token_rate_limited"
-        />
-      </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Status
         <select
-          class="mt-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.statusClass}
         >
           {#each requestLogStatusClasses as statusClass}
@@ -549,30 +529,84 @@
           {/each}
         </select>
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <button
+        class="ui-button ui-button--sm ui-button--secondary"
+        type="button"
+        aria-expanded={showAdvancedFilters}
+        onclick={() => (showAdvancedFilters = !showAdvancedFilters)}
+      >
+        <SlidersHorizontal class="size-4" aria-hidden="true" />
+        {showAdvancedFilters ? 'Fewer filters' : 'More filters'}
+      </button>
+      <button
+        class="ui-button ui-button--sm ui-button--primary"
+        type="button"
+        disabled={requestLogs.loading}
+        onclick={loadRequestLogs}
+      >
+        <RefreshCw class={requestLogs.loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
+        {requestLogs.loading ? 'Refreshing' : 'Apply'}
+      </button>
+    </div>
+
+    {#if showAdvancedFilters}
+    <div class="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 sm:grid-cols-2 lg:grid-cols-3">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Request ID filter
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.requestId}
+          placeholder="req_..."
+        />
+      </label>
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Model filter
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.model}
+          placeholder="gpt-5"
+        />
+      </label>
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Session filter
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.sessionId}
+          placeholder="workspace-123"
+        />
+      </label>
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Error code filter
+        <input
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogs.errorCode}
+          placeholder="api_key_token_rate_limited"
+        />
+      </label>
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Status code filter
         <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.statusCode}
           placeholder="503"
           inputmode="numeric"
           pattern="[1-5][0-9][0-9]"
         />
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Since
         <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.since}
           placeholder="Unix seconds"
           inputmode="numeric"
           pattern="[0-9]*"
         />
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Usage source
         <select
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.usageSource}
         >
           {#each usageSourceFilters as usageSource}
@@ -580,10 +614,10 @@
           {/each}
         </select>
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Routing error
         <select
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.routingPoolError}
         >
           {#each routingPoolErrorFilters as routingPoolError}
@@ -591,18 +625,18 @@
           {/each}
         </select>
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Fallback chain
         <input
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.routingPoolChain}
           placeholder="primary -> secondary"
         />
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Provider account
         <select
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.providerAccountId}
         >
           <option value="all">All provider accounts</option>
@@ -611,10 +645,10 @@
           {/each}
         </select>
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Routing pool
         <select
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.routingPoolId}
         >
           <option value="all">All routing pools</option>
@@ -623,10 +657,10 @@
           {/each}
         </select>
       </label>
-      <label class="block text-sm font-medium text-[#3c3c3c]">
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         API key
         <select
-          class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.clientKeyId}
         >
           <option value="all">All API keys</option>
@@ -643,16 +677,8 @@
         />
         Only fallback requests
       </label>
-      <button
-        class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={requestLogs.loading}
-        onclick={loadRequestLogs}
-      >
-        {requestLogs.loading ? 'Refreshing' : 'Refresh'}
-      </button>
     </div>
-  </div>
+    {/if}
 
   {#if requestLogs.error}
     <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">

@@ -287,14 +287,17 @@ test('routing pools page manages account pools', () => {
 
   // Row inline enabled switch (main table, not edit modal)
   assert.match(poolsPage, /role="switch"/);
-  assert.match(poolsPage, /pool\.enabled = event\.currentTarget\.checked/);
-  assert.match(poolsPage, /void updateRoutingPool\(pool\)/);
+  assert.match(poolsPage, /function setRoutingPoolEnabled/);
+  assert.match(poolsPage, /pool\.enabled = previous/);
+  assert.match(poolsPage, /void setRoutingPoolEnabled\(pool, event\.currentTarget\.checked\)/);
 
   // Sticky Actions column in main table
   assert.match(poolsPage, /sticky right-0.*Actions/);
 
-  // Main table row Actions includes Delete that calls deleteRoutingPool(pool.id)
-  assert.match(poolsPage, /deleteRoutingPool\(pool\.id\)/);
+  // Destructive removal requires a custom confirmation dialog.
+  assert.match(poolsPage, /openDeleteRoutingPool\(pool\)/);
+  assert.match(poolsPage, /confirmDeleteRoutingPool/);
+  assert.match(poolsPage, /delete-routing-pool-title/);
 
   // Edit modal with role="dialog" aria-modal="true"
   assert.match(poolsPage, /role="dialog"/);
@@ -365,6 +368,9 @@ test('gateway page manages runtime limits and usage visibility', () => {
 
   assert.match(gatewayPage, /loadGatewaySettings/);
   assert.match(gatewayPage, /loadProviderAccounts/);
+  assert.match(gatewayPage, /const readinessLoading = \$derived/);
+  assert.match(gatewayPage, /const readinessError = \$derived/);
+  assert.match(gatewayPage, /Checking gateway readiness/);
   assert.match(gatewayPage, /loadModelRouting/);
   assert.match(gatewayPage, /loadKeys/);
   assert.match(gatewayPage, /getSchedulableProviderAccounts/);
@@ -607,6 +613,13 @@ test('request logs page filters by provider account', () => {
   assert.match(adminState, /requestLogs\.providerAccountId/);
   assert.match(adminState, /requestLogs\.routingPoolId/);
   assert.match(requestLogsPage, /loadProviderAccounts\(\)/);
+});
+
+test('request logs keep advanced diagnostics filters collapsed until requested', () => {
+  assert.match(requestLogsPage, /let showAdvancedFilters = \$state\(false\)/);
+  assert.match(requestLogsPage, /aria-expanded=\{showAdvancedFilters\}/);
+  assert.match(requestLogsPage, /More filters/);
+  assert.match(requestLogsPage, /\{#if showAdvancedFilters\}/);
 });
 
 test('providers page initializes account search from provider account URL param', () => {
@@ -1193,6 +1206,10 @@ test('ops monitor links error buckets to filtered request logs', () => {
   assert.match(opsPage, /function opsSinceParam/);
   assert.match(opsPage, /function requestLogHrefWithSince/);
   assert.match(opsPage, /params\.set\('since', opsSinceParam\(\)\)/);
+  assert.match(opsPage, /let pendingRange = \$state\(''\)/);
+  assert.match(opsPage, /const snapshot =/);
+  assert.match(opsPage, /Object\.assign\(opsMonitor, snapshot\)/);
+  assert.match(opsPage, /Showing the last complete range/);
   assert.match(opsPage, /params\.set\('error', key\)/);
   assert.match(opsPage, /params\.set\('statusCode', key\)/);
   assert.match(opsPage, /params\.set\('model', key\)/);

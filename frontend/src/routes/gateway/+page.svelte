@@ -1,5 +1,6 @@
 <script>
   import {
+    apiKeys,
     cleanupRequestLogs,
     formatCostMicrousd,
     formatDate,
@@ -42,6 +43,12 @@
       routableModelCount,
       activeKeys
     })
+  );
+  const readinessLoading = $derived(
+    providerAccounts.loading || modelRouting.loading || apiKeys.loading
+  );
+  const readinessError = $derived(
+    [providerAccounts.error, modelRouting.error, apiKeys.error].filter(Boolean).join(' ')
   );
   const usage24hModels = $derived(usage.summaries['24h:model'] ?? null);
   const usage24hProviderAccounts = $derived(usage.summaries['24h:provider_account'] ?? null);
@@ -197,12 +204,16 @@
           <dt class="text-sm font-medium text-[#6e6e6e]">Active API keys</dt>
           <dd class="mt-2">
             <a class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]" href="/api-keys?status=active">
-              {activeKeys.length}
+              {apiKeys.loading ? 'Loading' : activeKeys.length}
             </a>
           </dd>
         </div>
       </dl>
-      {#if readinessIssues.length > 0}
+      {#if readinessLoading}
+        <p class="ui-loading-state mt-4" aria-live="polite">Checking gateway readiness...</p>
+      {:else if readinessError}
+        <p class="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{readinessError}</p>
+      {:else if readinessIssues.length > 0}
         <div class="mt-4 space-y-2">
           {#each readinessIssues as issue}
             <p class="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{issue}</p>

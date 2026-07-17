@@ -8,7 +8,7 @@
     session,
     updateFingerprintProfile,
   } from '$lib/admin-state.svelte.js';
-  import { Plus } from 'lucide-svelte';
+  import { Pencil, Plus, Trash2, X } from 'lucide-svelte';
 
   import AuthGate from '$lib/AuthGate.svelte';
 
@@ -17,7 +17,13 @@
   let requested = $state(false);
   let showForm = $state(false);
   let editingId = $state(/** @type {number|null} */ null);
+  let deletingId = $state(/** @type {number | null} */ (null));
+  let deletingBusy = $state(false);
   let selectedTemplate = $state('');
+  let formError = $state('');
+  const deletingProfile = $derived(
+    fingerprintProfiles.items.find((profile) => profile.id === deletingId) ?? null
+  );
 
   let form = $state({
     name: '',
@@ -78,6 +84,7 @@
 
   function openCreateForm() {
     editingId = null;
+    formError = '';
     showForm = true;
     applyTemplate(systemDefaultProfile() ? SYSTEM_DEFAULT_KEY : '');
   }
@@ -86,6 +93,7 @@
   function edit(fp) {
     if (fp.systemKey) return;
     editingId = fp.id;
+    formError = '';
     selectedTemplate = '';
     form = {
       name: fp.name,
@@ -102,6 +110,7 @@
     editingId = null;
     selectedTemplate = '';
     form = blankForm();
+    formError = '';
     showForm = false;
   }
 
@@ -114,7 +123,12 @@
         headers = JSON.parse(form.headersText);
       }
     } catch {
-      fingerprintProfiles.error = 'Headers must be valid JSON';
+      formError = 'Headers must be valid JSON object syntax.';
+      return;
+    }
+
+    if (headers === null || Array.isArray(headers) || typeof headers !== 'object') {
+      formError = 'Headers must be a JSON object.';
       return;
     }
 
@@ -136,10 +150,26 @@
     if (ok) resetForm();
   }
 
-  /** @param {number} id @param {string} name */
-  async function handleDelete(id, name) {
-    if (!confirm(`Delete fingerprint profile "${name}"?`)) return;
-    await deleteFingerprintProfile(id);
+  /** @param {number} id */
+  function openDeleteProfile(id) {
+    fingerprintProfiles.error = '';
+    deletingId = id;
+  }
+
+  function closeDeleteProfile() {
+    if (deletingBusy) return;
+    deletingId = null;
+  }
+
+  async function confirmDeleteProfile() {
+    if (!deletingProfile) return;
+    deletingBusy = true;
+    try {
+      const ok = await deleteFingerprintProfile(deletingProfile.id);
+      if (ok) deletingId = null;
+    } finally {
+      deletingBusy = false;
+    }
   }
 </script>
 
@@ -166,7 +196,7 @@
       </div>
     </header>
 
-    {#if fingerprintProfiles.error}
+    {#if fingerprintProfiles.error && !showForm && !deletingProfile}
       <section class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
         {fingerprintProfiles.error}
       </section>
@@ -206,8 +236,17 @@
 
     <!-- Form modal -->
     {#if showForm}
-      <section class="rounded-lg border border-[#ededed] bg-white p-6">
-        <h3 class="text-base font-semibold text-[#0d0d0d]">{editingId ? 'Edit' : 'New'} profile</h3>
+      <div class="ui-modal-backdrop ui-modal-backdrop--top" role="dialog" aria-modal="true" aria-labelledby="fingerprint-form-title">
+      <section class="ui-modal-panel ui-modal-panel--lg">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 id="fingerprint-form-title" class="text-lg font-semibold text-[#0d0d0d]">{editingId ? 'Edit' : 'New'} profile</h2>
+            <p class="mt-1 text-sm text-[#6e6e6e]">Control the HTTP and TLS identity sent for selected provider accounts.</p>
+          </div>
+          <button class="ui-button ui-button--icon" type="button" disabled={fingerprintProfiles.saving} onclick={resetForm} aria-label="Close fingerprint profile dialog">
+            <X class="size-4" aria-hidden="true" />
+          </button>
+        </div>
         <form class="mt-4 space-y-4" onsubmit={handleSubmit}>
           {#if !editingId}
             <label class="block text-sm font-medium text-[#3c3c3c]">
@@ -241,6 +280,7 @@
           <label class="block text-sm font-medium text-[#3c3c3c]">
             Custom headers (JSON object)
             <textarea class="mt-1 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" rows="4" bind:value={form.headersText} ></textarea>
+            {#if formError}<span class="mt-1 block text-xs text-red-700" role="alert">{formError}</span>{/if}
           </label>
           <label class="flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
             <input class="h-4 w-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]" type="checkbox" bind:checked={form.enabled} />
@@ -254,8 +294,37 @@
               Cancel
             </button>
           </div>
+          {#if fingerprintProfiles.error}
+            <p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{fingerprintProfiles.error}</p>
+          {/if}
         </form>
       </section>
+      </div>
+    {/if}
+
+    {#if deletingProfile}
+      <div class="ui-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-fingerprint-title">
+        <div class="ui-modal-panel ui-modal-panel--sm">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <h2 id="delete-fingerprint-title" class="text-lg font-semibold text-[#0d0d0d]">Delete fingerprint profile?</h2>
+              <p class="mt-2 text-sm text-[#6e6e6e]">{deletingProfile.name} will no longer be available to provider accounts.</p>
+            </div>
+            <button class="ui-button ui-button--icon" type="button" disabled={deletingBusy} onclick={closeDeleteProfile} aria-label="Close delete fingerprint dialog">
+              <X class="size-4" aria-hidden="true" />
+            </button>
+          </div>
+          {#if fingerprintProfiles.error}
+            <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{fingerprintProfiles.error}</p>
+          {/if}
+          <div class="ui-modal-actions">
+            <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={deletingBusy} onclick={closeDeleteProfile}>Cancel</button>
+            <button class="ui-button ui-button--sm ui-button--danger-filled" type="button" disabled={deletingBusy} onclick={confirmDeleteProfile}>
+              {deletingBusy ? 'Deleting' : 'Delete profile'}
+            </button>
+          </div>
+        </div>
+      </div>
     {/if}
 
     <!-- Profiles list -->
@@ -315,8 +384,8 @@
                     {#if fp.systemKey}
                       <span class="text-xs font-medium text-[#8e8e8e]">Managed by system</span>
                     {:else}
-                      <button class="ui-button ui-button--sm rounded-md px-2.5 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" onclick={() => edit(fp)}>Edit</button>
-                      <button class="ui-button ui-button--sm ml-1 rounded-md px-2.5 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50" onclick={() => handleDelete(fp.id, fp.name)}>Delete</button>
+                      <button class="ui-button ui-button--icon ui-button--secondary" onclick={() => edit(fp)} title="Edit profile" aria-label="Edit profile"><Pencil class="size-4" aria-hidden="true" /></button>
+                      <button class="ui-button ui-button--icon ui-button--danger ml-1" onclick={() => openDeleteProfile(fp.id)} title="Delete profile" aria-label="Delete profile"><Trash2 class="size-4" aria-hidden="true" /></button>
                     {/if}
                   </td>
                 </tr>

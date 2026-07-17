@@ -10,6 +10,7 @@
 
   import AuthGate from '$lib/AuthGate.svelte';
   let range = $state('24h');
+  let pendingRange = $state('');
   const maxLatCount = $derived(opsMonitor.latency?.buckets?.length ? Math.max(...opsMonitor.latency.buckets.map((/** @type {{count: number}} */ b) => b.count), 1) : 0);
 
   let requested = $state(false);
@@ -22,12 +23,28 @@
   ];
 
   /** @param {string} value */
-  function changeRange(value) {
-    range = value;
+  async function changeRange(value) {
+    if (opsMonitor.loading || value === range) return;
     const option = rangeOptions.find((r) => r.value === value);
-    if (option) {
-      loadOpsDashboard(option.seconds);
+    if (!option) return;
+
+    const snapshot = {
+      stats: opsMonitor.stats,
+      throughput: opsMonitor.throughput,
+      errorTrend: opsMonitor.errorTrend,
+      latency: opsMonitor.latency,
+      accountHealth: opsMonitor.accountHealth,
+      accountTests: opsMonitor.accountTests,
+      costBreakdown: opsMonitor.costBreakdown
+    };
+    pendingRange = value;
+    await loadOpsDashboard(option.seconds);
+    if (opsMonitor.error) {
+      Object.assign(opsMonitor, snapshot);
+    } else {
+      range = value;
     }
+    pendingRange = '';
   }
 
   $effect(() => {
@@ -139,7 +156,8 @@
         <div class="flex items-center gap-1 rounded-lg border border-[#e5e5e5] bg-white p-0.5">
           {#each rangeOptions as option}
             <button
-              class="ui-button ui-button--md rounded-md px-3 py-1.5 text-sm font-medium transition-colors {range === option.value ? 'bg-[#0d0d0d] text-white' : 'text-[#3c3c3c] hover:bg-[#f5f5f5]'}"
+              class="ui-button ui-button--md rounded-md px-3 py-1.5 text-sm font-medium transition-colors {(pendingRange || range) === option.value ? 'bg-[#0d0d0d] text-white' : 'text-[#3c3c3c] hover:bg-[#f5f5f5]'}"
+              disabled={opsMonitor.loading}
               onclick={() => changeRange(option.value)}
             >
               {option.label}
@@ -158,6 +176,11 @@
         {opsMonitor.error}
       </section>
     {:else}
+      {#if opsMonitor.error}
+        <section class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+          {opsMonitor.error}. Showing the last complete range.
+        </section>
+      {/if}
       <!-- Error summary cards -->
       {#if opsMonitor.stats}
         <section class="grid gap-4 grid-cols-2 sm:grid-cols-4">

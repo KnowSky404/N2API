@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { Plus, RefreshCw, X } from 'lucide-svelte';
+  import { Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
   import {
     apiKeys,
     createRoutingPool,
@@ -25,6 +25,7 @@
   let routingPoolStatusFilter = $state('all');
   let showCreateModal = $state(false);
   let editingRoutingPoolId = $state(0);
+  let deletingRoutingPoolId = $state(0);
   let editingRoutingPoolDraft = $state(/** @type {import('$lib/admin-state.svelte.js').RoutingPool | null} */ (null));
   const visibleRoutingPools = $derived(
     routingPools.items.filter((pool) => {
@@ -37,6 +38,36 @@
   );
 
   const editingRoutingPool = $derived(editingRoutingPoolDraft);
+  const deletingRoutingPool = $derived(
+    routingPools.items.find((pool) => pool.id === deletingRoutingPoolId) ?? null
+  );
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool @param {boolean} enabled */
+  async function setRoutingPoolEnabled(pool, enabled) {
+    const previous = pool.enabled;
+    pool.enabled = enabled;
+    await updateRoutingPool(pool);
+    if (routingPools.error) {
+      pool.enabled = previous;
+    }
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  function openDeleteRoutingPool(pool) {
+    routingPools.error = '';
+    deletingRoutingPoolId = pool.id;
+  }
+
+  function closeDeleteRoutingPool() {
+    if (routingPools.saving) return;
+    deletingRoutingPoolId = 0;
+  }
+
+  async function confirmDeleteRoutingPool() {
+    if (!deletingRoutingPool) return;
+    await deleteRoutingPool(deletingRoutingPool.id);
+    if (!routingPools.error) deletingRoutingPoolId = 0;
+  }
 
   /** @param {string} search */
   function applyRoutingPoolURLFilters(search) {
@@ -501,10 +532,7 @@
                       checked={pool.enabled}
                       disabled={routingPools.saving}
                       aria-label={`Set ${routingPoolLabel(pool)} ${pool.enabled ? 'disabled' : 'enabled'}`}
-                      onchange={(event) => {
-                        pool.enabled = event.currentTarget.checked;
-                        void updateRoutingPool(pool);
-                      }}
+                      onchange={(event) => void setRoutingPoolEnabled(pool, event.currentTarget.checked)}
                     />
                     <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
                   </label>
@@ -531,24 +559,24 @@
                 <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]" data-label="Actions">
                   <div class="relative flex justify-end gap-2 whitespace-nowrap">
                     <button
-                      class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
+                      class="ui-button ui-button--icon ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
                       type="button"
                       disabled={routingPools.saving}
                       onclick={() => openRoutingPoolEditor(pool)}
                       title="Edit pool"
                       aria-label="Edit pool"
                     >
-                      Edit
+                      <Pencil class="size-4" aria-hidden="true" />
                     </button>
                     <button
-                      class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      class="ui-button ui-button--icon ui-button--danger rounded-lg border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                       type="button"
                       disabled={routingPools.saving}
-                      onclick={() => deleteRoutingPool(pool.id)}
+                      onclick={() => openDeleteRoutingPool(pool)}
                       title="Delete pool"
                       aria-label="Delete pool"
                     >
-                      Delete
+                      <Trash2 class="size-4" aria-hidden="true" />
                     </button>
                   </div>
                 </td>
@@ -559,6 +587,31 @@
       </div>
     {/if}
   </div>
+
+{#if deletingRoutingPool}
+  <div class="ui-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-routing-pool-title">
+    <div class="ui-modal-panel ui-modal-panel--sm">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 id="delete-routing-pool-title" class="text-lg font-semibold text-[#0d0d0d]">Delete routing pool?</h2>
+          <p class="mt-2 text-sm text-[#6e6e6e]">{routingPoolLabel(deletingRoutingPool)} will be removed. Bound API keys must be reassigned separately.</p>
+        </div>
+        <button class="ui-button ui-button--icon" type="button" disabled={routingPools.saving} onclick={closeDeleteRoutingPool} aria-label="Close delete routing pool dialog">
+          <X class="size-4" aria-hidden="true" />
+        </button>
+      </div>
+      {#if routingPools.error}
+        <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{routingPools.error}</p>
+      {/if}
+      <div class="ui-modal-actions">
+        <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={routingPools.saving} onclick={closeDeleteRoutingPool}>Cancel</button>
+        <button class="ui-button ui-button--sm ui-button--danger-filled" type="button" disabled={routingPools.saving} onclick={confirmDeleteRoutingPool}>
+          {routingPools.saving ? 'Deleting' : 'Delete pool'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if editingRoutingPool}
   {@const pool = editingRoutingPool}

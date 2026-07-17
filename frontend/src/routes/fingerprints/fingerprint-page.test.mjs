@@ -28,3 +28,14 @@ test('fingerprint profiles expose the system default and seed new profiles from 
   assert.match(source, /if \(fp\.systemKey\) return/);
   assert.match(source, /\{#if fp\.systemKey\}[\s\S]*Managed by system/);
 });
+
+test('fingerprint create edit and delete flows use accessible dialogs', () => {
+  assert.match(source, /fingerprint-form-title/);
+  assert.match(source, /delete-fingerprint-title/);
+  assert.match(source, /role="dialog"/);
+  assert.match(source, /aria-modal="true"/);
+  assert.match(source, /formError/);
+  assert.match(source, /Headers must be valid JSON object syntax/);
+  assert.match(source, /confirmDeleteProfile/);
+  assert.doesNotMatch(source, /\bconfirm\(/);
+});
