@@ -416,7 +416,7 @@
   </div>
 
   <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="ui-table w-full min-w-[760px] text-left text-sm">
+    <table class="ui-table ui-table--stacked w-full min-w-[760px] text-left text-sm">
       <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
         <tr>
           <th class="px-4 py-3 font-medium">Group</th>
@@ -441,7 +441,7 @@
         {:else}
           {#each usage.current.rows as row}
             <tr>
-              <td class="px-4 py-3 font-medium text-[#0d0d0d]">
+              <td class="px-4 py-3 font-medium text-[#0d0d0d]" data-label="Group">
                 {#if usageRowHref(row)}
                   <a class="max-w-[260px] truncate inline-block underline-offset-2 hover:underline" href={usageRowHref(row)}>
                     {row.label || row.id}
@@ -450,13 +450,13 @@
                   {row.label || row.id}
                 {/if}
               </td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.requests)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.inputTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.outputTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.totalTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.cachedInputTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatTokens(row.reasoningTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Requests">{formatTokens(row.requests)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Input tokens">{formatTokens(row.inputTokens)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Output tokens">{formatTokens(row.outputTokens)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Total tokens">{formatTokens(row.totalTokens)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Cached input">{formatTokens(row.cachedInputTokens)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Reasoning">{formatTokens(row.reasoningTokens)}</td>
+              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Estimated cost">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
             </tr>
           {/each}
         {/if}
@@ -661,7 +661,7 @@
   {/if}
 
   <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="ui-table w-full min-w-[1560px] text-left text-sm">
+    <table class="ui-table ui-table--stacked w-full min-w-[1560px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Time</th>
@@ -694,8 +694,8 @@
     {#each requestLogs.items as log}
       {@const requestLogCost = formatRequestLogCost(log)}
       <tr class="bg-white">
-        <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(log.createdAt)}</td>
-        <td class="px-4 py-3 text-[#3c3c3c]">
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Time">{formatDate(log.createdAt)}</td>
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Key">
           {#if log.clientKeyId}
             <a
               class="block max-w-[180px] truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]"
@@ -709,7 +709,7 @@
             {log.clientKey || 'Unknown'}
           {/if}
         </td>
-        <td class="px-4 py-3">
+        <td class="px-4 py-3" data-label="Provider account">
           {#if log.providerAccountId}
             <div class="max-w-[220px]">
               <a
@@ -728,7 +728,7 @@
             <span class="text-[#6e6e6e]">Unassigned</span>
           {/if}
         </td>
-        <td class="px-4 py-3 text-[#3c3c3c]">
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Routing pool">
           {#if log.routingPoolId}
             <div class="max-w-[180px]">
               <a
@@ -758,36 +758,36 @@
             <span class="text-[#6e6e6e]">Global pool</span>
           {/if}
         </td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.model || '-'}</td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">
+        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]" data-label="Model">{log.model || '-'}</td>
+        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]" data-label="Session">
           <span class="block max-w-[180px] truncate">{log.sessionId || '-'}</span>
         </td>
-        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
+        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Tokens">
           {formatTokens(log.inputTokens)} in / {formatTokens(log.outputTokens)} out
           <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total</p>
           <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.cachedInputTokens)} Cached</p>
           <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.reasoningTokens)} Reasoning</p>
         </td>
-        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
+        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Estimated cost">
           {#if requestLogCost === 'Unpriced'}
             <span class="font-sans text-sm text-[#6e6e6e]">{requestLogCost}</span>
           {:else}
             {requestLogCost}
           {/if}
         </td>
-        <td class="px-4 py-3 text-[#3c3c3c]">
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Usage">
           <span class="text-sm">{usageSourceLabel(log.usageSource)}</span>
         </td>
-        <td class="px-4 py-3 text-[#3c3c3c]">
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Gateway diagnostics">
           <span class="text-sm tabular-nums">Attempts {log.gatewayAttemptCount ?? 0}</span>
           <p class="mt-1 text-xs text-[#6e6e6e]">Fallbacks {log.gatewayFallbackCount ?? 0}</p>
           {#if log.routingPoolError}
             <p class="mt-1 text-xs font-medium text-amber-700">{errorLabel(log.routingPoolError)}</p>
           {/if}
         </td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]">{log.route}</td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]">{log.method}</td>
-        <td class="px-4 py-3">
+        <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]" data-label="Route">{log.route}</td>
+        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]" data-label="Method">{log.method}</td>
+        <td class="px-4 py-3" data-label="Status">
           <span
             class={[
               'inline-flex rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
@@ -801,10 +801,10 @@
             {log.statusCode}
           </span>
         </td>
-        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]">
+        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Latency">
           {log.latencyMs}ms
         </td>
-        <td class="px-4 py-3 text-[#3c3c3c]">
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Error">
           {#if errorHref(log)}
             <a
               class="underline-offset-2 hover:underline"

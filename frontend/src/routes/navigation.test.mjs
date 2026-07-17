@@ -107,6 +107,17 @@ test('admin routes share the dashboard page heading hierarchy', () => {
   }
 });
 
+test('dense management tables provide a shared mobile stacked view', () => {
+  for (const route of ['api-keys', 'providers', 'routing-pools', 'models', 'request-logs', 'pricing', 'fingerprints']) {
+    const source = readText(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /ui-table--stacked/, `${route} should opt its primary table into the mobile stacked view`);
+    assert.match(source, /data-label=/, `${route} should label stacked table values`);
+  }
+
+  assert.match(uiStyles, /\.ui-table--stacked/);
+  assert.match(uiStyles, /content: attr\(data-label\)/);
+});
+
 test('editable modals use explicit close controls and persistent unified saves', () => {
   for (const label of [
     'Close change password modal',
@@ -1636,7 +1647,7 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{confirmSyncOfficial\}/);
 
   assert.match(pricingPage, /let pricingPage = \$state\(1\)/);
-  assert.match(pricingPage, /let pricingPageSize = \$state\(10\)/);
+  assert.match(pricingPage, /let pricingPageSize = \$state\(5\)/);
   assert.match(pricingPage, /pricingPageCount/);
   assert.match(pricingPage, /normalizedPricingPage/);
   assert.match(pricingPage, /paginatedPricingRows/);

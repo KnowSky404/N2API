@@ -637,7 +637,7 @@
       </div>
 
       <div class="ui-table-shell mt-5 overflow-x-auto rounded-lg border border-[#ededed]">
-        <table class="ui-table min-w-full divide-y divide-[#ededed] text-left text-sm">
+        <table class="ui-table ui-table--stacked min-w-full divide-y divide-[#ededed] text-left text-sm">
           <thead class="bg-[#fafafa] text-xs text-[#6e6e6e]">
             <tr>
               <th class="px-4 py-3 font-medium">Model</th>
@@ -662,19 +662,19 @@
             {:else}
               {#each visibleModelRoutingRows as model}
                 <tr class="align-top">
-                  <td class="px-4 py-4">
+                  <td class="px-4 py-4" data-label="Model">
                     <p class="font-medium text-[#0d0d0d]">{model.model}</p>
                     {#if model.enabledCount === 0}
                       <p class="mt-1 text-xs text-amber-700">No schedulable account</p>
                     {/if}
                   </td>
-                  <td class="px-4 py-4 text-[#3c3c3c]">
+                  <td class="px-4 py-4 text-[#3c3c3c]" data-label="Policy">
                     {model.allowed ? 'Allowed' : 'Hidden'}
                   </td>
-                  <td class="px-4 py-4 text-[#3c3c3c]">
+                  <td class="px-4 py-4 text-[#3c3c3c]" data-label="Accounts">
                     {model.enabledCount} / {model.configuredCount}
                   </td>
-                  <td class="px-4 py-4">
+                  <td class="px-4 py-4" data-label="Candidates">
                     {#if visibleModelAccounts(model).length}
                       <div class="flex flex-wrap gap-2">
                         {#each visibleModelAccounts(model) as account}

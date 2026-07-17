@@ -177,7 +177,7 @@
         <h2 class="ui-section-title">System sending defaults</h2>
       </div>
       <div class="ui-table-shell overflow-x-auto">
-        <table class="ui-table w-full min-w-[720px] text-sm">
+        <table class="ui-table ui-table--stacked w-full min-w-[720px] text-sm">
           <thead>
             <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
               <th class="px-4 py-3">Account type</th>
@@ -188,16 +188,16 @@
           </thead>
           <tbody class="divide-y divide-[#ededed]">
             <tr>
-              <td class="px-4 py-3 font-medium text-[#0d0d0d]">Codex OAuth</td>
-              <td class="px-4 py-3 text-[#3c3c3c]">Default Codex CLI</td>
-              <td class="px-4 py-3 text-[#3c3c3c]">Codex TUI headers</td>
-              <td class="px-4 py-3 text-[#3c3c3c]">Default transport</td>
+              <td class="px-4 py-3 font-medium text-[#0d0d0d]" data-label="Account type">Codex OAuth</td>
+              <td class="px-4 py-3 text-[#3c3c3c]" data-label="Default identity">Default Codex CLI</td>
+              <td class="px-4 py-3 text-[#3c3c3c]" data-label="HTTP headers">Codex TUI headers</td>
+              <td class="px-4 py-3 text-[#3c3c3c]" data-label="TLS">Default transport</td>
             </tr>
             <tr>
-              <td class="px-4 py-3 font-medium text-[#0d0d0d]">API upstream</td>
-              <td class="px-4 py-3 text-[#3c3c3c]">Default API upstream (pass-through)</td>
-              <td class="px-4 py-3 text-[#3c3c3c]">Client headers; upstream bearer token</td>
-              <td class="px-4 py-3 text-[#3c3c3c]">Default transport</td>
+              <td class="px-4 py-3 font-medium text-[#0d0d0d]" data-label="Account type">API upstream</td>
+              <td class="px-4 py-3 text-[#3c3c3c]" data-label="Default identity">Default API upstream (pass-through)</td>
+              <td class="px-4 py-3 text-[#3c3c3c]" data-label="HTTP headers">Client headers; upstream bearer token</td>
+              <td class="px-4 py-3 text-[#3c3c3c]" data-label="TLS">Default transport</td>
             </tr>
           </tbody>
         </table>
@@ -266,7 +266,7 @@
         <p class="p-6 text-sm text-[#6e6e6e]">No fingerprint profiles configured.</p>
       {:else}
         <div class="ui-table-shell overflow-x-auto">
-          <table class="ui-table w-full text-sm">
+          <table class="ui-table ui-table--stacked w-full text-sm">
             <thead>
               <tr class="border-b border-[#ededed] text-left text-xs font-medium text-[#6e6e6e]">
                 <th class="px-4 py-3">Name</th>
@@ -281,7 +281,7 @@
             <tbody class="divide-y divide-[#ededed]">
               {#each fingerprintProfiles.items as fp}
                 <tr class="hover:bg-[#fafafa]">
-                  <td class="px-4 py-3 align-top">
+                  <td class="px-4 py-3 align-top" data-label="Name">
                     <div class="flex flex-wrap items-center gap-2">
                       <span class="font-medium text-[#0d0d0d]">{fp.name}</span>
                       {#if fp.systemKey}
@@ -292,9 +292,9 @@
                       <p class="mt-1 max-w-[260px] text-xs leading-5 text-[#6e6e6e]">{fp.description}</p>
                     {/if}
                   </td>
-                  <td class="max-w-[360px] break-all px-4 py-3 align-top font-mono text-[13px] leading-5 text-[#3c3c3c]">{fp.userAgent || '-'}</td>
-                  <td class="px-4 py-3 align-top font-mono text-[13px] text-[#3c3c3c]">{fp.tlsFingerprint || 'Default transport'}</td>
-                  <td class="px-4 py-3 align-top font-mono text-[13px] text-[#3c3c3c]">
+                  <td class="max-w-[360px] break-all px-4 py-3 align-top font-mono text-[13px] leading-5 text-[#3c3c3c]" data-label="User-Agent">{fp.userAgent || '-'}</td>
+                  <td class="px-4 py-3 align-top font-mono text-[13px] text-[#3c3c3c]" data-label="TLS">{fp.tlsFingerprint || 'Default transport'}</td>
+                  <td class="px-4 py-3 align-top font-mono text-[13px] text-[#3c3c3c]" data-label="Headers">
                     {#if fp.headers && Object.keys(fp.headers).length}
                       <div class="space-y-1">
                         {#each Object.entries(fp.headers) as [key, value]}
@@ -305,13 +305,13 @@
                       -
                     {/if}
                   </td>
-                  <td class="px-4 py-3">
+                  <td class="px-4 py-3" data-label="Status">
                     <span class={fp.enabled ? 'rounded-full bg-[#e8f5f0] px-2 py-0.5 text-xs font-medium text-[#0a7a5e]' : 'rounded-full bg-[#f5f5f5] px-2 py-0.5 text-xs font-medium text-[#6e6e6e]'}>
                       {fp.enabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </td>
-                  <td class="px-4 py-3 text-[#6e6e6e]">{formatDate(fp.createdAt)}</td>
-                  <td class="px-4 py-3 text-right align-top">
+                  <td class="px-4 py-3 text-[#6e6e6e]" data-label="Created">{formatDate(fp.createdAt)}</td>
+                  <td class="px-4 py-3 text-right align-top" data-label="Actions">
                     {#if fp.systemKey}
                       <span class="text-xs font-medium text-[#8e8e8e]">Managed by system</span>
                     {:else}

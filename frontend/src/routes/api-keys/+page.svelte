@@ -1512,7 +1512,7 @@
   {/if}
 
   <div class="ui-table-shell mt-4 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="ui-table w-full min-w-[980px] text-left text-sm">
+    <table class="ui-table ui-table--stacked w-full min-w-[980px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="w-12 px-4 py-3 font-medium">
@@ -1551,7 +1551,7 @@
   {:else}
     {#each paginatedAPIKeys as key}
       <tr class="bg-white">
-        <td class="px-4 py-3 align-middle">
+        <td class="px-4 py-3 align-middle" data-label="Select">
           <label class="inline-flex items-center">
             <input
               class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
@@ -1563,8 +1563,8 @@
             <span class="sr-only">Select {key.name}</span>
           </label>
         </td>
-        <td class="px-4 py-3 font-medium text-[#0d0d0d]">{key.name}</td>
-        <td class="px-4 py-3 align-middle">
+        <td class="px-4 py-3 font-medium text-[#0d0d0d]" data-label="Name">{key.name}</td>
+        <td class="px-4 py-3 align-middle" data-label="Prefix">
           <div class="inline-flex items-center gap-2 whitespace-nowrap">
             <span class="font-mono text-[13px] text-[#3c3c3c]">{key.prefix}</span>
             {#if !key.revokedAt}
@@ -1582,9 +1582,9 @@
             {/if}
           </div>
         </td>
-        <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.createdAt)}</td>
-        <td class="px-4 py-3 text-[#3c3c3c]">{formatDate(key.lastUsedAt)}</td>
-        <td class="px-4 py-3 align-middle">
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Created">{formatDate(key.createdAt)}</td>
+        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Last used">{formatDate(key.lastUsedAt)}</td>
+        <td class="px-4 py-3 align-middle" data-label="Status">
           <div title={keyPhysicalDeleteTitle(key)}>
             {#if key.revokedAt}
               <span class="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
@@ -1606,7 +1606,7 @@
             {/if}
           </div>
         </td>
-        <td class="whitespace-nowrap px-4 py-3 align-middle text-right">
+        <td class="whitespace-nowrap px-4 py-3 align-middle text-right" data-label="Actions">
           <div class="inline-flex items-center justify-end gap-1 whitespace-nowrap">
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"

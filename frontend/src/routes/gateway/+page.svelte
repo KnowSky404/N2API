@@ -168,7 +168,7 @@
         <h2 class="ui-section-title">Gateway readiness</h2>
         <p class="mt-1 text-sm text-[#6e6e6e]">Core capacity signals required before this gateway can serve daily traffic reliably.</p>
       </div>
-      <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-4">
+      <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Provider accounts</dt>
           <dd class="mt-2">
@@ -221,7 +221,7 @@
         <h2 class="ui-section-title">Scheduling health</h2>
         <p class="mt-1 text-sm text-[#6e6e6e]">Provider account eligibility and local health state used by the gateway scheduler.</p>
       </div>
-      <dl class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-3">
+      <dl class="mt-4 grid gap-3 sm:grid-cols-3">
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
           <dt class="text-sm font-medium text-[#6e6e6e]">Enabled accounts</dt>
           <dd class="mt-2 text-base font-semibold text-[#0d0d0d]">{providerAccounts.loading ? 'Loading' : enabledProviderAccountCount}</dd>
@@ -284,7 +284,7 @@
         <p class="ui-loading-state mt-4 text-sm text-[#6e6e6e]" aria-live="polite">Loading gateway runtime limits...</p>
       {:else}
         <form class="mt-4" onsubmit={(event) => { event.preventDefault(); updateGatewaySettings(); }}>
-          <dl class="grid gap-3 grid-cols-2 sm:grid-cols-3 xl:grid-cols-6">
+          <dl class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
               <dt class="text-xs font-medium text-[#6e6e6e]">Gateway concurrency</dt>
               <dd class="mt-2">
@@ -343,7 +343,7 @@
                 <input class="mt-2 w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" bind:value={gatewaySettings.data.providerAccountAutoTestIntervalSeconds} />
               </label>
             </div>
-            <div class="mt-4 grid gap-3 grid-cols-2 sm:grid-cols-4">
+            <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <div class="rounded-md border border-[#ededed] bg-white p-3">
                 <p class="text-xs font-medium text-[#6e6e6e]">Auto-test status</p>
                 <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.providerAccountAutoTestStatus.running ? 'Running' : 'Idle'}</p>
@@ -398,7 +398,7 @@
       {#if usage.error}
         <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
       {/if}
-      <div class="mt-5 grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
+      <div class="mt-5 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {#each usageSections as section}
           <div class="rounded-lg border border-[#ededed]">
             <div class="border-b border-[#ededed] bg-[#f5f5f5] px-4 py-3">
@@ -413,13 +413,13 @@
               <div class="divide-y divide-[#ededed]">
                 {#each section.summary.rows.slice(0, 5) as row}
                   {@const href = usageRowHref(section.title, row)}
-                  <div class="grid gap-2 px-4 py-3 text-sm grid-cols-[minmax(0,1fr)_auto]">
+                  <div class="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
                     {#if href}
                       <a class="min-w-0 truncate font-medium text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]" href={href}>{row.label || row.id}</a>
                     {:else}
                       <span class="min-w-0 truncate font-medium text-[#0d0d0d]">{row.label || row.id}</span>
                     {/if}
-                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] whitespace-nowrap text-right">
+                    <span class="font-mono text-[13px] tabular-nums text-[#6e6e6e] sm:whitespace-nowrap sm:text-right">
                       {formatTokens(row.requests)} req · {formatTokens(row.totalTokens)} tokens · {formatCostMicrousd(row.estimatedCostMicrousd)}
                     </span>
                   </div>

@@ -786,7 +786,7 @@ test('provider account table supports search, sorting, and a pinned actions colu
   assert.match(source, /testAllProviderAccounts/);
   assert.match(source, />\s*Test all accounts\s*</);
   assert.match(source, /sticky right-0/);
-  assert.match(source, /colspan="8"/);
+  assert.match(source, /colspan="7"/);
   assert.doesNotMatch(source, /setProviderAccountSort\('priority'\)/);
   assert.doesNotMatch(source, /setProviderAccountSort\('loadFactor'\)/);
   assert.doesNotMatch(source, /setProviderAccountSort\('expires'\)/);
@@ -810,10 +810,10 @@ test('provider account table paginates rows and shows summary controls below the
   assert.doesNotMatch(source, /<p class="mt-3 text-sm text-\[#6e6e6e\]">\s*Showing \{filteredProviderAccounts\.length\} of \{providerAccounts\.items\.length\}/);
 });
 
-test('provider account table exposes per-row selection checkboxes', () => {
-  assert.match(source, /selectedProviderAccountIds/);
-  assert.match(source, /toggleProviderAccountSelection/);
-  assert.match(source, /Select \{accountLabel\(account\)\}/);
+test('provider account table does not expose selection without batch actions', () => {
+  assert.doesNotMatch(source, /selectedProviderAccountIds/);
+  assert.doesNotMatch(source, /toggleProviderAccountSelection/);
+  assert.doesNotMatch(source, /Select \{accountLabel\(account\)\}/);
 });
 
 test('provider account rows use compact controls and hover details', () => {

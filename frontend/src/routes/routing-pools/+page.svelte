@@ -470,7 +470,7 @@
       </p>
     {:else}
       <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-        <table class="ui-table w-full min-w-[980px] text-left text-sm">
+        <table class="ui-table ui-table--stacked w-full min-w-[980px] text-left text-sm">
           <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
             <tr>
               <th class="px-4 py-3 font-medium">Pool</th>
@@ -486,13 +486,13 @@
           <tbody class="divide-y divide-[#ededed]">
             {#each visibleRoutingPools as pool (pool.id)}
               <tr class="bg-white align-top">
-                <td class="px-4 py-3 align-middle">
+                <td class="px-4 py-3 align-middle" data-label="Pool">
                   <p class="max-w-[22rem] truncate font-medium text-[#0d0d0d]">{routingPoolLabel(pool)}</p>
                   {#if pool.description}
                     <p class="mt-1 max-w-[22rem] truncate text-[#6e6e6e]">{pool.description}</p>
                   {/if}
                 </td>
-                <td class="px-4 py-3 align-middle">
+                <td class="px-4 py-3 align-middle" data-label="Enabled">
                   <label class="inline-flex items-center gap-0 text-sm font-medium text-[#3c3c3c]" title={pool.enabled ? 'Enabled' : 'Disabled'}>
                     <input
                       class="peer sr-only"
@@ -509,7 +509,7 @@
                     <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
                   </label>
                 </td>
-                <td class="px-4 py-3 align-middle">
+                <td class="px-4 py-3 align-middle" data-label="Fallback">
                   {#if pool.fallbackPoolName}
                     <a
                       class="text-[#0a7a5e] underline-offset-2 hover:underline"
@@ -524,11 +524,11 @@
                     <span class="text-[#9b9b9b]">—</span>
                   {/if}
                 </td>
-                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]">{(pool.accounts ?? []).length}</td>
-                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]">{schedulablePoolMemberCount(pool)}</td>
-                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]">{boundAPIKeyCount(pool)}</td>
-                <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(pool.createdAt)}</td>
-                <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]" data-label="Members">{(pool.accounts ?? []).length}</td>
+                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]" data-label="Schedulable">{schedulablePoolMemberCount(pool)}</td>
+                <td class="px-4 py-3 align-middle font-mono tabular-nums text-[#0d0d0d]" data-label="Bound keys">{boundAPIKeyCount(pool)}</td>
+                <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]" data-label="Created">{formatDate(pool.createdAt)}</td>
+                <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]" data-label="Actions">
                   <div class="relative flex justify-end gap-2 whitespace-nowrap">
                     <button
                       class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"

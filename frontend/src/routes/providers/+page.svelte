@@ -28,7 +28,6 @@
     accountModelSummary,
     accountModelsText,
     session,
-    selectedProviderAccountIds,
     sourceBadgeLabel,
     syncAccountModels,
     setAccountModelEnabled,
@@ -37,7 +36,6 @@
     testProviderAccount,
     testProviderAccountModel,
     toggleAccountTestHistory,
-    toggleProviderAccountSelection,
     updateProviderAccount,
     fingerprintProfiles,
     loadFingerprintProfiles
@@ -72,7 +70,6 @@
   let modelTestRunActive = $state(false);
 
   const providerStateLabel = $derived(getProviderStateLabel());
-  const selectedProviderAccountCount = $derived(Object.keys(selectedProviderAccountIds).length);
   const editingProviderAccount = $derived(
     providerAccounts.items.find((account) => account.id === editingProviderAccountId) ?? null
   );
@@ -1102,10 +1099,9 @@ Enabled
   </div>
 
   <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="ui-table w-full min-w-[1180px] text-left text-sm">
+    <table class="ui-table ui-table--stacked w-full min-w-[1100px] text-left text-sm">
 <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
-    <th class="w-12 px-4 py-3 font-medium">Select</th>
     <th class="px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('account')}>
       <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('account')}>
         Account<span class="text-[11px]">{sortIndicator('account')}</span>
@@ -1142,15 +1138,15 @@ Enabled
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="8">Loading provider accounts...</td>
+      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="7">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No provider accounts connected yet.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No accounts match your search.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">No accounts match your search.</td>
     </tr>
   {:else}
     {#each paginatedProviderAccounts as account}
@@ -1158,30 +1154,18 @@ Enabled
       {@const historyState = getAccountTestResultsState(account.id)}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
       <tr class="bg-white align-top">
-        <td class="px-4 py-3 align-middle">
-          <label class="inline-flex items-center">
-            <input
-              class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
-              type="checkbox"
-              checked={Boolean(selectedProviderAccountIds[account.id])}
-              disabled={providerAccounts.saving}
-              onchange={(event) => toggleProviderAccountSelection(account.id, event.currentTarget.checked)}
-            />
-            <span class="sr-only">Select {accountLabel(account)}</span>
-          </label>
-        </td>
-        <td class="px-4 py-3 align-middle" title={accountHoverDetail(account)}>
+        <td class="px-4 py-3 align-middle" data-label="Account" title={accountHoverDetail(account)}>
           <p class="max-w-[22rem] truncate font-medium text-[#0d0d0d]">{accountLabel(account)}</p>
           {#if accountEmailLabel(account)}
             <p class="mt-1 max-w-[22rem] truncate text-[#6e6e6e]">{accountEmailLabel(account)}</p>
           {/if}
         </td>
-        <td class="px-4 py-3 align-middle">
+        <td class="px-4 py-3 align-middle" data-label="Type">
           <span class="inline-flex whitespace-nowrap rounded-full bg-[#f5f5f5] px-2.5 py-1 text-xs font-medium text-[#3c3c3c]">
             {accountTypeLabel(account)}
           </span>
         </td>
-        <td class="px-4 py-3 align-middle" title={statusHoverDetail(account)}>
+        <td class="px-4 py-3 align-middle" data-label="Status" title={statusHoverDetail(account)}>
           <span
             class={[
               'inline-flex max-w-full whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium capitalize',
@@ -1195,7 +1179,7 @@ Enabled
             {statusLabel(account.status)}
           </span>
         </td>
-        <td class="px-4 py-3 align-middle">
+        <td class="px-4 py-3 align-middle" data-label="Enabled">
           <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]" title={account.enabled ? 'Enabled' : 'Disabled'}>
             <input
               class="peer sr-only"
@@ -1213,9 +1197,9 @@ Enabled
             <span class="text-xs text-[#6e6e6e]">{account.enabled ? 'Enabled' : 'Disabled'}</span>
           </label>
         </td>
-        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastRefreshAt)}</td>
-        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]">{formatDate(account.lastUsedAt)}</td>
-        <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]" data-label="Last refresh">{formatDate(account.lastRefreshAt)}</td>
+        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]" data-label="Last used">{formatDate(account.lastUsedAt)}</td>
+        <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]" data-label="Actions">
           <div class="relative flex justify-end gap-2 whitespace-nowrap">
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
@@ -1264,9 +1248,6 @@ Enabled
       Showing {providerAccountPageSummary} of {filteredProviderAccounts.length}
       {#if providerAccounts.items.length !== filteredProviderAccounts.length}
         filtered from {providerAccounts.items.length}
-      {/if}
-      {#if selectedProviderAccountCount > 0}
-        · {selectedProviderAccountCount} selected
       {/if}
     </p>
     <div class="flex flex-wrap items-center gap-2">

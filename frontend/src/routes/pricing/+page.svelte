@@ -129,7 +129,7 @@
 
   let pricingSearch = $state('');
   let pricingPage = $state(1);
-  let pricingPageSize = $state(10);
+  let pricingPageSize = $state(5);
 
   const filteredPricingRows = $derived(
     (usagePricing.rows || []).filter((row) => {
@@ -430,7 +430,7 @@
     </div>
 
     <div class="ui-table-shell ui-table-shell--scroll mt-5 overflow-auto max-h-[65vh] rounded-lg border border-[#ededed]">
-      <table class="ui-table w-full min-w-[1280px] text-left text-sm">
+      <table class="ui-table ui-table--stacked w-full min-w-[1280px] text-left text-sm">
         <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
           <tr>
             <th class="sticky left-0 top-0 z-20 bg-[#f5f5f5] px-4 py-3 font-medium shadow-[8px_0_12px_rgba(255,255,255,0.85)]">Model</th>
@@ -456,56 +456,56 @@
             {#each paginatedPricingRows as row, index (row.model + '-' + (usagePricing.rows || []).indexOf(row))}
               {@const isEditing = editingPricingRow === row}
               <tr>
-                <td class="sticky left-0 z-[5] bg-white px-4 py-3 shadow-[8px_0_12px_rgba(255,255,255,0.85)]">
+                <td class="sticky left-0 z-[5] bg-white px-4 py-3 shadow-[8px_0_12px_rgba(255,255,255,0.85)]" data-label="Model">
                   {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={row.model} placeholder="gpt-5" />
                   {:else}
                     <span class="block max-w-[220px] truncate font-mono text-[13px] text-[#0d0d0d]">{row.model || '-'}</span>
                   {/if}
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3" data-label="Input">
                   {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.inputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'inputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.inputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3" data-label="Cached input">
                   {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.cachedInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'cachedInputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.cachedInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3" data-label="Output">
                   {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.outputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'outputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.outputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3" data-label="Long input">
                   {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.longInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'longInputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3" data-label="Long cached input">
                   {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.longCachedInputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'longCachedInputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longCachedInputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3" data-label="Long output">
                   {#if isEditing}
                     <input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" step="0.000001" value={formatPricingInputValue(row.longOutputMicrousdPerMillion)} oninput={(event) => updatePricingValue(row, 'longOutputMicrousdPerMillion', event)} />
                   {:else}
                     <span class="font-mono text-[13px] tabular-nums text-[#3c3c3c]">{formatPricingValue(row.longOutputMicrousdPerMillion)}</span>
                   {/if}
                 </td>
-                <td class="bg-white px-3 py-3 md:sticky md:right-0 md:shadow-[-8px_0_12px_rgba(255,255,255,0.85)]">
+                <td class="bg-white px-3 py-3 md:sticky md:right-0 md:shadow-[-8px_0_12px_rgba(255,255,255,0.85)]" data-label="Actions">
                   <div class="flex justify-end gap-2 whitespace-nowrap">
                     {#if isEditing}
                       <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={commitPricingRow}>Done</button>
