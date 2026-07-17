@@ -1,11 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mock } from 'bun:test';
 import { runModelTestsWithConcurrency } from '../../lib/model-test-queue.js';
 
 globalThis.$state = (value) => value;
-mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const {
   accountTestResults,
   apiUpstreamForm,

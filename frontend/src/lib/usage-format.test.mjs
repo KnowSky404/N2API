@@ -1,9 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mock } from 'bun:test';
 
 globalThis.$state = (value) => value;
-mock.module('$lib/clipboard.js', () => ({ copyText: async () => false }));
 const { formatCostMicrousd, formatRequestLogCost, formatTokens } = await import('./admin-state.svelte.js');
 
 test('formatTokens uses compact tabular-friendly counts', () => {
