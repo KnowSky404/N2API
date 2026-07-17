@@ -1217,8 +1217,14 @@ test('ops monitor links error buckets to filtered request logs', () => {
   assert.match(opsPage, /params\.set\('since', opsSinceParam\(\)\)/);
   assert.match(opsPage, /let pendingRange = \$state\(''\)/);
   assert.match(opsPage, /const snapshot =/);
+  assert.match(opsPage, /const loaded = await loadOpsDashboard\(option\.seconds\)/);
+  assert.match(opsPage, /if \(!loaded\)/);
   assert.match(opsPage, /Object\.assign\(opsMonitor, snapshot\)/);
   assert.match(opsPage, /Showing the last complete range/);
+  assert.match(adminState, /const results = await Promise\.all\(\[/);
+  assert.match(adminState, /const loaded = results\.every\(Boolean\)/);
+  assert.match(adminState, /if \(!loaded && !opsMonitor\.error\)/);
+  assert.match(adminState, /return loaded/);
   assert.match(opsPage, /params\.set\('error', key\)/);
   assert.match(opsPage, /params\.set\('statusCode', key\)/);
   assert.match(opsPage, /params\.set\('model', key\)/);

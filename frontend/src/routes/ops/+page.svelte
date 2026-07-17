@@ -38,8 +38,8 @@
       costBreakdown: opsMonitor.costBreakdown
     };
     pendingRange = value;
-    await loadOpsDashboard(option.seconds);
-    if (opsMonitor.error) {
+    const loaded = await loadOpsDashboard(option.seconds);
+    if (!loaded) {
       Object.assign(opsMonitor, snapshot);
     } else {
       range = value;

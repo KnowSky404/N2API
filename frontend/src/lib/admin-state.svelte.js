@@ -3684,114 +3684,121 @@ export const opsMonitor = $state({
 /** @param {number} sinceSeconds */
 export async function loadOpsErrorStats(sinceSeconds) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
-  opsMonitor.error = '';
   try {
     const params = new URLSearchParams();
     if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
     opsMonitor.stats = await requestJSON(`/api/admin/ops/error-stats?${params.toString()}`);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops error stats';
+    return false;
   }
 }
 
 /** @param {number} sinceSeconds @param {string} interval */
 export async function loadOpsThroughputTrend(sinceSeconds, interval) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
-  opsMonitor.error = '';
   try {
     const params = new URLSearchParams();
     if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
     if (interval) params.set('interval', interval);
     opsMonitor.throughput = await requestJSON(`/api/admin/ops/throughput-trend?${params.toString()}`);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops throughput trend';
+    return false;
   }
 }
 
 /** @param {number} sinceSeconds @param {string} interval */
 export async function loadOpsErrorTrend(sinceSeconds, interval) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
-  opsMonitor.error = '';
   try {
     const params = new URLSearchParams();
     if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
     if (interval) params.set('interval', interval);
     opsMonitor.errorTrend = await requestJSON(`/api/admin/ops/error-trend?${params.toString()}`);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops error trend';
+    return false;
   }
 }
 
 /** @param {number} sinceSeconds */
 export async function loadOpsLatencyDistribution(sinceSeconds) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
-  opsMonitor.error = '';
   try {
     const params = new URLSearchParams();
     if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
     opsMonitor.latency = await requestJSON(`/api/admin/ops/latency-distribution?${params.toString()}`);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops latency distribution';
+    return false;
   }
 }
 
 /** @param {number} sinceSeconds */
 export async function loadOpsAccountHealth(sinceSeconds) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
-  opsMonitor.error = '';
   try {
     const params = new URLSearchParams();
     if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
     opsMonitor.accountHealth = await requestJSON(`/api/admin/ops/account-health?${params.toString()}`);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops account health';
+    return false;
   }
 }
 
 /** @param {number} sinceSeconds */
 export async function loadOpsAccountTests(sinceSeconds) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
-  opsMonitor.error = '';
   try {
     const params = new URLSearchParams({ limit: '20' });
     if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
     opsMonitor.accountTests = await requestJSON(`/api/admin/ops/account-tests?${params.toString()}`);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops account tests';
+    return false;
   }
 }
 
 /** @param {number} sinceSeconds */
 export async function loadOpsCostBreakdown(sinceSeconds) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
-  opsMonitor.error = '';
   try {
     const params = new URLSearchParams();
     if (sinceSeconds > 0) params.set('since', String(sinceSeconds));
     opsMonitor.costBreakdown = await requestJSON(`/api/admin/ops/cost-breakdown?${params.toString()}`);
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     opsMonitor.error = error instanceof Error ? error.message : 'Failed to load ops cost breakdown';
+    return false;
   }
 }
 
@@ -3801,7 +3808,7 @@ export async function loadOpsDashboard(rangeSeconds) {
   opsMonitor.loading = true;
   opsMonitor.error = '';
   try {
-    await Promise.all([
+    const results = await Promise.all([
       loadOpsErrorStats(since),
       loadOpsThroughputTrend(since, 'hour'),
       loadOpsErrorTrend(since, 'hour'),
@@ -3810,6 +3817,11 @@ export async function loadOpsDashboard(rangeSeconds) {
       loadOpsAccountTests(since),
       loadOpsCostBreakdown(since),
     ]);
+    const loaded = results.every(Boolean);
+    if (!loaded && !opsMonitor.error) {
+      opsMonitor.error = 'Failed to load complete ops dashboard';
+    }
+    return loaded;
   } finally {
     opsMonitor.loading = false;
   }
