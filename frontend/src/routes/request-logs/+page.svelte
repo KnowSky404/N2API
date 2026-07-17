@@ -28,6 +28,25 @@
   let apiKeysRequested = $state(false);
   let appliedRequestLogSearch = $state('');
   let showAdvancedFilters = $state(false);
+  let requestLogPage = $state(1);
+  let requestLogPageSize = $state(10);
+
+  let requestLogPageCount = $derived(Math.max(1, Math.ceil(requestLogs.items.length / requestLogPageSize)));
+  let normalizedRequestLogPage = $derived(Math.min(Math.max(requestLogPage, 1), requestLogPageCount));
+  let paginatedRequestLogs = $derived(
+    requestLogs.items.slice(
+      (normalizedRequestLogPage - 1) * requestLogPageSize,
+      normalizedRequestLogPage * requestLogPageSize
+    )
+  );
+  let requestLogPageSummary = $derived(
+    requestLogs.items.length === 0
+      ? '0'
+      : `${(normalizedRequestLogPage - 1) * requestLogPageSize + 1}-${Math.min(
+          normalizedRequestLogPage * requestLogPageSize,
+          requestLogs.items.length
+        )}`
+  );
 
   /** @param {string} search */
   function applyRequestLogURLFilters(search) {
@@ -167,6 +186,7 @@
     if (appliedRequestLogSearch !== page.url.search) {
       appliedRequestLogSearch = page.url.search;
       applyRequestLogURLFilters(page.url.search);
+      requestLogPage = 1;
       void loadRequestLogs();
     }
     if (!providerAccountsRequested && providerAccounts.items.length === 0) {
@@ -334,6 +354,16 @@
   /** @param {Event & { currentTarget: HTMLSelectElement }} event */
   function changeUsageRange(event) {
     loadUsageSummary(event.currentTarget.value, usage.groupBy);
+  }
+
+  function applyRequestLogFilters() {
+    requestLogPage = 1;
+    void loadRequestLogs();
+  }
+
+  /** @param {number} targetPage */
+  function goToRequestLogPage(targetPage) {
+    requestLogPage = Math.min(Math.max(targetPage, 1), requestLogPageCount);
   }
 
 </script>
@@ -546,7 +576,7 @@
         class="ui-button ui-button--sm ui-button--primary"
         type="button"
         disabled={requestLogs.loading}
-        onclick={loadRequestLogs}
+        onclick={applyRequestLogFilters}
       >
         <RefreshCw class={requestLogs.loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
         {requestLogs.loading ? 'Refreshing' : 'Apply'}
@@ -690,9 +720,9 @@
     </p>
   {/if}
 
-  <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
+  <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed] sm:max-h-[65vh] sm:overflow-auto">
     <table class="ui-table ui-table--stacked w-full min-w-[1560px] text-left text-sm">
-<thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
+<thead class="sticky top-0 z-20 border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
   <tr>
     <th class="px-4 py-3 font-medium">Time</th>
     <th class="px-4 py-3 font-medium">Key</th>
@@ -721,7 +751,7 @@
       <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="15">No gateway requests yet.</td>
     </tr>
   {:else}
-    {#each requestLogs.items as log}
+    {#each paginatedRequestLogs as log}
       {@const requestLogCost = formatRequestLogCost(log)}
       <tr class="bg-white">
         <td class="px-4 py-3 text-[#3c3c3c]" data-label="Time">{formatDate(log.createdAt)}</td>
@@ -853,6 +883,42 @@
   {/if}
 </tbody>
     </table>
+  </div>
+  <div class="ui-pagination mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
+    <p>Showing {requestLogPageSummary} of {requestLogs.items.length}</p>
+    <div class="flex flex-wrap items-center gap-2">
+      <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
+        Rows
+        <select
+          class="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          bind:value={requestLogPageSize}
+          onchange={() => {
+            requestLogPage = 1;
+          }}
+        >
+          <option value={10}>10</option>
+          <option value={20}>20</option>
+          <option value={50}>50</option>
+        </select>
+      </label>
+      <span class="text-xs tabular-nums text-[#6e6e6e]">Page {normalizedRequestLogPage} of {requestLogPageCount}</span>
+      <button
+        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={normalizedRequestLogPage <= 1}
+        onclick={() => goToRequestLogPage(requestLogPage - 1)}
+      >
+        Previous
+      </button>
+      <button
+        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        type="button"
+        disabled={normalizedRequestLogPage >= requestLogPageCount}
+        onclick={() => goToRequestLogPage(requestLogPage + 1)}
+      >
+        Next
+      </button>
+    </div>
   </div>
 </section>
 </div>

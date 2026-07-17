@@ -476,6 +476,25 @@ test('request logs page shows token usage', () => {
   assert.match(requestLogsPage, /Unpriced/);
 });
 
+test('request logs table paginates locally with a bounded sticky scroll area', () => {
+  assert.match(requestLogsPage, /let requestLogPage = \$state\(1\)/);
+  assert.match(requestLogsPage, /let requestLogPageSize = \$state\(10\)/);
+  assert.match(requestLogsPage, /requestLogPageCount/);
+  assert.match(requestLogsPage, /normalizedRequestLogPage/);
+  assert.match(requestLogsPage, /paginatedRequestLogs/);
+  assert.match(requestLogsPage, /requestLogPageSummary/);
+  assert.match(requestLogsPage, /\{#each paginatedRequestLogs as log\}/);
+  assert.match(requestLogsPage, /sm:max-h-\[65vh\] sm:overflow-auto/);
+  assert.match(requestLogsPage, /<thead class="sticky top-0 z-20/);
+  assert.match(requestLogsPage, /bind:value=\{requestLogPageSize\}/);
+  assert.match(requestLogsPage, /<option value=\{10\}>10<\/option>/);
+  assert.match(requestLogsPage, /<option value=\{20\}>20<\/option>/);
+  assert.match(requestLogsPage, /<option value=\{50\}>50<\/option>/);
+  assert.match(requestLogsPage, /Page \{normalizedRequestLogPage\} of \{requestLogPageCount\}/);
+  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(requestLogPage - 1\)\}/);
+  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(requestLogPage \+ 1\)\}/);
+});
+
 test('request logs page includes usage accounting UI', () => {
   for (const label of [
     'Usage summary',
