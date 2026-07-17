@@ -1036,8 +1036,11 @@ function clearRequestLogs() {
   replaceState(requestLogs, {
     loading: false,
     error: '',
+    requestId: '',
     query: '',
     statusClass: 'all',
+    statusCode: '',
+    since: '',
     providerAccountId: 'all',
     routingPoolId: 'all',
     clientKeyId: 'all',

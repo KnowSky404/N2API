@@ -1024,6 +1024,11 @@ test('dashboard shows gateway scheduling capacity', () => {
   assert.match(dashboardPage, /getSchedulableProviderAccounts/);
   assert.match(dashboardPage, /getUnschedulableProviderAccountSummary/);
   assert.match(dashboardPage, /getRoutableModelCount/);
+  assert.match(dashboardPage, /getGatewayReadinessIssues/);
+  assert.match(dashboardPage, /Gateway attention/);
+  assert.match(dashboardPage, /function readinessIssueHref/);
+  assert.match(dashboardPage, /return '\/models\?status=blocked'/);
+  assert.match(dashboardPage, /return '\/api-keys'/);
   assert.match(dashboardPage, /modelRouting/);
   assert.match(dashboardPage, /href="\/providers\?status=active"/);
   assert.match(dashboardPage, /href="\/providers\?status=blocked"/);
@@ -1052,7 +1057,11 @@ test('dashboard shows 24h gateway usage snapshot', () => {
   }
 
   assert.match(dashboardPage, /usage\.summaries\['24h:/);
-  assert.match(dashboardPage, /section.data.rows/);
+  assert.match(dashboardPage, /selectedUsageSection\.data\.rows/);
+  assert.match(dashboardPage, /role="tablist"/);
+  assert.match(dashboardPage, /role="tabpanel"/);
+  assert.match(dashboardPage, /aria-controls="usage-breakdown-panel"/);
+  assert.match(dashboardPage, /aria-selected=\{selectedUsageKey === section\.key\}/);
   assert.match(dashboardPage, /dashboardUsageHref/);
   assert.match(dashboardPage, /function dashboardUsageSinceParam/);
   assert.match(dashboardPage, /function dashboardUsageHrefWithSince/);
@@ -1095,9 +1104,10 @@ test('dashboard shows ops monitoring snapshot', () => {
   assert.match(dashboardPage, /params\.set\('providerAccountId', key\)/);
   assert.match(dashboardPage, /params\.set\('clientKeyId', key\)/);
   assert.match(dashboardPage, /href=\{dashboardOpsErrorHref\(bucket\)\}/);
-  assert.match(dashboardPage, /href=\{dashboardCostModelHref\(bucket\)\}/);
-  assert.match(dashboardPage, /href=\{dashboardCostProviderAccountHref\(bucket\)\}/);
-  assert.match(dashboardPage, /href=\{dashboardCostClientKeyHref\(bucket\)\}/);
+  assert.match(dashboardPage, /href: dashboardCostModelHref/);
+  assert.match(dashboardPage, /href: dashboardCostProviderAccountHref/);
+  assert.match(dashboardPage, /href: dashboardCostClientKeyHref/);
+  assert.match(dashboardPage, /href=\{section\.href\(bucket\)\}/);
   assert.match(dashboardPage, /formatCostMicrousd\(bucket\.estimatedCostMicrousd/);
   assert.match(dashboardPage, /href="\/ops"/);
   assert.match(adminState, /await loadOpsDashboard\(86400\)/);
@@ -1172,6 +1182,13 @@ test('admin state derives schedulable gateway capacity', () => {
   assert.match(adminState, /circuitOpenUntil/);
   assert.match(adminState, /export function getRoutableModelCount/);
   assert.match(adminState, /enabledCount/);
+});
+
+test('admin state preserves every request log filter across session resets', () => {
+  const clearRequestLogs = adminState.match(/function clearRequestLogs\(\) \{[\s\S]*?\n\}/)?.[0] ?? '';
+  for (const filter of ['requestId', 'query', 'statusClass', 'statusCode', 'since', 'providerAccountId', 'routingPoolId', 'clientKeyId', 'model', 'sessionId', 'errorCode', 'usageSource', 'routingPoolError', 'routingPoolChain', 'gatewayFallbacks']) {
+    assert.match(clearRequestLogs, new RegExp(`${filter}:`), `clearRequestLogs should restore ${filter}`);
+  }
 });
 
 test('shared AuthGate component owns loading and sign-in shell', () => {
