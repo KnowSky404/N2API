@@ -1739,7 +1739,7 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 
 	startedAt := time.Now()
 	result, err := s.prober.ProbeAccountStatus(ctx, cfg, selected.AuthorizationToken)
-	s.logAccountTestRequest(ctx, selected, accountStatusTestModel(selected), accountStatusTestRoute(cfg), accountStatusTestMethod(cfg), result.statusCode, accountStatusTestError(result, err), startedAt)
+	s.logAccountTestRequest(ctx, selected, accountStatusTestModel(cfg), accountStatusTestRoute(cfg), accountStatusTestMethod(cfg), result.statusCode, accountStatusTestError(result, err), startedAt)
 	if err != nil {
 		now := time.Now()
 		until := now.Add(defaultCircuitOpen)
@@ -1827,8 +1827,8 @@ func accountStatusTestMethod(cfg Config) string {
 	return http.MethodGet
 }
 
-func accountStatusTestModel(selected SelectedAccount) string {
-	if selected.AccountType == AccountTypeCodexOAuth {
+func accountStatusTestModel(cfg Config) string {
+	if strings.TrimSpace(cfg.ProbeChatGPTAccountID) != "" {
 		return "gpt-5.4-mini"
 	}
 	return ""

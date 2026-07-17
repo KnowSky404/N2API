@@ -1260,6 +1260,61 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	}
 }
 
+func TestTestAccountLogsModelOnlyForCodexResponsesProbe(t *testing.T) {
+	testCases := []struct {
+		name               string
+		chatGPTAccountID   string
+		wantModel          string
+		wantRoute          string
+		wantMethod         string
+		wantProbeAccountID string
+	}{
+		{
+			name:       "missing ChatGPT account ID",
+			wantRoute:  "/v1/models",
+			wantMethod: http.MethodGet,
+		},
+		{
+			name:               "with ChatGPT account ID",
+			chatGPTAccountID:   "acct_chatgpt",
+			wantModel:          "gpt-5.4-mini",
+			wantRoute:          "/backend-api/codex/responses",
+			wantMethod:         http.MethodPost,
+			wantProbeAccountID: "acct_chatgpt",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			account := testAccount(t, 7, true, 3, "oauth-access-token")
+			account.AccountType = AccountTypeCodexOAuth
+			if testCase.chatGPTAccountID != "" {
+				account.Metadata = map[string]string{"chatgpt_account_id": testCase.chatGPTAccountID}
+			}
+			repo.accounts = []Account{account}
+			client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
+			service := newConfiguredService(repo, client)
+			requestLogger := &captureAccountTestRequestLogger{}
+			service.accountTestRequestLogger = requestLogger
+
+			if _, err := service.TestAccount(context.Background(), account.ID); err != nil {
+				t.Fatalf("TestAccount returned error: %v", err)
+			}
+			if client.gotConfig.ProbeChatGPTAccountID != testCase.wantProbeAccountID {
+				t.Fatalf("probe ChatGPT account ID = %q, want %q", client.gotConfig.ProbeChatGPTAccountID, testCase.wantProbeAccountID)
+			}
+			if len(requestLogger.entries) != 1 {
+				t.Fatalf("request log count = %d, want 1", len(requestLogger.entries))
+			}
+			entry := requestLogger.entries[0]
+			if entry.Model != testCase.wantModel || entry.Route != testCase.wantRoute || entry.Method != testCase.wantMethod {
+				t.Fatalf("request log model/route/method = %q/%q/%q, want %q/%q/%q", entry.Model, entry.Route, entry.Method, testCase.wantModel, testCase.wantRoute, testCase.wantMethod)
+			}
+		})
+	}
+}
+
 func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	repo := newMemoryRepo()
 	account := testAccount(t, 7, true, 3, "unused-oauth-token")
