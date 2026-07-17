@@ -1231,6 +1231,8 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	repo.accounts = []Account{account}
 	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
 	service := newConfiguredService(repo, client)
+	requestLogger := &captureAccountTestRequestLogger{err: errors.New("request log unavailable")}
+	service.accountTestRequestLogger = requestLogger
 
 	tested, err := service.TestAccount(context.Background(), 7)
 	if err != nil {
@@ -1246,6 +1248,16 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	if tested.LastTestAt == nil || tested.LastTestStatus != AccountTestStatusPassed || tested.LastTestError != "" {
 		t.Fatalf("test result = at:%v status:%q error:%q, want passed result", tested.LastTestAt, tested.LastTestStatus, tested.LastTestError)
 	}
+	if len(requestLogger.entries) != 1 {
+		t.Fatalf("request log count = %d, want 1", len(requestLogger.entries))
+	}
+	entry := requestLogger.entries[0]
+	if entry.RequestID == "" || entry.Provider != "openai" || entry.ProviderAccountID != account.ID || entry.ProviderAccountType != AccountTypeAPIUpstream || entry.ProviderAccountName != account.DisplayName {
+		t.Fatalf("request log attribution = %+v", entry)
+	}
+	if entry.Route != "/v1/models" || entry.Method != http.MethodGet || entry.StatusCode != http.StatusOK || entry.Error != "" || entry.Latency < 0 || entry.CreatedAt.IsZero() {
+		t.Fatalf("request log probe fields = %+v", entry)
+	}
 }
 
 func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
@@ -1258,6 +1270,8 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	repo.accounts = []Account{account}
 	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusTooManyRequests, retryAfter: "120", message: "quota window"}}
 	service := newConfiguredService(repo, client)
+	requestLogger := &captureAccountTestRequestLogger{}
+	service.accountTestRequestLogger = requestLogger
 
 	tested, err := service.TestAccount(context.Background(), 7)
 	if err != nil {
@@ -1272,6 +1286,9 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	}
 	if tested.RateLimitedUntil == nil || !tested.RateLimitedUntil.After(time.Now().Add(100*time.Second)) {
 		t.Fatalf("RateLimitedUntil = %v, want retry-after window", tested.RateLimitedUntil)
+	}
+	if len(requestLogger.entries) != 1 || requestLogger.entries[0].StatusCode != http.StatusTooManyRequests || requestLogger.entries[0].Error != "rate_limited" {
+		t.Fatalf("failed request log = %+v, want HTTP 429 rate_limited", requestLogger.entries)
 	}
 }
 
@@ -1367,6 +1384,8 @@ func TestTestAccountModelUsesExactAPIUpstreamAndPersistsFailureWithoutChangingHe
 	}}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 	service.modelProber = prober
+	requestLogger := &captureAccountTestRequestLogger{}
+	service.accountTestRequestLogger = requestLogger
 
 	result, err := service.TestAccountModel(context.Background(), account.ID, " gpt-test ")
 	if err != nil {
@@ -1394,6 +1413,16 @@ func TestTestAccountModelUsesExactAPIUpstreamAndPersistsFailureWithoutChangingHe
 	}
 	if unchanged.Status != AccountStatusCircuitOpen || unchanged.StatusReason != "existing health state" || unchanged.FailureCount != 4 || unchanged.CircuitOpenUntil == nil {
 		t.Fatalf("account health mutated by model diagnostic: %+v", unchanged)
+	}
+	if len(requestLogger.entries) != 1 {
+		t.Fatalf("request log count = %d, want 1", len(requestLogger.entries))
+	}
+	entry := requestLogger.entries[0]
+	if entry.Route != "/v1/chat/completions" || entry.Method != http.MethodPost || entry.Model != "gpt-test" || entry.StatusCode != http.StatusTooManyRequests || entry.Error != "rate_limited" {
+		t.Fatalf("model test request log = %+v", entry)
+	}
+	if entry.ProviderAccountID != account.ID || entry.ProviderAccountType != AccountTypeAPIUpstream || entry.ProviderAccountName != account.DisplayName || entry.Latency < 0 || entry.CreatedAt.IsZero() {
+		t.Fatalf("model test request log attribution = %+v", entry)
 	}
 }
 
@@ -4337,6 +4366,16 @@ type captureAccountModelProber struct {
 	selected SelectedAccount
 	model    string
 	calls    int
+}
+
+type captureAccountTestRequestLogger struct {
+	entries []AccountTestRequestLog
+	err     error
+}
+
+func (l *captureAccountTestRequestLogger) CreateAccountTestRequestLog(_ context.Context, entry AccountTestRequestLog) error {
+	l.entries = append(l.entries, entry)
+	return l.err
 }
 
 func (p *captureAccountModelProber) ProbeAccountModel(_ context.Context, _ Config, selected SelectedAccount, model string) modelProbeResult {

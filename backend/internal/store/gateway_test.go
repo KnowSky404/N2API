@@ -6,10 +6,12 @@ import (
 	"testing"
 
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
+	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
 
 func TestGatewayRepositoryImplementsRequestLogger(t *testing.T) {
 	var _ gateway.RequestLogger = (*GatewayRepository)(nil)
+	var _ provider.AccountTestRequestLogger = (*GatewayRepository)(nil)
 }
 
 func TestCreateRequestLogSQLIncludesProviderAccountAttribution(t *testing.T) {
@@ -39,5 +41,8 @@ func TestCreateRequestLogNullsMissingProviderAccountID(t *testing.T) {
 	source := string(sourceBytes)
 	if !strings.Contains(source, "nullInt64(entry.ProviderAccountID)") {
 		t.Fatal("CreateRequestLog must store ProviderAccountID 0 as NULL so local gateway rejections can be logged without violating the provider account foreign key")
+	}
+	if !strings.Contains(source, "nullInt64(entry.ClientKeyID)") {
+		t.Fatal("CreateRequestLog must store ClientKeyID 0 as NULL so provider tests can be logged without a downstream API key")
 	}
 }

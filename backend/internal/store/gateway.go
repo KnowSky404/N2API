@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
+	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,7 +37,7 @@ func (r *GatewayRepository) CreateRequestLog(ctx context.Context, entry gateway.
 	}
 	_, err = r.pool.Exec(ctx, createRequestLogSQL(),
 		entry.RequestID,
-		entry.ClientKeyID,
+		nullInt64(entry.ClientKeyID),
 		nullInt64(entry.ProviderAccountID),
 		entry.ProviderAccountType,
 		entry.ProviderAccountName,
@@ -66,6 +67,24 @@ func (r *GatewayRepository) CreateRequestLog(ctx context.Context, entry gateway.
 		entry.CreatedAt,
 	)
 	return err
+}
+
+func (r *GatewayRepository) CreateAccountTestRequestLog(ctx context.Context, entry provider.AccountTestRequestLog) error {
+	return r.CreateRequestLog(ctx, gateway.RequestLog{
+		RequestID:           entry.RequestID,
+		Provider:            entry.Provider,
+		ProviderAccountID:   entry.ProviderAccountID,
+		ProviderAccountType: entry.ProviderAccountType,
+		ProviderAccountName: entry.ProviderAccountName,
+		Model:               entry.Model,
+		Route:               entry.Route,
+		Method:              entry.Method,
+		StatusCode:          entry.StatusCode,
+		Latency:             entry.Latency,
+		Error:               entry.Error,
+		UsageSource:         "provider_test",
+		CreatedAt:           entry.CreatedAt,
+	})
 }
 
 func nullInt64(value int64) any {

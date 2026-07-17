@@ -92,6 +92,7 @@ const (
 
 	defaultAccountTestResultsLimit = 20
 	maxAccountTestResultsLimit     = 100
+	accountTestRequestLogTimeout   = 5 * time.Second
 )
 
 const (
@@ -136,6 +137,7 @@ type Config struct {
 	RefreshWindow         time.Duration
 	CodeVerifier          string
 	AllowHTTPAPIUpstreams bool
+	AccountTestLogger     AccountTestRequestLogger
 }
 
 type Status struct {
@@ -237,6 +239,25 @@ type AccountTestResult struct {
 	Message   string    `json:"message"`
 	CheckedAt time.Time `json:"checkedAt"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type AccountTestRequestLog struct {
+	RequestID           string
+	Provider            string
+	ProviderAccountID   int64
+	ProviderAccountType string
+	ProviderAccountName string
+	Model               string
+	Route               string
+	Method              string
+	StatusCode          int
+	Latency             time.Duration
+	Error               string
+	CreatedAt           time.Time
+}
+
+type AccountTestRequestLogger interface {
+	CreateAccountTestRequestLog(ctx context.Context, entry AccountTestRequestLog) error
 }
 
 type SessionBinding struct {
@@ -519,14 +540,15 @@ type HTTPClient struct {
 }
 
 type Service struct {
-	repo         Repository
-	client       OAuthClient
-	prober       accountStatusProber
-	modelProber  accountModelProber
-	cfg          Config
-	refreshMu    sync.Mutex
-	refreshLocks map[int64]*sync.Mutex
-	httpClient   *HTTPClient
+	repo                     Repository
+	client                   OAuthClient
+	prober                   accountStatusProber
+	modelProber              accountModelProber
+	accountTestRequestLogger AccountTestRequestLogger
+	cfg                      Config
+	refreshMu                sync.Mutex
+	refreshLocks             map[int64]*sync.Mutex
+	httpClient               *HTTPClient
 }
 
 func NewHTTPClient(client *http.Client) *HTTPClient {
@@ -594,13 +616,14 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 	prober, _ := client.(accountStatusProber)
 	httpClient := NewHTTPClient(nil)
 	return &Service{
-		repo:         repo,
-		client:       client,
-		prober:       prober,
-		modelProber:  httpClient,
-		cfg:          cfg,
-		httpClient:   httpClient,
-		refreshLocks: make(map[int64]*sync.Mutex),
+		repo:                     repo,
+		client:                   client,
+		prober:                   prober,
+		modelProber:              httpClient,
+		accountTestRequestLogger: cfg.AccountTestLogger,
+		cfg:                      cfg,
+		httpClient:               httpClient,
+		refreshLocks:             make(map[int64]*sync.Mutex),
 	}
 }
 
@@ -1467,6 +1490,7 @@ func (s *Service) TestAccountModel(ctx context.Context, accountID int64, model s
 	probeCtx, cancel := context.WithTimeout(ctx, accountModelTestTimeout)
 	defer cancel()
 	probe := s.modelProber.ProbeAccountModel(probeCtx, s.cfg, selected, model)
+	s.logAccountTestRequest(ctx, selected, model, accountModelTestRoute(s.cfg, selected), http.MethodPost, probe.statusCode, probe.errorCode, startedAt)
 	checkedAt := time.Now().UTC()
 	result := AccountModelTestResult{
 		AccountID:  accountID,
@@ -1713,7 +1737,9 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	}
 	cfg.ProxyURL = selected.ProxyURL
 
+	startedAt := time.Now()
 	result, err := s.prober.ProbeAccountStatus(ctx, cfg, selected.AuthorizationToken)
+	s.logAccountTestRequest(ctx, selected, accountStatusTestModel(selected), accountStatusTestRoute(cfg), accountStatusTestMethod(cfg), result.statusCode, accountStatusTestError(result, err), startedAt)
 	if err != nil {
 		now := time.Now()
 		until := now.Add(defaultCircuitOpen)
@@ -1743,6 +1769,108 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 		return Account{}, err
 	}
 	return s.ResetAccountStatus(ctx, account.ID)
+}
+
+func (s *Service) logAccountTestRequest(ctx context.Context, selected SelectedAccount, model, route, method string, statusCode int, errorCode string, startedAt time.Time) {
+	if s.accountTestRequestLogger == nil {
+		return
+	}
+	if statusCode == 0 {
+		statusCode = http.StatusBadGateway
+	}
+	providerName := strings.TrimSpace(selected.Provider)
+	if providerName == "" {
+		providerName = s.cfg.Provider
+	}
+	requestID, err := secret.GenerateToken("req")
+	if err != nil {
+		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	}
+	entry := AccountTestRequestLog{
+		RequestID:           requestID,
+		Provider:            providerName,
+		ProviderAccountID:   selected.AccountID,
+		ProviderAccountType: selected.AccountType,
+		ProviderAccountName: selected.DisplayName,
+		Model:               model,
+		Route:               route,
+		Method:              method,
+		StatusCode:          statusCode,
+		Latency:             time.Since(startedAt),
+		Error:               errorCode,
+		CreatedAt:           startedAt,
+	}
+	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountTestRequestLogTimeout)
+	defer cancel()
+	_ = s.accountTestRequestLogger.CreateAccountTestRequestLog(logCtx, entry)
+}
+
+func accountStatusTestRoute(cfg Config) string {
+	if strings.TrimSpace(cfg.ProbeChatGPTAccountID) != "" {
+		baseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
+		if baseURL == "" {
+			baseURL = "https://chatgpt.com/backend-api/codex"
+		}
+		return requestRoutePath(baseURL+"/responses", "/responses")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	return requestRoutePath(baseURL+"/v1/models", "/v1/models")
+}
+
+func accountStatusTestMethod(cfg Config) string {
+	if strings.TrimSpace(cfg.ProbeChatGPTAccountID) != "" {
+		return http.MethodPost
+	}
+	return http.MethodGet
+}
+
+func accountStatusTestModel(selected SelectedAccount) string {
+	if selected.AccountType == AccountTypeCodexOAuth {
+		return "gpt-5.4-mini"
+	}
+	return ""
+}
+
+func accountStatusTestError(result probeResult, probeErr error) string {
+	if probeErr != nil {
+		if errors.Is(probeErr, context.DeadlineExceeded) {
+			return "timeout"
+		}
+		return "network_error"
+	}
+	if result.statusCode >= http.StatusOK && result.statusCode <= 299 {
+		return ""
+	}
+	switch result.statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "unauthorized"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	default:
+		return "upstream_error"
+	}
+}
+
+func accountModelTestRoute(cfg Config, selected SelectedAccount) string {
+	if selected.AccountType == AccountTypeCodexOAuth {
+		baseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
+		if baseURL == "" {
+			baseURL = "https://chatgpt.com/backend-api/codex"
+		}
+		return requestRoutePath(baseURL+"/responses", "/responses")
+	}
+	return requestRoutePath(upstreamChatCompletionsURL(selected.BaseURL), "/v1/chat/completions")
+}
+
+func requestRoutePath(rawURL, fallback string) string {
+	target, err := url.Parse(rawURL)
+	if err != nil || target.Path == "" {
+		return fallback
+	}
+	return target.Path
 }
 
 func (s *Service) TestAccounts(ctx context.Context) ([]Account, error) {

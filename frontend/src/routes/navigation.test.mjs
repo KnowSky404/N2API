@@ -440,6 +440,12 @@ test('request logs page shows provider account attribution', () => {
   assert.match(requestLogsPage, /Global pool/);
 });
 
+test('request logs identify and filter provider test probes', () => {
+  assert.match(requestLogsPage, /value: 'provider_test', label: 'Provider test'/);
+  assert.match(requestLogsPage, /if \(value === 'provider_test'\) return 'Provider test';/);
+  assert.match(requestLogsPage, /'provider_test'/);
+});
+
 test('request logs page shows request model', () => {
   assert.match(requestLogsPage, />Model</);
   assert.match(requestLogsPage, /log\.model/);

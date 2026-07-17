@@ -228,6 +228,7 @@ func main() {
 	go runAPIKeyCleanup(ctx, adminService, time.Hour)
 
 	providerRepo := store.NewProviderRepository(pool)
+	requestLogRepo := store.NewGatewayRepository(pool)
 	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
 		Provider:              "openai",
 		ClientID:              cfg.OpenAIOAuthClientID,
@@ -238,6 +239,7 @@ func main() {
 		APIBaseURL:            cfg.OpenAIAPIBaseURL,
 		Secret:                cfg.EncryptionSecret,
 		AllowHTTPAPIUpstreams: cfg.AllowHTTPAPIUpstreams,
+		AccountTestLogger:     requestLogRepo,
 	})
 	autoTestRunner := provider.NewAutoTestRunnerWithConfigSource(providerService, func(ctx context.Context) (provider.AutoTestRunnerConfig, error) {
 		settings, err := adminService.GetGatewaySettings(ctx)
@@ -261,7 +263,7 @@ func main() {
 		SettingsProvider:                adminService,
 		BudgetProvider:                  adminService,
 		ErrorPassthroughRulesProvider:   adminService,
-		Logger:                          store.NewGatewayRepository(pool),
+		Logger:                          requestLogRepo,
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,
 			providers: providerService,

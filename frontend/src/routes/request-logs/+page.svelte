@@ -81,6 +81,7 @@
         'chat_completions',
         'responses',
         'stream',
+        'provider_test',
         'gemini_usage_metadata',
         'anthropic_usage'
       ].includes(usageSource)
@@ -194,6 +195,7 @@
     if (value === 'chat_completions') return 'Chat';
     if (value === 'responses') return 'Responses';
     if (value === 'stream') return 'Stream';
+    if (value === 'provider_test') return 'Provider test';
     if (value === 'gemini_usage_metadata') return 'Gemini';
     if (value === 'anthropic_usage') return 'Anthropic';
     return value || 'Missing';
@@ -262,6 +264,7 @@
     { value: 'chat_completions', label: 'Chat completions' },
     { value: 'responses', label: 'Responses' },
     { value: 'stream', label: 'Stream' },
+    { value: 'provider_test', label: 'Provider test' },
     { value: 'gemini_usage_metadata', label: 'Gemini metadata' },
     { value: 'anthropic_usage', label: 'Anthropic usage' }
   ];
