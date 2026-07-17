@@ -46,7 +46,8 @@ Files:
 
 Steps:
 
-- [ ] Implement insert-on-pool and insert-on-`pgx.Tx` APIs.
+- [ ] Implement insert-on-pool and insert-on-`pgx.Tx` APIs plus context-carried
+  `EventIntent` helpers.
 - [ ] Implement typed filter validation and `limit + 1` pagination.
 - [ ] Encode and validate an opaque URL-safe `(occurred_at, id)` cursor and query
   deterministically without looking up a retained row.
@@ -94,6 +95,10 @@ Steps:
 
 - [ ] Add action constants for API keys, routing pools, settings, pricing,
   fingerprints, passthrough rules, request-log cleanup, and model settings.
+- [ ] Make each concrete PostgreSQL mutation read the context intent, enrich it from
+  `RETURNING` or a locked row, and insert it in the mutation's own transaction.
+- [ ] Add a coverage test for audited store mutations; never call an independent
+  recorder after a successful repository method.
 - [ ] Make login session creation, logout session revocation, password changes, and
   bootstrap create/username update commit their success events transactionally.
 - [ ] Pass allowlisted `changed_fields`; represent credential changes as booleans.
@@ -128,6 +133,8 @@ Steps:
 - [ ] Rework batch helpers to produce accurate success, failure, and partial counts.
 - [ ] Commit a per-target event with every target mutation, attach a shared
   `batch_id`, and write a separate best-effort summary after processing.
+- [ ] Preserve stop-on-first-error behavior and record requested, attempted,
+  succeeded, failed, and skipped counts in the summary.
 - [ ] Cover `provider_account.disconnect_all` for the legacy provider-wide route.
 - [ ] Emit one auto-test cycle summary while keeping current per-account test history.
 - [ ] Record runtime account events only when state actually changes.

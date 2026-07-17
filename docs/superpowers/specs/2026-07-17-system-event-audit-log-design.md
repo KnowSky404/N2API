@@ -195,10 +195,19 @@ scheduler cycle or batch creates one root correlation ID and reuses it for its
 related per-target events. An incoming request ID is accepted only after strict
 character and length validation; otherwise N2API replaces it.
 
-Admin and provider services emit semantic events. Store mutation methods accept the
-event and insert it through the same `pgx.Tx` before commit. Route middleware is a
-safety net for authentication rejection and missing action coverage, not the source
-of successful domain audit events.
+Admin and provider services create a semantic `EventIntent` and attach it to the
+operation context. The concrete store mutation method reads that intent, enriches it
+with the final target snapshot obtained from `RETURNING` or the row locked by its
+own transaction, and inserts the event through that same `pgx.Tx` before commit.
+The standalone event repository is only for queries, retention, and failure or
+HTTP-only events; it must not be called by a service after a successful business
+repository call. Route middleware is a safety net for authentication rejection and
+missing action coverage, not the source of successful domain audit events.
+
+This context-based intent keeps the existing narrow repository interfaces usable by
+tests while making atomic event handling the responsibility of the PostgreSQL store.
+A coverage test enumerates every audited store mutation and fails when a method does
+not consume an intent or explicitly document why it is not auditable.
 
 Login session creation, logout session revocation, password changes, and bootstrap
 admin create/username update follow the same rule: their success event is inserted
@@ -233,10 +242,18 @@ the same target transaction. All per-target events share a `batch_id` in allowli
 metadata. After processing, the batch writes a summary event containing:
 
 - requested target count;
+- attempted target count;
 - succeeded and failed counts;
+- skipped count for targets not attempted after the first failure;
 - bounded arrays of numeric target IDs;
 - the first fixed-catalog error code;
 - `partial` outcome when at least one target changed and another failed.
+
+V1 preserves the existing stop-on-first-error behavior and HTTP error mapping.
+Therefore `attempted = succeeded + failed` and
+`skipped = requested - attempted`. A fully successful batch returns its existing
+success response. A failed or partial batch returns the existing mapped error while
+the system event retains the accurate counts and IDs.
 
 The summary does not replace per-target events: a crash after target N must still
 leave audit evidence for targets 1 through N. The UI groups matching `batch_id`
