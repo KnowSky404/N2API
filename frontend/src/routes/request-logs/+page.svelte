@@ -400,6 +400,7 @@
       <button
         class={[
           'rounded-lg border p-4 text-left hover:bg-[#f5f5f5]',
+          usage.range === range ? '' : 'hidden md:block',
           usage.range === range ? 'border-[#10a37f] bg-[#e8f5f0]' : 'border-[#ededed] bg-white'
         ]}
         type="button"

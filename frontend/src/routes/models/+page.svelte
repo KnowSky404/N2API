@@ -389,9 +389,12 @@
           {/if}
         </div>
         {#if blockedModels.length > 0}
-          <p class="mt-3 text-sm text-amber-800 break-words">
-            {blockedModels.map((model) => model.model).join(', ')} cannot receive model-routed traffic yet.
-          </p>
+          <details class="mt-3 rounded-md border border-amber-200 bg-amber-50">
+            <summary class="cursor-pointer px-3 py-2 text-sm font-medium text-amber-800">View {blockedModels.length} blocked models</summary>
+            <p class="border-t border-amber-200 px-3 py-2 text-sm text-amber-800 break-words">
+              {blockedModels.map((model) => model.model).join(', ')} cannot receive model-routed traffic yet.
+            </p>
+          </details>
         {:else}
           <p class="mt-3 text-sm text-[#0a7a5e]">All configured routing models have at least one schedulable account.</p>
         {/if}

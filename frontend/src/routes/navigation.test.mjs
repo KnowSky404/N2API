@@ -624,6 +624,7 @@ test('request logs keep advanced diagnostics filters collapsed until requested',
   assert.match(requestLogsPage, /aria-expanded=\{showAdvancedFilters\}/);
   assert.match(requestLogsPage, /More filters/);
   assert.match(requestLogsPage, /\{#if showAdvancedFilters\}/);
+  assert.match(requestLogsPage, /usage\.range === range \? '' : 'hidden md:block'/);
 });
 
 test('providers page initializes account search from provider account URL param', () => {
@@ -756,6 +757,7 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /paginatedModelRoutingRows/);
   assert.match(modelsPage, /\{#each paginatedModelRoutingRows as model\}/);
   assert.match(modelsPage, /<details class="group min-w-0">/);
+  assert.match(modelsPage, /View \{blockedModels\.length\} blocked models/);
   assert.match(adminState, /stickyBoundAccountId/);
   assert.match(adminState, /currentConcurrentRequests/);
   assert.match(adminState, /effectiveMaxConcurrentRequests/);
