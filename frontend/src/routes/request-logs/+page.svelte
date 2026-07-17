@@ -906,7 +906,7 @@
         class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={normalizedRequestLogPage <= 1}
-        onclick={() => goToRequestLogPage(requestLogPage - 1)}
+        onclick={() => goToRequestLogPage(normalizedRequestLogPage - 1)}
       >
         Previous
       </button>
@@ -914,7 +914,7 @@
         class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
         type="button"
         disabled={normalizedRequestLogPage >= requestLogPageCount}
-        onclick={() => goToRequestLogPage(requestLogPage + 1)}
+        onclick={() => goToRequestLogPage(normalizedRequestLogPage + 1)}
       >
         Next
       </button>

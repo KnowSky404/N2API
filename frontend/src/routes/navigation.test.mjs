@@ -491,8 +491,9 @@ test('request logs table paginates locally with a bounded sticky scroll area', (
   assert.match(requestLogsPage, /<option value=\{20\}>20<\/option>/);
   assert.match(requestLogsPage, /<option value=\{50\}>50<\/option>/);
   assert.match(requestLogsPage, /Page \{normalizedRequestLogPage\} of \{requestLogPageCount\}/);
-  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(requestLogPage - 1\)\}/);
-  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(requestLogPage \+ 1\)\}/);
+  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(normalizedRequestLogPage - 1\)\}/);
+  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(normalizedRequestLogPage \+ 1\)\}/);
+  assert.doesNotMatch(requestLogsPage, /goToRequestLogPage\(requestLogPage [+-] 1\)/);
 });
 
 test('request logs page includes usage accounting UI', () => {
