@@ -209,6 +209,8 @@
               sidebarCollapsed ? 'justify-center px-0' : ''
             ]}
             onclick={toggleUserDropdown}
+            aria-haspopup="menu"
+            aria-expanded={userDropdownOpen}
           >
             <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#e8e8e8]">
               <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
@@ -259,6 +261,8 @@
             <button
               class="ui-button ui-button--md flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[#3c3c3c] hover:bg-[#f5f5f5]"
               onclick={toggleUserDropdown}
+              aria-haspopup="menu"
+              aria-expanded={userDropdownOpen}
             >
               <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
               <span class="hidden sm:inline-block max-w-[120px] truncate">{session.username || 'admin'}</span>
@@ -361,7 +365,7 @@
 {#if userDropdownOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
   <div class="fixed inset-0 z-40" onclick={closeUserDropdown}></div>
-  <div class="fixed z-50 min-w-[160px] rounded-lg border border-[#ededed] bg-white py-1 shadow-[0_4px_16px_rgba(13,13,13,0.06)]" style="bottom: 3.5rem; left: 1rem;">
+  <div class="fixed right-4 top-14 z-50 min-w-[180px] rounded-lg border border-[#ededed] bg-white py-1 shadow-[0_4px_16px_rgba(13,13,13,0.06)] lg:bottom-14 lg:left-4 lg:right-auto lg:top-auto" role="menu">
     <div class="border-b border-[#ededed] px-3 py-2">
       <p class="text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
       <p class="text-xs text-[#8e8e8e]">Signed in</p>
@@ -369,6 +373,7 @@
     <button
       class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
       onclick={openPasswordModal}
+      role="menuitem"
     >
       <Lock class="h-4 w-4 text-[#6e6e6e]" />
       Change password
@@ -376,6 +381,7 @@
     <button
       class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
       onclick={logout}
+      role="menuitem"
     >
       <LogOut class="h-4 w-4 text-[#6e6e6e]" />
       Sign out

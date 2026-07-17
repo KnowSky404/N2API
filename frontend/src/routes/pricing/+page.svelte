@@ -7,7 +7,7 @@
     usagePricing,
   } from '$lib/admin-state.svelte.js';
   import AuthGate from '$lib/AuthGate.svelte';
-  import { LoaderCircle, TriangleAlert, X } from 'lucide-svelte';
+  import { LoaderCircle, Plus, TriangleAlert, X } from 'lucide-svelte';
 
   function emptyPricingRow() {
     return {
@@ -38,6 +38,7 @@
 
   /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
   let editingPricingRow = $state(null);
+  let editingPricingOriginal = $state(/** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */ (null));
   let deleteConfirmPricingPopover = $state(/** @type {{row: import('$lib/admin-state.svelte.js').UsagePricingRow, top: number, left: number}|null} */ (null));
 
   const pricingBusy = $derived(
@@ -63,6 +64,13 @@
   });
 
   $effect(() => {
+    if (!usagePricing.saved) return;
+    closeSyncMessage = 'Pricing saved.';
+    const timer = setTimeout(() => { closeSyncMessage = ''; }, 4000);
+    return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
     const candidates = usagePricing.deletionCandidates || [];
     const syncMessage = usagePricing.syncMessage;
     if (candidates.length > 0 && syncMessage && !usagePricing.syncing) {
@@ -83,11 +91,21 @@
   /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
   function startEditingPricingRow(row) {
     editingPricingRow = row;
+    editingPricingOriginal = { ...row };
+  }
+
+  function cancelEditingPricingRow() {
+    if (editingPricingRow && editingPricingOriginal) {
+      Object.assign(editingPricingRow, editingPricingOriginal);
+    }
+    editingPricingRow = null;
+    editingPricingOriginal = null;
   }
 
   async function commitPricingRow() {
     if (await savePricingRows()) {
       editingPricingRow = null;
+      editingPricingOriginal = null;
     }
   }
 
@@ -384,7 +402,7 @@
           </button>
         {/if}
         <button
-          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+          class="ui-button ui-button--sm ui-button--secondary"
           type="button"
           disabled={pricingBusy}
           onclick={openSyncConfirmModal}
@@ -392,11 +410,12 @@
           {usagePricing.syncing ? 'Syncing' : 'Sync official'}
         </button>
         <button
-          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+          class="ui-button ui-button--sm ui-button--primary"
           type="button"
           disabled={pricingBusy}
           onclick={openAddPricingModal}
         >
+          <Plus class="size-4" aria-hidden="true" />
           Add model
         </button>
       </div>
@@ -404,8 +423,6 @@
 
     {#if usagePricing.error && !showSyncConfirmModal && !showUpcomingIgnoreModal && !showShutdownRemovalModal}
       <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usagePricing.error}</p>
-    {:else if usagePricing.saved}
-      <p class="mt-4 rounded-md border border-[#cce7db] bg-[#e8f5f0] p-3 text-sm text-[#0a7a5e]">Pricing saved.</p>
     {/if}
 
     <div class="mt-5 grid gap-3" style="grid-template-columns: 1fr auto">
@@ -508,7 +525,8 @@
                 <td class="bg-white px-3 py-3 md:sticky md:right-0 md:shadow-[-8px_0_12px_rgba(255,255,255,0.85)]" data-label="Actions">
                   <div class="flex justify-end gap-2 whitespace-nowrap">
                     {#if isEditing}
-                      <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={commitPricingRow}>Done</button>
+                      <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={pricingBusy} onclick={cancelEditingPricingRow}>Cancel</button>
+                      <button class="ui-button ui-button--sm ui-button--primary" type="button" disabled={pricingBusy} onclick={commitPricingRow}>Save</button>
                     {:else}
                       <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={pricingBusy} onclick={() => startEditingPricingRow(row)}>Edit</button>
                         <button class="ui-button ui-button--sm ui-button--danger rounded-lg border border-red-200 bg-white px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={pricingBusy} onclick={(e) => openDeleteConfirmPricingRow(row, e)}>Remove</button>

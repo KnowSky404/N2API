@@ -18,6 +18,8 @@
   let appliedModelRoutingSearch = $state('');
   let modelSearch = $state('');
   let modelStatusFilter = $state('all');
+  let modelPage = $state(1);
+  let modelPageSize = $state(5);
   let modelProviderAccountId = $state('');
   let modelDiagnosticClientKeyId = $state('');
 
@@ -45,6 +47,7 @@
     if (['all', 'routable', 'blocked', 'hidden', 'allowed'].includes(status)) {
       modelStatusFilter = status;
     }
+    modelPage = 1;
 
     const previewModel = params.get('previewModel') ?? '';
     if (previewModel.length > 0 && previewModel.length <= 100) {
@@ -216,6 +219,16 @@
       if (!query) return true;
       return modelSearchText(model).includes(query);
     })
+  );
+  const modelPageCount = $derived(Math.max(1, Math.ceil(visibleModelRoutingRows.length / modelPageSize)));
+  const normalizedModelPage = $derived(Math.min(Math.max(modelPage, 1), modelPageCount));
+  const paginatedModelRoutingRows = $derived(
+    visibleModelRoutingRows.slice((normalizedModelPage - 1) * modelPageSize, normalizedModelPage * modelPageSize)
+  );
+  const modelPageSummary = $derived(
+    visibleModelRoutingRows.length === 0
+      ? '0'
+      : `${(normalizedModelPage - 1) * modelPageSize + 1}-${(normalizedModelPage - 1) * modelPageSize + paginatedModelRoutingRows.length}`
   );
 
   /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
@@ -619,6 +632,7 @@
             type="search"
             placeholder="Search models or accounts"
             bind:value={modelSearch}
+            oninput={() => (modelPage = 1)}
           />
         </label>
         <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
@@ -626,6 +640,7 @@
           <select
             class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
             bind:value={modelStatusFilter}
+            onchange={() => (modelPage = 1)}
           >
             <option value="all">All models</option>
             <option value="routable">Routable models</option>
@@ -660,7 +675,8 @@
                 <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="4">No model routing rows match your filters.</td>
               </tr>
             {:else}
-              {#each visibleModelRoutingRows as model}
+              {#each paginatedModelRoutingRows as model}
+                {@const candidateAccounts = visibleModelAccounts(model)}
                 <tr class="align-top">
                   <td class="px-4 py-4" data-label="Model">
                     <p class="font-medium text-[#0d0d0d]">{model.model}</p>
@@ -675,42 +691,28 @@
                     {model.enabledCount} / {model.configuredCount}
                   </td>
                   <td class="px-4 py-4" data-label="Candidates">
-                    {#if visibleModelAccounts(model).length}
-                      <div class="flex flex-wrap gap-2">
-                        {#each visibleModelAccounts(model) as account}
-                          <span
-                            class={[
-                              'inline-flex max-w-[400px] flex-wrap items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs',
-                              account.schedulable
-                                ? 'border-[#ededed] bg-[#fafafa] text-[#3c3c3c]'
-                                : 'border-amber-200 bg-amber-50 text-amber-800'
-                            ]}
-                            title={routingAccountHoverDetail(account)}
-                          >
-                            <span class="font-mono text-[11px] font-semibold text-[#0d0d0d]">Schedule rank #{account.scheduleRank}</span>
-                            <a
-                              class="truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline"
-                              href={providerAccountHref(account)}
-                              aria-label="View provider account"
-                            >
-                              {account.displayName || `Account ${account.id}`}
-                            </a>
-                            <span class="text-[#6e6e6e]">{accountTypeLabel(account.accountType)}</span>
-                            <span class="text-[#6e6e6e]">Priority {account.priority}</span>
-                            <span class="text-[#6e6e6e]">Load {account.loadFactor || 1}</span>
-                            <span class="text-[#6e6e6e]">Used {formatDate(account.lastUsedAt)}</span>
-                            {#if account.lastTestAt}
-                              <span class="text-[#6e6e6e]">Test {account.lastTestStatus || 'checked'} {formatDate(account.lastTestAt)}</span>
-                            {/if}
-                            {#if account.lastTestError}
-                              <span class="font-medium text-amber-800">{account.lastTestError}</span>
-                            {/if}
-                            <span class={account.schedulable ? 'text-[#6e6e6e]' : 'font-medium text-amber-800'}>
-                              {account.schedulable ? statusLabel(account.status) : account.unschedulableReason}
-                            </span>
-                          </span>
-                        {/each}
-                      </div>
+                    {#if candidateAccounts.length}
+                      <details class="group min-w-0">
+                        <summary class="cursor-pointer list-none rounded-md px-2 py-1.5 text-sm text-[#3c3c3c] hover:bg-[#f5f5f5] focus-visible:outline-2 focus-visible:outline-[#10a37f]">
+                          <span class="font-medium text-[#0d0d0d]">{candidateAccounts.length} candidate{candidateAccounts.length === 1 ? '' : 's'}</span>
+                          <span class="text-[#6e6e6e]"> · first {candidateAccounts[0].displayName || `Account ${candidateAccounts[0].id}`}</span>
+                        </summary>
+                        <div class="mt-2 divide-y divide-[#ededed] rounded-lg border border-[#ededed]">
+                          {#each candidateAccounts as account}
+                            <div class="grid gap-1 px-3 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_auto]" title={routingAccountHoverDetail(account)}>
+                              <div class="min-w-0">
+                                <a class="truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={providerAccountHref(account)} aria-label="View provider account">
+                                  #{account.scheduleRank} {account.displayName || `Account ${account.id}`}
+                                </a>
+                                <p class="mt-1 text-[#6e6e6e]">{accountTypeLabel(account.accountType)} · priority {account.priority} · load {account.loadFactor || 1}</p>
+                              </div>
+                              <span class={account.schedulable ? 'text-[#0a7a5e]' : 'font-medium text-amber-800'}>
+                                {account.schedulable ? statusLabel(account.status) : account.unschedulableReason}
+                              </span>
+                            </div>
+                          {/each}
+                        </div>
+                      </details>
                     {:else}
                       <span class="text-sm text-[#6e6e6e]">No candidates</span>
                     {/if}
@@ -720,6 +722,22 @@
             {/if}
           </tbody>
         </table>
+      </div>
+      <div class="ui-pagination">
+        <p>Showing {modelPageSummary} of {visibleModelRoutingRows.length}</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
+            Rows
+            <select class="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs" bind:value={modelPageSize} onchange={() => (modelPage = 1)}>
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+            </select>
+          </label>
+          <span class="text-xs tabular-nums">Page {normalizedModelPage} of {modelPageCount}</span>
+          <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={normalizedModelPage <= 1} onclick={() => (modelPage = normalizedModelPage - 1)}>Previous</button>
+          <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={normalizedModelPage >= modelPageCount} onclick={() => (modelPage = normalizedModelPage + 1)}>Next</button>
+        </div>
       </div>
     </section>
   </div>

@@ -74,6 +74,10 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   assert.match(layout, /changePasswordForm\.newPassword/);
   assert.match(layout, /onsubmit={handleChangePassword}/);
   assert.match(layout, /aria-label="Close change password modal"/);
+  assert.match(layout, /aria-haspopup="menu"/);
+  assert.match(layout, /aria-expanded=\{userDropdownOpen\}/);
+  assert.match(layout, /right-4 top-14[^"]*lg:bottom-14/);
+  assert.match(layout, /role="menu"/);
   assert.doesNotMatch(layout, /setTimeout\(\(\) => closePasswordModal/);
 });
 
@@ -740,7 +744,6 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /visibleModelAccounts\(model\)/);
   assert.match(modelsPage, /modelHasVisibleProviderAccount\(model\)/);
   assert.match(modelsPage, /String\(account\.id\) === modelProviderAccountId/);
-  assert.match(modelsPage, /Schedule rank/);
   assert.match(modelsPage, /Schedule reason/);
   assert.match(modelsPage, /account\.scheduleRank/);
   assert.match(modelsPage, /account\.scheduleReason/);
@@ -749,6 +752,10 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /No schedulable account/);
   assert.match(modelsPage, /Sticky bound/);
   assert.match(modelsPage, /account\.stickyBound/);
+  assert.match(modelsPage, /let modelPageSize = \$state\(5\)/);
+  assert.match(modelsPage, /paginatedModelRoutingRows/);
+  assert.match(modelsPage, /\{#each paginatedModelRoutingRows as model\}/);
+  assert.match(modelsPage, /<details class="group min-w-0">/);
   assert.match(adminState, /stickyBoundAccountId/);
   assert.match(adminState, /currentConcurrentRequests/);
   assert.match(adminState, /effectiveMaxConcurrentRequests/);
@@ -1556,9 +1563,13 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(adminState, /savePricingRows[\s\S]*?PUT[\s\S]*?await loadUsagePricing\(\)/,
     'savePricingRows must call await loadUsagePricing() after PUT success');
 
-  // Row Done button calls commitPricingRow (save+reload), not just clear edit state
+  // Row Save calls commitPricingRow (save+reload), and Cancel restores the draft snapshot.
   assert.match(pricingPage, /commitPricingRow/);
   assert.match(pricingPage, /onclick=\{commitPricingRow\}/);
+  assert.match(pricingPage, /editingPricingOriginal/);
+  assert.match(pricingPage, /function cancelEditingPricingRow/);
+  assert.match(pricingPage, /Object\.assign\(editingPricingRow, editingPricingOriginal\)/);
+  assert.match(pricingPage, /onclick=\{cancelEditingPricingRow\}/);
   assert.doesNotMatch(pricingPage, /finishPricingRowEdit/);
 
   // Pricing page imports savePricingRows from admin-state, no longer imports saveUsagePricing for the form
@@ -1656,10 +1667,10 @@ test('usage pricing table defaults to per-row editing with sticky actions', () =
   assert.match(pricingPage, /localeCompare\(right\.model/);
   assert.match(pricingPage, /\[\.\.\.filteredPricingRows\]\.sort/);
 
-  // Pricing commands use the compact button size without shrinking inputs or selects.
-  assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{openSyncConfirmModal\}/);
+  // Pricing commands use shared button variants without shrinking inputs or selects.
+  assert.match(pricingPage, /class="ui-button ui-button--sm ui-button--secondary"[\s\S]{0,180}?onclick=\{openSyncConfirmModal\}/);
   assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*h-8 w-8[^"]*"[\s\S]{0,180}?aria-label="Review upcoming model shutdowns"/);
-  assert.match(pricingPage, /<button class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{commitPricingRow\}/);
+  assert.match(pricingPage, /class="ui-button ui-button--sm ui-button--primary"[\s\S]{0,180}?onclick=\{commitPricingRow\}/);
   assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,300}?>\s*Previous/);
   assert.match(pricingPage, /<button[\s\S]{0,80}?class="[^"]*px-2\.5 py-1\.5 text-xs[^"]*"[\s\S]{0,180}?onclick=\{confirmSyncOfficial\}/);
 
