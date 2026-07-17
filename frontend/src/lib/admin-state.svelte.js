@@ -150,6 +150,27 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} SystemEvent
+ * @property {number} id
+ * @property {string} occurredAt
+ * @property {'audit' | 'security' | 'oauth' | 'scheduler' | 'runtime'} category
+ * @property {'info' | 'warning' | 'error'} severity
+ * @property {string} action
+ * @property {'success' | 'failure' | 'partial'} outcome
+ * @property {{ type: 'admin' | 'system', id?: number, name: string }} actor
+ * @property {{ type: string, id: string, name: string }} target
+ * @property {string} correlationId
+ * @property {string} sourceIp
+ * @property {string} httpMethod
+ * @property {string} routePattern
+ * @property {number | null} statusCode
+ * @property {number} durationMs
+ * @property {string} errorCode
+ * @property {string} message
+ * @property {Record<string, unknown>} metadata
+ */
+
+/**
  * @typedef {object} UsageSummaryRow
  * @property {string} id
  * @property {string} label
@@ -453,6 +474,41 @@ export const requestLogs = $state({
   gatewayFallbacks: false,
   items: []
 });
+
+/** @type {{ loading: boolean, loadingOlder: boolean, error: string, query: string, since: string, category: string, outcome: string, severity: string, action: string, actor: string, targetType: string, targetId: string, items: SystemEvent[], nextCursor: string, hasMore: boolean }} */
+export const systemEvents = $state({
+  loading: false,
+  loadingOlder: false,
+  error: '',
+  query: '',
+  since: '',
+  category: 'all',
+  outcome: 'all',
+  severity: 'all',
+  action: '',
+  actor: '',
+  targetType: '',
+  targetId: '',
+  items: [],
+  nextCursor: '',
+  hasMore: false
+});
+let systemEventRequestSequence = 0;
+
+export function resetSystemEventFilters() {
+  systemEvents.error = '';
+  systemEvents.query = '';
+  systemEvents.since = '';
+  systemEvents.category = 'all';
+  systemEvents.outcome = 'all';
+  systemEvents.severity = 'all';
+  systemEvents.action = '';
+  systemEvents.actor = '';
+  systemEvents.targetType = '';
+  systemEvents.targetId = '';
+  systemEvents.nextCursor = '';
+  systemEvents.hasMore = false;
+}
 
 export function resetRequestLogFilters() {
   requestLogs.error = '';
@@ -1055,6 +1111,27 @@ function clearRequestLogs() {
   });
 }
 
+function clearSystemEvents() {
+  systemEventRequestSequence += 1;
+  replaceState(systemEvents, {
+    loading: false,
+    loadingOlder: false,
+    error: '',
+    query: '',
+    since: '',
+    category: 'all',
+    outcome: 'all',
+    severity: 'all',
+    action: '',
+    actor: '',
+    targetType: '',
+    targetId: '',
+    items: [],
+    nextCursor: '',
+    hasMore: false
+  });
+}
+
 function clearUsage() {
   replaceState(usage, {
     loading: false,
@@ -1185,6 +1262,7 @@ export async function loadSession() {
       clearModelSettings();
       clearGatewaySettings();
       clearRequestLogs();
+      clearSystemEvents();
       clearUsage();
       return;
     }
@@ -1236,6 +1314,7 @@ export async function loadSession() {
     clearModelSettings();
     clearGatewaySettings();
     clearRequestLogs();
+    clearSystemEvents();
     clearUsage();
   }
 }
@@ -1270,6 +1349,7 @@ export async function logout() {
   clearModelSettings();
   clearGatewaySettings();
   clearRequestLogs();
+  clearSystemEvents();
   clearUsage();
   loginForm.password = '';
 }
@@ -3148,6 +3228,94 @@ export async function loadRequestLogs() {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     requestLogs.loading = false;
+  }
+}
+
+/**
+ * @param {URLSearchParams} params
+ * @returns {Promise<{ events?: SystemEvent[], nextCursor?: string, hasMore?: boolean }>}
+ */
+async function requestSystemEventsPage(params) {
+  const response = await fetch(`/api/admin/system-events?${params.toString()}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    const error = new Error(payload.error ?? `Request failed with ${response.status}`);
+    // @ts-expect-error Attach the status so an expired keyset cursor can recover.
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+/**
+ * @param {{ append?: boolean }} [options]
+ */
+export async function loadSystemEvents(options = {}) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
+
+  let append = options.append === true;
+  if (append && (!systemEvents.hasMore || !systemEvents.nextCursor || systemEvents.loading || systemEvents.loadingOlder)) return;
+  const requestSequence = ++systemEventRequestSequence;
+
+  if (append) {
+    systemEvents.loadingOlder = true;
+  } else {
+    systemEvents.loading = true;
+  }
+  systemEvents.error = '';
+
+  const params = new URLSearchParams({ limit: '50' });
+  const values = [
+    ['q', systemEvents.query],
+    ['action', systemEvents.action],
+    ['actor', systemEvents.actor],
+    ['targetType', systemEvents.targetType],
+    ['targetId', systemEvents.targetId]
+  ];
+  for (const [key, value] of values) {
+    const trimmed = value.trim();
+    if (trimmed) params.set(key, trimmed);
+  }
+  if (/^\d+$/.test(systemEvents.since)) params.set('since', systemEvents.since);
+  if (systemEvents.category !== 'all') params.set('category', systemEvents.category);
+  if (systemEvents.outcome !== 'all') params.set('outcome', systemEvents.outcome);
+  if (systemEvents.severity !== 'all') params.set('severity', systemEvents.severity);
+  if (append) params.set('cursor', systemEvents.nextCursor);
+
+  try {
+    let payload;
+    try {
+      payload = await requestSystemEventsPage(params);
+    } catch (error) {
+      // Retention can invalidate an old cursor. Recover with the current filters.
+      // @ts-expect-error Status is attached by requestSystemEventsPage.
+      if (!append || error?.status !== 400) throw error;
+      append = false;
+      params.delete('cursor');
+      payload = await requestSystemEventsPage(params);
+    }
+    if (!isCurrentAuthenticated(version) || requestSequence !== systemEventRequestSequence) return;
+
+    const events = Array.isArray(payload.events) ? payload.events : [];
+    if (append) {
+      const existingIds = new Set(systemEvents.items.map((event) => String(event.id)));
+      systemEvents.items = [
+        ...systemEvents.items,
+        ...events.filter((event) => !existingIds.has(String(event.id)))
+      ];
+    } else {
+      systemEvents.items = events;
+    }
+    systemEvents.nextCursor = payload.nextCursor ?? '';
+    systemEvents.hasMore = payload.hasMore === true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version) || requestSequence !== systemEventRequestSequence) return;
+    systemEvents.error = error instanceof Error ? error.message : 'Failed to load system logs';
+  } finally {
+    if (!isCurrentAuthenticated(version) || requestSequence !== systemEventRequestSequence) return;
+    systemEvents.loading = false;
+    systemEvents.loadingOlder = false;
   }
 }
 

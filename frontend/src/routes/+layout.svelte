@@ -18,6 +18,7 @@
     Shuffle,
     Key,
     ScrollText,
+    History,
     BadgeDollarSign,
     Activity,
     Fingerprint,
@@ -40,6 +41,7 @@
     { href: '/routing-pools', label: 'Routing pools', icon: Shuffle },
     { href: '/api-keys', label: 'API Keys', icon: Key },
     { href: '/request-logs', label: 'Request Logs', icon: ScrollText },
+    { href: '/system-logs', label: 'System logs', icon: History },
     { href: '/pricing', label: 'Pricing', icon: BadgeDollarSign },
     { href: '/ops', label: 'Ops', icon: Activity },
     { href: '/fingerprints', label: 'Fingerprints', icon: Fingerprint }

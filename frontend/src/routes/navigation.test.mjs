@@ -13,6 +13,7 @@ const expectedFiles = [
   'src/routes/models/+page.svelte',
   'src/routes/api-keys/+page.svelte',
   'src/routes/request-logs/+page.svelte',
+  'src/routes/system-logs/+page.svelte',
   'src/routes/pricing/+page.svelte',
   'src/routes/ops/+page.svelte',
   'src/routes/fingerprints/+page.svelte'
@@ -33,6 +34,7 @@ const fileExists = await preloadFileExistence([
 ]);
 
 const requestLogsPage = readText('src/routes/request-logs/+page.svelte');
+const systemLogsPage = readText('src/routes/system-logs/+page.svelte');
 const pricingPage = readText('src/routes/pricing/+page.svelte');
 const modelsPage = readText('src/routes/models/+page.svelte');
 const gatewayPage = readText('src/routes/gateway/+page.svelte');
@@ -62,7 +64,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readText('src/routes/+layout.svelte');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'Pricing', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Pricing', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -98,6 +100,7 @@ test('admin routes share the dashboard page heading hierarchy', () => {
     models: 'Routing diagnostics',
     'api-keys': 'API keys',
     'request-logs': 'Request logs',
+    'system-logs': 'System logs',
     pricing: 'Pricing',
     ops: 'Operations monitor',
     fingerprints: 'Fingerprint profiles'
@@ -112,7 +115,7 @@ test('admin routes share the dashboard page heading hierarchy', () => {
 });
 
 test('dense management tables provide a shared mobile stacked view', () => {
-  for (const route of ['api-keys', 'providers', 'routing-pools', 'models', 'request-logs', 'pricing', 'fingerprints']) {
+  for (const route of ['api-keys', 'providers', 'routing-pools', 'models', 'request-logs', 'system-logs', 'pricing', 'fingerprints']) {
     const source = readText(`src/routes/${route}/+page.svelte`);
     assert.match(source, /ui-table--stacked/, `${route} should opt its primary table into the mobile stacked view`);
     assert.match(source, /data-label=/, `${route} should label stacked table values`);
@@ -120,6 +123,35 @@ test('dense management tables provide a shared mobile stacked view', () => {
 
   assert.match(uiStyles, /\.ui-table--stacked/);
   assert.match(uiStyles, /content: attr\(data-label\)/);
+});
+
+test('system logs expose URL-backed filters, keyset pagination, and safe details', () => {
+  assert.match(layoutPage, /href:\s*'\/system-logs'/);
+  assert.match(layoutPage, /label:\s*'System logs'/);
+  assert.match(layoutPage, /icon:\s*History/);
+
+  for (const queryKey of ['q', 'since', 'category', 'outcome', 'severity', 'action', 'actor', 'targetType', 'targetId']) {
+    assert.match(systemLogsPage, new RegExp(`params\\.set\\('${queryKey}'`), `system logs should write ${queryKey} to the URL`);
+  }
+  assert.match(systemLogsPage, /from '\$app\/navigation'/);
+  assert.match(systemLogsPage, /page\.url\.search/);
+  assert.match(systemLogsPage, /loadSystemEvents\(\{ append: true \}\)/);
+  assert.match(systemLogsPage, /Load older/);
+  assert.match(systemLogsPage, /Existing results may be stale/);
+  assert.match(systemLogsPage, /role="dialog"/);
+  assert.match(systemLogsPage, /aria-modal="true"/);
+  assert.match(systemLogsPage, /Close system event details/);
+  assert.match(systemLogsPage, /<dl/);
+  assert.doesNotMatch(systemLogsPage, /{@html|innerHTML/);
+  assert.match(systemLogsPage, /batch_id/);
+  assert.match(systemLogsPage, /related \{group\.children\.length === 1 \? 'event' : 'events'\}/);
+
+  assert.match(adminState, /export const systemEvents = \$state/);
+  assert.match(adminState, /export async function loadSystemEvents/);
+  assert.match(adminState, /\/api\/admin\/system-events/);
+  assert.match(adminState, /new URLSearchParams\(\{ limit: '50' \}\)/);
+  assert.match(adminState, /params\.set\('cursor', systemEvents\.nextCursor\)/);
+  assert.match(adminState, /systemEvents\.items = \[\s*\.\.\.systemEvents\.items/);
 });
 
 test('editable modals use explicit close controls and persistent unified saves', () => {
