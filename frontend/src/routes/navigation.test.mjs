@@ -83,6 +83,11 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   assert.doesNotMatch(layout, /setTimeout\(\(\) => closePasswordModal/);
 });
 
+test('shared page content expands on wide displays without changing the 1080p cap', () => {
+  assert.match(layoutPage, /max-w-\[clamp\(72rem,calc\(70vw-12rem\),144rem\)\]/);
+  assert.doesNotMatch(layoutPage, /max-w-6xl/);
+});
+
 test('primary navigation moves model policy ownership to API keys', () => {
   const layout = readText('src/routes/+layout.svelte');
 
