@@ -40,6 +40,16 @@ body {
   gap: 1.5rem;
 }
 
+.ui-content-shell {
+  max-width: clamp(72rem, calc(70vw - 12rem), 144rem);
+}
+
+@media (min-width: 112rem) and (min-resolution: 1.5dppx) {
+  .ui-content-shell {
+    max-width: min(calc(100vw - 24rem), 220rem);
+  }
+}
+
 .ui-page-header {
   display: flex;
   min-width: 0;

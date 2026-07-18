@@ -83,9 +83,12 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   assert.doesNotMatch(layout, /setTimeout\(\(\) => closePasswordModal/);
 });
 
-test('shared page content expands on wide displays without changing the 1080p cap', () => {
-  assert.match(layoutPage, /max-w-\[clamp\(72rem,calc\(70vw-12rem\),144rem\)\]/);
+test('shared page content expands on wide and HiDPI displays without changing the 1080p cap', () => {
+  assert.match(layoutPage, /ui-content-shell/);
   assert.doesNotMatch(layoutPage, /max-w-6xl/);
+  assert.match(uiStyles, /\.ui-content-shell\s*\{[^}]*max-width:\s*clamp\(72rem, calc\(70vw - 12rem\), 144rem\)/s);
+  assert.match(uiStyles, /@media \(min-width: 112rem\) and \(min-resolution: 1\.5dppx\)/);
+  assert.match(uiStyles, /max-width:\s*min\(calc\(100vw - 24rem\), 220rem\)/);
 });
 
 test('primary navigation moves model policy ownership to API keys', () => {
