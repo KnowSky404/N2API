@@ -42,6 +42,8 @@
   let timeRange = $state('all');
   let selectedEvent = $state(/** @type {import('$lib/admin-state.svelte.js').SystemEvent | null} */ (null));
   let expandedBatchIds = $state(/** @type {Record<string, boolean>} */ ({}));
+  let eventPage = $state(1);
+  let eventPageSize = $state(5);
 
   const activeFilterCount = $derived([
     systemEvents.query,
@@ -90,6 +92,17 @@
       });
   });
 
+  const eventPageCount = $derived(Math.max(1, Math.ceil(groupedEvents.length / eventPageSize)));
+  const normalizedEventPage = $derived(Math.min(Math.max(eventPage, 1), eventPageCount));
+  const paginatedGroupedEvents = $derived(
+    groupedEvents.slice((normalizedEventPage - 1) * eventPageSize, normalizedEventPage * eventPageSize)
+  );
+  const eventPageSummary = $derived(
+    groupedEvents.length === 0
+      ? '0'
+      : `${(normalizedEventPage - 1) * eventPageSize + 1}-${(normalizedEventPage - 1) * eventPageSize + paginatedGroupedEvents.length}`
+  );
+
   /** @param {string} search */
   function applyURLFilters(search) {
     resetSystemEventFilters();
@@ -112,6 +125,7 @@
 
     timeRange = rangeForSince(systemEvents.since);
     expandedBatchIds = {};
+    eventPage = 1;
   }
 
   /** @param {URLSearchParams} params @param {string} key @param {number} maxLength */
@@ -166,7 +180,18 @@
   async function resetFilters() {
     resetSystemEventFilters();
     timeRange = 'all';
+    eventPage = 1;
     await goto('/system-logs', { keepFocus: true, noScroll: true });
+  }
+
+  async function refreshSystemEvents() {
+    eventPage = 1;
+    await loadSystemEvents();
+  }
+
+  /** @param {number} targetPage */
+  function goToEventPage(targetPage) {
+    eventPage = Math.min(Math.max(targetPage, 1), eventPageCount);
   }
 
   /** @param {SystemEvent} event */
@@ -224,6 +249,13 @@
     if (outcome === 'success') return 'text-[#0a7a5e]';
     if (outcome === 'partial') return 'text-amber-700';
     return 'text-red-700';
+  }
+
+  /** @param {string} outcome */
+  function outcomeBadgeClass(outcome) {
+    if (outcome === 'success') return 'border-[#cfe9df] bg-[#e8f5f0] text-[#0a7a5e]';
+    if (outcome === 'partial') return 'border-amber-200 bg-amber-50 text-amber-700';
+    return 'border-red-200 bg-red-50 text-red-700';
   }
 
   /** @param {string} value */
@@ -315,7 +347,7 @@
           aria-label="Refresh system logs"
           title="Refresh system logs"
           disabled={systemEvents.loading || systemEvents.loadingOlder}
-          onclick={() => void loadSystemEvents()}
+          onclick={() => void refreshSystemEvents()}
         >
           <RefreshCw class={systemEvents.loading ? 'size-4 animate-spin motion-reduce:animate-none' : 'size-4'} aria-hidden="true" />
         </button>
@@ -407,21 +439,21 @@
       {#if systemEvents.error}
         <div class="mb-3 flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between" role="alert">
           <span>{systemEvents.error}{systemEvents.items.length > 0 ? ' Existing results may be stale.' : ''}</span>
-          <button class="ui-button ui-button--sm ui-button--secondary shrink-0 rounded-md border border-red-200 bg-white px-3 text-xs font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => void loadSystemEvents()}>Retry</button>
+          <button class="ui-button ui-button--sm ui-button--secondary shrink-0 rounded-md border border-red-200 bg-white px-3 text-xs font-medium text-red-700 hover:bg-red-50" type="button" onclick={() => void refreshSystemEvents()}>Retry</button>
         </div>
       {/if}
 
       <div class="ui-table-shell">
-        <table class="ui-table ui-table--stacked min-w-[980px]">
+        <table class="ui-table ui-table--stacked min-w-[1080px] text-center">
           <thead>
             <tr>
-              <th>Time</th>
-              <th>Category</th>
-              <th>Action</th>
-              <th>Actor</th>
-              <th>Target</th>
-              <th>Outcome</th>
-              <th class="text-right">Details</th>
+              <th class="text-center">Time</th>
+              <th class="text-center">Category</th>
+              <th class="text-center">Action</th>
+              <th class="text-center">Actor</th>
+              <th class="text-center">Target</th>
+              <th class="text-center">Outcome</th>
+              <th class="text-center">Details</th>
             </tr>
           </thead>
           <tbody>
@@ -430,38 +462,44 @@
             {:else if groupedEvents.length === 0}
               <tr><td class="ui-table-empty" colspan="7">No system events match these filters.</td></tr>
             {:else}
-              {#each groupedEvents as group (group.event.id)}
+              {#each paginatedGroupedEvents as group (group.event.id)}
                 {@const event = group.event}
                 {@const CategoryIcon = categoryIcon(event.category)}
                 {@const OutcomeIcon = outcomeIcon(event.outcome)}
                 <tr>
-                  <td class="whitespace-nowrap tabular-nums text-[#3c3c3c]" data-label="Time">{formatDate(event.occurredAt)}</td>
+                  <td class="whitespace-nowrap text-center tabular-nums text-[#3c3c3c]" data-label="Time">{formatDate(event.occurredAt)}</td>
                   <td data-label="Category">
-                    <span class="inline-flex items-center gap-1.5 text-[#3c3c3c]"><CategoryIcon class="size-4 text-[#6e6e6e]" aria-hidden="true" />{titleCase(event.category)}</span>
-                    <p class="mt-1 text-xs text-[#8e8e8e]">{titleCase(event.severity)}</p>
+                    <div class="flex min-w-0 flex-col items-center">
+                      <span class="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#ededed] bg-[#fafafa] px-2 py-1 text-[#3c3c3c]"><CategoryIcon class="size-4 text-[#6e6e6e]" aria-hidden="true" />{titleCase(event.category)}</span>
+                      <p class="mt-1 text-xs text-[#8e8e8e]">{titleCase(event.severity)}</p>
+                    </div>
                   </td>
                   <td class="font-mono text-[13px] text-[#0d0d0d]" data-label="Action">
-                    <span class="block max-w-[260px] break-words">{event.action}</span>
+                    <span class="mx-auto block max-w-[260px] break-words leading-5">{event.action}</span>
                     {#if group.children.length > 0}
-                      <button class="ui-button ui-button--xs mt-1 inline-flex items-center gap-1 text-xs text-[#6e6e6e] hover:text-[#0d0d0d]" type="button" aria-expanded={expandedBatchIds[group.batchId] === true} onclick={() => toggleBatch(group.batchId)}>
+                      <button class="ui-button ui-button--xs mx-auto mt-1 inline-flex items-center gap-1 text-xs text-[#6e6e6e] hover:text-[#0d0d0d]" type="button" aria-expanded={expandedBatchIds[group.batchId] === true} onclick={() => toggleBatch(group.batchId)}>
                         {#if expandedBatchIds[group.batchId]}<ChevronDown class="size-3.5" aria-hidden="true" />{:else}<ChevronRight class="size-3.5" aria-hidden="true" />{/if}
                         {group.children.length} related {group.children.length === 1 ? 'event' : 'events'}
                       </button>
                     {/if}
                   </td>
                   <td data-label="Actor">
-                    <span class="text-[#3c3c3c]">{actorLabel(event)}</span>
-                    <p class="mt-1 text-xs text-[#8e8e8e]">{titleCase(event.actor.type)}</p>
+                    <div class="flex min-w-0 flex-col items-center">
+                      <span class="font-medium text-[#3c3c3c]">{actorLabel(event)}</span>
+                      <p class="mt-1 text-xs text-[#8e8e8e]">{titleCase(event.actor.type)}</p>
+                    </div>
                   </td>
                   <td data-label="Target">
-                    <span class="block max-w-[220px] truncate text-[#3c3c3c]" title={targetLabel(event)}>{targetLabel(event)}</span>
-                    {#if event.target.type}<p class="mt-1 font-mono text-xs text-[#8e8e8e]">{event.target.type}{event.target.id ? ` / ${event.target.id}` : ''}</p>{/if}
+                    <div class="flex min-w-0 flex-col items-center">
+                      <span class="block max-w-[220px] truncate text-[#3c3c3c]" title={targetLabel(event)}>{targetLabel(event)}</span>
+                      {#if event.target.type}<p class="mt-1 max-w-[220px] truncate font-mono text-xs text-[#8e8e8e]" title={`${event.target.type}${event.target.id ? ` / ${event.target.id}` : ''}`}>{event.target.type}{event.target.id ? ` / ${event.target.id}` : ''}</p>{/if}
+                    </div>
                   </td>
                   <td data-label="Outcome">
-                    <span class={['inline-flex items-center gap-1.5 font-medium', outcomeClass(event.outcome)]}><OutcomeIcon class="size-4" aria-hidden="true" />{titleCase(event.outcome)}</span>
+                    <span class={['inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-1 font-medium', outcomeBadgeClass(event.outcome)]}><OutcomeIcon class="size-4" aria-hidden="true" />{titleCase(event.outcome)}</span>
                   </td>
-                  <td class="text-right" data-label="Details">
-                    <button class="ui-button ui-button--icon ui-button--secondary ml-auto rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]" type="button" aria-label={`View details for ${event.action}`} title="View event details" onclick={() => openDetails(event)}><Eye class="size-4" aria-hidden="true" /></button>
+                  <td class="text-center" data-label="Details">
+                    <button class="ui-button ui-button--icon ui-button--secondary mx-auto rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]" type="button" aria-label={`View details for ${event.action}`} title="View event details" onclick={() => openDetails(event)}><Eye class="size-4" aria-hidden="true" /></button>
                   </td>
                 </tr>
                 {#if group.children.length > 0 && expandedBatchIds[group.batchId]}
@@ -469,13 +507,13 @@
                     {@const ChildCategoryIcon = categoryIcon(child.category)}
                     {@const ChildOutcomeIcon = outcomeIcon(child.outcome)}
                     <tr class="bg-[#fafafa]">
-                      <td class="whitespace-nowrap pl-8 tabular-nums text-[#3c3c3c]" data-label="Time">{formatDate(child.occurredAt)}</td>
-                      <td data-label="Category"><span class="inline-flex items-center gap-1.5 text-[#3c3c3c]"><ChildCategoryIcon class="size-4 text-[#6e6e6e]" aria-hidden="true" />{titleCase(child.category)}</span></td>
-                      <td class="font-mono text-[13px] text-[#0d0d0d]" data-label="Action">{child.action}</td>
+                      <td class="whitespace-nowrap tabular-nums text-[#3c3c3c]" data-label="Time">{formatDate(child.occurredAt)}</td>
+                      <td data-label="Category"><span class="inline-flex items-center justify-center gap-1.5 rounded-md border border-[#ededed] bg-white px-2 py-1 text-[#3c3c3c]"><ChildCategoryIcon class="size-4 text-[#6e6e6e]" aria-hidden="true" />{titleCase(child.category)}</span></td>
+                      <td class="font-mono text-[13px] text-[#0d0d0d]" data-label="Action"><span class="mx-auto block max-w-[260px] break-words">{child.action}</span></td>
                       <td data-label="Actor">{actorLabel(child)}</td>
-                      <td data-label="Target"><span class="block max-w-[220px] truncate" title={targetLabel(child)}>{targetLabel(child)}</span></td>
-                      <td data-label="Outcome"><span class={['inline-flex items-center gap-1.5 font-medium', outcomeClass(child.outcome)]}><ChildOutcomeIcon class="size-4" aria-hidden="true" />{titleCase(child.outcome)}</span></td>
-                      <td class="text-right" data-label="Details"><button class="ui-button ui-button--icon ui-button--secondary ml-auto rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]" type="button" aria-label={`View details for ${child.action}`} title="View event details" onclick={() => openDetails(child)}><Eye class="size-4" aria-hidden="true" /></button></td>
+                      <td data-label="Target"><span class="mx-auto block max-w-[220px] truncate" title={targetLabel(child)}>{targetLabel(child)}</span></td>
+                      <td data-label="Outcome"><span class={['inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-1 font-medium', outcomeBadgeClass(child.outcome)]}><ChildOutcomeIcon class="size-4" aria-hidden="true" />{titleCase(child.outcome)}</span></td>
+                      <td class="text-center" data-label="Details"><button class="ui-button ui-button--icon ui-button--secondary mx-auto rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]" type="button" aria-label={`View details for ${child.action}`} title="View event details" onclick={() => openDetails(child)}><Eye class="size-4" aria-hidden="true" /></button></td>
                     </tr>
                   {/each}
                 {/if}
@@ -486,12 +524,48 @@
       </div>
 
       <div class="ui-pagination mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
-        <p>Showing {systemEvents.items.length} {systemEvents.items.length === 1 ? 'event' : 'events'}</p>
-        {#if systemEvents.hasMore}
-          <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={systemEvents.loadingOlder || systemEvents.loading} onclick={() => void loadSystemEvents({ append: true })}>
-            {systemEvents.loadingOlder ? 'Loading...' : 'Load older'}
+        <p>
+          Showing {eventPageSummary} of {groupedEvents.length} loaded {groupedEvents.length === 1 ? 'event' : 'events'}
+          {#if systemEvents.hasMore}<span class="text-[#8e8e8e]"> · More available</span>{/if}
+        </p>
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
+            Rows
+            <select
+              class="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+              bind:value={eventPageSize}
+              onchange={() => {
+                eventPage = 1;
+              }}
+            >
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+            </select>
+          </label>
+          <span class="text-xs tabular-nums text-[#6e6e6e]">Page {normalizedEventPage} of {eventPageCount}</span>
+          <button
+            class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={normalizedEventPage <= 1}
+            onclick={() => goToEventPage(normalizedEventPage - 1)}
+          >
+            Previous
           </button>
-        {/if}
+          <button
+            class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={normalizedEventPage >= eventPageCount}
+            onclick={() => goToEventPage(normalizedEventPage + 1)}
+          >
+            Next
+          </button>
+          {#if systemEvents.hasMore}
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" type="button" disabled={systemEvents.loadingOlder || systemEvents.loading} onclick={() => void loadSystemEvents({ append: true })}>
+              {systemEvents.loadingOlder ? 'Loading...' : 'Load older'}
+            </button>
+          {/if}
+        </div>
       </div>
     </section>
   </div>

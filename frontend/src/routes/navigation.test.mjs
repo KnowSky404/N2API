@@ -133,7 +133,7 @@ test('dense management tables provide a shared mobile stacked view', () => {
   assert.match(uiStyles, /content: attr\(data-label\)/);
 });
 
-test('system logs expose URL-backed filters, keyset pagination, and safe details', () => {
+test('system logs expose URL-backed filters, layered pagination, and safe details', () => {
   assert.match(layoutPage, /href:\s*'\/system-logs'/);
   assert.match(layoutPage, /label:\s*'System logs'/);
   assert.match(layoutPage, /icon:\s*History/);
@@ -145,6 +145,25 @@ test('system logs expose URL-backed filters, keyset pagination, and safe details
   assert.match(systemLogsPage, /page\.url\.search/);
   assert.match(systemLogsPage, /loadSystemEvents\(\{ append: true \}\)/);
   assert.match(systemLogsPage, /Load older/);
+  for (const paginationState of [
+    'eventPage',
+    'eventPageSize',
+    'eventPageCount',
+    'normalizedEventPage',
+    'paginatedGroupedEvents',
+    'eventPageSummary'
+  ]) {
+    assert.match(systemLogsPage, new RegExp(paginationState));
+  }
+  assert.match(systemLogsPage, /\{#each paginatedGroupedEvents as group/);
+  assert.match(systemLogsPage, /Page \{normalizedEventPage\} of \{eventPageCount\}/);
+  assert.match(systemLogsPage, /Previous/);
+  assert.match(systemLogsPage, /Next/);
+  assert.match(systemLogsPage, /<option value=\{5\}>5<\/option>/);
+  assert.match(systemLogsPage, /<option value=\{10\}>10<\/option>/);
+  assert.match(systemLogsPage, /<option value=\{20\}>20<\/option>/);
+  assert.match(systemLogsPage, /min-w-\[1080px\] text-center/);
+  assert.match(systemLogsPage, /outcomeBadgeClass/);
   assert.match(systemLogsPage, /Existing results may be stale/);
   assert.match(systemLogsPage, /role="dialog"/);
   assert.match(systemLogsPage, /aria-modal="true"/);
