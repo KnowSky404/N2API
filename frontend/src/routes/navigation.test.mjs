@@ -814,11 +814,14 @@ test('models page shows scheduling diagnostics for routing candidates', () => {
   assert.match(modelsPage, /modelDiagnosticClientKeyId = clientKeyId/);
   assert.match(modelsPage, /providerAccountId = params\.get\('providerAccountId'\)/);
   assert.match(modelsPage, /modelProviderAccountId = providerAccountId/);
-  for (const label of ['Search models', 'Status filter', 'All models', 'Routable models', 'Blocked models', 'Hidden models', 'Allowed models']) {
+  for (const label of ['Search models', 'Status filter', 'All models', 'Routable models', 'Blocked models', 'Configured', 'Routing status']) {
     assert.match(modelsPage, new RegExp(label.replace(' ', '\\s+')), `models page should include ${label}`);
   }
   assert.match(modelsPage, /modelSearch/);
   assert.match(modelsPage, /modelStatusFilter/);
+  assert.match(modelsPage, /Unscoped diagnostic \(no API key\)/);
+  assert.doesNotMatch(modelsPage, /Hidden models|Allowed models/);
+  assert.doesNotMatch(modelsPage, /model\.allowed/);
   assert.match(modelsPage, /visibleModelRoutingRows/);
   assert.match(modelsPage, /modelProviderAccountId/);
   assert.match(modelsPage, /selectedDiagnosticAPIKey/);
@@ -1158,8 +1161,8 @@ test('api keys page renames keys without rotating secrets', () => {
   assert.match(apiKeysPage, /keyConcurrencyLimitLabel/);
   assert.match(apiKeysPage, /keyRateWindowLimitLabel/);
   assert.match(apiKeysPage, /keyRateRemainingLabel/);
-  // Routing pool regressions: original option text, fallback/chain link text
-  assert.match(apiKeysPage, /Global provider account pool/);
+  // Routing pool regressions: fail-closed option text, fallback/chain link text
+  assert.match(apiKeysPage, /No routing pool/);
   assert.match(apiKeysPage, /Chain logs/);
   // All API calls use snapshot values, never editingKey.* after first await
   assert.match(apiKeysPage, /updateAPIKeyName\(snap\.id,\s*snap\.name\)/);
@@ -1399,7 +1402,7 @@ test('api keys page supports table filters and row selection', () => {
     'Routing pool filter',
     'Model policy filter',
     'Issue filter',
-    'Global pool',
+    'No routing pool',
     'All model policies',
     'All routable models',
     'Selected models',
@@ -1431,7 +1434,7 @@ test('api keys page supports table filters and row selection', () => {
   assert.match(apiKeysPage, /bind:value=\{keyRoutingPoolFilter\}/);
   assert.match(apiKeysPage, /bind:value=\{keyModelPolicyFilter\}/);
   assert.match(apiKeysPage, /bind:value=\{keyIssueFilter\}/);
-  assert.match(apiKeysPage, /keyRoutingPoolFilter === 'global'/);
+  assert.match(apiKeysPage, /keyRoutingPoolFilter === 'unbound'/);
   assert.match(apiKeysPage, /keyModelPolicyFilter === 'all_routable'/);
   assert.doesNotMatch(apiKeysPage, /No models/);
 });
@@ -1482,6 +1485,7 @@ test('api keys page has a bulk edit modal with opt-in sections', () => {
   assert.match(apiKeysPage, /bulkEditForm\.applyBudgets/);
   assert.match(apiKeysPage, /submitBulkEdit/);
   assert.match(apiKeysPage, /bulkUpdateSelectedAPIKeys/);
+  assert.match(apiKeysPage, /No routing pool = no model access/);
   assert.match(apiKeysPage, /const selectedIds = \[\.\.\.selectedEditableAPIKeys\]/);
   assert.match(apiKeysPage, /selectedAPIKeyIds\[String\(id\)\] = true/);
   const bulkSubmit = apiKeysPage.match(/async function submitBulkEdit[\s\S]*?\n  \}/)?.[0] ?? '';

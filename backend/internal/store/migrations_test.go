@@ -640,10 +640,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 36 {
-		t.Fatalf("migration sources = %d, want 36", len(sources))
+	if len(sources) != 37 {
+		t.Fatalf("migration sources = %d, want 37", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[35].Path != "00036_system_events.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[36].Path != "00037_remove_global_allowed_models.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
@@ -656,6 +656,24 @@ func TestSystemEventsMigrationIsEmbedded(t *testing.T) {
 	for _, want := range []string{
 		"CREATE TABLE IF NOT EXISTS system_events", "system_events_category_check", "system_events_metadata_object_check",
 		"system_events_occurred_id_idx", "system_events_category_occurred_id_idx", "system_events_non_success_idx", "DROP TABLE IF EXISTS system_events",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
+func TestRemoveGlobalAllowedModelsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00037_remove_global_allowed_models.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"UPDATE settings",
+		"value = value - 'allowedModels'",
+		"key = 'model_settings'",
+		"jsonb_typeof(value) = 'object'",
+		"value ? 'allowedModels'",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("migration missing %q", want)

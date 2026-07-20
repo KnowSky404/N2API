@@ -209,12 +209,6 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
- * @typedef {object} ModelSettingsData
- * @property {string} defaultModel
- * @property {string[]} allowedModels
- */
-
-/**
  * @typedef {object} AccountModel
  * @property {number} id
  * @property {number} accountId
@@ -315,7 +309,6 @@ import { copyText } from '$lib/clipboard.js';
 /**
  * @typedef {object} ModelRoutingModel
  * @property {string} model
- * @property {boolean} allowed
  * @property {number} configuredCount
  * @property {number} enabledCount
  * @property {ModelRoutingAccount[]} accounts
@@ -431,7 +424,7 @@ export const apiUpstreamForm = $state({
   submitting: false,
   error: ''
 });
-/** @type {{ loading: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], newKeyName: string, oneTimeSecret: string }} */
+/** @type {{ loading: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], newKeyName: string, newKeyRoutingPoolId: number, oneTimeSecret: string }} */
 export const apiKeys = $state({
   loading: false,
   creating: false,
@@ -439,6 +432,7 @@ export const apiKeys = $state({
   error: '',
   items: [],
   newKeyName: '',
+  newKeyRoutingPoolId: 0,
   oneTimeSecret: ''
 });
 /** @type {Record<string, boolean>} */
@@ -555,14 +549,13 @@ export const usagePricing = $state({
   unit: '1M_tokens',
   rows: []
 });
-/** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, defaultModel: string, allowedModelsText: string }} */
+/** @type {{ loading: boolean, saving: boolean, error: string, saved: boolean, defaultModel: string }} */
 export const modelSettings = $state({
   loading: false,
   saving: false,
   error: '',
   saved: false,
-  defaultModel: '',
-  allowedModelsText: ''
+  defaultModel: ''
 });
 /** @type {Record<string, AccountModelsState>} */
 export const accountModels = $state({});
@@ -570,12 +563,11 @@ export const accountModels = $state({});
 export const accountTestResults = $state({});
 /** @type {Record<string, boolean>} */
 export const selectedProviderAccountIds = $state({});
-/** @type {{ loading: boolean, error: string, defaultModel: string, allowedModels: string[], models: ModelRoutingModel[], warnings: string[] }} */
+/** @type {{ loading: boolean, error: string, defaultModel: string, models: ModelRoutingModel[], warnings: string[] }} */
 export const modelRouting = $state({
   loading: false,
   error: '',
   defaultModel: '',
-  allowedModels: [],
   models: [],
   warnings: []
 });
@@ -1072,6 +1064,7 @@ function clearAPIKeys() {
     error: '',
     items: [],
     newKeyName: '',
+    newKeyRoutingPoolId: 0,
     oneTimeSecret: ''
   });
 }
@@ -1166,14 +1159,12 @@ function clearModelSettings() {
     saving: false,
     error: '',
     saved: false,
-    defaultModel: '',
-    allowedModelsText: ''
+    defaultModel: ''
   });
   replaceState(modelRouting, {
     loading: false,
     error: '',
     defaultModel: '',
-    allowedModels: [],
     models: [],
     warnings: []
   });
@@ -3050,7 +3041,6 @@ export async function loadModelSettings() {
     const payload = await requestJSON('/api/admin/model-settings');
     if (!isCurrentAuthenticated(version)) return;
     modelSettings.defaultModel = payload.defaultModel ?? '';
-    modelSettings.allowedModelsText = (payload.allowedModels ?? []).join('\n');
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     modelSettings.error = error instanceof Error ? error.message : 'Failed to load model settings';
@@ -3071,7 +3061,6 @@ export async function loadModelRouting() {
     const payload = await requestJSON('/api/admin/model-routing');
     if (!isCurrentAuthenticated(version)) return;
     modelRouting.defaultModel = payload.defaultModel ?? '';
-    modelRouting.allowedModels = payload.allowedModels ?? [];
     modelRouting.models = payload.models ?? [];
     modelRouting.warnings = payload.warnings ?? [];
   } catch (error) {
@@ -3133,19 +3122,15 @@ export async function saveModelSettings(event) {
   modelSettings.error = '';
   modelSettings.saved = false;
 
-  const allowedModels = parseModelLines(modelSettings.allowedModelsText);
-
   try {
     const payload = await requestJSON('/api/admin/model-settings', {
       method: 'PUT',
       body: JSON.stringify({
-        defaultModel: modelSettings.defaultModel,
-        allowedModels
+        defaultModel: modelSettings.defaultModel
       })
     });
     if (!isCurrentAuthenticated(version)) return;
     modelSettings.defaultModel = payload.defaultModel ?? '';
-    modelSettings.allowedModelsText = (payload.allowedModels ?? []).join('\n');
     modelSettings.saved = true;
     await loadModelRouting();
   } catch (error) {
@@ -3571,14 +3556,23 @@ export async function createKey(event) {
   apiKeys.oneTimeSecret = '';
 
   try {
+    const routingPoolId = Number(apiKeys.newKeyRoutingPoolId ?? 0);
+    if (!Number.isInteger(routingPoolId) || routingPoolId < 0) {
+      apiKeys.error = 'Routing pool selection is invalid';
+      return;
+    }
     const payload = await requestJSON('/api/admin/keys', {
       method: 'POST',
-      body: JSON.stringify({ name: apiKeys.newKeyName })
+      body: JSON.stringify({
+        name: apiKeys.newKeyName,
+        routingPoolId: routingPoolId > 0 ? routingPoolId : null
+      })
     });
     if (!isCurrentAuthenticated(version)) return;
     apiKeys.items = [payload.key, ...apiKeys.items];
     apiKeys.oneTimeSecret = payload.secret;
     apiKeys.newKeyName = '';
+    apiKeys.newKeyRoutingPoolId = 0;
     await loadRequestLogs();
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;

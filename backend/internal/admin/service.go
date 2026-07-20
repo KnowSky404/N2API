@@ -234,8 +234,7 @@ type UsageCostEstimate struct {
 }
 
 type ModelSettings struct {
-	DefaultModel  string   `json:"defaultModel"`
-	AllowedModels []string `json:"allowedModels"`
+	DefaultModel string `json:"defaultModel"`
 }
 
 type GatewaySettings struct {
@@ -256,15 +255,13 @@ type RequestLogCleanupResult struct {
 }
 
 type ModelRoutingStatus struct {
-	DefaultModel  string              `json:"defaultModel"`
-	AllowedModels []string            `json:"allowedModels"`
-	Models        []ModelRoutingModel `json:"models"`
-	Warnings      []string            `json:"warnings"`
+	DefaultModel string              `json:"defaultModel"`
+	Models       []ModelRoutingModel `json:"models"`
+	Warnings     []string            `json:"warnings"`
 }
 
 type ModelRoutingModel struct {
 	Model           string                `json:"model"`
-	Allowed         bool                  `json:"allowed"`
 	ConfiguredCount int                   `json:"configuredCount"`
 	EnabledCount    int                   `json:"enabledCount"`
 	Accounts        []ModelRoutingAccount `json:"accounts,omitempty"`
@@ -302,7 +299,7 @@ type Repository interface {
 	CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
 	RevokeSession(ctx context.Context, tokenHash string) error
-	CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string) (APIKey, error)
+	CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string, routingPoolID *int64) (APIKey, error)
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
 	PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error)
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
@@ -536,10 +533,32 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return nil
 }
 
-func (s *Service) CreateAPIKey(ctx context.Context, name string) (CreatedAPIKey, error) {
+func (s *Service) CreateAPIKey(ctx context.Context, name string, routingPoolID *int64) (CreatedAPIKey, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return CreatedAPIKey{}, ErrInvalidInput
+	}
+	if routingPoolID != nil && *routingPoolID < 0 {
+		return CreatedAPIKey{}, ErrInvalidInput
+	}
+	if routingPoolID != nil && *routingPoolID == 0 {
+		routingPoolID = nil
+	}
+	if routingPoolID != nil {
+		pools, err := s.repo.ListRoutingPools(ctx)
+		if err != nil {
+			return CreatedAPIKey{}, err
+		}
+		found := false
+		for _, pool := range pools {
+			if pool.ID == *routingPoolID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return CreatedAPIKey{}, ErrNotFound
+		}
 	}
 
 	token, err := secret.GenerateToken(apiKeyTokenName)
@@ -554,7 +573,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string) (CreatedAPIKey,
 		}
 	}
 	ctx = withAuditIntent(ctx, systemevent.ActionAPIKeyCreated, "client_api_key", "", name, nil)
-	key, err := s.repo.CreateAPIKey(ctx, name, secret.HashAPIKey(token), secret.TokenPrefix(token), encryptedSecret)
+	key, err := s.repo.CreateAPIKey(ctx, name, secret.HashAPIKey(token), secret.TokenPrefix(token), encryptedSecret, routingPoolID)
 	if err != nil {
 		return CreatedAPIKey{}, err
 	}
@@ -1051,7 +1070,7 @@ func (s *Service) UpdateModelSettings(ctx context.Context, settings ModelSetting
 	if err != nil {
 		return ModelSettings{}, err
 	}
-	ctx = withAuditIntent(ctx, systemevent.ActionModelSettingsUpdated, "model_settings", "default", "", map[string]any{"model_count": len(normalized.AllowedModels)})
+	ctx = withAuditIntent(ctx, systemevent.ActionModelSettingsUpdated, "model_settings", "default", "", changedFields("default_model"))
 	return s.repo.SaveModelSettings(ctx, normalized)
 }
 
@@ -1105,20 +1124,6 @@ func (s *Service) DefaultModel(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return settings.DefaultModel, nil
-}
-
-func (s *Service) IsModelAllowed(ctx context.Context, model string) (bool, error) {
-	settings, err := s.GetModelSettings(ctx)
-	if err != nil {
-		return false, err
-	}
-	model = strings.TrimSpace(model)
-	for _, allowed := range settings.AllowedModels {
-		if model == allowed {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func normalizeUsagePricing(pricing UsagePricing) (UsagePricing, error) {
@@ -1202,15 +1207,7 @@ func costPartMicrousd(tokens int, rateMicrousdPerMillion int64) int64 {
 }
 
 func defaultModelSettings() ModelSettings {
-	return ModelSettings{
-		DefaultModel: defaultModel,
-		AllowedModels: []string{
-			defaultModel,
-			"gpt-4.1-mini",
-			"gpt-4o",
-			"gpt-4o-mini",
-		},
-	}
+	return ModelSettings{DefaultModel: defaultModel}
 }
 
 func normalizeModelSettings(settings ModelSettings) (ModelSettings, error) {
@@ -1219,21 +1216,11 @@ func normalizeModelSettings(settings ModelSettings) (ModelSettings, error) {
 		return ModelSettings{}, ErrInvalidInput
 	}
 
-	allowed, err := normalizeModelList(settings.AllowedModels)
-	if err != nil {
-		return ModelSettings{}, err
-	}
-	defaultAllowed := false
-	for _, model := range allowed {
-		if model == defaultName {
-			defaultAllowed = true
-		}
-	}
-	if len(allowed) == 0 || len(defaultName) > maxModelNameLen || !defaultAllowed {
+	if len(defaultName) > maxModelNameLen {
 		return ModelSettings{}, ErrInvalidInput
 	}
 
-	return ModelSettings{DefaultModel: defaultName, AllowedModels: allowed}, nil
+	return ModelSettings{DefaultModel: defaultName}, nil
 }
 
 func normalizeModelList(models []string) ([]string, error) {

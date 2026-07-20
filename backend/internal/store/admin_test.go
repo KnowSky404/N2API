@@ -326,7 +326,7 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()
 
-	created, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-model-policy", "n2api_", "encrypted-secret")
+	created, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-model-policy", "n2api_", "encrypted-secret", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -452,19 +452,19 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 func TestPurgeRevokedAPIKeysRemovesOnlyExpiredRevokedKeys(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestAdminRepository(t)
-	oldKey, err := repo.CreateAPIKey(ctx, "old deleted", "hash-old-deleted", "n2_old", "encrypted-old")
+	oldKey, err := repo.CreateAPIKey(ctx, "old deleted", "hash-old-deleted", "n2_old", "encrypted-old", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey old returned error: %v", err)
 	}
-	recentKey, err := repo.CreateAPIKey(ctx, "recent deleted", "hash-recent-deleted", "n2_recent", "encrypted-recent")
+	recentKey, err := repo.CreateAPIKey(ctx, "recent deleted", "hash-recent-deleted", "n2_recent", "encrypted-recent", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey recent returned error: %v", err)
 	}
-	disabledKey, err := repo.CreateAPIKey(ctx, "disabled", "hash-disabled", "n2_disabled", "encrypted-disabled")
+	disabledKey, err := repo.CreateAPIKey(ctx, "disabled", "hash-disabled", "n2_disabled", "encrypted-disabled", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey disabled returned error: %v", err)
 	}
-	activeKey, err := repo.CreateAPIKey(ctx, "active", "hash-active", "n2_active", "encrypted-active")
+	activeKey, err := repo.CreateAPIKey(ctx, "active", "hash-active", "n2_active", "encrypted-active", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey active returned error: %v", err)
 	}
@@ -505,11 +505,11 @@ func TestPurgeRevokedAPIKeysRemovesOnlyExpiredRevokedKeys(t *testing.T) {
 func TestDeleteRevokedAPIKeyRejectsActiveAndDeletesRevokedKey(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestAdminRepository(t)
-	active, err := repo.CreateAPIKey(ctx, "active", "hash-physical-active", "n2_active", "encrypted-active")
+	active, err := repo.CreateAPIKey(ctx, "active", "hash-physical-active", "n2_active", "encrypted-active", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey active returned error: %v", err)
 	}
-	revoked, err := repo.CreateAPIKey(ctx, "deleted", "hash-physical-deleted", "n2_deleted", "encrypted-deleted")
+	revoked, err := repo.CreateAPIKey(ctx, "deleted", "hash-physical-deleted", "n2_deleted", "encrypted-deleted", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey deleted returned error: %v", err)
 	}
@@ -538,11 +538,11 @@ func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(20_000, 0).UTC()
 
-	key, err := repo.CreateAPIKey(ctx, "budgeted", "hash-budgeted", "n2api_", "encrypted-budgeted")
+	key, err := repo.CreateAPIKey(ctx, "budgeted", "hash-budgeted", "n2api_", "encrypted-budgeted", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
-	other, err := repo.CreateAPIKey(ctx, "other", "hash-other", "n2api_", "encrypted-other")
+	other, err := repo.CreateAPIKey(ctx, "other", "hash-other", "n2api_", "encrypted-other", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey other returned error: %v", err)
 	}
@@ -586,9 +586,12 @@ func TestAdminRepositoryRoutingPools(t *testing.T) {
 		t.Fatalf("pool account ids = %+v, want account id %d", pool.AccountIDs, accountID)
 	}
 
-	key, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-routing-pool", "n2api_", "encrypted-routing-pool")
+	key, err := repo.CreateAPIKey(ctx, "codex laptop", "hash-routing-pool", "n2api_", "encrypted-routing-pool", &pool.ID)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	if key.RoutingPoolID == nil || *key.RoutingPoolID != pool.ID || key.RoutingPoolName != "codex primary" {
+		t.Fatalf("created key routing pool = %+v, want pool binding", key)
 	}
 	key, err = repo.UpdateAPIKeyRoutingPool(ctx, key.ID, &pool.ID)
 	if err != nil {
@@ -642,7 +645,7 @@ func TestAdminRepositoryMutationCommitsSystemEventAtomically(t *testing.T) {
 		Outcome:  systemevent.OutcomeSuccess,
 	})
 
-	key, err := repo.CreateAPIKey(ctx, "atomic key", "atomic-hash", "n2api_", "encrypted")
+	key, err := repo.CreateAPIKey(ctx, "atomic key", "atomic-hash", "n2api_", "encrypted", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -668,7 +671,7 @@ func TestAdminRepositoryInvalidSystemEventRollsBackMutation(t *testing.T) {
 		Metadata: map[string]any{"access_token": "must-not-be-stored"},
 	})
 
-	if _, err := repo.CreateAPIKey(ctx, "rollback key", "rollback-hash", "n2api_", "encrypted"); err == nil {
+	if _, err := repo.CreateAPIKey(ctx, "rollback key", "rollback-hash", "n2api_", "encrypted", nil); err == nil {
 		t.Fatal("CreateAPIKey returned nil error, want invalid system event error")
 	}
 

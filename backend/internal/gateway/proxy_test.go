@@ -18,11 +18,14 @@ import (
 )
 
 type fakeAPIKeyAuthenticator struct {
-	gotKey string
-	err    error
-	key    admin.APIKey
-	keys   map[string]admin.APIKey
+	gotKey  string
+	err     error
+	key     admin.APIKey
+	keys    map[string]admin.APIKey
+	unbound bool
 }
+
+var defaultTestRoutingPoolID int64 = 1
 
 func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey string) (admin.APIKey, error) {
 	a.gotKey = apiKey
@@ -34,12 +37,19 @@ func (a *fakeAPIKeyAuthenticator) AuthenticateAPIKey(_ context.Context, apiKey s
 		if !ok {
 			return admin.APIKey{}, admin.ErrUnauthorized
 		}
-		return key, nil
+		return withTestRoutingPool(key, a.unbound), nil
 	}
 	if a.key.ID != 0 {
-		return a.key, nil
+		return withTestRoutingPool(a.key, a.unbound), nil
 	}
-	return admin.APIKey{ID: 42, Name: "test key"}, nil
+	return withTestRoutingPool(admin.APIKey{ID: 42, Name: "test key"}, a.unbound), nil
+}
+
+func withTestRoutingPool(key admin.APIKey, unbound bool) admin.APIKey {
+	if key.RoutingPoolID == nil && !unbound {
+		key.RoutingPoolID = &defaultTestRoutingPoolID
+	}
+	return key
 }
 
 type fakeSelectedAccountProvider struct {
@@ -123,27 +133,12 @@ func (p *fakeSelectedAccountProvider) RecordAccountUsed(_ context.Context, accou
 
 type fakeModelProvider struct {
 	defaultModel       string
-	allowedModels      []string
-	exposedModels      []ExposedModel
 	chainExposedModels []ExposedModel
 	chainPoolIDs       []int64
 }
 
 func (p fakeModelProvider) DefaultModel(context.Context) (string, error) {
 	return p.defaultModel, nil
-}
-
-func (p fakeModelProvider) IsModelAllowed(_ context.Context, model string) (bool, error) {
-	for _, allowed := range p.allowedModels {
-		if allowed == model {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (p fakeModelProvider) ListExposedModels(context.Context) ([]ExposedModel, error) {
-	return append([]ExposedModel(nil), p.exposedModels...), nil
 }
 
 func (p *fakeModelProvider) ListExposedModelsForRoutingPoolChain(_ context.Context, routingPoolID int64) ([]ExposedModel, error) {
@@ -302,18 +297,18 @@ func TestProxyRequiresBearerAPIKey(t *testing.T) {
 	}
 }
 
-func TestProxyModelsReturnsLocalAggregateList(t *testing.T) {
+func TestProxyModelsReturnsEmptyListForUnboundKey(t *testing.T) {
 	upstreamCalled := false
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamCalled = true
 		t.Fatal("upstream should not be called for local models list")
 	}))
 	defer upstream.Close()
-	auth := &fakeAPIKeyAuthenticator{}
+	auth := &fakeAPIKeyAuthenticator{unbound: true}
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	proxy := NewProxy(auth, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
-		ModelProvider:   fakeModelProvider{exposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}}},
+		ModelProvider:   fakeModelProvider{},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
@@ -345,18 +340,47 @@ func TestProxyModelsReturnsLocalAggregateList(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("Unmarshal response returned error: %v; body=%s", err, recorder.Body.String())
 	}
-	if body.Object != "list" || len(body.Data) != 1 {
+	if body.Object != "list" || len(body.Data) != 0 {
 		t.Fatalf("models response = %+v", body)
 	}
-	if got := body.Data[0]; got.ID != "gpt-5" || got.Object != "model" || got.Created != 0 || got.OwnedBy != "openai" {
-		t.Fatalf("model = %+v, want local gpt-5 model", got)
+}
+
+func TestProxyRequiresRoutingPoolBeforeParsingOrCallingUpstream(t *testing.T) {
+	var transportCalls int32
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
+	logger := &fakeRequestLogger{}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&transportCalls, 1)
+		return nil, errors.New("unexpected upstream call")
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{unbound: true}, accounts, Config{
+		Logger:        logger,
+		ModelProvider: fakeModelProvider{},
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"routing_pool_required"`) {
+		t.Fatalf("body = %q, want routing_pool_required", recorder.Body.String())
+	}
+	if accounts.calls != 0 || atomic.LoadInt32(&transportCalls) != 0 {
+		t.Fatalf("account calls = %d transport calls = %d, want no upstream work", accounts.calls, transportCalls)
+	}
+	if len(logger.entries) != 1 || logger.entries[0].Error != "routing_pool_required" || logger.entries[0].RoutingPoolError != "routing_pool_required" {
+		t.Fatalf("request logs = %+v, want routing_pool_required error fields", logger.entries)
 	}
 }
 
 func TestProxyModelsForPoolBoundKeyUseRoutingPoolChain(t *testing.T) {
 	poolID := int64(1)
 	models := &fakeModelProvider{
-		exposedModels:      []ExposedModel{{ID: "global-only", OwnedBy: "openai"}},
 		chainExposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}},
 	}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, RoutingPoolID: &poolID}}, &fakeSelectedAccountProvider{}, Config{
@@ -383,15 +407,17 @@ func TestProxyModelsForPoolBoundKeyUseRoutingPoolChain(t *testing.T) {
 }
 
 func TestProxyModelsFiltersLocalListForSelectedAPIKey(t *testing.T) {
+	poolID := int64(1)
 	auth := &fakeAPIKeyAuthenticator{key: admin.APIKey{
 		ID:            42,
 		Name:          "test key",
 		ModelPolicy:   admin.APIKeyModelPolicySelected,
 		AllowedModels: []string{"gpt-5-mini", "gpt-4o"},
+		RoutingPoolID: &poolID,
 	}}
 	accounts := &fakeSelectedAccountProvider{}
 	proxy := NewProxy(auth, accounts, Config{
-		ModelProvider: fakeModelProvider{exposedModels: []ExposedModel{
+		ModelProvider: &fakeModelProvider{chainExposedModels: []ExposedModel{
 			{ID: "gpt-5", OwnedBy: "openai"},
 			{ID: "gpt-5-mini", OwnedBy: "openai"},
 			{ID: "gpt-4o", OwnedBy: "openai"},
@@ -443,8 +469,7 @@ func TestProxyRoutesChatCompletionByRequestedModel(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -483,8 +508,7 @@ func TestProxyRoutesRequestWithSessionIDForStickySelection(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
@@ -526,8 +550,7 @@ func TestProxyRoutesRequestWithSessionIDHeaderForStickySelection(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
@@ -570,8 +593,7 @@ func TestProxyRoutesRequestWithN2APISessionHeaderForStickySelection(t *testing.T
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
@@ -640,8 +662,7 @@ func TestProxyPrefersBodySessionIDOverHeaderForStickySelection(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
@@ -686,8 +707,7 @@ func TestProxyRejectsWhenConcurrentRequestLimitIsFull(t *testing.T) {
 		UpstreamBaseURL:              "https://upstream.example.test",
 		MaxConcurrentGatewayRequests: 1,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -752,8 +772,7 @@ func TestProxyUsesDynamicGatewaySettingsForConcurrencyLimit(t *testing.T) {
 		UpstreamBaseURL:  "https://upstream.example.test",
 		SettingsProvider: settings,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -821,8 +840,7 @@ func TestProxyRetriesAnotherAccountWhenSelectedAccountConcurrencyLimitIsFull(t *
 		UpstreamBaseURL:                 "https://upstream.example.test",
 		MaxConcurrentRequestsPerAccount: 1,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -899,8 +917,7 @@ func TestProxyUsesSelectedAccountConcurrencyOverride(t *testing.T) {
 		UpstreamBaseURL:                 "https://upstream.example.test",
 		MaxConcurrentRequestsPerAccount: 5,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -964,8 +981,7 @@ func TestProxyRejectsWhenAllSelectedAccountsHitConcurrencyLimit(t *testing.T) {
 		UpstreamBaseURL:                 "https://upstream.example.test",
 		MaxConcurrentRequestsPerAccount: 1,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -1058,8 +1074,7 @@ func TestProxyRejectsWhenAPIKeyConcurrencyLimitIsFull(t *testing.T) {
 		UpstreamBaseURL:             "https://upstream.example.test",
 		MaxConcurrentRequestsPerKey: 1,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -1130,8 +1145,7 @@ func TestProxyAllowsDifferentAPIKeysWhenOneKeyConcurrencyLimitIsFull(t *testing.
 		UpstreamBaseURL:             "https://upstream.example.test",
 		MaxConcurrentRequestsPerKey: 1,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	firstReq := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -1211,8 +1225,7 @@ func TestProxyRejectsWhenAPIKeyRequestRateLimitIsExceeded(t *testing.T) {
 		UpstreamBaseURL:            "https://upstream.example.test",
 		MaxRequestsPerMinutePerKey: 1,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	proxy.rateLimiter.now = func() time.Time {
@@ -1327,8 +1340,7 @@ func TestProxyUsesAPIKeyRequestRateLimitOverride(t *testing.T) {
 		UpstreamBaseURL:            "https://upstream.example.test",
 		MaxRequestsPerMinutePerKey: 100,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	proxy.rateLimiter.now = func() time.Time {
@@ -1390,8 +1402,7 @@ func TestProxyRejectsWhenAPIKeyTokenRateLimitIsExceeded(t *testing.T) {
 		UpstreamBaseURL:          "https://upstream.example.test",
 		MaxTokensPerMinutePerKey: 10,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	proxy.tokenLimiter.now = func() time.Time {
@@ -1457,8 +1468,7 @@ func TestProxyUsesAPIKeyTokenRateLimitOverride(t *testing.T) {
 		UpstreamBaseURL:          "https://upstream.example.test",
 		MaxTokensPerMinutePerKey: 100,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	proxy.tokenLimiter.now = func() time.Time {
@@ -1516,10 +1526,9 @@ func TestProxyModelsBypassesAPIKeyTokenRateLimit(t *testing.T) {
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "token limited key"}}, tokens, Config{
 		UpstreamBaseURL:          "https://upstream.example.test",
 		MaxTokensPerMinutePerKey: 10,
-		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
-			exposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}},
+		ModelProvider: &fakeModelProvider{
+			defaultModel:       "gpt-5",
+			chainExposedModels: []ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}},
 		},
 	}, client)
 	proxy.tokenLimiter.now = func() time.Time {
@@ -1566,8 +1575,7 @@ func TestProxyRejectsUnlistedModelForSelectedAPIKeyBeforeAccountSelection(t *tes
 	proxy := NewProxy(auth, accounts, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -1588,7 +1596,7 @@ func TestProxyRejectsUnlistedModelForSelectedAPIKeyBeforeAccountSelection(t *tes
 	}
 }
 
-func TestProxyRejectsUnlistedGloballyHiddenModelForSelectedAPIKeyWithoutLeakingGlobalPolicy(t *testing.T) {
+func TestProxyRejectsUnlistedModelForSelectedAPIKeyWithCompatibleError(t *testing.T) {
 	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
 	auth := &fakeAPIKeyAuthenticator{key: admin.APIKey{
 		ID:            42,
@@ -1599,8 +1607,7 @@ func TestProxyRejectsUnlistedGloballyHiddenModelForSelectedAPIKeyWithoutLeakingG
 	proxy := NewProxy(auth, accounts, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"hidden-model","messages":[]}`))
@@ -1621,15 +1628,22 @@ func TestProxyRejectsUnlistedGloballyHiddenModelForSelectedAPIKeyWithoutLeakingG
 	}
 }
 
-func TestProxyRejectsGloballyHiddenModelWithOpenAICompatibleNotFound(t *testing.T) {
+func TestProxyRoutesModelWithoutGlobalFilter(t *testing.T) {
 	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "upstream-token"}}}
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_123"}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, accounts, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
-	})
+	}, client)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"hidden-model","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	req.Header.Set("Content-Type", "application/json")
@@ -1637,14 +1651,11 @@ func TestProxyRejectsGloballyHiddenModelWithOpenAICompatibleNotFound(t *testing.
 
 	proxy.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "model_not_found") || !strings.Contains(recorder.Body.String(), "requested model is not available") {
-		t.Fatalf("body = %q, want model_not_found with unavailable message", recorder.Body.String())
-	}
-	if accounts.calls != 0 {
-		t.Fatalf("account calls = %d, want 0", accounts.calls)
+	if accounts.calls != 1 {
+		t.Fatalf("account calls = %d, want one pool-scoped selection", accounts.calls)
 	}
 }
 
@@ -1659,8 +1670,7 @@ func TestProxyRejectsInjectedDefaultModelWhenSelectedAPIKeyDoesNotAllowIt(t *tes
 	proxy := NewProxy(auth, accounts, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[]}`))
@@ -1697,8 +1707,7 @@ func TestProxyInjectsDefaultModelWhenMissing(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"hi"}`))
@@ -1730,8 +1739,7 @@ func TestProxyRejectsNonStringModel(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":123,"messages":[]}`))
@@ -1774,8 +1782,7 @@ func TestProxyTrimsRequestedModelBeforeRoutingAndForwarding(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":" gpt-5 ","messages":[]}`))
@@ -1807,8 +1814,7 @@ func TestProxyReturnsModelUnavailableBeforeUpstream(t *testing.T) {
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: upstream.URL,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5-mini",
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
@@ -2091,7 +2097,7 @@ func TestProxyRoutesAPIUpstreamResponsesCreateWithoutCodexTransform(t *testing.T
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
 		UpstreamBaseURL:       defaultUpstream.URL,
 		CodexResponsesBaseURL: "http://codex.invalid",
-		ModelProvider:         fakeModelProvider{defaultModel: "gpt-5", allowedModels: []string{"gpt-5"}},
+		ModelProvider:         fakeModelProvider{defaultModel: "gpt-5"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi","stream":false}`))
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
@@ -3038,8 +3044,7 @@ func TestProxyLogsPreciseAPIKeyTokenRateLimitReason(t *testing.T) {
 		MaxTokensPerMinutePerKey: 10,
 		Logger:                   logger,
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5",
-			allowedModels: []string{"gpt-5"},
+			defaultModel: "gpt-5",
 		},
 	}, client)
 	proxy.tokenLimiter.now = func() time.Time {
@@ -3668,8 +3673,7 @@ func TestProxyCarriesStickySessionOnFallbackSelection(t *testing.T) {
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		ModelProvider: fakeModelProvider{
-			defaultModel:  "gpt-5-mini",
-			allowedModels: []string{"gpt-5", "gpt-5-mini"},
+			defaultModel: "gpt-5-mini",
 		},
 	}, client)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))

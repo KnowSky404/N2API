@@ -82,7 +82,7 @@
       if (keyStatusFilter === 'disabled' && (!key.disabledAt || key.revokedAt)) return false;
       if (keyStatusFilter === 'revoked' && !key.revokedAt) return false;
 
-      if (keyRoutingPoolFilter === 'global' && Number(key.routingPoolId ?? 0) > 0) return false;
+      if (keyRoutingPoolFilter === 'unbound' && Number(key.routingPoolId ?? 0) > 0) return false;
       if (/^[1-9]\d*$/.test(keyRoutingPoolFilter)) {
         const poolId = Number(keyRoutingPoolFilter);
         if (Number(key.routingPoolId ?? 0) !== poolId) return false;
@@ -190,6 +190,7 @@
   function openCreateKeyModal() {
     apiKeys.error = '';
     apiKeys.newKeyName = '';
+    apiKeys.newKeyRoutingPoolId = 0;
     apiKeys.oneTimeSecret = '';
     createKeyModalOpen = true;
   }
@@ -199,6 +200,7 @@
     createKeyModalOpen = false;
     apiKeys.error = '';
     apiKeys.newKeyName = '';
+    apiKeys.newKeyRoutingPoolId = 0;
   }
 
   /** @param {number} keyId */
@@ -516,7 +518,7 @@
       key.name,
       key.prefix,
       key.routingPoolName,
-      key.routingPoolId ? 'routing pool' : 'global pool',
+      key.routingPoolId ? 'routing pool' : 'no routing pool no model access',
       key.modelPolicy === 'selected' ? 'selected models' : 'all routable models',
       ...(key.allowedModels ?? []),
       key.revokedAt ? 'revoked' : key.disabledAt ? 'disabled' : 'active',
@@ -698,6 +700,20 @@
                 required
               />
             </label>
+            <label class="mt-4 grid gap-2 text-sm font-medium text-[#3c3c3c]">
+              Routing pool
+              <select
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
+                bind:value={apiKeys.newKeyRoutingPoolId}
+                disabled={apiKeys.creating || routingPools.loading}
+              >
+                <option value={0}>No routing pool</option>
+                {#each routingPools.items as pool}
+                  <option value={pool.id}>{pool.name}</option>
+                {/each}
+              </select>
+            </label>
+            <p class="mt-2 text-xs leading-5 text-[#6e6e6e]">No routing pool = no model access.</p>
           </div>
           {#if apiKeys.oneTimeSecret}
             <div class="rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
@@ -795,7 +811,7 @@
             </label>
             {#if bulkEditForm.targetModelPolicy === 'selected'}
               <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
-                Allowed models (one per line)
+                Selected models (one per line)
                 <textarea
                   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                   rows="4"
@@ -820,12 +836,13 @@
                 class="rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                 bind:value={bulkEditForm.targetRoutingPoolId}
               >
-                <option value={0}>Global pool</option>
+                <option value={0}>No routing pool</option>
                 {#each routingPools.items as pool}
                   <option value={pool.id}>{pool.name}</option>
                 {/each}
               </select>
             </label>
+            <p class="mt-2 text-xs leading-5 text-[#6e6e6e]">No routing pool = no model access for the selected keys.</p>
           {/if}
 
           <label class="flex items-center gap-3 text-sm font-medium text-[#3c3c3c]">
@@ -1057,7 +1074,7 @@
                   editingKey.routingPoolId = Number(event.currentTarget.value || 0);
                 }}
               >
-                <option value={0}>Global provider account pool</option>
+                <option value={0}>No routing pool</option>
                 {#each routingPools.items as pool}
                   <option value={pool.id}>{pool.name}</option>
                 {/each}
@@ -1069,7 +1086,7 @@
                   {editingKey.routingPoolName || `Pool ${editingKey.routingPoolId}`}
                 </a>
               {:else}
-                Global pool
+                No routing pool · No model access
               {/if}
               {#if routingPoolFallbackNameForKey(editingKey)}
                 <span> · Fallback </span>
@@ -1398,7 +1415,7 @@
           onchange={() => { keyPage = 1; }}
         >
           <option value="all">All routing pools</option>
-          <option value="global">Global pool</option>
+          <option value="unbound">No routing pool</option>
           {#each routingPools.items as pool}
             <option value={String(pool.id)}>{pool.name}</option>
           {/each}

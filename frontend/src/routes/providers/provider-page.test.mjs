@@ -15,6 +15,7 @@ const {
   futureTimeRemainingLabel,
   getAccountTestResultsState,
   connectProvider,
+  createKey,
   createAPIUpstreamAccount,
   loadModelRoutingPreview,
   loadRequestLogs,
@@ -1163,6 +1164,41 @@ test('api key state can save routing pool binding', async () => {
   assert.equal(apiKeys.items[0].routingPoolId, 3);
 });
 
+test('api key state sends the optional routing pool during creation', async () => {
+  session.authenticated = true;
+  apiKeys.error = '';
+  apiKeys.items = [];
+  const createBodies = [];
+  globalThis.fetch = async (path, options = {}) => {
+    if (path === '/api/admin/keys') {
+      const body = JSON.parse(String(options.body));
+      createBodies.push(body);
+      return new Response(
+        JSON.stringify({
+          key: { id: createBodies.length, name: body.name, routingPoolId: body.routingPoolId },
+          secret: `secret-${createBodies.length}`
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(JSON.stringify({ logs: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  };
+
+  apiKeys.newKeyName = 'pool key';
+  apiKeys.newKeyRoutingPoolId = 3;
+  await createKey({ preventDefault() {} });
+  apiKeys.newKeyName = 'unbound key';
+  await createKey({ preventDefault() {} });
+
+  assert.deepEqual(createBodies, [
+    { name: 'pool key', routingPoolId: 3 },
+    { name: 'unbound key', routingPoolId: null }
+  ]);
+});
+
 test('routing pool state refreshes fallback references after deleting a pool', async () => {
   session.authenticated = true;
   routingPools.items = [
@@ -1253,7 +1289,7 @@ test('saveAccountModels excludes synced rows from manual save payload', async ()
       );
     }
     if (path === '/api/admin/model-routing') {
-      return new Response(JSON.stringify({ defaultModel: '', allowedModels: [], models: [], warnings: [] }), {
+      return new Response(JSON.stringify({ defaultModel: '', models: [], warnings: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
@@ -1302,7 +1338,7 @@ test('syncAccountModels calls sync endpoint and refreshes routing state', async 
     }
     if (path === '/api/admin/model-routing') {
       return new Response(
-        JSON.stringify({ defaultModel: '', allowedModels: [], models: [], warnings: [] }),
+        JSON.stringify({ defaultModel: '', models: [], warnings: [] }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -1352,7 +1388,7 @@ test('syncAccountModels stale response does not overwrite newer result', async (
       });
     }
     if (path === '/api/admin/model-routing') {
-      return new Response(JSON.stringify({ defaultModel: '', allowedModels: [], models: [], warnings: [] }), {
+      return new Response(JSON.stringify({ defaultModel: '', models: [], warnings: [] }), {
         status: 200, headers: { 'Content-Type': 'application/json' }
       });
     }
@@ -1455,6 +1491,9 @@ test('api keys page uses modal to create keys and removes gateway model-settings
   assert.match(apiKeysSource, /aria-modal="true"/);
   assert.match(apiKeysSource, /Create API key/);
   assert.match(apiKeysSource, /submitCreateKey/);
+  assert.match(apiKeysSource, /bind:value=\{apiKeys\.newKeyRoutingPoolId\}/);
+  assert.match(apiKeysSource, /No routing pool = no model access/);
+  assert.match(adminStateSource, /routingPoolId: routingPoolId > 0 \? routingPoolId : null/);
 
   // Removed sections
   assert.doesNotMatch(apiKeysSource, /Gateway runtime limits/);

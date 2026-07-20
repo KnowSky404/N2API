@@ -44,7 +44,7 @@
     }
 
     const status = params.get('status') ?? '';
-    if (['all', 'routable', 'blocked', 'hidden', 'allowed'].includes(status)) {
+    if (['all', 'routable', 'blocked'].includes(status)) {
       modelStatusFilter = status;
     }
     modelPage = 1;
@@ -241,7 +241,6 @@
   function modelSearchText(model) {
     return [
       model.model,
-      model.allowed ? 'allowed' : 'hidden',
       Number(model.enabledCount ?? 0) > 0 ? 'routable' : 'blocked',
       ...(model.accounts ?? []).flatMap((account) => [
         account.displayName,
@@ -266,8 +265,6 @@
   function modelMatchesStatusFilter(model, filter) {
     if (filter === 'routable') return Number(model.enabledCount ?? 0) > 0;
     if (filter === 'blocked') return Number(model.enabledCount ?? 0) === 0;
-    if (filter === 'hidden') return !model.allowed;
-    if (filter === 'allowed') return model.allowed;
     return true;
   }
 
@@ -350,8 +347,8 @@
           <p class="mt-2 truncate text-sm font-semibold text-[#0d0d0d]">{modelRouting.defaultModel || 'Not set'}</p>
         </div>
         <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-          <p class="text-xs font-medium text-[#6e6e6e]">Allowed</p>
-          <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{modelRouting.allowedModels.length}</p>
+          <p class="text-xs font-medium text-[#6e6e6e]">Configured</p>
+          <p class="mt-2 text-sm font-semibold text-[#0d0d0d]">{modelRouting.models.length}</p>
         </div>
         <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
           <p class="text-xs font-medium text-[#6e6e6e]">Routable</p>
@@ -440,7 +437,7 @@
               bind:value={modelRoutingPreview.routingPoolId}
               disabled={routingPools.loading}
             >
-              <option value="0">Global provider pool</option>
+              <option value="0">Unscoped diagnostic (no API key)</option>
               {#each routingPools.items as pool}
                 <option value={String(pool.id)}>{pool.name}</option>
               {/each}
@@ -648,8 +645,6 @@
             <option value="all">All models</option>
             <option value="routable">Routable models</option>
             <option value="blocked">Blocked models</option>
-            <option value="hidden">Hidden models</option>
-            <option value="allowed">Allowed models</option>
           </select>
         </label>
       </div>
@@ -659,7 +654,7 @@
           <thead class="bg-[#fafafa] text-xs text-[#6e6e6e]">
             <tr>
               <th class="px-4 py-3 font-medium">Model</th>
-              <th class="px-4 py-3 font-medium">Policy</th>
+              <th class="px-4 py-3 font-medium">Routing status</th>
               <th class="px-4 py-3 font-medium">Accounts</th>
               <th class="px-4 py-3 font-medium">Candidates</th>
             </tr>
@@ -687,8 +682,8 @@
                       <p class="mt-1 text-xs text-amber-700">No schedulable account</p>
                     {/if}
                   </td>
-                  <td class="px-4 py-4 text-[#3c3c3c]" data-label="Policy">
-                    {model.allowed ? 'Allowed' : 'Hidden'}
+                  <td class="px-4 py-4 text-[#3c3c3c]" data-label="Routing status">
+                    {model.enabledCount > 0 ? 'Routable' : 'Blocked'}
                   </td>
                   <td class="px-4 py-4 text-[#3c3c3c]" data-label="Accounts">
                     {model.enabledCount} / {model.configuredCount}

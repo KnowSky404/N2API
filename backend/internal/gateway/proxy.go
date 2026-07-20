@@ -98,8 +98,6 @@ type ExposedModel struct {
 
 type ModelProvider interface {
 	DefaultModel(ctx context.Context) (string, error)
-	IsModelAllowed(ctx context.Context, model string) (bool, error)
-	ListExposedModels(ctx context.Context) ([]ExposedModel, error)
 }
 
 type RoutingPoolModelProvider interface {
@@ -349,6 +347,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if key.RoutingPoolID == nil || *key.RoutingPoolID <= 0 {
+		errorCode = "routing_pool_required"
+		loggedRoutingPoolError = errorCode
+		writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "api key must be bound to a routing pool")
+		return
+	}
 	if p.accounts == nil {
 		errorCode = "service_unavailable"
 		writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "gateway service unavailable")
@@ -360,7 +364,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key token rate limit exceeded")
 		return
 	}
-
 	bodyFactory, maxAttempts, model, sessionID, err := p.requestBodyFactory(r)
 	if err != nil {
 		errorCode = requestBodyErrorCode(err)
@@ -373,19 +376,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errorCode = "model_not_found"
 		writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
 		return
-	}
-	if model != "" {
-		allowed, err := p.modelAllowed(r.Context(), model)
-		if err != nil {
-			errorCode = requestBodyErrorCode(err)
-			writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
-			return
-		}
-		if !allowed {
-			errorCode = "model_not_found"
-			writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
-			return
-		}
 	}
 
 	release, ok := p.tryAcquireGatewaySlot(settings.MaxConcurrentGatewayRequests)
@@ -1083,21 +1073,21 @@ func appendUniqueInt64(values []int64, value int64) []int64 {
 
 func (p *Proxy) writeLocalModels(ctx context.Context, w http.ResponseWriter, key admin.APIKey) error {
 	models := []ExposedModel{}
-	if p.models != nil {
-		var err error
-		if key.RoutingPoolID != nil && *key.RoutingPoolID > 0 {
-			if poolModels, ok := p.models.(RoutingPoolModelProvider); ok {
-				models, err = poolModels.ListExposedModelsForRoutingPoolChain(ctx, *key.RoutingPoolID)
-			} else {
-				models, err = p.models.ListExposedModels(ctx)
-			}
-		} else {
-			models, err = p.models.ListExposedModels(ctx)
+	if p.models != nil && key.RoutingPoolID != nil && *key.RoutingPoolID > 0 {
+		poolModels, ok := p.models.(RoutingPoolModelProvider)
+		if !ok {
+			return writeModelList(w, key, models)
 		}
+		var err error
+		models, err = poolModels.ListExposedModelsForRoutingPoolChain(ctx, *key.RoutingPoolID)
 		if err != nil {
 			return err
 		}
 	}
+	return writeModelList(w, key, models)
+}
+
+func writeModelList(w http.ResponseWriter, key admin.APIKey, models []ExposedModel) error {
 	type openAIModel struct {
 		ID      string `json:"id"`
 		Object  string `json:"object"`
@@ -1472,13 +1462,6 @@ func (p *Proxy) defaultModel(ctx context.Context) (string, error) {
 		return "", errModelNotFound
 	}
 	return model, nil
-}
-
-func (p *Proxy) modelAllowed(ctx context.Context, model string) (bool, error) {
-	if p.models == nil {
-		return true, nil
-	}
-	return p.models.IsModelAllowed(ctx, model)
 }
 
 func apiKeyAllowsModel(key admin.APIKey, model string) bool {

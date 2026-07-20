@@ -125,7 +125,6 @@ type fakeProviderService struct {
 	accountModelTestErr    error
 	testedModelAccountID   int64
 	testedModel            string
-	exposedModels          []provider.ExposedModel
 	selectionPreview       provider.SelectionPreview
 	previewModel           string
 	previewSessionID       string
@@ -140,7 +139,6 @@ type fakeProviderService struct {
 	accountModelsErr       error
 	accountTestResultsErr  error
 	replaceModelsErr       error
-	exposedModelsErr       error
 	refreshErr             error
 	resetStatusErr         error
 	disconnectErr          error
@@ -211,10 +209,7 @@ func newFakeAdminService() *fakeAdminService {
 		logs: []admin.RequestLog{
 			{ID: 3, RequestID: "req_3", ClientKey: "codex laptop (n2api_abc)", Provider: "openai", Route: "/v1/models", Method: http.MethodGet, StatusCode: 200, LatencyMS: 12, GatewayAttemptCount: 2, GatewayFallbackCount: 1, CreatedAt: time.Unix(4000, 0).UTC()},
 		},
-		modelSettings: admin.ModelSettings{
-			DefaultModel:  "gpt-4.1",
-			AllowedModels: []string{"gpt-4.1", "gpt-4.1-mini"},
-		},
+		modelSettings: admin.ModelSettings{DefaultModel: "gpt-4.1"},
 	}
 }
 
@@ -251,11 +246,25 @@ func (s *fakeAdminService) ListAPIKeys(_ context.Context) ([]admin.APIKey, error
 	return s.keys, nil
 }
 
-func (s *fakeAdminService) CreateAPIKey(_ context.Context, name string) (admin.CreatedAPIKey, error) {
+func (s *fakeAdminService) CreateAPIKey(_ context.Context, name string, routingPoolID *int64) (admin.CreatedAPIKey, error) {
 	if strings.TrimSpace(name) == "" {
 		return admin.CreatedAPIKey{}, admin.ErrInvalidInput
 	}
 	key := admin.APIKey{ID: 9, Name: name, Prefix: "n2api_new", CreatedAt: time.Unix(2000, 0).UTC()}
+	if routingPoolID != nil && *routingPoolID > 0 {
+		var pool *admin.RoutingPool
+		for i := range s.routingPools {
+			if s.routingPools[i].ID == *routingPoolID {
+				pool = &s.routingPools[i]
+				break
+			}
+		}
+		if pool == nil {
+			return admin.CreatedAPIKey{}, admin.ErrNotFound
+		}
+		key.RoutingPoolID = routingPoolID
+		key.RoutingPoolName = pool.Name
+	}
 	return admin.CreatedAPIKey{Key: key, Secret: "n2api_new_secret"}, nil
 }
 
@@ -527,17 +536,7 @@ func (s *fakeAdminService) UpdateModelSettings(_ context.Context, settings admin
 	if defaultModel == "" {
 		return admin.ModelSettings{}, admin.ErrInvalidInput
 	}
-	defaultAllowed := false
-	for _, model := range settings.AllowedModels {
-		if strings.TrimSpace(model) == defaultModel {
-			defaultAllowed = true
-			break
-		}
-	}
-	if !defaultAllowed {
-		return admin.ModelSettings{}, admin.ErrInvalidInput
-	}
-	s.modelSettings = settings
+	s.modelSettings = admin.ModelSettings{DefaultModel: defaultModel}
 	return s.modelSettings, nil
 }
 
@@ -580,20 +579,6 @@ func (s *fakeAdminService) DefaultModel(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return settings.DefaultModel, nil
-}
-
-func (s *fakeAdminService) IsModelAllowed(ctx context.Context, model string) (bool, error) {
-	settings, err := s.GetModelSettings(ctx)
-	if err != nil {
-		return false, err
-	}
-	model = strings.TrimSpace(model)
-	for _, allowed := range settings.AllowedModels {
-		if model == allowed {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 func newFakeProviderService() *fakeProviderService {
@@ -736,20 +721,6 @@ func (s *fakeProviderService) ReplaceAccountModels(_ context.Context, accountID 
 	}
 	s.accountModels[accountID] = saved
 	return append([]provider.AccountModel(nil), saved...), nil
-}
-
-func (s *fakeProviderService) ListExposedModels(_ context.Context, allowedModels []string) ([]provider.ExposedModel, error) {
-	if s.exposedModelsErr != nil {
-		return nil, s.exposedModelsErr
-	}
-	if s.exposedModels != nil {
-		return append([]provider.ExposedModel(nil), s.exposedModels...), nil
-	}
-	models := make([]provider.ExposedModel, 0, len(allowedModels))
-	for _, model := range allowedModels {
-		models = append(models, provider.ExposedModel{ID: model, OwnedBy: "openai"})
-	}
-	return models, nil
 }
 
 func (s *fakeProviderService) PreviewAccountSelection(_ context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
@@ -1360,7 +1331,7 @@ func TestListAPIKeysIncludesBudgetUsageState(t *testing.T) {
 func TestCreateAPIKeyReturnsOneTimeSecret(t *testing.T) {
 	admins := newFakeAdminService()
 	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/keys", strings.NewReader(`{"name":"codex laptop"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/keys", strings.NewReader(`{"name":"codex laptop","routingPoolId":3}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -1370,13 +1341,30 @@ func TestCreateAPIKeyReturnsOneTimeSecret(t *testing.T) {
 		t.Fatalf("status = %d, want 201", recorder.Code)
 	}
 	var body struct {
-		Secret string `json:"secret"`
+		Secret string       `json:"secret"`
+		Key    admin.APIKey `json:"key"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
 	if body.Secret == "" {
 		t.Fatal("secret is empty")
+	}
+	if body.Key.RoutingPoolID == nil || *body.Key.RoutingPoolID != 3 || body.Key.RoutingPoolName != "primary" {
+		t.Fatalf("created key = %+v, want primary routing pool", body.Key)
+	}
+}
+
+func TestCreateAPIKeyRejectsMissingRoutingPool(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/keys", strings.NewReader(`{"name":"codex laptop","routingPoolId":999}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -5038,7 +5026,7 @@ func TestModelSettingsRequiresSessionAndReturnsSettings(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.DefaultModel != "gpt-4.1" || len(body.AllowedModels) != 2 {
+	if body.DefaultModel != "gpt-4.1" {
 		t.Fatalf("model settings = %+v", body)
 	}
 }
@@ -5046,7 +5034,7 @@ func TestModelSettingsRequiresSessionAndReturnsSettings(t *testing.T) {
 func TestUpdateModelSettingsReturnsSavedSettings(t *testing.T) {
 	admins := newFakeAdminService()
 	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/model-settings", strings.NewReader(`{"defaultModel":"gpt-5","allowedModels":["gpt-5","gpt-5-mini"]}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/model-settings", strings.NewReader(`{"defaultModel":"gpt-5"}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -5059,14 +5047,14 @@ func TestUpdateModelSettingsReturnsSavedSettings(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.DefaultModel != "gpt-5" || !slices.Equal(body.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+	if body.DefaultModel != "gpt-5" {
 		t.Fatalf("model settings = %+v", body)
 	}
 }
 
 func TestUpdateModelSettingsReturnsBadRequestForInvalidInput(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
-	req := httptest.NewRequest(http.MethodPut, "/api/admin/model-settings", strings.NewReader(`{"defaultModel":"gpt-5","allowedModels":["gpt-5-mini"]}`))
+	req := httptest.NewRequest(http.MethodPut, "/api/admin/model-settings", strings.NewReader(`{"defaultModel":" "}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -5086,10 +5074,7 @@ func TestUpdateModelSettingsReturnsBadRequestForInvalidInput(t *testing.T) {
 
 func TestModelRoutingReturnsStatus(t *testing.T) {
 	admins := newFakeAdminService()
-	admins.modelSettings = admin.ModelSettings{
-		DefaultModel:  "gpt-5",
-		AllowedModels: []string{"gpt-5", "gpt-5-mini", "codex-mini"},
-	}
+	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5"}
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
 		{ID: 7, Provider: "openai", Enabled: true},
@@ -5105,10 +5090,6 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 		{ID: 13, AccountID: 8, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
 		{ID: 14, AccountID: 8, Provider: "openai", Model: "unallowed-model", Enabled: true, Source: provider.AccountModelSourceManual},
 	}
-	providers.exposedModels = []provider.ExposedModel{
-		{ID: "gpt-5", OwnedBy: "openai"},
-		{ID: "gpt-5-mini", OwnedBy: "openai"},
-	}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
@@ -5123,32 +5104,29 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.DefaultModel != "gpt-5" || !slices.Equal(body.AllowedModels, []string{"gpt-5", "gpt-5-mini", "codex-mini"}) {
+	if body.DefaultModel != "gpt-5" {
 		t.Fatalf("routing settings = %+v", body)
 	}
-	if len(body.Models) != 4 {
-		t.Fatalf("models length = %d, want 4: %+v", len(body.Models), body.Models)
+	if len(body.Models) != 3 {
+		t.Fatalf("models length = %d, want 3 configured models: %+v", len(body.Models), body.Models)
 	}
-	if body.Models[0].Model != "gpt-5" || !body.Models[0].Allowed || body.Models[0].ConfiguredCount != 2 || body.Models[0].EnabledCount != 1 {
+	if body.Models[0].Model != "gpt-5" || body.Models[0].ConfiguredCount != 2 || body.Models[0].EnabledCount != 1 {
 		t.Fatalf("first model = %+v", body.Models[0])
 	}
 	if len(body.Models[0].Accounts) == 0 || !reflect.DeepEqual(body.Models[0].Accounts[0].RoutingPoolIDs, []int64{3}) {
 		t.Fatalf("first model account routing pools = %+v, want [3]", body.Models[0].Accounts)
 	}
-	if body.Models[2].Model != "codex-mini" || !body.Models[2].Allowed || body.Models[2].ConfiguredCount != 0 || body.Models[2].EnabledCount != 0 {
+	if body.Models[2].Model != "unallowed-model" || body.Models[2].ConfiguredCount != 1 || body.Models[2].EnabledCount != 0 {
 		t.Fatalf("third model = %+v", body.Models[2])
 	}
-	if body.Models[3].Model != "unallowed-model" || body.Models[3].Allowed || body.Models[3].ConfiguredCount != 1 || body.Models[3].EnabledCount != 0 {
-		t.Fatalf("fourth model = %+v", body.Models[3])
-	}
-	if len(body.Warnings) != 1 || !strings.Contains(body.Warnings[0], "codex-mini") {
-		t.Fatalf("warnings = %+v, want missing codex-mini warning", body.Warnings)
+	if len(body.Warnings) != 2 {
+		t.Fatalf("warnings = %+v, want warnings for both unschedulable models", body.Warnings)
 	}
 }
 
 func TestModelRoutingStatusEnabledCountUsesSchedulableAccountRules(t *testing.T) {
 	admins := newFakeAdminService()
-	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5"}}
+	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5"}
 	now := time.Now()
 	future := now.Add(time.Hour)
 	past := now.Add(-time.Hour)
@@ -5165,7 +5143,6 @@ func TestModelRoutingStatusEnabledCountUsesSchedulableAccountRules(t *testing.T)
 			{AccountID: account.ID, Provider: "openai", Model: "gpt-5", Enabled: true, Source: provider.AccountModelSourceManual},
 		}
 	}
-	providers.exposedModels = []provider.ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
@@ -5183,14 +5160,14 @@ func TestModelRoutingStatusEnabledCountUsesSchedulableAccountRules(t *testing.T)
 	if len(body.Models) != 1 {
 		t.Fatalf("models = %+v, want one model", body.Models)
 	}
-	if body.Models[0].Model != "gpt-5" || !body.Models[0].Allowed || body.Models[0].ConfiguredCount != 5 || body.Models[0].EnabledCount != 2 {
-		t.Fatalf("model = %+v, want gpt-5 allowed configured=5 enabled=2", body.Models[0])
+	if body.Models[0].Model != "gpt-5" || body.Models[0].ConfiguredCount != 5 || body.Models[0].EnabledCount != 2 {
+		t.Fatalf("model = %+v, want gpt-5 configured=5 enabled=2", body.Models[0])
 	}
 }
 
 func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 	admins := newFakeAdminService()
-	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5"}}
+	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5"}
 	now := time.Now()
 	future := now.Add(time.Hour)
 	providers := newFakeProviderService()
@@ -5205,7 +5182,6 @@ func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 			{AccountID: account.ID, Provider: "openai", Model: "gpt-5", Enabled: account.ID != 10, Source: provider.AccountModelSourceManual},
 		}
 	}
-	providers.exposedModels = []provider.ExposedModel{}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
@@ -5268,7 +5244,7 @@ func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 
 func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 	admins := newFakeAdminService()
-	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5"}}
+	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5"}
 	now := time.Now()
 	recent := now.Add(-time.Minute)
 	older := now.Add(-time.Hour)
@@ -5286,7 +5262,6 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 			{AccountID: account.ID, Provider: "openai", Model: "gpt-5", Enabled: account.ID != 11, Source: provider.AccountModelSourceManual},
 		}
 	}
-	providers.exposedModels = []provider.ExposedModel{{ID: "gpt-5", OwnedBy: "openai"}}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})

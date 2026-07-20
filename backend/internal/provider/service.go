@@ -580,8 +580,7 @@ type Repository interface {
 	RecordAccountModelTestResult(ctx context.Context, provider string, result AccountModelTestResult) error
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	SyncAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
-	ListExposedModels(ctx context.Context, provider string, allowedModels []string) ([]ExposedModel, error)
-	ListExposedModelsForRoutingPools(ctx context.Context, provider string, poolIDs []int64, allowedModels []string) ([]ExposedModel, error)
+	ListExposedModelsForRoutingPools(ctx context.Context, provider string, poolIDs []int64) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error)
 	RoutingPoolHasAccounts(ctx context.Context, poolID int64) (bool, error)
@@ -1790,13 +1789,9 @@ func upstreamModelsURL(baseURL string) string {
 	return trimmed + "/v1/models"
 }
 
-func (s *Service) ListExposedModels(ctx context.Context, allowedModels []string) ([]ExposedModel, error) {
-	return s.repo.ListExposedModels(ctx, s.cfg.Provider, allowedModels)
-}
-
-func (s *Service) ListExposedModelsForRoutingPoolChain(ctx context.Context, primaryPoolID int64, allowedModels []string) ([]ExposedModel, error) {
+func (s *Service) ListExposedModelsForRoutingPoolChain(ctx context.Context, primaryPoolID int64) ([]ExposedModel, error) {
 	if primaryPoolID <= 0 {
-		return s.ListExposedModels(ctx, allowedModels)
+		return []ExposedModel{}, nil
 	}
 	pools, _, err := s.routingPoolChain(ctx, primaryPoolID)
 	if err != nil {
@@ -1812,7 +1807,7 @@ func (s *Service) ListExposedModelsForRoutingPoolChain(ctx context.Context, prim
 		}
 		poolIDs = append(poolIDs, pool.ID)
 	}
-	return s.repo.ListExposedModelsForRoutingPools(ctx, s.cfg.Provider, poolIDs, allowedModels)
+	return s.repo.ListExposedModelsForRoutingPools(ctx, s.cfg.Provider, poolIDs)
 }
 
 func (s *Service) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {

@@ -261,7 +261,7 @@ func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) e
 	return tx.Commit(ctx)
 }
 
-func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string) (admin.APIKey, error) {
+func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string, routingPoolID *int64) (admin.APIKey, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return admin.APIKey{}, err
@@ -269,10 +269,10 @@ func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix, 
 	defer tx.Rollback(ctx)
 	var id int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO client_api_keys (name, key_hash, prefix, encrypted_secret)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO client_api_keys (name, key_hash, prefix, encrypted_secret, routing_pool_id)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id
-	`, name, hash, prefix, encryptedSecret).Scan(&id)
+	`, name, hash, prefix, encryptedSecret, routingPoolID).Scan(&id)
 	if err != nil {
 		return admin.APIKey{}, err
 	}

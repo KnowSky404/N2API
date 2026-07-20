@@ -35,7 +35,7 @@ type AdminService interface {
 	ChangePassword(ctx context.Context, adminID int64, currentPassword, newPassword string) error
 	ValidateSession(ctx context.Context, token string) (admin.Admin, error)
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
-	CreateAPIKey(ctx context.Context, name string) (admin.CreatedAPIKey, error)
+	CreateAPIKey(ctx context.Context, name string, routingPoolID *int64) (admin.CreatedAPIKey, error)
 	GetAPIKeySecret(ctx context.Context, id int64) (string, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 	DeleteRevokedAPIKey(ctx context.Context, id int64) error
@@ -80,7 +80,6 @@ type AdminService interface {
 	UpdateErrorPassthroughRule(ctx context.Context, id int64, input admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error)
 	DeleteErrorPassthroughRule(ctx context.Context, id int64) error
 	DefaultModel(ctx context.Context) (string, error)
-	IsModelAllowed(ctx context.Context, model string) (bool, error)
 }
 
 type ProviderService interface {
@@ -94,7 +93,6 @@ type ProviderService interface {
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
 	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
-	ListExposedModels(ctx context.Context, allowedModels []string) ([]provider.ExposedModel, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
@@ -367,17 +365,22 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("POST /api/admin/keys", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		var req struct {
-			Name string `json:"name"`
+			Name          string `json:"name"`
+			RoutingPoolID *int64 `json:"routingPoolId"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
 
-		created, err := admins.CreateAPIKey(r.Context(), req.Name)
+		created, err := admins.CreateAPIKey(r.Context(), req.Name, req.RoutingPoolID)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "internal_error")
@@ -2615,18 +2618,6 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 	if err != nil {
 		return admin.ModelRoutingStatus{}, err
 	}
-	allowed, err := admins.IsModelAllowed(ctx, defaultModel)
-	if err != nil {
-		return admin.ModelRoutingStatus{}, err
-	}
-	if !allowed {
-		return admin.ModelRoutingStatus{}, admin.ErrInvalidInput
-	}
-
-	settings, err := admins.GetModelSettings(ctx)
-	if err != nil {
-		return admin.ModelRoutingStatus{}, err
-	}
 	accounts, err := providers.ListAccounts(ctx)
 	if err != nil {
 		return admin.ModelRoutingStatus{}, err
@@ -2636,29 +2627,12 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 		return admin.ModelRoutingStatus{}, err
 	}
 	accountRoutingPoolIDs := routingPoolIDsByAccount(routingPools)
-	exposed, err := providers.ListExposedModels(ctx, settings.AllowedModels)
-	if err != nil {
-		return admin.ModelRoutingStatus{}, err
-	}
 
 	status := admin.ModelRoutingStatus{
-		DefaultModel:  defaultModel,
-		AllowedModels: append([]string(nil), settings.AllowedModels...),
-		Models:        make([]admin.ModelRoutingModel, 0, len(settings.AllowedModels)),
+		DefaultModel: defaultModel,
+		Models:       []admin.ModelRoutingModel{},
 	}
-	allowedSet := make(map[string]struct{}, len(settings.AllowedModels))
-	modelIndexes := make(map[string]int, len(settings.AllowedModels))
-	for _, model := range settings.AllowedModels {
-		allowedSet[model] = struct{}{}
-		status.Models = append(status.Models, admin.ModelRoutingModel{
-			Model:   model,
-			Allowed: true,
-		})
-		modelIndexes[model] = len(status.Models) - 1
-	}
-
-	extraModels := []string{}
-	extraModelSet := map[string]struct{}{}
+	modelIndexes := map[string]int{}
 	now := time.Now()
 	for _, account := range accounts {
 		models, err := providers.ListAccountModels(ctx, account.ID)
@@ -2675,10 +2649,6 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 				})
 				index = len(status.Models) - 1
 				modelIndexes[model.Model] = index
-				if _, seen := extraModelSet[model.Model]; !seen {
-					extraModelSet[model.Model] = struct{}{}
-					extraModels = append(extraModels, model.Model)
-				}
 			}
 			status.Models[index].ConfiguredCount++
 			schedulable := accountReady && modelEnabled
@@ -2703,29 +2673,18 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 			})
 		}
 	}
+	sort.Slice(status.Models, func(i, j int) bool {
+		return status.Models[i].Model < status.Models[j].Model
+	})
 	for i := range status.Models {
 		sortModelRoutingAccounts(status.Models[i].Accounts, accounts)
 		for index := range status.Models[i].Accounts {
 			status.Models[i].Accounts[index].ScheduleRank = index + 1
 		}
 	}
-	if len(extraModels) > 1 {
-		sort.Strings(extraModels)
-		extras := make([]admin.ModelRoutingModel, 0, len(extraModels))
-		for _, model := range extraModels {
-			extras = append(extras, status.Models[modelIndexes[model]])
-		}
-		status.Models = append(status.Models[:len(settings.AllowedModels)], extras...)
-	}
-
-	exposedSet := map[string]struct{}{}
-	for _, model := range exposed {
-		exposedSet[model.ID] = struct{}{}
-	}
-
 	for _, model := range status.Models {
-		if _, ok := exposedSet[model.Model]; model.Allowed && !ok {
-			status.Warnings = append(status.Warnings, "allowed model "+model.Model+" has no enabled account")
+		if model.EnabledCount == 0 {
+			status.Warnings = append(status.Warnings, "model "+model.Model+" has no schedulable account")
 		}
 	}
 	return status, nil

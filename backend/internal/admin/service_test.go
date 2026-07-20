@@ -186,7 +186,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevoked(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionSecret: "test-encryption-secret"})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevok
 func TestSetAPIKeyDisabledBlocksAndRestoresAuthentication(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestSetAPIKeyDisabledBlocksAndRestoresAuthentication(t *testing.T) {
 func TestUpdateAPIKeyBudgetsValidatesNonNegativeValues(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{})
-	result, err := service.CreateAPIKey(context.Background(), "codex")
+	result, err := service.CreateAPIKey(context.Background(), "codex", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestAPIKeyBudgetUsageComputesRemainingAndExceeded(t *testing.T) {
 func TestAuthenticateAPIKeyMapsTouchNotFoundToUnauthorized(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -433,15 +433,47 @@ func TestCreateAPIKeyRejectsInvalidName(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 
-	if _, err := service.CreateAPIKey(context.Background(), " \t "); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.CreateAPIKey(context.Background(), " \t ", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("CreateAPIKey error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestCreateAPIKeyValidatesAndPersistsRoutingPool(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	poolID := int64(7)
+
+	result, err := service.CreateAPIKey(context.Background(), "pooled key", &poolID)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	if result.Key.RoutingPoolID == nil || *result.Key.RoutingPoolID != 7 || result.Key.RoutingPoolName != "primary" {
+		t.Fatalf("created key = %+v, want primary routing pool", result.Key)
+	}
+
+	missingPoolID := int64(8)
+	if _, err := service.CreateAPIKey(context.Background(), "missing pool", &missingPoolID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateAPIKey missing pool error = %v, want ErrNotFound", err)
+	}
+	if len(repo.keys) != 1 {
+		t.Fatalf("stored keys = %d, want no key created for missing pool", len(repo.keys))
+	}
+
+	zeroPoolID := int64(0)
+	unbound, err := service.CreateAPIKey(context.Background(), "unbound key", &zeroPoolID)
+	if err != nil {
+		t.Fatalf("CreateAPIKey with zero pool returned error: %v", err)
+	}
+	if unbound.Key.RoutingPoolID != nil || unbound.Key.RoutingPoolName != "" {
+		t.Fatalf("zero-pool key = %+v, want normalized unbound key", unbound.Key)
 	}
 }
 
 func TestUpdateAPIKeyNameTrimsAndPersistsName(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -475,11 +507,11 @@ func TestUpdateAPIKeyNameRejectsInvalidName(t *testing.T) {
 func TestListAPIKeysReturnsRepositoryKeys(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	first, err := service.CreateAPIKey(context.Background(), "first")
+	first, err := service.CreateAPIKey(context.Background(), "first", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey first returned error: %v", err)
 	}
-	second, err := service.CreateAPIKey(context.Background(), "second")
+	second, err := service.CreateAPIKey(context.Background(), "second", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey second returned error: %v", err)
 	}
@@ -574,11 +606,11 @@ func TestPurgeExpiredAPIKeysPurgesRevokedKeysPastRetention(t *testing.T) {
 func TestDeleteRevokedAPIKeyOnlyDeletesLogicallyDeletedKey(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	active, err := service.CreateAPIKey(context.Background(), "active")
+	active, err := service.CreateAPIKey(context.Background(), "active", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey active returned error: %v", err)
 	}
-	revoked, err := service.CreateAPIKey(context.Background(), "deleted")
+	revoked, err := service.CreateAPIKey(context.Background(), "deleted", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey deleted returned error: %v", err)
 	}
@@ -603,7 +635,7 @@ func TestDeleteRevokedAPIKeyOnlyDeletesLogicallyDeletedKey(t *testing.T) {
 func TestAPIKeyModelPolicyDefaultsToAll(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -624,7 +656,7 @@ func TestAPIKeyModelPolicyDefaultsToAll(t *testing.T) {
 func TestAPIKeySelectedModelPolicy(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -674,7 +706,7 @@ func TestAPIKeySelectedModelPolicy(t *testing.T) {
 func TestUpdateAPIKeyModelPolicyRejectsInvalidInput(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -700,7 +732,7 @@ func TestUpdateAPIKeyModelPolicyRejectsInvalidInput(t *testing.T) {
 func TestUpdateAPIKeyLimitsPersistsNonNegativeLimits(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{})
-	result, err := service.CreateAPIKey(context.Background(), "codex laptop")
+	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
@@ -954,22 +986,14 @@ func TestModelSettingsDefaultAndUpdate(t *testing.T) {
 	if settings.DefaultModel != "gpt-4.1" {
 		t.Fatalf("DefaultModel = %q, want gpt-4.1", settings.DefaultModel)
 	}
-	if len(settings.AllowedModels) == 0 {
-		t.Fatal("AllowedModels is empty")
-	}
-
 	updated, err := service.UpdateModelSettings(context.Background(), ModelSettings{
-		DefaultModel:  " gpt-5 ",
-		AllowedModels: []string{" gpt-5 ", "", "gpt-5-mini", "gpt-5"},
+		DefaultModel: " gpt-5 ",
 	})
 	if err != nil {
 		t.Fatalf("UpdateModelSettings returned error: %v", err)
 	}
 	if updated.DefaultModel != "gpt-5" {
 		t.Fatalf("DefaultModel = %q, want gpt-5", updated.DefaultModel)
-	}
-	if !slices.Equal(updated.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
-		t.Fatalf("AllowedModels = %+v, want normalized unique list", updated.AllowedModels)
 	}
 }
 
@@ -981,11 +1005,8 @@ func TestUpdateModelSettingsRejectsInvalidInput(t *testing.T) {
 		name     string
 		settings ModelSettings
 	}{
-		{name: "empty default", settings: ModelSettings{DefaultModel: " ", AllowedModels: []string{"gpt-5"}}},
-		{name: "default not allowed", settings: ModelSettings{DefaultModel: "gpt-5", AllowedModels: []string{"gpt-5-mini"}}},
-		{name: "empty allowed", settings: ModelSettings{DefaultModel: "gpt-5"}},
-		{name: "model name too long", settings: ModelSettings{DefaultModel: strings.Repeat("a", 129), AllowedModels: []string{strings.Repeat("a", 129)}}},
-		{name: "too many models", settings: ModelSettings{DefaultModel: "model-0", AllowedModels: buildModelNames(101)}},
+		{name: "empty default", settings: ModelSettings{DefaultModel: " "}},
+		{name: "model name too long", settings: ModelSettings{DefaultModel: strings.Repeat("a", 129)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := service.UpdateModelSettings(context.Background(), tc.settings); !errors.Is(err, ErrInvalidInput) {
@@ -1436,7 +1457,7 @@ func TestEstimateUsageCostPrefersExactVersionedPriceAndRejectsNonDateSuffixFallb
 	}
 }
 
-func TestModelPolicyHelpersReturnDefaultAndAllowedStatus(t *testing.T) {
+func TestDefaultModelReturnsConfiguredDefault(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 
@@ -1447,30 +1468,11 @@ func TestModelPolicyHelpersReturnDefaultAndAllowedStatus(t *testing.T) {
 	if defaultModel != "gpt-4.1" {
 		t.Fatalf("DefaultModel = %q, want gpt-4.1", defaultModel)
 	}
-
-	allowed, err := service.IsModelAllowed(context.Background(), " gpt-4.1-mini ")
-	if err != nil {
-		t.Fatalf("IsModelAllowed returned error: %v", err)
-	}
-	if !allowed {
-		t.Fatal("IsModelAllowed returned false for configured model")
-	}
-
-	allowed, err = service.IsModelAllowed(context.Background(), "gpt-5")
-	if err != nil {
-		t.Fatalf("IsModelAllowed returned error: %v", err)
-	}
-	if allowed {
-		t.Fatal("IsModelAllowed returned true for unconfigured model")
-	}
 }
 
 func TestDefaultModelRejectsInvalidStoredSettings(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.modelSettings = ModelSettings{
-		DefaultModel:  "gpt-5",
-		AllowedModels: []string{"gpt-5-mini"},
-	}
+	repo.modelSettings = ModelSettings{DefaultModel: " "}
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 
 	if _, err := service.DefaultModel(context.Background()); !errors.Is(err, ErrInvalidInput) {
@@ -1654,7 +1656,7 @@ func (r *memoryRepo) RevokeSession(_ context.Context, tokenHash string) error {
 	return nil
 }
 
-func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix, encryptedSecret string) (APIKey, error) {
+func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix, encryptedSecret string, routingPoolID *int64) (APIKey, error) {
 	key := APIKey{
 		ID:              r.nextAPIKeyID,
 		Name:            name,
@@ -1662,6 +1664,10 @@ func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix, encrypt
 		SecretAvailable: encryptedSecret != "",
 		CreatedAt:       time.Now(),
 		ModelPolicy:     APIKeyModelPolicyAll,
+		RoutingPoolID:   routingPoolID,
+	}
+	if routingPoolID != nil {
+		key.RoutingPoolName = r.routingPools[*routingPoolID].Name
 	}
 	r.nextAPIKeyID++
 	r.keys[key.ID] = memoryAPIKey{APIKey: key, Hash: hash, EncryptedSecret: encryptedSecret}

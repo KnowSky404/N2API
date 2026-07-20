@@ -2439,7 +2439,7 @@ func TestListExposedModelsForRoutingPoolChainIncludesFallbackModels(t *testing.T
 	repo.accountModels[30] = []AccountModel{{AccountID: 30, Provider: "openai", Model: "global-only", Enabled: true}}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
-	models, err := service.ListExposedModelsForRoutingPoolChain(context.Background(), 1, []string{"gpt-4", "gpt-5", "global-only"})
+	models, err := service.ListExposedModelsForRoutingPoolChain(context.Background(), 1)
 	if err != nil {
 		t.Fatalf("ListExposedModelsForRoutingPoolChain returned error: %v", err)
 	}
@@ -4248,34 +4248,7 @@ func (r *memoryRepo) SyncAccountModels(ctx context.Context, providerName string,
 	return listed, summary, err
 }
 
-func (r *memoryRepo) ListExposedModels(ctx context.Context, providerName string, allowedModels []string) ([]ExposedModel, error) {
-	available := map[string]bool{}
-	now := time.Now()
-	for _, account := range r.accounts {
-		if account.Provider != providerName || !accountSchedulable(account, now) {
-			continue
-		}
-		for _, accountModel := range r.accountModels[account.ID] {
-			if accountModel.Provider == providerName && accountModel.Enabled {
-				available[accountModel.Model] = true
-			}
-		}
-	}
-
-	seen := map[string]bool{}
-	exposed := []ExposedModel{}
-	for _, allowed := range allowedModels {
-		model := strings.TrimSpace(allowed)
-		if model == "" || seen[model] || !available[model] {
-			continue
-		}
-		seen[model] = true
-		exposed = append(exposed, ExposedModel{ID: model, OwnedBy: "openai"})
-	}
-	return exposed, nil
-}
-
-func (r *memoryRepo) ListExposedModelsForRoutingPools(ctx context.Context, providerName string, poolIDs []int64, allowedModels []string) ([]ExposedModel, error) {
+func (r *memoryRepo) ListExposedModelsForRoutingPools(ctx context.Context, providerName string, poolIDs []int64) ([]ExposedModel, error) {
 	poolAccounts := map[int64]bool{}
 	for _, poolID := range poolIDs {
 		for _, poolAccount := range r.routingPoolAccounts[poolID] {
@@ -4296,16 +4269,11 @@ func (r *memoryRepo) ListExposedModelsForRoutingPools(ctx context.Context, provi
 		}
 	}
 
-	seen := map[string]bool{}
 	exposed := []ExposedModel{}
-	for _, allowed := range allowedModels {
-		model := strings.TrimSpace(allowed)
-		if model == "" || seen[model] || !available[model] {
-			continue
-		}
-		seen[model] = true
+	for model := range available {
 		exposed = append(exposed, ExposedModel{ID: model, OwnedBy: "openai"})
 	}
+	sort.Slice(exposed, func(i, j int) bool { return exposed[i].ID < exposed[j].ID })
 	return exposed, nil
 }
 

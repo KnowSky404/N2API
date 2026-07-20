@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -109,45 +108,8 @@ func (p gatewayModelProvider) DefaultModel(ctx context.Context) (string, error) 
 	return settings.DefaultModel, nil
 }
 
-func (p gatewayModelProvider) IsModelAllowed(ctx context.Context, model string) (bool, error) {
-	settings, err := p.admins.GetModelSettings(ctx)
-	if err != nil {
-		return false, err
-	}
-	model = strings.TrimSpace(model)
-	for _, allowed := range settings.AllowedModels {
-		if strings.TrimSpace(allowed) == model {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (p gatewayModelProvider) ListExposedModels(ctx context.Context) ([]gateway.ExposedModel, error) {
-	settings, err := p.admins.GetModelSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	models, err := p.providers.ListExposedModels(ctx, settings.AllowedModels)
-	if err != nil {
-		return nil, err
-	}
-	exposed := make([]gateway.ExposedModel, 0, len(models))
-	for _, model := range models {
-		exposed = append(exposed, gateway.ExposedModel{
-			ID:      model.ID,
-			OwnedBy: model.OwnedBy,
-		})
-	}
-	return exposed, nil
-}
-
 func (p gatewayModelProvider) ListExposedModelsForRoutingPoolChain(ctx context.Context, routingPoolID int64) ([]gateway.ExposedModel, error) {
-	settings, err := p.admins.GetModelSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	models, err := p.providers.ListExposedModelsForRoutingPoolChain(ctx, routingPoolID, settings.AllowedModels)
+	models, err := p.providers.ListExposedModelsForRoutingPoolChain(ctx, routingPoolID)
 	if err != nil {
 		return nil, err
 	}

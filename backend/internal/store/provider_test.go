@@ -477,7 +477,7 @@ func TestProviderRepositoryListExposedModelsForRoutingPools(t *testing.T) {
 	}
 	poolID := insertProviderRoutingPool(t, repo.pool, "primary", pooled.ID)
 
-	models, err := repo.ListExposedModelsForRoutingPools(ctx, "openai", []int64{poolID}, []string{"gpt-5", "global-only"})
+	models, err := repo.ListExposedModelsForRoutingPools(ctx, "openai", []int64{poolID})
 	if err != nil {
 		t.Fatalf("ListExposedModelsForRoutingPools returned error: %v", err)
 	}
@@ -1322,7 +1322,7 @@ func TestProviderRepositoryListEligibleAccountsForModelUsesUnifiedTables(t *test
 	}
 }
 
-func TestListExposedModelsFiltersByAllowedOrder(t *testing.T) {
+func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
 
@@ -1465,30 +1465,29 @@ func TestListExposedModelsFiltersByAllowedOrder(t *testing.T) {
 			t.Fatalf("ReplaceAccountModels %s returned error: %v", testCase.model, err)
 		}
 	}
+	poolID := insertProviderRoutingPool(t, repo.pool, "all accounts", account.ID)
+	for _, pooledAccount := range []provider.Account{
+		disabledAccount,
+		expiredAccount,
+		unknownStatus,
+		rateLimitedNull,
+		rateLimitedFuture,
+		rateLimitedPast,
+		circuitOpenNull,
+		circuitOpenFuture,
+		circuitOpenPast,
+	} {
+		if _, err := repo.pool.Exec(ctx, `INSERT INTO routing_pool_accounts (pool_id, account_id) VALUES ($1, $2)`, poolID, pooledAccount.ID); err != nil {
+			t.Fatalf("insert routing pool account %d: %v", pooledAccount.ID, err)
+		}
+	}
 
-	models, err := repo.ListExposedModels(ctx, "openai", []string{
-		"codex-mini",
-		"disabled-model",
-		"expired-only",
-		"unknown-status-only",
-		"rate-limited-null-only",
-		"rate-limited-future-only",
-		"rate-limited-past",
-		"circuit-open-null-only",
-		"circuit-open-future-only",
-		"circuit-open-past",
-		"gpt-5",
-		"missing",
-		"codex-mini",
-	})
+	models, err := repo.ListExposedModelsForRoutingPools(ctx, "openai", []int64{poolID})
 	if err != nil {
 		t.Fatalf("ListExposedModels returned error: %v", err)
 	}
 	want := []provider.ExposedModel{
 		{ID: "codex-mini", OwnedBy: "openai"},
-		{ID: "expired-only", OwnedBy: "openai"},
-		{ID: "rate-limited-past", OwnedBy: "openai"},
-		{ID: "circuit-open-past", OwnedBy: "openai"},
 		{ID: "gpt-5", OwnedBy: "openai"},
 	}
 	if !reflect.DeepEqual(models, want) {

@@ -34,10 +34,10 @@ func TestGatewayModelDocumentationMentionsRoutingPoolFiltering(t *testing.T) {
 		}
 		text := string(content)
 		for _, want := range []string{
-			"For a pool-bound API key",
 			"/v1/models",
-			"routing pool fallback chain",
-			"global provider account pool",
+			"unbound",
+			"routing-pool fallback chain",
+			"selected",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in /v1/models routing pool documentation", path, want)
@@ -233,10 +233,10 @@ func TestGatewayDocumentationMentionsRoutingPools(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"Routing pools",
-			"API key can be bound to one routing pool",
-			"pool-bound key",
-			"Pool membership priority",
-			"global provider account pool",
+			"unbound",
+			"explicit fallback chain",
+			"cannot route model requests",
+			"`routing_pool_required`",
 			"`routing_pool_unavailable`",
 			"`routing_pool_empty`",
 		} {
@@ -298,8 +298,8 @@ func TestGatewayDocumentationMentionsRoutingPoolFallback(t *testing.T) {
 		}
 		text := string(content)
 		for _, want := range []string{
-			"routing pool fallback",
-			"pool-bound key never falls back to the global provider account pool",
+			"Routing pool fallback",
+			"no implicit fallback outside the chain",
 			"`routing_pool_disabled`",
 			"`routing_pool_empty`",
 			"`routing_pool_cycle`",
@@ -395,21 +395,15 @@ func TestGatewayDocumentationMentionsProviderAccountFingerprintProfileCreation(t
 	}
 }
 
-func TestGatewayDocumentationMentionsSingleAccountModelBackfill(t *testing.T) {
+func TestGatewayDocumentationOmitsGlobalAllowedModelList(t *testing.T) {
 	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
 		}
 		text := string(content)
-		for _, want := range []string{
-			"single connected provider account",
-			"backfills",
-			"global allowed model list",
-		} {
-			if !strings.Contains(text, want) {
-				t.Fatalf("%s missing %q in single-account model backfill documentation", path, want)
-			}
+		if strings.Contains(strings.ToLower(text), "global allowed model list") {
+			t.Fatalf("%s still documents the removed global allowed model list", path)
 		}
 	}
 }
