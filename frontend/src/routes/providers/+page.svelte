@@ -44,6 +44,7 @@
 
   import AuthGate from '$lib/AuthGate.svelte';
   import { runModelTestsWithConcurrency } from '$lib/model-test-queue.js';
+  const DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY = 'codex_cli_default';
   let accountSearch = $state('');
   let accountStatusFilter = $state('all');
   let accountTypeFilter = $state('all');
@@ -79,6 +80,12 @@
   const deletingProviderAccount = $derived(
     providerAccounts.items.find((account) => account.id === deletingProviderAccountId) ?? null
   );
+  const defaultCodexFingerprintProfile = $derived(
+    fingerprintProfiles.items.find((profile) => profile.systemKey === DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY) ?? null
+  );
+  const oauthFingerprintProfiles = $derived(
+    fingerprintProfiles.items.filter((profile) => profile.systemKey !== DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY)
+  );
   const modelTestAccount = $derived(
     providerAccounts.items.find((account) => account.id === modelTestAccountId) ?? null
   );
@@ -104,6 +111,19 @@
   const allFilteredModelTestsSelected = $derived(
     filteredModelTestModels.length > 0 && filteredSelectedModelTestCount === filteredModelTestModels.length
   );
+
+  $effect(() => {
+    const defaultProfileID = Number(defaultCodexFingerprintProfile?.id ?? 0);
+    if (
+      defaultProfileID > 0 &&
+      editingProviderAccount &&
+      editingProviderAccountDraft &&
+      isCodexOAuthAccount(editingProviderAccount) &&
+      Number(editingProviderAccountDraft.fingerprintProfileId) === defaultProfileID
+    ) {
+      editingProviderAccountDraft.fingerprintProfileId = 0;
+    }
+  });
   const someFilteredModelTestsSelected = $derived(
     filteredSelectedModelTestCount > 0 && !allFilteredModelTestsSelected
   );
@@ -337,13 +357,18 @@
    * @param {ReturnType<typeof getAccountModelsState>} modelState
    */
   function createAccountDraft(account, modelState) {
+    const fingerprintProfileID = Number(account.fingerprintProfileId ?? 0);
+    const defaultProfileID = Number(defaultCodexFingerprintProfile?.id ?? 0);
     return {
       name: accountLabel(account),
       enabled: Boolean(account.enabled),
       priority: Number(account.priority ?? 0),
       loadFactor: Number(account.loadFactor || 1),
       maxConcurrentRequests: Number(account.maxConcurrentRequests || 0),
-      fingerprintProfileId: Number(account.fingerprintProfileId ?? 0),
+      fingerprintProfileId:
+        isCodexOAuthAccount(account) && defaultProfileID > 0 && fingerprintProfileID === defaultProfileID
+          ? 0
+          : fingerprintProfileID,
       baseUrl: account.baseUrl || '',
       proxyUrl: account.proxyUrlSummary || '',
       apiKey: '',
@@ -351,6 +376,19 @@
       modelItems: modelState.items.map((item) => ({ ...item })),
       syncModelsOnSave: false
     };
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {number} selectedProfileID
+   */
+  function resolveFingerprintProfileID(account, selectedProfileID) {
+    const profileID = Number(selectedProfileID) || 0;
+    if (profileID > 0) return profileID;
+    if (isCodexOAuthAccount(account)) {
+      return Number(defaultCodexFingerprintProfile?.id ?? 0) || null;
+    }
+    return null;
   }
 
   /** @param {number} accountId */
@@ -463,7 +501,7 @@
       priority: Number(draft.priority),
       loadFactor: Number(draft.loadFactor),
       maxConcurrentRequests: Number(draft.maxConcurrentRequests),
-      fingerprintProfileId: Number(draft.fingerprintProfileId) || null
+      fingerprintProfileId: resolveFingerprintProfileID(account, draft.fingerprintProfileId)
     });
     if (providerAccounts.error) {
       editingProviderAccountError = providerAccounts.error;
@@ -900,7 +938,7 @@ class={[
                   bind:value={providerConnectForm.fingerprintProfileId}
                 >
                   <option value="0">Default Codex CLI</option>
-                  {#each fingerprintProfiles.items as fp}
+                  {#each oauthFingerprintProfiles as fp}
                     <option value={String(fp.id)}>{fp.name}</option>
                   {/each}
                 </select>
@@ -1691,7 +1729,7 @@ Enabled
                 bind:value={draft.fingerprintProfileId}
               >
                 <option value={0}>{account.accountType === 'api_upstream' ? 'Default API upstream (pass-through)' : 'Default Codex CLI'}</option>
-                {#each fingerprintProfiles.items as fp}
+                {#each account.accountType === 'api_upstream' ? fingerprintProfiles.items : oauthFingerprintProfiles as fp}
                   <option value={fp.id}>{fp.name}</option>
                 {/each}
               </select>

@@ -379,6 +379,20 @@ test('provider account create forms can bind fingerprint profiles', () => {
   assert.match(editAccountSlice, /<option value=\{0\}>/);
 });
 
+test('Codex OAuth fingerprint selectors render the system default only once', () => {
+  assert.match(source, /DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY = 'codex_cli_default'/);
+  assert.match(
+    source,
+    /oauthFingerprintProfiles = \$derived\(\s*fingerprintProfiles\.items\.filter\(\(profile\) => profile\.systemKey !== DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY\)\s*\)/
+  );
+  assert.match(source, /\{#each oauthFingerprintProfiles as fp\}/);
+  assert.match(
+    source,
+    /account\.accountType === 'api_upstream' \? fingerprintProfiles\.items : oauthFingerprintProfiles/
+  );
+  assert.match(source, /resolveFingerprintProfileID\(account, draft\.fingerprintProfileId\)/);
+});
+
 test('provider account state sends fingerprint profile on new account creation', async () => {
   session.authenticated = true;
   providerConnectForm.name = 'Work Codex';
