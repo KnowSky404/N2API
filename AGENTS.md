@@ -70,15 +70,15 @@
 - After each atomic change (each feature, fix, refactor, docs update, or test update), you MUST create an atomic git commit. Never accumulate multiple unrelated changes into one commit, and never leave a change uncommitted after it is complete unless the user explicitly asks otherwise.
 - Each commit MUST contain exactly one coherent change: for example, one feature, one fix, one refactor, one docs update, or one test update.
 - Use Conventional Commits for commit messages, such as `feat: add provider health check`, `fix: preserve streaming response headers`, `docs: update deployment guide`, `test: cover token refresh`, or `chore: update tooling`.
+- Do not push commits or tags, merge remote branches, create pull requests, publish releases, or otherwise send local changes to GitHub unless the user explicitly requests that remote action. A request to implement or commit changes does not imply permission to push.
 - Do not commit generated build artifacts, dependency directories, local caches, or real environment files.
 - After every conversation turn that involves code or functionality changes, rebuild and refresh the local Docker Compose dev stack so the user can test and verify. Use the `n2api-refresh-docker` skill for the exact commands. If no code or functionality was changed during the turn, skip this step.
-- After code or functionality changes are pushed or merged to GitHub, wait for the corresponding `CI Image` workflow run to complete before claiming the work is finished. Confirm both the `Test` and `Build and smoke test image` jobs pass; for `main` branch runs, also confirm the image push step succeeds. If the workflow fails, inspect the GitHub Actions logs and resolve the failure before closing the task.
+- Because the local Compose refresh uses `--no-cache`, run `docker builder prune --all --force` immediately before the rebuild to remove unused cache from previous builds and again after a successful rebuild, recreation, and verification so the new build cache does not accumulate. This cleanup is builder-wide. Do not automatically run `docker system prune`, prune images, or prune volumes.
+- Do not inspect or poll GitHub CI for local commits that have not been pushed. Only after a user-authorized push succeeds, or after a merge has otherwise reached GitHub, wait for the corresponding `CI Image` workflow run to complete before claiming the remote workflow is finished. Confirm both the `Test` and `Build and smoke test image` jobs pass; for `main` branch runs, also confirm the image push step succeeds. If the workflow fails, inspect the GitHub Actions logs and resolve the failure before closing the task.
 
-## DeepSeek Delegation Workflow
+## Subagent Workflow
 
-N2API inherits the global DeepSeek/subagent policy from `~/.codex/AGENTS.md`,
-including agent selection, model settings, worker depth limits, thread lifecycle,
-and fallback rules.
+N2API inherits the global subagent policy from `~/.codex/AGENTS.md`.
 
 Project-specific additions:
 - The main agent remains responsible for N2API requirements, architecture,
