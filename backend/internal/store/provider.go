@@ -465,7 +465,6 @@ func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, pro
 			AND a.status = 'active'
 			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= $4)
 			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= $4)
-			AND (c.access_token_expires_at IS NULL OR c.access_token_expires_at > $4)
 			AND NOT (a.id = ANY($5::bigint[]))
 			AND (
 				$3 = ''
@@ -1778,7 +1777,6 @@ func (r *ProviderRepository) ListExposedModelsForRoutingPools(ctx context.Contex
 		FROM provider_account_models m
 		JOIN provider_accounts a ON a.id = m.account_id
 			AND a.provider = m.provider
-		JOIN provider_account_credentials c ON c.account_id = a.id
 		JOIN routing_pool_accounts rpa ON rpa.account_id = a.id
 		WHERE m.provider = $1
 			AND rpa.pool_id = ANY($2)
@@ -1787,7 +1785,6 @@ func (r *ProviderRepository) ListExposedModelsForRoutingPools(ctx context.Contex
 			AND a.status = 'active'
 			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= now())
 			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= now())
-			AND (c.access_token_expires_at IS NULL OR c.access_token_expires_at > now())
 		ORDER BY m.model
 	`, providerName, poolIDs)
 	if err != nil {

@@ -142,6 +142,41 @@ func TestRoutingPoolHasAccountsUsesMembershipRows(t *testing.T) {
 	}
 }
 
+func TestRoutingPoolQueriesDoNotFilterRefreshableOAuthAccountsByAccessTokenExpiry(t *testing.T) {
+	source, err := os.ReadFile("provider.go")
+	if err != nil {
+		t.Fatalf("ReadFile provider.go returned error: %v", err)
+	}
+	text := string(source)
+	for _, testCase := range []struct {
+		name  string
+		start string
+		end   string
+	}{
+		{
+			name:  "account selection",
+			start: "func (r *ProviderRepository) ListAccountsForRoutingPool",
+			end:   "func (r *ProviderRepository) FindSessionBindingInRoutingPool",
+		},
+		{
+			name:  "model exposure",
+			start: "func (r *ProviderRepository) ListExposedModelsForRoutingPools",
+			end:   "func (r *ProviderRepository) ListEligibleAccountsForModel",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			start := strings.Index(text, testCase.start)
+			end := strings.Index(text, testCase.end)
+			if start < 0 || end <= start {
+				t.Fatalf("could not isolate %s query", testCase.name)
+			}
+			if strings.Contains(text[start:end], "c.access_token_expires_at") {
+				t.Fatal("routing pool query filters access-token expiry before provider refresh can run")
+			}
+		})
+	}
+}
+
 func TestProviderRepositorySubjectConflictPreservesSchedulingFields(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
@@ -353,6 +388,7 @@ func TestProviderRepositoryRoutingPoolSelectionAndBinding(t *testing.T) {
 		Priority:              1,
 		Status:                provider.AccountStatusActive,
 	})
+	expiredAt := time.Now().Add(-time.Minute)
 	pooled := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
 		AccountType:           provider.AccountTypeCodexOAuth,
@@ -360,6 +396,7 @@ func TestProviderRepositoryRoutingPoolSelectionAndBinding(t *testing.T) {
 		DisplayName:           "Pooled Account",
 		EncryptedAccessToken:  "pool-token",
 		EncryptedRefreshToken: "refresh-token",
+		AccessTokenExpiresAt:  &expiredAt,
 		Enabled:               true,
 		Priority:              50,
 		Status:                provider.AccountStatusActive,
@@ -1488,6 +1525,7 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	}
 	want := []provider.ExposedModel{
 		{ID: "codex-mini", OwnedBy: "openai"},
+		{ID: "expired-only", OwnedBy: "openai"},
 		{ID: "gpt-5", OwnedBy: "openai"},
 	}
 	if !reflect.DeepEqual(models, want) {
