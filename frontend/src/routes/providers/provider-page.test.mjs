@@ -29,6 +29,7 @@ const {
   pruneAccountModelStates,
   pruneAccountTestResultStates,
   pruneSelectedProviderAccounts,
+  providerAccountEffectiveStatus,
   providerAccounts,
   providerAccountPauseForm,
   providerConnectForm,
@@ -248,6 +249,14 @@ test('futureTimeRemainingLabel formats scheduling block windows', () => {
   assert.equal(futureTimeRemainingLabel('2026-06-24T03:00:00Z', now), '1d 3h remaining');
   assert.equal(futureTimeRemainingLabel('2026-06-22T23:59:00Z', now), '');
   assert.equal(futureTimeRemainingLabel('not-a-date', now), '');
+});
+
+test('providerAccountEffectiveStatus treats elapsed transient windows as active', () => {
+  const now = new Date('2026-07-20T06:00:00Z');
+  assert.equal(providerAccountEffectiveStatus({ status: 'rate_limited', rateLimitedUntil: '2026-07-20T05:59:00Z' }, now), 'active');
+  assert.equal(providerAccountEffectiveStatus({ status: 'rate_limited', rateLimitedUntil: '2026-07-20T06:01:00Z' }, now), 'rate_limited');
+  assert.equal(providerAccountEffectiveStatus({ status: 'circuit_open', circuitOpenUntil: '2026-07-20T05:59:00Z' }, now), 'active');
+  assert.equal(providerAccountEffectiveStatus({ status: 'expired' }, now), 'expired');
 });
 
 test('loadRequestLogs includes usage source filter when selected', async () => {
@@ -875,6 +884,10 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /bind:value=\{draft\.maxConcurrentRequests\}/);
   assert.match(source, /provider-account-max-concurrency/);
   assert.match(source, /testProviderAccount/);
+  assert.match(source, /testAccountRecovery/);
+  assert.match(source, /title="Test recovery"/);
+  assert.match(source, /recoveryTestAccountId === account\.id/);
+  assert.match(source, /Recovery confirmed/);
   assert.match(source, /href=\{`\/request-logs\?providerAccountId=\$\{account\.id\}`\}/);
   assert.match(source, /Request logs/);
   assert.match(source, /pauseProviderAccount/);
@@ -901,8 +914,9 @@ test('provider account state can disconnect a single account', () => {
 
 test('provider account rows show remaining scheduling block windows', () => {
   assert.match(source, /function statusHoverDetail/);
+  assert.match(source, /providerAccountEffectiveStatus\(account\)/);
   assert.match(source, /account\.status === 'rate_limited' && account\.rateLimitedUntil/);
-  assert.match(source, /Rate limited until \$\{formatDate\(account\.rateLimitedUntil\)\}/);
+  assert.match(source, /Rate limit elapsed at \$\{formatDate\(account\.rateLimitedUntil\)\}/);
   assert.match(source, /title=\{statusHoverDetail\(account\)\}/);
   assert.doesNotMatch(source, /futureTimeRemainingLabel/);
   assert.doesNotMatch(source, /Rate limited \{futureTimeRemainingLabel/);

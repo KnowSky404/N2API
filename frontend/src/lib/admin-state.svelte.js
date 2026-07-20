@@ -766,18 +766,33 @@ export function getGatewayReadyKeys(keys = apiKeys.items) {
   });
 }
 
-/** @param {string | null | undefined} value */
-function isFutureTimestamp(value) {
+/** @param {string | null | undefined} value @param {Date} [now] */
+function isFutureTimestamp(value, now = new Date()) {
   if (!value) return false;
   const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) && timestamp > Date.now();
+  return Number.isFinite(timestamp) && timestamp > now.getTime();
+}
+
+/** @param {string | null | undefined} value @param {Date} [now] */
+function isElapsedTimestamp(value, now = new Date()) {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp <= now.getTime();
+}
+
+/** @param {Partial<ProviderAccount>} account @param {Date} [now] */
+export function providerAccountEffectiveStatus(account, now = new Date()) {
+  const status = account.status ?? '';
+  if (status === 'rate_limited' && isElapsedTimestamp(account.rateLimitedUntil, now)) return 'active';
+  if (status === 'circuit_open' && isElapsedTimestamp(account.circuitOpenUntil, now)) return 'active';
+  return status;
 }
 
 /** @param {Partial<ProviderAccount>} account */
 function isProviderAccountSchedulable(account) {
   if (!account.enabled) return false;
   if (isFutureTimestamp(account.rateLimitedUntil) || isFutureTimestamp(account.circuitOpenUntil)) return false;
-  return !['disabled', 'expired', 'rate_limited', 'circuit_open'].includes(account.status ?? '');
+  return !['disabled', 'expired', 'rate_limited', 'circuit_open'].includes(providerAccountEffectiveStatus(account));
 }
 
 /** @param {Partial<ProviderAccount>} account */
@@ -785,7 +800,8 @@ function providerAccountUnschedulableReason(account) {
   if (!account.enabled) return 'disabled';
   if (isFutureTimestamp(account.rateLimitedUntil)) return 'rate_limited';
   if (isFutureTimestamp(account.circuitOpenUntil)) return 'circuit_open';
-  if (['disabled', 'expired', 'rate_limited', 'circuit_open'].includes(account.status ?? '')) return account.status ?? '';
+  const status = providerAccountEffectiveStatus(account);
+  if (['disabled', 'expired', 'rate_limited', 'circuit_open'].includes(status)) return status;
   return '';
 }
 
@@ -2257,20 +2273,22 @@ export async function testProviderAccount(account) {
   providerAccounts.saving = true;
   providerAccounts.error = '';
   try {
-    await requestJSON(`/api/admin/provider-accounts/${account.id}/test`, {
+    const payload = await requestJSON(`/api/admin/provider-accounts/${account.id}/test`, {
       method: 'POST'
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return null;
     await loadProviderAccounts();
     await loadModelRouting();
     await refreshExpandedAccountTestResults();
+    return payload?.account ?? null;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return null;
     const message = error instanceof Error ? error.message : 'Account test failed';
     providerAccounts.error = message;
     await loadProviderAccounts();
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return null;
     providerAccounts.error = message;
+    return null;
   } finally {
     if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
   }

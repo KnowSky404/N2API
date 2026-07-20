@@ -1432,6 +1432,38 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	}
 }
 
+func TestTestAccountOAuthRecoveryClearsRateLimitState(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 3, "oauth-access-token")
+	account.AccountType = AccountTypeCodexOAuth
+	account.Metadata = map[string]string{"chatgpt_account_id": "acct_chatgpt"}
+	account.Status = AccountStatusRateLimited
+	account.StatusReason = "previous rate limit"
+	account.LastError = "previous rate limit"
+	now := time.Now()
+	rateLimitedUntil := now.Add(-time.Minute)
+	account.LastErrorAt = &now
+	account.RateLimitedUntil = &rateLimitedUntil
+	repo.accounts = []Account{account}
+	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
+	service := newConfiguredService(repo, client)
+
+	tested, err := service.TestAccount(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("TestAccount returned error: %v", err)
+	}
+
+	if client.gotConfig.ProbeChatGPTAccountID != "acct_chatgpt" || client.gotAccessToken != "oauth-access-token" {
+		t.Fatalf("probe account/token = %q/%q, want acct_chatgpt/oauth-access-token", client.gotConfig.ProbeChatGPTAccountID, client.gotAccessToken)
+	}
+	if tested.Status != AccountStatusActive || tested.StatusReason != "" || tested.LastError != "" || tested.LastErrorAt != nil || tested.RateLimitedUntil != nil {
+		t.Fatalf("tested account = %+v, want recovered active account", tested)
+	}
+	if tested.LastTestAt == nil || tested.LastTestStatus != AccountTestStatusPassed || tested.LastTestError != "" {
+		t.Fatalf("test result = at:%v status:%q error:%q, want passed result", tested.LastTestAt, tested.LastTestStatus, tested.LastTestError)
+	}
+}
+
 func TestTestAccountLogsModelOnlyForCodexResponsesProbe(t *testing.T) {
 	testCases := []struct {
 		name               string

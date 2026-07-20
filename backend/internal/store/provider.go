@@ -1782,7 +1782,11 @@ func (r *ProviderRepository) ListExposedModelsForRoutingPools(ctx context.Contex
 			AND rpa.pool_id = ANY($2)
 			AND m.enabled = true
 			AND a.enabled = true
-			AND a.status = 'active'
+			AND (
+				a.status IN ('', 'active')
+				OR (a.status = 'rate_limited' AND a.rate_limited_until IS NOT NULL AND a.rate_limited_until <= now())
+				OR (a.status = 'circuit_open' AND a.circuit_open_until IS NOT NULL AND a.circuit_open_until <= now())
+			)
 			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= now())
 			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= now())
 		ORDER BY m.model

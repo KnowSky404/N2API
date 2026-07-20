@@ -21,6 +21,7 @@
     providerConnectForm,
     providerOAuth,
     pauseProviderAccount,
+    providerAccountEffectiveStatus,
     refreshProviderAccount,
     removeAccountModel,
     resetProviderAccountStatus,
@@ -68,6 +69,8 @@
   /** @type {Record<string, { status: string, errorCode: string, httpStatus: number, latencyMs: number, message: string, checkedAt: string }>} */
   let modelTestRuns = $state({});
   let modelTestRunActive = $state(false);
+  let recoveryTestAccountId = $state(0);
+  let recoveryNotice = $state(/** @type {{ kind: 'success' | 'warning' | 'error', title: string, message: string } | null} */ (null));
 
   const providerStateLabel = $derived(getProviderStateLabel());
   const editingProviderAccount = $derived(
@@ -202,11 +205,12 @@
    * @param {string} filter
    */
   function accountMatchesStatusFilter(account, filter) {
-    if (filter === 'active') return account.status === 'active';
-    if (filter === 'blocked') return account.status !== 'active';
-    if (filter === 'rate_limited') return account.status === 'rate_limited';
-    if (filter === 'circuit_open') return account.status === 'circuit_open';
-    if (filter === 'expired') return account.status === 'expired';
+    const status = providerAccountEffectiveStatus(account);
+    if (filter === 'active') return status === 'active';
+    if (filter === 'blocked') return status !== 'active';
+    if (filter === 'rate_limited') return status === 'rate_limited';
+    if (filter === 'circuit_open') return status === 'circuit_open';
+    if (filter === 'expired') return status === 'expired';
     return true;
   }
 
@@ -252,7 +256,7 @@
   function accountSortValue(account, key) {
     if (key === 'account') return accountLabel(account);
     if (key === 'type') return accountTypeLabel(account);
-    if (key === 'status') return statusLabel(account.status);
+    if (key === 'status') return statusLabel(providerAccountEffectiveStatus(account));
     if (key === 'enabled') return account.enabled ? 0 : 1;
     if (key === 'refresh') return Date.parse(account.lastRefreshAt ?? '') || 0;
     if (key === 'used') return Date.parse(account.lastUsedAt ?? '') || 0;
@@ -685,9 +689,43 @@
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function statusHoverDetail(account) {
     if (account.status === 'rate_limited' && account.rateLimitedUntil) {
+      if (providerAccountEffectiveStatus(account) === 'active') {
+        return `Rate limit elapsed at ${formatDate(account.rateLimitedUntil)}. Test recovery to confirm upstream health.`;
+      }
       return `Rate limited until ${formatDate(account.rateLimitedUntil)}`;
     }
+    if (account.status === 'circuit_open' && account.circuitOpenUntil && providerAccountEffectiveStatus(account) === 'active') {
+      return `Circuit window elapsed at ${formatDate(account.circuitOpenUntil)}. Test recovery to confirm upstream health.`;
+    }
     return statusLabel(account.status);
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  async function testAccountRecovery(account) {
+    if (!isCodexOAuthAccount(account) || providerAccounts.saving || recoveryTestAccountId) return;
+    recoveryTestAccountId = account.id;
+    recoveryNotice = null;
+    const tested = await testProviderAccount(account);
+    if (providerAccounts.error || !tested) {
+      recoveryNotice = {
+        kind: 'error',
+        title: 'Recovery test failed',
+        message: providerAccounts.error || `${accountLabel(account)} could not be tested.`
+      };
+    } else if (tested.status === 'active') {
+      recoveryNotice = {
+        kind: 'success',
+        title: 'Recovery confirmed',
+        message: `${accountLabel(account)} is active and its local failure state was cleared.`
+      };
+    } else {
+      recoveryNotice = {
+        kind: 'warning',
+        title: 'Recovery not confirmed',
+        message: tested.statusReason || tested.lastError || `${accountLabel(account)} is still ${statusLabel(tested.status)}.`
+      };
+    }
+    recoveryTestAccountId = 0;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').AccountModel[]} models */
@@ -708,6 +746,34 @@
 </svelte:head>
 
 <AuthGate>
+{#if recoveryNotice}
+  <div
+    class={[
+      'fixed right-4 top-4 z-[70] flex w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-lg border bg-white p-4 shadow-lg',
+      recoveryNotice.kind === 'success'
+        ? 'border-emerald-200'
+        : recoveryNotice.kind === 'warning'
+          ? 'border-amber-200'
+          : 'border-red-200'
+    ]}
+    role={recoveryNotice.kind === 'error' ? 'alert' : 'status'}
+    aria-live="polite"
+  >
+    <div class="min-w-0 flex-1">
+      <p class="text-sm font-semibold text-[#0d0d0d]">{recoveryNotice.title}</p>
+      <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{recoveryNotice.message}</p>
+    </div>
+    <button
+      class="ui-button ui-button--icon inline-flex size-7 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+      type="button"
+      onclick={() => { recoveryNotice = null; }}
+      title="Dismiss notification"
+      aria-label="Dismiss notification"
+    >
+      <X class="size-4" aria-hidden="true" />
+    </button>
+  </div>
+{/if}
 <section class="ui-page min-w-0">
   <header class="ui-page-header">
     <div class="ui-page-heading">
@@ -1153,6 +1219,7 @@ Enabled
       {@const modelState = getAccountModelsState(account.id)}
       {@const historyState = getAccountTestResultsState(account.id)}
       {@const enabledModels = enabledAccountModelCount(modelState.items)}
+      {@const effectiveStatus = providerAccountEffectiveStatus(account)}
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle" data-label="Account" title={accountHoverDetail(account)}>
           <p class="max-w-[22rem] truncate font-medium text-[#0d0d0d]">{accountLabel(account)}</p>
@@ -1169,14 +1236,14 @@ Enabled
           <span
             class={[
               'inline-flex max-w-full whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium capitalize',
-              account.status === 'active' || !account.status
+              effectiveStatus === 'active' || !effectiveStatus
                 ? 'bg-[#e8f5f0] text-[#0a7a5e]'
-                : account.status === 'disabled'
+                : effectiveStatus === 'disabled'
                   ? 'bg-[#f5f5f5] text-[#6e6e6e]'
                   : 'bg-amber-50 text-amber-700'
             ]}
           >
-            {statusLabel(account.status)}
+            {statusLabel(effectiveStatus)}
           </span>
         </td>
         <td class="px-4 py-3 align-middle" data-label="Enabled">
@@ -1201,6 +1268,19 @@ Enabled
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]" data-label="Last used">{formatDate(account.lastUsedAt)}</td>
         <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]" data-label="Actions">
           <div class="relative flex justify-end gap-2 whitespace-nowrap">
+            {#if isCodexOAuthAccount(account)}
+              <button
+                class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                type="button"
+                disabled={providerAccounts.saving || recoveryTestAccountId !== 0}
+                onclick={() => testAccountRecovery(account)}
+                title="Test recovery"
+                aria-label={`Test recovery for ${accountLabel(account)}`}
+              >
+                <RefreshCw class={recoveryTestAccountId === account.id ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
+                <span class="sr-only">Test recovery</span>
+              </button>
+            {/if}
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
@@ -1622,7 +1702,7 @@ Enabled
           <h3 class="text-sm font-semibold text-[#0d0d0d]">Account actions</h3>
           <div class="flex flex-wrap gap-2">
             <a class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href={`/request-logs?providerAccountId=${account.id}`}>Request logs</a>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => testProviderAccount(account)}>Test</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => isCodexOAuthAccount(account) ? testAccountRecovery(account) : testProviderAccount(account)}>{isCodexOAuthAccount(account) ? 'Test recovery' : 'Test'}</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => pauseProviderAccount(account)}>Pause</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => refreshProviderAccount(account)}>Refresh</button>

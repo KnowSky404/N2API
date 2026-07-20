@@ -1524,9 +1524,11 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 		t.Fatalf("ListExposedModels returned error: %v", err)
 	}
 	want := []provider.ExposedModel{
+		{ID: "circuit-open-past", OwnedBy: "openai"},
 		{ID: "codex-mini", OwnedBy: "openai"},
 		{ID: "expired-only", OwnedBy: "openai"},
 		{ID: "gpt-5", OwnedBy: "openai"},
+		{ID: "rate-limited-past", OwnedBy: "openai"},
 	}
 	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("exposed models = %+v, want %+v", models, want)
