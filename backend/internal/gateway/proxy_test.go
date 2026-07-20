@@ -66,6 +66,7 @@ type fakeSelectedAccountProvider struct {
 	authorizationRefreshes      []authorizationRefreshCall
 	refreshedAuthorizationToken string
 	refreshAuthorizationRetry   bool
+	refreshFailureRecorded      bool
 	refreshAuthorizationErr     error
 }
 
@@ -137,14 +138,14 @@ func (p *fakeSelectedAccountProvider) RecordAccountFailure(_ context.Context, ac
 	return nil
 }
 
-func (p *fakeSelectedAccountProvider) RefreshAccountAuthorization(_ context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (string, bool, error) {
+func (p *fakeSelectedAccountProvider) RefreshAccountAuthorization(_ context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (string, bool, bool, error) {
 	p.authorizationRefreshes = append(p.authorizationRefreshes, authorizationRefreshCall{
 		accountID:           accountID,
 		rejectedAccessToken: rejectedAccessToken,
 		statusCode:          statusCode,
 		message:             message,
 	})
-	return p.refreshedAuthorizationToken, p.refreshAuthorizationRetry, p.refreshAuthorizationErr
+	return p.refreshedAuthorizationToken, p.refreshAuthorizationRetry, p.refreshFailureRecorded, p.refreshAuthorizationErr
 }
 
 func (p *fakeSelectedAccountProvider) RecordAccountUsed(_ context.Context, accountID int64) error {
@@ -3671,7 +3672,7 @@ func TestProxyFallsBackAfterRefreshedOAuthTokenIsStillUnauthorized(t *testing.T)
 	}
 }
 
-func TestProxyFallsBackWhenOAuthAuthorizationRefreshFails(t *testing.T) {
+func TestProxyRecordsAccountFailureWhenOAuthAuthorizationRefreshFailsBeforeRecording(t *testing.T) {
 	transportCalls := 0
 	tokens := &fakeSelectedAccountProvider{
 		accounts: []SelectedAccount{
@@ -3714,11 +3715,46 @@ func TestProxyFallsBackWhenOAuthAuthorizationRefreshFails(t *testing.T) {
 	if transportCalls != 2 || len(tokens.authorizationRefreshes) != 1 {
 		t.Fatalf("transport/refresh = %d/%+v, want 2/1", transportCalls, tokens.authorizationRefreshes)
 	}
-	if len(tokens.failures) != 0 {
-		t.Fatalf("gateway account failures = %+v, want refresh failure recorded only by provider", tokens.failures)
+	if len(tokens.failures) != 1 || tokens.failures[0].accountID != 1 || tokens.failures[0].statusCode != http.StatusUnauthorized {
+		t.Fatalf("gateway account failures = %+v, want rejected authorization recorded", tokens.failures)
 	}
 	if len(tokens.exclusions) != 2 || !slices.Equal(tokens.exclusions[1], []int64{1}) {
 		t.Fatalf("selection exclusions = %+v, want failed OAuth account excluded", tokens.exclusions)
+	}
+}
+
+func TestProxyDoesNotDuplicatePersistedOAuthAuthorizationRefreshFailure(t *testing.T) {
+	tokens := &fakeSelectedAccountProvider{
+		accounts: []SelectedAccount{
+			{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"},
+		},
+		refreshAuthorizationRetry: true,
+		refreshFailureRecorded:    true,
+		refreshAuthorizationErr:   errors.New("refresh rejected"),
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
+	}
+	if len(tokens.authorizationRefreshes) != 1 {
+		t.Fatalf("authorization refreshes = %+v, want one", tokens.authorizationRefreshes)
+	}
+	if len(tokens.failures) != 0 {
+		t.Fatalf("gateway account failures = %+v, want provider record preserved without duplication", tokens.failures)
 	}
 }
 

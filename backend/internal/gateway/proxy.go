@@ -75,7 +75,7 @@ type AccountFailureReporter interface {
 }
 
 type AccountAuthorizationRefresher interface {
-	RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (accessToken string, retry bool, err error)
+	RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (accessToken string, retry bool, failureRecorded bool, err error)
 }
 
 type AccountUsageRecorder interface {
@@ -461,7 +461,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var upstreamResp *http.Response
 		var upstreamErr error
 		authorizationRetried := false
-		authorizationRefreshFailed := false
+		authorizationRefreshFailureRecorded := false
 		for {
 			upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 			if err != nil {
@@ -479,13 +479,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
 				break
 			}
-			refreshedToken, retry, refreshErr := p.refreshAccountAuthorization(r.Context(), selected, upstreamResp.StatusCode, message)
+			refreshedToken, retry, failureRecorded, refreshErr := p.refreshAccountAuthorization(r.Context(), selected, upstreamResp.StatusCode, message)
 			if !retry {
 				break
 			}
 			authorizationRetried = true
 			if refreshErr != nil || strings.TrimSpace(refreshedToken) == "" {
-				authorizationRefreshFailed = true
+				authorizationRefreshFailureRecorded = failureRecorded
 				break
 			}
 			_ = upstreamResp.Body.Close()
@@ -521,7 +521,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
 				return
 			}
-			if !authorizationRefreshFailed {
+			if !authorizationRefreshFailureRecorded {
 				p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
 			}
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
@@ -1087,13 +1087,13 @@ func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statu
 	_ = reporter.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
 }
 
-func (p *Proxy) refreshAccountAuthorization(ctx context.Context, selected SelectedAccount, statusCode int, message string) (string, bool, error) {
+func (p *Proxy) refreshAccountAuthorization(ctx context.Context, selected SelectedAccount, statusCode int, message string) (string, bool, bool, error) {
 	if selected.AccountID <= 0 || selected.AccountType != provider.AccountTypeCodexOAuth {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	refresher, ok := p.accounts.(AccountAuthorizationRefresher)
 	if !ok {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	return refresher.RefreshAccountAuthorization(ctx, selected.AccountID, selected.AuthorizationToken, statusCode, message)
 }

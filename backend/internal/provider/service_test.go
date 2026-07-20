@@ -726,7 +726,7 @@ func TestRefreshAccountAuthorizationRefreshesRejectedUnexpiredToken(t *testing.T
 	}}
 	service := newConfiguredService(repo, client)
 
-	token, retry, err := service.RefreshAccountAuthorization(
+	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
 		context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
 	)
 	if err != nil {
@@ -734,6 +734,9 @@ func TestRefreshAccountAuthorizationRefreshesRejectedUnexpiredToken(t *testing.T
 	}
 	if !retry || token != "new-access" {
 		t.Fatalf("refresh result = token %q retry %v, want new-access/true", token, retry)
+	}
+	if failureRecorded {
+		t.Fatal("successful refresh reported an account failure")
 	}
 	if client.calls != 1 {
 		t.Fatalf("refresh calls = %d, want 1", client.calls)
@@ -751,7 +754,7 @@ func TestRefreshAccountAuthorizationReusesConcurrentlyRotatedToken(t *testing.T)
 	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "unexpected-refresh", ExpiresIn: 3600}}
 	service := newConfiguredService(repo, client)
 
-	token, retry, err := service.RefreshAccountAuthorization(
+	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
 		context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
 	)
 	if err != nil {
@@ -759,6 +762,9 @@ func TestRefreshAccountAuthorizationReusesConcurrentlyRotatedToken(t *testing.T)
 	}
 	if !retry || token != "new-access" {
 		t.Fatalf("refresh result = token %q retry %v, want new-access/true", token, retry)
+	}
+	if failureRecorded {
+		t.Fatal("concurrently rotated token reported an account failure")
 	}
 	if client.calls != 0 {
 		t.Fatalf("refresh calls = %d, want 0 for already rotated token", client.calls)
@@ -782,17 +788,18 @@ func TestRefreshAccountAuthorizationSerializesConcurrentRejectedTokenRefresh(t *
 	service := newConfiguredService(repo, client)
 
 	type result struct {
-		token string
-		retry bool
-		err   error
+		token           string
+		retry           bool
+		failureRecorded bool
+		err             error
 	}
 	results := make(chan result, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			token, retry, err := service.RefreshAccountAuthorization(
+			token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
 				context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
 			)
-			results <- result{token: token, retry: retry, err: err}
+			results <- result{token: token, retry: retry, failureRecorded: failureRecorded, err: err}
 		}()
 	}
 
@@ -800,8 +807,8 @@ func TestRefreshAccountAuthorizationSerializesConcurrentRejectedTokenRefresh(t *
 	client.release <- struct{}{}
 	for i := 0; i < 2; i++ {
 		got := <-results
-		if got.err != nil || !got.retry || got.token != "new-access" {
-			t.Fatalf("refresh result = token %q retry %v error %v", got.token, got.retry, got.err)
+		if got.err != nil || !got.retry || got.failureRecorded || got.token != "new-access" {
+			t.Fatalf("refresh result = token %q retry %v failureRecorded %v error %v", got.token, got.retry, got.failureRecorded, got.err)
 		}
 	}
 	if client.calls != 1 {
@@ -817,7 +824,7 @@ func TestRefreshAccountAuthorizationSkipsScopePermissionFailure(t *testing.T) {
 	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "unexpected-refresh", ExpiresIn: 3600}}
 	service := newConfiguredService(repo, client)
 
-	token, retry, err := service.RefreshAccountAuthorization(
+	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
 		context.Background(), account.ID, "access-token", http.StatusForbidden, "missing scopes: api.responses.write",
 	)
 	if err != nil {
@@ -826,8 +833,54 @@ func TestRefreshAccountAuthorizationSkipsScopePermissionFailure(t *testing.T) {
 	if retry || token != "" {
 		t.Fatalf("refresh result = token %q retry %v, want empty/false", token, retry)
 	}
+	if failureRecorded {
+		t.Fatal("scope permission failure reported an OAuth refresh failure")
+	}
 	if client.calls != 0 {
 		t.Fatalf("refresh calls = %d, want 0 for scope permission failure", client.calls)
+	}
+}
+
+func TestRefreshAccountAuthorizationReportsPersistedRefreshFailure(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	account := testExpiredAccount(t, 7, true, 3, "access-token", "refresh-token", expiresAt)
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh rejected")})
+
+	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
+		context.Background(), account.ID, "access-token", http.StatusUnauthorized, "invalid access token",
+	)
+	if err == nil {
+		t.Fatal("RefreshAccountAuthorization returned nil error")
+	}
+	if token != "" || !retry || !failureRecorded {
+		t.Fatalf("refresh result = token %q retry %v failureRecorded %v, want empty/true/true", token, retry, failureRecorded)
+	}
+	if repo.accounts[0].FailureCount != 1 {
+		t.Fatalf("failure count = %d, want 1", repo.accounts[0].FailureCount)
+	}
+}
+
+func TestRefreshAccountAuthorizationReportsUnpersistedCredentialError(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	account := testExpiredAccount(t, 7, true, 3, "access-token", "refresh-token", expiresAt)
+	account.EncryptedRefreshToken = "invalid-ciphertext"
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
+		context.Background(), account.ID, "access-token", http.StatusUnauthorized, "invalid access token",
+	)
+	if err == nil {
+		t.Fatal("RefreshAccountAuthorization returned nil error")
+	}
+	if token != "" || !retry || failureRecorded {
+		t.Fatalf("refresh result = token %q retry %v failureRecorded %v, want empty/true/false", token, retry, failureRecorded)
+	}
+	if repo.accounts[0].FailureCount != 0 {
+		t.Fatalf("failure count = %d, want no provider refresh failure record", repo.accounts[0].FailureCount)
 	}
 }
 

@@ -89,7 +89,7 @@ func (p gatewayAccountProvider) RecordAccountFailure(ctx context.Context, accoun
 	return p.service.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
 }
 
-func (p gatewayAccountProvider) RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (string, bool, error) {
+func (p gatewayAccountProvider) RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (string, bool, bool, error) {
 	return p.service.RefreshAccountAuthorization(ctx, accountID, rejectedAccessToken, statusCode, message)
 }
 
