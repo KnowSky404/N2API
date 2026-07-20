@@ -7,7 +7,7 @@ import (
 )
 
 func TestGatewayModelDocumentationMentionsAPIKeyPolicyFiltering(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -27,7 +27,7 @@ func TestGatewayModelDocumentationMentionsAPIKeyPolicyFiltering(t *testing.T) {
 }
 
 func TestGatewayModelDocumentationMentionsRoutingPoolFiltering(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -47,7 +47,7 @@ func TestGatewayModelDocumentationMentionsRoutingPoolFiltering(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsStickySessionProxyHeaderRequirement(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -66,7 +66,7 @@ func TestGatewayDocumentationMentionsStickySessionProxyHeaderRequirement(t *test
 }
 
 func TestGatewayDocumentationMentionsPersistentStickySessionBindings(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -85,7 +85,7 @@ func TestGatewayDocumentationMentionsPersistentStickySessionBindings(t *testing.
 }
 
 func TestGatewayDocumentationMentionsAPIKeyLimitInheritance(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -104,7 +104,7 @@ func TestGatewayDocumentationMentionsAPIKeyLimitInheritance(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAPIKeyActiveConcurrency(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -123,7 +123,7 @@ func TestGatewayDocumentationMentionsAPIKeyActiveConcurrency(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAPIKeyRateWindowVisibility(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -143,7 +143,7 @@ func TestGatewayDocumentationMentionsAPIKeyRateWindowVisibility(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAPIKeyListFiltering(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -161,7 +161,7 @@ func TestGatewayDocumentationMentionsAPIKeyListFiltering(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAPIKeyRename(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -181,7 +181,7 @@ func TestGatewayDocumentationMentionsAPIKeyRename(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAPIKeyDisable(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -202,7 +202,7 @@ func TestGatewayDocumentationMentionsAPIKeyDisable(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAPIKeyBudgets(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -225,7 +225,7 @@ func TestGatewayDocumentationMentionsAPIKeyBudgets(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsRoutingPools(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -248,7 +248,7 @@ func TestGatewayDocumentationMentionsRoutingPools(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -271,7 +271,7 @@ func TestGatewayDocumentationMentionsPreciseLocalLimitLogReasons(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsRequestLogFallbackDiagnostics(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -291,7 +291,7 @@ func TestGatewayDocumentationMentionsRequestLogFallbackDiagnostics(t *testing.T)
 }
 
 func TestGatewayDocumentationMentionsRoutingPoolFallback(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -313,7 +313,7 @@ func TestGatewayDocumentationMentionsRoutingPoolFallback(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAllUsageLogDrilldowns(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -336,7 +336,7 @@ func TestGatewayDocumentationMentionsAllUsageLogDrilldowns(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -354,7 +354,7 @@ func TestGatewayDocumentationMentionsReadinessRefresh(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsAPIUpstreamCredentialRotation(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -375,7 +375,7 @@ func TestGatewayDocumentationMentionsAPIUpstreamCredentialRotation(t *testing.T)
 }
 
 func TestGatewayDocumentationMentionsProviderAccountFingerprintProfileCreation(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -396,7 +396,7 @@ func TestGatewayDocumentationMentionsProviderAccountFingerprintProfileCreation(t
 }
 
 func TestGatewayDocumentationOmitsGlobalAllowedModelList(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -409,7 +409,7 @@ func TestGatewayDocumentationOmitsGlobalAllowedModelList(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -428,7 +428,7 @@ func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountConcurrencyOverride(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -447,7 +447,7 @@ func TestGatewayDocumentationMentionsProviderAccountConcurrencyOverride(t *testi
 }
 
 func TestGatewayDocumentationMentionsProviderAccountActiveConcurrency(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -466,7 +466,7 @@ func TestGatewayDocumentationMentionsProviderAccountActiveConcurrency(t *testing
 }
 
 func TestGatewayDocumentationMentionsProviderAccountDisconnect(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -485,7 +485,7 @@ func TestGatewayDocumentationMentionsProviderAccountDisconnect(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsRoutingPreviewConcurrency(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -505,7 +505,7 @@ func TestGatewayDocumentationMentionsRoutingPreviewConcurrency(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsRoutingPreviewScheduleReasons(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -524,7 +524,7 @@ func TestGatewayDocumentationMentionsRoutingPreviewScheduleReasons(t *testing.T)
 }
 
 func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -543,7 +543,7 @@ func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountBulkEnable(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -562,7 +562,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkEnable(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountBulkScheduling(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -581,7 +581,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkScheduling(t *testing.T)
 }
 
 func TestGatewayDocumentationMentionsProviderAccountBulkModels(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -600,7 +600,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkModels(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountBulkRoutingPoolMembership(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -621,7 +621,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkRoutingPoolMembership(t 
 }
 
 func TestGatewayDocumentationMentionsSelectedProviderAccountTests(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -640,7 +640,7 @@ func TestGatewayDocumentationMentionsSelectedProviderAccountTests(t *testing.T) 
 }
 
 func TestGatewayDocumentationMentionsProviderAccountBulkRefresh(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -659,7 +659,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkRefresh(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountBulkDisconnect(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -678,7 +678,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkDisconnect(t *testing.T)
 }
 
 func TestGatewayDocumentationMentionsProviderAccountBulkStatusActions(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -697,7 +697,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkStatusActions(t *testing
 }
 
 func TestGatewayDocumentationMentionsSchedulingHealthSummary(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -716,7 +716,7 @@ func TestGatewayDocumentationMentionsSchedulingHealthSummary(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsRequestLogModelSessionDrilldown(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -736,7 +736,7 @@ func TestGatewayDocumentationMentionsRequestLogModelSessionDrilldown(t *testing.
 }
 
 func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md", "../../../.env.example"} {
+	for _, path := range []string{"../../../docs/manual.md", "../../../.env.example"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -757,7 +757,7 @@ func TestGatewayDocumentationMentionsProviderAccountAutoTests(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountAutoTestStatus(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -777,7 +777,7 @@ func TestGatewayDocumentationMentionsProviderAccountAutoTestStatus(t *testing.T)
 }
 
 func TestGatewayDocumentationMentionsRequestLogRetentionCleanup(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -797,7 +797,7 @@ func TestGatewayDocumentationMentionsRequestLogRetentionCleanup(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsProviderAccountSchedulingPause(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -818,7 +818,7 @@ func TestGatewayDocumentationMentionsProviderAccountSchedulingPause(t *testing.T
 }
 
 func TestGatewayDocumentationMentionsProviderAccountTestResults(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
@@ -843,7 +843,7 @@ func TestGatewayDocumentationMentionsProviderAccountTestResults(t *testing.T) {
 }
 
 func TestGatewayDocumentationMentionsRoutingPreviewExclusions(t *testing.T) {
-	for _, path := range []string{"../../../README.md", "../../../deploy/README.md"} {
+	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) returned error: %v", path, err)

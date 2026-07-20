@@ -1,6 +1,8 @@
-# N2API Deployment
+# N2API Manual
 
-The default deployment target is Docker Compose on a small VPS.
+This manual contains the detailed deployment, client configuration, provider
+account, routing, and gateway operations guidance for N2API. The default
+deployment target is Docker Compose on a small VPS.
 
 ## Start Locally
 
