@@ -6,7 +6,7 @@
     formatTokens,
     gatewayLimitLabel,
     gatewaySettings,
-    getActiveKeys,
+    getGatewayReadyKeys,
     getGatewayReadinessIssues,
     getRoutableModelCount,
     getSchedulableProviderAccounts,
@@ -25,7 +25,7 @@
   import { ArrowRight, RefreshCw, TriangleAlert } from 'lucide-svelte';
 
   const statusItems = $derived(getStatusItems());
-  const activeKeys = $derived(getActiveKeys());
+  const gatewayReadyKeys = $derived(getGatewayReadyKeys());
   const schedulableAccounts = $derived(getSchedulableProviderAccounts());
   const unschedulableAccountSummary = $derived(getUnschedulableProviderAccountSummary());
   const routableModelCount = $derived(getRoutableModelCount());
@@ -295,8 +295,8 @@
         <dd class="mt-2 text-xl font-semibold tabular-nums text-[#0d0d0d]">{modelRouting.loading ? '—' : routableModelCount}</dd>
       </div>
       <div class="col-span-2 min-w-0 bg-white p-4 sm:col-span-1">
-        <dt class="text-[13px] font-medium text-[#6e6e6e]">Active API keys</dt>
-        <dd class="mt-2 text-xl font-semibold tabular-nums text-[#0d0d0d]">{apiKeys.loading || apiKeys.error ? '-' : activeKeys.length}</dd>
+        <dt class="text-[13px] font-medium text-[#6e6e6e]">Gateway-ready API keys</dt>
+        <dd class="mt-2 text-xl font-semibold tabular-nums text-[#0d0d0d]">{apiKeys.loading || apiKeys.error ? '-' : gatewayReadyKeys.length}</dd>
       </div>
     </dl>
 

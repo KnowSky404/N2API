@@ -21,6 +21,7 @@ const {
   loadRequestLogs,
   modelListText,
   modelRoutingPreview,
+  getGatewayReadyKeys,
   getGatewayReadinessIssues,
   mergeAccountModelChanges,
   parseAccountModelsText,
@@ -702,8 +703,33 @@ test('getGatewayReadinessIssues reports missing gateway prerequisites', () => {
       'No provider account is connected.',
       'No provider account is currently schedulable.',
       'No model has a schedulable provider account.',
-      'No active API key can call the gateway.'
+      'No gateway-ready API key can call the gateway.'
     ]
+  );
+});
+
+test('getGatewayReadyKeys excludes active keys without a routing pool', () => {
+  assert.deepEqual(
+    getGatewayReadyKeys([
+      { id: 11, routingPoolId: null, revokedAt: null, disabledAt: null },
+      { id: 12, routingPoolId: 0, revokedAt: null, disabledAt: null },
+      { id: 13, routingPoolId: 7, revokedAt: null, disabledAt: null },
+      { id: 14, routingPoolId: 7, revokedAt: '2026-07-20T00:00:00Z', disabledAt: null },
+      { id: 15, routingPoolId: 7, revokedAt: null, disabledAt: '2026-07-20T00:00:00Z' }
+    ]).map((key) => key.id),
+    [13]
+  );
+});
+
+test('getGatewayReadinessIssues rejects an active but unbound API key', () => {
+  assert.deepEqual(
+    getGatewayReadinessIssues({
+      providerAccounts: [{ id: 7, enabled: true, status: 'active' }],
+      activeKeys: [{ id: 11, routingPoolId: null, revokedAt: null, disabledAt: null }],
+      routableModelCount: 1,
+      schedulableAccounts: [{ id: 7, enabled: true, status: 'active' }]
+    }),
+    ['No gateway-ready API key can call the gateway.']
   );
 });
 
@@ -711,7 +737,7 @@ test('getGatewayReadinessIssues is clear when gateway can serve traffic', () => 
   assert.deepEqual(
     getGatewayReadinessIssues({
       providerAccounts: [{ id: 7, enabled: true, status: 'active' }],
-      activeKeys: [{ id: 11, revokedAt: null }],
+      activeKeys: [{ id: 11, routingPoolId: 7, revokedAt: null, disabledAt: null }],
       routableModelCount: 1,
       schedulableAccounts: [{ id: 7, enabled: true, status: 'active' }]
     }),

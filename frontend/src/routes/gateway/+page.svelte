@@ -7,7 +7,7 @@
     formatTokens,
     gatewayLimitLabel,
     gatewaySettings,
-    getActiveKeys,
+    getGatewayReadyKeys,
     getGatewayReadinessIssues,
     getRoutableModelCount,
     getSchedulableProviderAccounts,
@@ -28,7 +28,7 @@
   import AuthGate from '$lib/AuthGate.svelte';
   let gatewayRequested = $state(false);
 
-  const activeKeys = $derived(getActiveKeys());
+  const gatewayReadyKeys = $derived(getGatewayReadyKeys());
   const routableModelCount = $derived(getRoutableModelCount());
   const schedulableAccounts = $derived(getSchedulableProviderAccounts());
   const enabledProviderAccountCount = $derived(providerAccounts.items.filter((account) => account.enabled).length);
@@ -41,7 +41,7 @@
       providerAccounts: providerAccounts.items,
       schedulableAccounts,
       routableModelCount,
-      activeKeys
+      activeKeys: gatewayReadyKeys
     })
   );
   const readinessLoading = $derived(
@@ -201,10 +201,10 @@
           </dd>
         </div>
         <div class="rounded-md border border-[#ededed] bg-[#fafafa] p-3">
-          <dt class="text-sm font-medium text-[#6e6e6e]">Active API keys</dt>
+          <dt class="text-sm font-medium text-[#6e6e6e]">Gateway-ready API keys</dt>
           <dd class="mt-2">
             <a class="text-base font-semibold text-[#0d0d0d] underline decoration-[#d9d9d9] underline-offset-4 hover:decoration-[#10a37f]" href="/api-keys?status=active">
-              {apiKeys.loading ? 'Loading' : activeKeys.length}
+              {apiKeys.loading ? 'Loading' : gatewayReadyKeys.length}
             </a>
           </dd>
         </div>

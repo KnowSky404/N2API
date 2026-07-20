@@ -753,8 +753,17 @@ export function getStatusItems() {
   ];
 }
 
-export function getActiveKeys() {
-  return apiKeys.items.filter((key) => !key.revokedAt && !key.disabledAt);
+/** @param {APIKey[]} [keys] */
+export function getActiveKeys(keys = apiKeys.items) {
+  return keys.filter((key) => !key.revokedAt && !key.disabledAt);
+}
+
+/** @param {APIKey[]} [keys] */
+export function getGatewayReadyKeys(keys = apiKeys.items) {
+  return getActiveKeys(keys).filter((key) => {
+    const routingPoolID = Number(key.routingPoolId ?? 0);
+    return Number.isInteger(routingPoolID) && routingPoolID > 0;
+  });
 }
 
 /** @param {string | null | undefined} value */
@@ -839,7 +848,7 @@ export function getGatewayReadinessIssues(state = {}) {
   const accounts = state.providerAccounts ?? providerAccounts.items;
   const schedulable = state.schedulableAccounts ?? getSchedulableProviderAccounts(accounts);
   const routableCount = Number(state.routableModelCount ?? getRoutableModelCount());
-  const keys = state.activeKeys ?? getActiveKeys();
+  const keys = getGatewayReadyKeys(state.activeKeys ?? apiKeys.items);
   const issues = [];
 
   if (accounts.length === 0) {
@@ -852,7 +861,7 @@ export function getGatewayReadinessIssues(state = {}) {
     issues.push('No model has a schedulable provider account.');
   }
   if (keys.length === 0) {
-    issues.push('No active API key can call the gateway.');
+    issues.push('No gateway-ready API key can call the gateway.');
   }
 
   return issues;

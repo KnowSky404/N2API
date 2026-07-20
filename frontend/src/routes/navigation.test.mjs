@@ -386,7 +386,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
     'Provider accounts',
     'Schedulable accounts',
     'Routable models',
-    'Active API keys',
+    'Gateway-ready API keys',
     'Scheduling health',
     'Enabled accounts',
     'Blocked accounts',
@@ -443,7 +443,7 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /href={unschedulableReasonHref\(item\.reason\)}/);
   assert.match(gatewayPage, /enabledProviderAccountCount/);
   assert.match(gatewayPage, /getRoutableModelCount/);
-  assert.match(gatewayPage, /getActiveKeys/);
+  assert.match(gatewayPage, /getGatewayReadyKeys/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'model'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'provider_account'\)/);
   assert.match(gatewayPage, /loadUsageSummary\('24h', 'usage_source'\)/);
@@ -1173,7 +1173,7 @@ test('api keys page renames keys without rotating secrets', () => {
 });
 
 test('dashboard shows gateway scheduling capacity', () => {
-  for (const label of ['Provider accounts', 'Schedulable accounts', 'Unschedulable accounts', 'Routable models', 'Active API keys']) {
+  for (const label of ['Provider accounts', 'Schedulable accounts', 'Unschedulable accounts', 'Routable models', 'Gateway-ready API keys']) {
     assert.match(dashboardPage, new RegExp(label.replace(' ', '\\s+')), `dashboard should include ${label}`);
   }
 
