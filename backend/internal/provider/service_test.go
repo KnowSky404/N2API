@@ -714,6 +714,123 @@ func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
 	}
 }
 
+func TestRefreshAccountAuthorizationRefreshesRejectedUnexpiredToken(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expiresAt)
+	repo.accounts = []Account{account}
+	client := &captureRefreshOAuthClient{refresh: TokenResponse{
+		AccessToken:  "new-access",
+		RefreshToken: "new-refresh",
+		ExpiresIn:    3600,
+	}}
+	service := newConfiguredService(repo, client)
+
+	token, retry, err := service.RefreshAccountAuthorization(
+		context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
+	)
+	if err != nil {
+		t.Fatalf("RefreshAccountAuthorization returned error: %v", err)
+	}
+	if !retry || token != "new-access" {
+		t.Fatalf("refresh result = token %q retry %v, want new-access/true", token, retry)
+	}
+	if client.calls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", client.calls)
+	}
+	if repo.accounts[0].LastRefreshAt == nil {
+		t.Fatal("LastRefreshAt was not updated")
+	}
+}
+
+func TestRefreshAccountAuthorizationReusesConcurrentlyRotatedToken(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	account := testExpiredAccount(t, 7, true, 3, "new-access", "new-refresh", expiresAt)
+	repo.accounts = []Account{account}
+	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "unexpected-refresh", ExpiresIn: 3600}}
+	service := newConfiguredService(repo, client)
+
+	token, retry, err := service.RefreshAccountAuthorization(
+		context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
+	)
+	if err != nil {
+		t.Fatalf("RefreshAccountAuthorization returned error: %v", err)
+	}
+	if !retry || token != "new-access" {
+		t.Fatalf("refresh result = token %q retry %v, want new-access/true", token, retry)
+	}
+	if client.calls != 0 {
+		t.Fatalf("refresh calls = %d, want 0 for already rotated token", client.calls)
+	}
+}
+
+func TestRefreshAccountAuthorizationSerializesConcurrentRejectedTokenRefresh(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expiresAt)
+	repo.accounts = []Account{account}
+	client := &blockingOAuthClient{
+		refresh: TokenResponse{
+			AccessToken:  "new-access",
+			RefreshToken: "new-refresh",
+			ExpiresIn:    3600,
+		},
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	service := newConfiguredService(repo, client)
+
+	type result struct {
+		token string
+		retry bool
+		err   error
+	}
+	results := make(chan result, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			token, retry, err := service.RefreshAccountAuthorization(
+				context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
+			)
+			results <- result{token: token, retry: retry, err: err}
+		}()
+	}
+
+	<-client.entered
+	client.release <- struct{}{}
+	for i := 0; i < 2; i++ {
+		got := <-results
+		if got.err != nil || !got.retry || got.token != "new-access" {
+			t.Fatalf("refresh result = token %q retry %v error %v", got.token, got.retry, got.err)
+		}
+	}
+	if client.calls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", client.calls)
+	}
+}
+
+func TestRefreshAccountAuthorizationSkipsScopePermissionFailure(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	account := testExpiredAccount(t, 7, true, 3, "access-token", "refresh-token", expiresAt)
+	repo.accounts = []Account{account}
+	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "unexpected-refresh", ExpiresIn: 3600}}
+	service := newConfiguredService(repo, client)
+
+	token, retry, err := service.RefreshAccountAuthorization(
+		context.Background(), account.ID, "access-token", http.StatusForbidden, "missing scopes: api.responses.write",
+	)
+	if err != nil {
+		t.Fatalf("RefreshAccountAuthorization returned error: %v", err)
+	}
+	if retry || token != "" {
+		t.Fatalf("refresh result = token %q retry %v, want empty/false", token, retry)
+	}
+	if client.calls != 0 {
+		t.Fatalf("refresh calls = %d, want 0 for scope permission failure", client.calls)
+	}
+}
+
 func TestAccessTokenRefreshesExpiredToken(t *testing.T) {
 	repo := newMemoryRepo()
 	expired := time.Now().Add(-time.Minute)
@@ -818,12 +935,13 @@ func TestAccessTokenForAccountSerializesConcurrentRefresh(t *testing.T) {
 		release: make(chan struct{}),
 	}
 	service := newConfiguredService(repo, client)
+	account := repo.accounts[0]
 
 	errs := make(chan error, 2)
 	tokens := make(chan string, 2)
 	for i := 0; i < 2; i++ {
 		go func() {
-			token, err := service.AccessTokenForAccount(context.Background(), repo.accounts[0])
+			token, err := service.AccessTokenForAccount(context.Background(), account)
 			if err != nil {
 				errs <- err
 				return
@@ -4572,6 +4690,7 @@ func (c *captureProbeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Co
 type captureRefreshOAuthClient struct {
 	refresh   TokenResponse
 	gotConfig Config
+	calls     int
 }
 
 func (c *captureRefreshOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
@@ -4579,6 +4698,7 @@ func (c *captureRefreshOAuthClient) ExchangeCode(ctx context.Context, cfg Config
 }
 
 func (c *captureRefreshOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
+	c.calls++
 	c.gotConfig = cfg
 	return c.refresh, nil
 }

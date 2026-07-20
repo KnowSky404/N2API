@@ -74,6 +74,10 @@ type AccountFailureReporter interface {
 	RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error
 }
 
+type AccountAuthorizationRefresher interface {
+	RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (accessToken string, retry bool, err error)
+}
+
 type AccountUsageRecorder interface {
 	RecordAccountUsed(ctx context.Context, accountID int64) error
 }
@@ -454,17 +458,43 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			loggedRoutingPoolName,
 		)
 
-		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
-		if err != nil {
-			releaseAccount()
-			errorCode = "upstream_request_error"
-			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
-			return
+		var upstreamResp *http.Response
+		var upstreamErr error
+		authorizationRetried := false
+		authorizationRefreshFailed := false
+		for {
+			upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
+			if err != nil {
+				releaseAccount()
+				errorCode = "upstream_request_error"
+				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
+				return
+			}
+			upstreamResp, upstreamErr = p.clientForSelectedAccount(selected).Do(upstreamReq)
+			if upstreamErr != nil || authorizationRetried || !authorizationFailureStatus(upstreamResp.StatusCode) {
+				break
+			}
+
+			message, failureBody := captureFailure(upstreamResp)
+			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
+				break
+			}
+			refreshedToken, retry, refreshErr := p.refreshAccountAuthorization(r.Context(), selected, upstreamResp.StatusCode, message)
+			if !retry {
+				break
+			}
+			authorizationRetried = true
+			if refreshErr != nil || strings.TrimSpace(refreshedToken) == "" {
+				authorizationRefreshFailed = true
+				break
+			}
+			_ = upstreamResp.Body.Close()
+			selected.AuthorizationToken = refreshedToken
+			gatewayAttemptCount++
 		}
-		upstreamResp, err := p.clientForSelectedAccount(selected).Do(upstreamReq)
-		if err != nil {
+		if upstreamErr != nil {
 			releaseAccount()
-			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", err.Error())
+			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", upstreamErr.Error())
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				gatewayFallbackCount++
@@ -491,7 +521,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
 				return
 			}
-			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
+			if !authorizationRefreshFailed {
+				p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
+			}
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				releaseAccount()
@@ -1055,6 +1087,17 @@ func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statu
 	_ = reporter.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
 }
 
+func (p *Proxy) refreshAccountAuthorization(ctx context.Context, selected SelectedAccount, statusCode int, message string) (string, bool, error) {
+	if selected.AccountID <= 0 || selected.AccountType != provider.AccountTypeCodexOAuth {
+		return "", false, nil
+	}
+	refresher, ok := p.accounts.(AccountAuthorizationRefresher)
+	if !ok {
+		return "", false, nil
+	}
+	return refresher.RefreshAccountAuthorization(ctx, selected.AccountID, selected.AuthorizationToken, statusCode, message)
+}
+
 func containsInt64(values []int64, target int64) bool {
 	for _, value := range values {
 		if value == target {
@@ -1126,6 +1169,10 @@ func retryableUpstreamStatus(statusCode int) bool {
 		statusCode == http.StatusForbidden ||
 		statusCode == http.StatusTooManyRequests ||
 		statusCode >= http.StatusInternalServerError
+}
+
+func authorizationFailureStatus(statusCode int) bool {
+	return statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden
 }
 
 func upstreamStatusErrorCode(statusCode int) string {

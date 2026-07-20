@@ -12,6 +12,7 @@ import (
 
 func TestGatewayAccountProviderReportsAccountFailures(t *testing.T) {
 	var _ gateway.AccountFailureReporter = gatewayAccountProvider{}
+	var _ gateway.AccountAuthorizationRefresher = gatewayAccountProvider{}
 }
 
 func TestGatewayAccountProviderMapsDisplayNameForRequestLogs(t *testing.T) {

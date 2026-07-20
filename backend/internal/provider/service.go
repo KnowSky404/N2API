@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
@@ -2192,6 +2193,45 @@ func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (s
 	return s.accessTokenForAccount(ctx, account, RefreshTriggerGatewayRequest, true)
 }
 
+func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (string, bool, error) {
+	if accountID <= 0 || rejectedAccessToken == "" {
+		return "", false, ErrInvalidInput
+	}
+	if statusCode != http.StatusUnauthorized && statusCode != http.StatusForbidden {
+		return "", false, nil
+	}
+	if statusCode == http.StatusForbidden && isEndpointPermissionError(message) {
+		return "", false, nil
+	}
+
+	unlock := s.lockAccountRefresh(accountID)
+	defer unlock()
+
+	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
+	if err != nil {
+		return "", false, err
+	}
+	account = normalizeAccountCredentialFields(account)
+	accountType := strings.TrimSpace(account.AccountType)
+	if accountType == "" {
+		accountType = AccountTypeCodexOAuth
+	}
+	if accountType != AccountTypeCodexOAuth {
+		return "", false, nil
+	}
+
+	currentAccessToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
+	if err != nil {
+		return "", true, err
+	}
+	if subtle.ConstantTimeCompare([]byte(currentAccessToken), []byte(rejectedAccessToken)) != 1 {
+		return currentAccessToken, true, nil
+	}
+
+	accessToken, err := s.refreshAccessTokenLocked(ctx, account, RefreshTriggerGatewayRequest, true)
+	return accessToken, true, err
+}
+
 func (s *Service) accessTokenForAccount(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, error) {
 	account = normalizeAccountCredentialFields(account)
 	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
@@ -2213,6 +2253,11 @@ func (s *Service) accessTokenForAccount(ctx context.Context, account Account, tr
 		account = latest
 	}
 
+	return s.refreshAccessTokenLocked(ctx, account, trigger, recordRefreshFailure)
+}
+
+func (s *Service) refreshAccessTokenLocked(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, error) {
+	account = normalizeAccountCredentialFields(account)
 	refreshToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedRefreshToken)
 	if err != nil {
 		return "", err

@@ -53,16 +53,20 @@ func withTestRoutingPool(key admin.APIKey, unbound bool) admin.APIKey {
 }
 
 type fakeSelectedAccountProvider struct {
-	accounts     []SelectedAccount
-	errs         []error
-	calls        int
-	models       []string
-	sessions     []string
-	poolIDs      []int64
-	chainPoolIDs []int64
-	exclusions   [][]int64
-	failures     []reportedAccountFailure
-	used         []int64
+	accounts                    []SelectedAccount
+	errs                        []error
+	calls                       int
+	models                      []string
+	sessions                    []string
+	poolIDs                     []int64
+	chainPoolIDs                []int64
+	exclusions                  [][]int64
+	failures                    []reportedAccountFailure
+	used                        []int64
+	authorizationRefreshes      []authorizationRefreshCall
+	refreshedAuthorizationToken string
+	refreshAuthorizationRetry   bool
+	refreshAuthorizationErr     error
 }
 
 type reportedAccountFailure struct {
@@ -70,6 +74,13 @@ type reportedAccountFailure struct {
 	statusCode int
 	retryAfter string
 	message    string
+}
+
+type authorizationRefreshCall struct {
+	accountID           int64
+	rejectedAccessToken string
+	statusCode          int
+	message             string
 }
 
 func (p *fakeSelectedAccountProvider) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
@@ -124,6 +135,16 @@ func (p *fakeSelectedAccountProvider) RecordAccountFailure(_ context.Context, ac
 		message:    message,
 	})
 	return nil
+}
+
+func (p *fakeSelectedAccountProvider) RefreshAccountAuthorization(_ context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (string, bool, error) {
+	p.authorizationRefreshes = append(p.authorizationRefreshes, authorizationRefreshCall{
+		accountID:           accountID,
+		rejectedAccessToken: rejectedAccessToken,
+		statusCode:          statusCode,
+		message:             message,
+	})
+	return p.refreshedAuthorizationToken, p.refreshAuthorizationRetry, p.refreshAuthorizationErr
 }
 
 func (p *fakeSelectedAccountProvider) RecordAccountUsed(_ context.Context, accountID int64) error {
@@ -3512,7 +3533,10 @@ func TestProxyReturnsAccountsUnavailableWhenRetryableUpstreamHasNoFallbackAccoun
 
 func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *testing.T) {
 	transportCalls := 0
-	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "expired-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "expired-token"},
+		{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "second-token"},
+	}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		if transportCalls == 1 {
@@ -3545,6 +3569,156 @@ func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *tes
 	}
 	if tokens.failures[0].accountID != 1 || tokens.failures[0].statusCode != http.StatusUnauthorized {
 		t.Fatalf("failure = %+v", tokens.failures[0])
+	}
+	if len(tokens.authorizationRefreshes) != 0 {
+		t.Fatalf("API upstream authorization refreshes = %+v, want none", tokens.authorizationRefreshes)
+	}
+}
+
+func TestProxyRefreshesRejectedOAuthTokenAndRetriesSameAccountOnce(t *testing.T) {
+	transportCalls := 0
+	authorizations := []string{}
+	tokens := &fakeSelectedAccountProvider{
+		accounts:                    []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"}},
+		refreshedAuthorizationToken: "new-token",
+		refreshAuthorizationRetry:   true,
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		authorizations = append(authorizations, r.Header.Get("Authorization"))
+		if transportCalls == 1 {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
+				Request:    r,
+			}, nil
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Equal(authorizations, []string{"Bearer old-token", "Bearer new-token"}) {
+		t.Fatalf("upstream authorizations = %+v", authorizations)
+	}
+	if tokens.calls != 1 || len(tokens.authorizationRefreshes) != 1 || len(tokens.failures) != 0 {
+		t.Fatalf("selection/refresh/failures = %d/%+v/%+v", tokens.calls, tokens.authorizationRefreshes, tokens.failures)
+	}
+	refresh := tokens.authorizationRefreshes[0]
+	if refresh.accountID != 1 || refresh.rejectedAccessToken != "old-token" || refresh.statusCode != http.StatusUnauthorized {
+		t.Fatalf("authorization refresh = %+v", refresh)
+	}
+}
+
+func TestProxyFallsBackAfterRefreshedOAuthTokenIsStillUnauthorized(t *testing.T) {
+	transportCalls := 0
+	tokens := &fakeSelectedAccountProvider{
+		accounts: []SelectedAccount{
+			{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"},
+			{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "fallback-token"},
+		},
+		refreshedAuthorizationToken: "new-token",
+		refreshAuthorizationRetry:   true,
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls <= 2 {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
+				Request:    r,
+			}, nil
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer fallback-token" {
+			t.Fatalf("fallback authorization = %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if transportCalls != 3 || len(tokens.authorizationRefreshes) != 1 || len(tokens.failures) != 1 {
+		t.Fatalf("transport/refresh/failures = %d/%+v/%+v", transportCalls, tokens.authorizationRefreshes, tokens.failures)
+	}
+	if len(tokens.exclusions) != 2 || !slices.Equal(tokens.exclusions[1], []int64{1}) {
+		t.Fatalf("selection exclusions = %+v, want failed OAuth account excluded", tokens.exclusions)
+	}
+}
+
+func TestProxyFallsBackWhenOAuthAuthorizationRefreshFails(t *testing.T) {
+	transportCalls := 0
+	tokens := &fakeSelectedAccountProvider{
+		accounts: []SelectedAccount{
+			{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"},
+			{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "fallback-token"},
+		},
+		refreshAuthorizationRetry: true,
+		refreshAuthorizationErr:   errors.New("refresh failed"),
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		transportCalls++
+		if transportCalls == 1 {
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
+				Request:    r,
+			}, nil
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer fallback-token" {
+			t.Fatalf("fallback authorization = %q", got)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if transportCalls != 2 || len(tokens.authorizationRefreshes) != 1 {
+		t.Fatalf("transport/refresh = %d/%+v, want 2/1", transportCalls, tokens.authorizationRefreshes)
+	}
+	if len(tokens.failures) != 0 {
+		t.Fatalf("gateway account failures = %+v, want refresh failure recorded only by provider", tokens.failures)
+	}
+	if len(tokens.exclusions) != 2 || !slices.Equal(tokens.exclusions[1], []int64{1}) {
+		t.Fatalf("selection exclusions = %+v, want failed OAuth account excluded", tokens.exclusions)
 	}
 }
 
