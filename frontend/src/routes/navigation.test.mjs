@@ -946,7 +946,7 @@ test('api keys prefix column can copy reusable secrets', () => {
   assert.match(apiKeysPage, /copyAPIKeySecret/);
   assert.match(apiKeysPage, /onclick=\{\(\) => copyAPIKeySecret\(key\.id\)\}/);
   assert.match(apiKeysPage, /Copy full API key/);
-  assert.match(apiKeysPage, /You can copy it again later from the Prefix column\./);
+  assert.doesNotMatch(apiKeysPage, /You can copy it again later from the Prefix column\./);
   assert.doesNotMatch(apiKeysPage, /It will not be shown again\./);
 
   assert.match(adminState, /export async function copyAPIKeySecret/);

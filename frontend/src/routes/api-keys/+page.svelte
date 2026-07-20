@@ -652,28 +652,6 @@
     </div>
   </header>
 
-  {#if apiKeys.oneTimeSecret}
-    <div class="mt-5 rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
-<div class="flex flex-wrap items-center justify-between gap-3">
-  <p class="text-sm font-medium text-[#0a7a5e]">
-    Copy this key now. You can copy it again later from the Prefix column.
-  </p>
-  <button
-    class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-    type="button"
-    onclick={copySecret}
-  >
-    Copy
-  </button>
-</div>
-<code
-  class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]"
->
-  {apiKeys.oneTimeSecret}
-</code>
-    </div>
-  {/if}
-
   {#if apiKeys.error && !createKeyModalOpen && !bulkEditModalOpen}
     <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
 {apiKeys.error}
