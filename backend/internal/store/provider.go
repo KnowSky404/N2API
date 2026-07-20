@@ -462,7 +462,11 @@ func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, pro
 		WHERE a.provider = $1
 			AND rpa.pool_id = $2
 			AND a.enabled = true
-			AND a.status = 'active'
+			AND (
+				a.status IN ('', 'active')
+				OR (a.status = 'rate_limited' AND a.rate_limited_until IS NOT NULL AND a.rate_limited_until <= $4)
+				OR (a.status = 'circuit_open' AND a.circuit_open_until IS NOT NULL AND a.circuit_open_until <= $4)
+			)
 			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= $4)
 			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= $4)
 			AND NOT (a.id = ANY($5::bigint[]))

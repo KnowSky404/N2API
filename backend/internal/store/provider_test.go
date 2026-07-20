@@ -1533,6 +1533,25 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	if !reflect.DeepEqual(models, want) {
 		t.Fatalf("exposed models = %+v, want %+v", models, want)
 	}
+
+	for _, testCase := range []struct {
+		model          string
+		wantAccountIDs []int64
+	}{
+		{model: "gpt-5", wantAccountIDs: []int64{account.ID}},
+		{model: "rate-limited-past", wantAccountIDs: []int64{rateLimitedPast.ID}},
+		{model: "circuit-open-past", wantAccountIDs: []int64{circuitOpenPast.ID}},
+		{model: "rate-limited-future-only", wantAccountIDs: []int64{}},
+		{model: "circuit-open-future-only", wantAccountIDs: []int64{}},
+	} {
+		accounts, err := repo.ListAccountsForRoutingPool(ctx, "openai", poolID, testCase.model, nil, now)
+		if err != nil {
+			t.Fatalf("ListAccountsForRoutingPool(%s) returned error: %v", testCase.model, err)
+		}
+		if got := accountIDs(accounts); !reflect.DeepEqual(got, testCase.wantAccountIDs) {
+			t.Fatalf("routing accounts for %s = %v, want %v", testCase.model, got, testCase.wantAccountIDs)
+		}
+	}
 }
 
 type accountModelWant struct {
