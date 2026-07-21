@@ -487,6 +487,9 @@ export const gatewaySettings = $state({
   cleanupResult: null,
   data: null
 });
+/** @typedef {{ kind: 'success' | 'error', title: string, message: string }} ConfigurationExportNotice */
+/** @type {{ exporting: boolean, notice: ConfigurationExportNotice | null }} */
+export const configurationExport = $state({ exporting: false, notice: null });
 /** @type {{ loading: boolean, loadingOlder: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, since: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[], nextCursor: string, hasMore: boolean, appliedFilterQuery: string | null }} */
 export const requestLogs = $state({
   loading: false,
@@ -1185,6 +1188,10 @@ function clearGatewaySettings() {
   });
 }
 
+function clearConfigurationExport() {
+  replaceState(configurationExport, { exporting: false, notice: null });
+}
+
 function clearRequestLogs() {
   replaceState(requestLogs, {
     loading: false,
@@ -1281,6 +1288,7 @@ function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
   clearAPIKeys();
   clearModelSettings();
   clearGatewaySettings();
+  clearConfigurationExport();
   clearRequestLogs();
   clearSystemEvents();
   clearUsage();
@@ -2963,6 +2971,86 @@ export async function loadGatewaySettings() {
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     gatewaySettings.loading = false;
+  }
+}
+
+const portableConfigurationFallbackFilename = 'n2api-portable-config.json';
+const portableConfigurationFilenamePattern = /^n2api-portable-config-v[1-9]\d*-\d{8}T\d{6}Z\.json$/;
+
+/** @param {string | null} disposition */
+export function portableConfigurationFilename(disposition) {
+  if (!disposition) return portableConfigurationFallbackFilename;
+  for (const part of disposition.split(';').slice(1)) {
+    const value = part.trim();
+    const extendedMatch = value.match(/^filename\*\s*=\s*UTF-8''([^\s]+)$/i);
+    const filenameMatch = value.match(/^filename\s*=\s*(?:"([^"]*)"|([^\s]+))$/i);
+    const candidate = extendedMatch?.[1] ?? filenameMatch?.[1] ?? filenameMatch?.[2] ?? '';
+    if (portableConfigurationFilenamePattern.test(candidate)) return candidate;
+  }
+  return portableConfigurationFallbackFilename;
+}
+
+/** @param {string} url @param {string} filename */
+function triggerBrowserDownload(url, filename) {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.hidden = true;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+/**
+ * @param {{
+ *   fetch?: typeof globalThis.fetch,
+ *   createObjectURL?: (blob: Blob) => string,
+ *   revokeObjectURL?: (url: string) => void,
+ *   triggerDownload?: (url: string, filename: string) => void
+ * }} [deps]
+ */
+export async function exportPortableConfiguration(deps = {}) {
+  if (configurationExport.exporting || !session.authenticated) return false;
+  const version = sessionVersion;
+  const fetchImpl = deps.fetch ?? globalThis.fetch;
+  const createObjectURL = deps.createObjectURL ?? URL.createObjectURL.bind(URL);
+  const revokeObjectURL = deps.revokeObjectURL ?? URL.revokeObjectURL.bind(URL);
+  const triggerDownload = deps.triggerDownload ?? triggerBrowserDownload;
+
+  configurationExport.exporting = true;
+  configurationExport.notice = null;
+  let objectURL = '';
+  try {
+    const response = await fetchImpl('/api/admin/configuration/export', {
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401) clearAuthenticatedAdminState();
+      throw new Error(payload.error ?? `Request failed with ${response.status}`);
+    }
+    const blob = await response.blob();
+    if (!isCurrentAuthenticated(version)) return false;
+    const filename = portableConfigurationFilename(response.headers.get('Content-Disposition'));
+    objectURL = createObjectURL(blob);
+    triggerDownload(objectURL, filename);
+    configurationExport.notice = {
+      kind: 'success',
+      title: 'Download started',
+      message: 'Portable configuration is ready in your browser downloads.'
+    };
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    configurationExport.notice = {
+      kind: 'error',
+      title: 'Export failed',
+      message: error instanceof Error ? error.message : 'Failed to export portable configuration'
+    };
+    return false;
+  } finally {
+    if (objectURL) revokeObjectURL(objectURL);
+    if (isCurrentAuthenticated(version)) configurationExport.exporting = false;
   }
 }
 

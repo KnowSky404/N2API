@@ -508,6 +508,38 @@ material stored separately from the dump. Keep real operator dumps and storage
 credentials out of Git, GitHub Actions, logs, and drill records. CI may validate
 only generated non-sensitive fixture dumps.
 
+### Portable Configuration Export
+
+After signing in, open **Gateway** and use **Export JSON** under **Portable
+configuration**, or send `GET /api/admin/configuration/export` with an
+authenticated administrator session. The response is a no-store JSON
+attachment named `n2api-portable-config-v1-YYYYMMDDTHHMMSSZ.json`. The server
+rejects an export larger than 5 MiB and records the successful security audit
+event before sending the file.
+
+Format version 1 contains routing pools, memberships and fallbacks; active API
+non-deleted API key templates (active or disabled) with names, policies,
+limits, budgets and pool references;
+provider account names, scheduling fields, models and sanitized base URLs;
+model, usage-pricing and gateway settings; fingerprint profiles; and error
+passthrough rules. File-local references preserve relationships without making
+database IDs an import conflict key. API upstream base URLs have user info,
+query strings and fragments removed. Every custom fingerprint header value is
+replaced with `[redacted]`, including values that do not look sensitive.
+
+The export never contains administrator or session state, OAuth state or
+subjects, provider credentials, proxy URLs, client API key hashes, prefixes or
+encrypted reusable secrets, request logs, system events, provider test history,
+or runtime failure state. Alert rule and action schemas do not exist yet, so
+version 1 reports `unsupportedSections: ["alertRules", "alertActions"]` instead
+of claiming that they were exported or redacted.
+
+Portable configuration is a review and migration aid, not a complete backup
+and not currently importable. PostgreSQL remains the authoritative recovery
+source because it retains encrypted credentials and all operational state.
+Continue taking and verifying database backups even when configuration exports
+are stored separately.
+
 For an upgrade or rollback, change `N2API_IMAGE` to the target CalVer, then pull
 and recreate the stack:
 

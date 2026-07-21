@@ -105,3 +105,9 @@ func TestRequestLogExportLifecycleActionsAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigurationExportActionIsKnown(t *testing.T) {
+	if !IsKnownAction(ActionConfigurationExported) {
+		t.Fatalf("action %q is not registered", ActionConfigurationExported)
+	}
+}

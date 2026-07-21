@@ -82,6 +82,8 @@ type fakeAdminService struct {
 	systemEventPage      admin.SystemEventPage
 	systemEventFilter    admin.SystemEventFilter
 	systemEventErr       error
+	configurationExport  admin.ConfigurationSnapshot
+	configurationErr     error
 	errorOnEmptyLogout   bool
 	logoutTokens         []string
 	modelSettings        admin.ModelSettings
@@ -326,6 +328,10 @@ func (s *fakeAdminService) ValidateSession(_ context.Context, token string) (adm
 
 func (s *fakeAdminService) ListAPIKeys(_ context.Context) ([]admin.APIKey, error) {
 	return s.keys, nil
+}
+
+func (s *fakeAdminService) ExportConfiguration(_ context.Context) (admin.ConfigurationSnapshot, error) {
+	return s.configurationExport, s.configurationErr
 }
 
 func (s *fakeAdminService) CreateAPIKey(_ context.Context, name string, routingPoolID *int64) (admin.CreatedAPIKey, error) {

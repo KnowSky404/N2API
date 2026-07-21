@@ -64,6 +64,7 @@ type AdminService interface {
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) (admin.RequestLogPage, error)
 	StreamRequestLogs(ctx context.Context, filter admin.RequestLogFilter, maxRows int, visit func(admin.RequestLog) error) (admin.RequestLogExportResult, error)
 	ListSystemEvents(ctx context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error)
+	ExportConfiguration(ctx context.Context) (admin.ConfigurationSnapshot, error)
 	CleanupRequestLogs(ctx context.Context, now time.Time) (admin.RequestLogCleanupResult, error)
 	GetRequestLogRetentionStats(ctx context.Context, now time.Time) (admin.RequestLogRetentionStats, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
@@ -981,6 +982,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("GET /api/admin/request-logs/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleExportRequestLogs(w, r, admins, systemEvents, cfg.RequestLogExportMaxRows, cfg.RequestLogExportTimeout)
+	}))
+	mux.HandleFunc("GET /api/admin/configuration/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleExportConfiguration(w, r, admins, systemEvents, build)
 	}))
 	mux.HandleFunc("GET /api/admin/system-events", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		filter, err := buildSystemEventFilter(r)

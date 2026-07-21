@@ -1,6 +1,7 @@
 # Backup And Restore Verification Plan
 
-Status: in progress; Tasks 1-2 completed locally on 2026-07-21
+Status: in progress; Tasks 1-2 and the available Task 3 scope completed locally
+on 2026-07-21
 Public API changes: optional non-sensitive configuration export/import
 Data migration: none initially
 
@@ -138,6 +139,9 @@ real-backup recovery gate. No real operator drill is claimed by this task.
 
 ## Task 3: Export Non-sensitive Configuration
 
+Status: core format v1 completed locally on 2026-07-21; alert rules and actions
+are explicitly deferred until an alert schema exists.
+
 ### Goal
 
 Provide a versioned, portable file without credential material.
@@ -155,19 +159,38 @@ Stable schemas for routing, pricing, fingerprints, and alerts.
 ### Implementation
 
 Export routing pools/memberships, API key names/policies/limits (never key
-hash/secret), provider account non-sensitive fields/models (never credentials),
+hash/prefix/secret), provider account non-sensitive fields/models (never credentials),
 pricing, gateway settings, fingerprint profiles, and alert rule structure with
 redacted actions. Include format and application version.
+
+The implemented v1 uses a repeatable-read, read-only PostgreSQL transaction and
+explicit export DTOs. It emits file-local references for relationships, strips
+userinfo/query/fragment from API-upstream base URLs, redacts every fingerprint
+custom-header value, excludes revoked API keys, caps the attachment at 5 MiB,
+and records the successful security audit event before sending the body. The
+current schema has no alert rule or action tables, so the document reports
+`unsupportedSections: ["alertRules", "alertActions"]` rather than presenting
+that dependency as complete.
 
 ### Completion Criteria
 
 Automated tests prove no sensitive column or known secret appears in output.
+
+Local evidence: focused store/service/HTTP tests cover URL sanitation, complete
+fingerprint-header value redaction, forbidden JSON field names, relationship
+closure, authentication, attachment bounds, audit failure, and snapshot
+failure. The Gateway UI provides a bounded authenticated download without a new
+route, modal, or import placeholder.
 
 ### Commit
 
 `feat(backup): export non-sensitive configuration`
 
 ## Task 4: Dry-run And Atomic Import
+
+Status: blocked on owner approval of conflict defaults and the natural-key
+strategy; implementation must not begin by assuming overwrite or rename
+semantics.
 
 ### Goal
 

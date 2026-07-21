@@ -19,6 +19,7 @@ path; detailed usage and operations guidance belongs here.
 - [Docker installation on Ubuntu 24.04 ARM64](manual.md#install-docker-on-ubuntu-2404-arm64)
 - [Production deployment](manual.md#deploy-a-published-image)
 - [Backup, upgrade, and rollback](manual.md#back-up-and-upgrade)
+- [Portable configuration export](manual.md#portable-configuration-export)
 - [Downstream Codex CLI](manual.md#downstream-codex-cli)
 - [Provider accounts, API keys, and routing](manual.md#provider-accounts)
 - [Gateway limits, logs, and sticky sessions](manual.md#gateway-runtime-limits)

@@ -2,6 +2,8 @@
   import {
     apiKeys,
     cleanupRequestLogs,
+    configurationExport,
+    exportPortableConfiguration,
     formatCostMicrousd,
     formatDate,
     formatTokens,
@@ -24,6 +26,7 @@
     updateGatewaySettings,
     usage
   } from '$lib/admin-state.svelte.js';
+  import { Download, LoaderCircle, X } from 'lucide-svelte';
 
   import AuthGate from '$lib/AuthGate.svelte';
   let gatewayRequested = $state(false);
@@ -57,6 +60,15 @@
   const usage24hRoutingPoolChains = $derived(usage.summaries['24h:routing_pool_chain'] ?? null);
   const usage24hClientKeys = $derived(usage.summaries['24h:client_key'] ?? null);
   const usage24hSessions = $derived(usage.summaries['24h:session'] ?? null);
+
+  $effect(() => {
+    const notice = configurationExport.notice;
+    if (notice?.kind !== 'success') return;
+    const timer = setTimeout(() => {
+      if (configurationExport.notice === notice) configurationExport.notice = null;
+    }, 4000);
+    return () => clearTimeout(timer);
+  });
 
   $effect(() => {
     if (!session.authenticated) {
@@ -162,6 +174,30 @@
 </svelte:head>
 
 <AuthGate>
+  {#if configurationExport.notice}
+    <div
+      class={[
+        'fixed right-4 top-4 z-[70] flex w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-lg border bg-white p-4 shadow-lg',
+        configurationExport.notice.kind === 'success' ? 'border-emerald-200' : 'border-red-200'
+      ]}
+      role={configurationExport.notice.kind === 'error' ? 'alert' : 'status'}
+      aria-live="polite"
+    >
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold text-[#0d0d0d]">{configurationExport.notice.title}</p>
+        <p class="mt-1 break-words text-sm leading-5 text-[#6e6e6e]">{configurationExport.notice.message}</p>
+      </div>
+      <button
+        class="ui-button ui-button--icon inline-flex size-7 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+        type="button"
+        onclick={() => { configurationExport.notice = null; }}
+        title="Dismiss notification"
+        aria-label="Dismiss configuration export notification"
+      >
+        <X class="size-4" aria-hidden="true" />
+      </button>
+    </div>
+  {/if}
   <div class="ui-page">
     <header class="ui-page-header">
       <div class="ui-page-heading">
@@ -438,6 +474,30 @@
           </div>
         </form>
       {/if}
+    </section>
+
+    <!-- Portable configuration -->
+    <section class="rounded-lg border border-[#ededed] bg-white p-6">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="min-w-0">
+          <h2 class="ui-section-title">Portable configuration</h2>
+          <p class="mt-1 max-w-3xl text-sm text-[#6e6e6e]">Download versioned gateway configuration without credentials, API key material, or OAuth tokens. PostgreSQL backups remain the complete recovery source.</p>
+        </div>
+        <button
+          class="ui-button ui-button--sm ui-button--secondary w-full shrink-0 rounded-lg border border-[#d9d9d9] bg-white px-3 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+          type="button"
+          disabled={configurationExport.exporting}
+          onclick={() => void exportPortableConfiguration()}
+        >
+          {#if configurationExport.exporting}
+            <LoaderCircle class="size-4 animate-spin" aria-hidden="true" />
+            Exporting...
+          {:else}
+            <Download class="size-4" aria-hidden="true" />
+            Export JSON
+          {/if}
+        </button>
+      </div>
     </section>
 
     <!-- 24h usage -->
