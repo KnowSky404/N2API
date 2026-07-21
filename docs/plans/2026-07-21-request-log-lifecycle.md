@@ -1,0 +1,257 @@
+# Request Log Lifecycle Plan
+
+Status: planned
+Public API changes: additive cursor fields; export limits become explicit
+Data migration: cursor/query index changes only after measurement
+
+## Current Baseline
+
+`AdminRepository.ListRequestLogs` orders by `(created_at DESC,id DESC)` and
+returns a fixed `LIMIT`; the service clamps to 200. The UI slices those rows
+locally. Export supports JSON/CSV/JSONL but first loads the same bounded slice,
+so exports silently stop at 200. Retention is a manual unbounded delete in one
+transaction. System Events already provide the preferred signed cursor and
+batched retention patterns. The live local database had only 42 Request Log
+rows during this review, so it cannot justify speculative indexes.
+
+## Task 1: Add A Signed Cursor Page Contract
+
+### Goal
+
+Page older rows stably with existing filters and no offset scans.
+
+### Dependencies
+
+None.
+
+### Files
+
+- Modify: `backend/internal/admin/service.go`, `service_test.go`
+- Modify: `backend/internal/store/admin.go`, `admin_test.go`
+- Modify: `backend/internal/httpapi/server.go`, `server_test.go`
+- Create: `backend/internal/store/migrations/00038_request_log_cursor_index.sql` if EXPLAIN shows the existing index is insufficient
+- Test: service, store PostgreSQL integration, HTTP, migration
+- Document: `docs/manual.md`
+
+### Implementation
+
+1. Add `Cursor` and a `RequestLogPage` with `logs`, `hasMore`, and
+   `nextCursor`, preserving `logs` compatibility.
+2. Use an HMAC-domain-separated payload containing `(created_at,id)` and a
+   canonical filter digest; fetch `limit+1` with `<` tuple comparison.
+3. Return `400 invalid_input` for malformed, tampered, or filter-mismatched
+   cursors.
+4. Measure the current index and add `(created_at DESC,id DESC)` only if needed.
+
+### Tests And Verification
+
+Test equal timestamps, page boundary deletion, no duplicates, no omissions,
+tamper, filter mismatch, and service limits. Run real PostgreSQL store tests and
+`go test ./...`.
+
+### Compatibility And Security
+
+Cursor contents are opaque and signed, not encrypted. Existing clients reading
+`logs` continue to work.
+
+### Risks And Rollback
+
+Filter canonicalization drift can invalidate cursors; version payloads. Roll
+back API/store changes and leave any harmless composite index.
+
+### Manual Acceptance
+
+Not required for backend contract.
+
+### Completion Criteria
+
+Repeated page requests traverse all matching rows exactly once.
+
+### Commit
+
+`feat(request-logs): add cursor pagination contract`
+
+## Task 2: Move The UI To Server Pagination
+
+### Goal
+
+Replace bounded local page slicing with URL-backed older-page loading.
+
+### Dependencies
+
+Task 1.
+
+### Files
+
+- Modify: `frontend/src/lib/admin-state.svelte.js`
+- Modify: `frontend/src/routes/request-logs/+page.svelte`
+- Modify: `frontend/src/routes/navigation.test.mjs`
+- Test: frontend tests and Playwright
+- Migrate: none
+- Document: `docs/manual.md` only if operator behavior changes materially
+
+### Implementation
+
+Reset pages on filter change; keep filter state in the URL; append by cursor;
+recover from expired/invalid cursors with a fresh first page; preserve details
+selection by ID when still loaded.
+
+### Tests And Verification
+
+Run `bun test`, `bun run check`, `bun run build`, and Playwright at desktop and
+mobile widths against more than 200 seeded rows.
+
+### Compatibility And Security
+
+No records or columns are removed. Errors do not expose cursor internals.
+
+### Risks And Rollback
+
+Concurrent inserts should not reorder already loaded pages. Restore local
+pagination while the additive backend contract remains available.
+
+### Manual Acceptance
+
+Required for filter, Load older, and detail interactions.
+
+### Completion Criteria
+
+An operator can reach rows older than the first 200 without losing filters.
+
+### Commit
+
+`feat(request-logs): load cursor pages in admin UI`
+
+## Task 3: Batch Automatic Retention
+
+### Goal
+
+Apply saved retention safely in the background and expose task status.
+
+### Dependencies
+
+Task 1 cursor/index baseline.
+
+### Files
+
+- Modify: admin repository/service and tests
+- Modify: `backend/cmd/n2api/main.go`, `main_test.go`
+- Modify: System Event actions/tests
+- Modify: health/admin status endpoint and Gateway UI status
+- Modify: `.env.example`, `docs/manual.md`
+- Test: PostgreSQL batch integration and runner clock tests
+- Migrate: none unless task status is later made durable
+
+### Implementation
+
+Delete ordered ID batches selected by cutoff, commit each batch, honor context,
+take a PostgreSQL advisory lock, run once at startup then on a bounded interval,
+and record one summary or failure event. Expose last start/success/error and
+oldest/count estimates. Maximum rows and storage remain a later measured task.
+
+### Tests And Verification
+
+Seed multiple batches, interrupt between batches, run two workers, and verify
+surviving/new rows and event counts.
+
+### Compatibility And Security
+
+Retention `0` remains disabled. Default behavior does not delete logs unless a
+positive saved policy exists.
+
+### Risks And Rollback
+
+Wrong cutoffs are destructive. Require UTC tests and a verified backup; disable
+the runner to roll back.
+
+### Manual Acceptance
+
+Review displayed cutoff/count before enabling on a long-running instance.
+
+### Completion Criteria
+
+Cleanup is bounded, observable, single-run, cancellable, and restart-safe.
+
+### Commit
+
+`feat(request-logs): automate batched retention`
+
+## Task 4: Stream Bounded CSV And JSONL Exports
+
+### Goal
+
+Export large ranges without accumulating all rows in memory.
+
+### Dependencies
+
+Task 1 page/query primitives.
+
+### Files
+
+- Add repository row-stream callback/iterator in admin/store
+- Modify `handleExportRequestLogs` and tests
+- Modify frontend export controls/tests
+- Document limits in `.env.example` and `docs/manual.md`
+- Test: cancellation, limit, CSV injection, large fixture, disconnect
+- Migrate: none
+
+### Implementation
+
+Require an explicit time range for large exports, enforce row/time limits,
+support CSV and JSONL with optional gzip, protect `=`, `+`, `-`, and `@` CSV
+cells, name files by UTC range, and cancel database work on disconnect. Audit
+the accepted export before body streaming and record a final outcome separately
+without recursive failure.
+
+### Tests And Verification
+
+Measure memory over a large seeded set; disconnect mid-stream; validate gzip
+and spreadsheet-safe CSV.
+
+### Compatibility And Security
+
+Small JSON array export may remain with an explicit low cap. No secret fields
+are added.
+
+### Risks And Rollback
+
+Errors after headers cannot return JSON status. Stop streaming and record a
+bounded event; restore the small export handler to roll back.
+
+### Completion Criteria
+
+Export memory stays bounded and limits/cancellation are enforced.
+
+### Commit
+
+`feat(request-logs): stream bounded exports`
+
+## Task 5: Measure And Rationalize Indexes
+
+### Goal
+
+Keep only indexes justified by representative queries.
+
+### Dependencies
+
+Tasks 1-4 and a synthetic long-running data profile.
+
+### Files
+
+- Create: a migration for approved additions/removals
+- Create: `backend/internal/store/request_log_query_test.go` or benchmark fixture
+- Modify: migration tests and operations docs
+
+### Implementation
+
+Capture `EXPLAIN (ANALYZE, BUFFERS)` for default cursor and common exact filters.
+Review duplicate provider/model indexes from migrations 00009-00011. Do not add
+trigram or a broad matrix of indexes without measured benefit.
+
+### Completion Criteria
+
+Every changed index has before/after plan evidence and stated write/storage cost.
+
+### Commit
+
+`perf(request-logs): align indexes with measured queries`

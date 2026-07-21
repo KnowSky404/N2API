@@ -27,8 +27,15 @@ path; detailed usage and operations guidance belongs here.
 
 - [UI design source of truth](../DESIGN.md)
 - [Brand assets and generation records](brand/README.md)
-- [Implementation specifications](superpowers/specs/)
-- [Implementation plans](superpowers/plans/)
+- [Reliability and operations design](specs/2026-07-21-n2api-reliability-and-operations-design.md)
+- [Reliability and operations plans](plans/README.md)
+- [Historical implementation specifications](superpowers/specs/)
+- [Historical implementation plans](superpowers/plans/)
+
+The dated records under `superpowers/` describe completed or partially
+completed feature delivery. New cross-cutting reliability and operations work
+is tracked under `specs/` and `plans/`; the historical records remain available
+for implementation context and are not a second active roadmap.
 
 ## Documentation Site Direction
 
