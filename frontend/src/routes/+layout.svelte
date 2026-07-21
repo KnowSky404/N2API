@@ -562,7 +562,7 @@
     aria-describedby="active-sessions-description"
     tabindex="-1"
   >
-    <section class="ui-modal-panel ui-modal-panel--lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
+    <section class="ui-modal-panel ui-modal-panel--xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
       <header class="flex items-start justify-between gap-4">
         <div class="min-w-0">
           <div class="flex flex-wrap items-center gap-2">
@@ -590,7 +590,14 @@
       {/if}
 
       <div class="ui-table-shell mt-5">
-        <table class="ui-table ui-table--stacked">
+        <table class="ui-table ui-table--stacked sm:table-fixed">
+          <colgroup class="hidden sm:table-column-group">
+            <col class="w-[28%]" />
+            <col class="w-[16%]" />
+            <col class="w-[20%]" />
+            <col class="w-[20%]" />
+            <col class="w-[16%]" />
+          </colgroup>
           <thead>
             <tr>
               <th>Client</th>
@@ -608,7 +615,7 @@
             {:else}
               {#each adminSessions.items as adminSession (adminSession.id)}
                 <tr>
-                  <td data-label="Client">
+                  <td data-label="Client" class="px-4 py-3 align-top">
                     <div class="min-w-0">
                       <div class="flex flex-wrap items-center gap-2">
                         <span class="break-words font-medium text-[#3c3c3c]">{adminSession.userAgent || 'Unknown client'}</span>
@@ -619,10 +626,10 @@
                       <p class="mt-0.5 text-xs text-[#8e8e8e]">Created {sessionDate(adminSession.createdAt, 'Unavailable')}</p>
                     </div>
                   </td>
-                  <td data-label="Created IP"><span class="break-all font-mono text-xs text-[#3c3c3c]">{adminSession.createdIp || 'Unavailable'}</span></td>
-                  <td data-label="Last active" class="tabular-nums">{sessionDate(adminSession.lastUsedAt, 'Not recorded')}</td>
-                  <td data-label="Expires" class="tabular-nums">{sessionDate(adminSession.expiresAt, 'Unavailable')}</td>
-                  <td data-label="Actions" class="text-right">
+                  <td data-label="Created IP" class="px-4 py-3 align-top"><span class="break-all font-mono text-xs text-[#3c3c3c]">{adminSession.createdIp || 'Unavailable'}</span></td>
+                  <td data-label="Last active" class="whitespace-normal px-4 py-3 align-top text-xs tabular-nums">{sessionDate(adminSession.lastUsedAt, 'Not recorded')}</td>
+                  <td data-label="Expires" class="whitespace-normal px-4 py-3 align-top text-xs tabular-nums">{sessionDate(adminSession.expiresAt, 'Unavailable')}</td>
+                  <td data-label="Actions" class="px-4 py-3 text-right align-top">
                     <button
                       class="ui-button ui-button--sm ui-button--danger inline-flex items-center gap-1.5"
                       type="button"

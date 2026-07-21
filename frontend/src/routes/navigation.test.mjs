@@ -98,8 +98,10 @@ test('account menu exposes responsive active session controls with explicit dest
   assert.match(layoutPage, /revokeOtherAdminSessions/);
   assert.equal((layoutPage.match(/onclick=\{openSessionsModal\}/g) ?? []).length, 2, 'desktop/mobile account surfaces should open the same session dialog');
   assert.match(layoutPage, /aria-labelledby="active-sessions-title"/);
-  assert.match(layoutPage, /ui-modal-panel ui-modal-panel--lg/);
-  assert.match(layoutPage, /<table class="ui-table ui-table--stacked">/);
+  assert.match(layoutPage, /ui-modal-panel ui-modal-panel--xl/);
+  assert.match(layoutPage, /<table class="ui-table ui-table--stacked sm:table-fixed">/);
+  assert.match(layoutPage, /<colgroup class="hidden sm:table-column-group">[\s\S]*?w-\[28%\][\s\S]*?w-\[16%\][\s\S]*?<\/colgroup>/);
+  assert.match(layoutPage, /data-label="Last active" class="whitespace-normal px-4 py-3 align-top text-xs tabular-nums"/);
   for (const label of ['Client', 'Created IP', 'Last active', 'Expires', 'Actions']) {
     assert.match(layoutPage, new RegExp(`data-label="${label}"`));
   }
