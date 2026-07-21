@@ -47,6 +47,33 @@ hop, and the proxy nearest N2API must overwrite `X-Forwarded-Proto` and
 `X-Forwarded-Host` as single values rather than comma-separated lists. The
 standardized `Forwarded` header is not currently used.
 
+## Administrator Login Protection
+
+Administrator login throttling is enabled by default. N2API tracks failed
+attempts independently by normalized client IP and lowercase username; either
+dimension can temporarily deny a request. After five failures, denial starts at
+one second and doubles up to 60 seconds. Entries expire after 15 minutes of
+inactivity, the combined map is bounded to 4096 entries, and a successful login
+clears both identities. Concurrent password checks are reserved atomically, so
+an initial burst cannot exceed the configured threshold. Rejected requests keep
+the same `invalid_credentials` response body for known and unknown usernames.
+The threshold response includes `Retry-After`, and requests made during the
+denial period return HTTP 429 with an integer `Retry-After` value.
+
+Use `N2API_ADMIN_LOGIN_THROTTLE_FAILURES` to set the threshold from 1 to 20 and
+`N2API_ADMIN_LOGIN_THROTTLE_MAX_ENTRIES` to set the memory bound from 128 to
+16384. When the bound is exhausted, new identities fail closed instead of
+evicting active failure state. Set `N2API_ADMIN_LOGIN_THROTTLE_ENABLED=false`
+only as a temporary rollback. State is process-local and resets after a restart,
+which matches the single-node deployment model. Reverse-proxy deployments must
+configure `N2API_TRUSTED_PROXY_CIDRS` correctly so the IP dimension observes the
+client rather than the nearest proxy.
+
+Repeated login failures are globally aggregated into one System Event per
+one-minute window while throttling is enabled. The event uses a fixed
+administrator target; usernames, passwords, and request bodies are never stored
+in those events.
+
 ## Published Images
 
 The `CI Image` workflow tests every pull request without publishing an image.

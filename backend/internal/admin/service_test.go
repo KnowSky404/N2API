@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KnowSky404/N2API/backend/internal/secret"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
@@ -157,6 +158,15 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	}
 	if _, err := service.Login(context.Background(), "missing", "secret"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Login missing username error = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestDummyAdminPasswordHashMatchesProductionWorkFactor(t *testing.T) {
+	if !strings.HasPrefix(dummyAdminPasswordHash, "pbkdf2-sha256$210000$") {
+		t.Fatalf("dummy password hash uses unexpected work factor: %q", dummyAdminPasswordHash)
+	}
+	if !secret.VerifyPassword(dummyAdminPasswordHash, "n2api-dummy-password") {
+		t.Fatal("dummy admin password hash is not a valid production password hash")
 	}
 }
 

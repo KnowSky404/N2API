@@ -28,6 +28,7 @@ const (
 	RequestLogStatusSuccess       = "success"
 	RequestLogStatusClientError   = "client_error"
 	RequestLogStatusServerError   = "server_error"
+	dummyAdminPasswordHash        = "pbkdf2-sha256$210000$AAECAwQFBgcICQoLDA0ODw$6M7ZGtW4Xq6fsrLYeKn/xgsZw5E2huTtOgwzsiPv+Vk"
 )
 
 var (
@@ -438,12 +439,14 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	username = strings.TrimSpace(username)
 	password = strings.TrimSpace(password)
 	if username == "" || password == "" {
+		secret.VerifyPassword(dummyAdminPasswordHash, password)
 		return Session{}, ErrUnauthorized
 	}
 
 	admin, err := s.repo.FindAdminByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
+			secret.VerifyPassword(dummyAdminPasswordHash, password)
 			return Session{}, ErrUnauthorized
 		}
 		return Session{}, err

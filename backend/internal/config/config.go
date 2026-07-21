@@ -33,6 +33,9 @@ type Config struct {
 	ProviderAccountAutoTestInterval        time.Duration
 	SystemEventRetentionDays               int
 	TrustedProxyCIDRs                      []netip.Prefix
+	AdminLoginThrottleEnabled              bool
+	AdminLoginThrottleFailures             int
+	AdminLoginThrottleMaxEntries           int
 }
 
 const (
@@ -44,6 +47,8 @@ const (
 	defaultProviderAccountAutoTestInterval = 5 * time.Minute
 	minProviderAccountAutoTestInterval     = time.Minute
 	defaultSystemEventRetentionDays        = 365
+	defaultAdminLoginThrottleFailures      = 5
+	defaultAdminLoginThrottleMaxEntries    = 4096
 )
 
 func Load(lookup func(string) string) (Config, error) {
@@ -67,6 +72,33 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.AllowHTTPAPIUpstreams = allowHTTPAPIUpstreams
+	adminLoginThrottleEnabled, err := parseBool(valueOrDefault(lookup("N2API_ADMIN_LOGIN_THROTTLE_ENABLED"), "true"), "N2API_ADMIN_LOGIN_THROTTLE_ENABLED")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AdminLoginThrottleEnabled = adminLoginThrottleEnabled
+	adminLoginThrottleFailures, err := parsePositiveIntWithDefault(
+		lookup("N2API_ADMIN_LOGIN_THROTTLE_FAILURES"),
+		"N2API_ADMIN_LOGIN_THROTTLE_FAILURES",
+		defaultAdminLoginThrottleFailures,
+		1,
+		20,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AdminLoginThrottleFailures = adminLoginThrottleFailures
+	adminLoginThrottleMaxEntries, err := parsePositiveIntWithDefault(
+		lookup("N2API_ADMIN_LOGIN_THROTTLE_MAX_ENTRIES"),
+		"N2API_ADMIN_LOGIN_THROTTLE_MAX_ENTRIES",
+		defaultAdminLoginThrottleMaxEntries,
+		128,
+		16384,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AdminLoginThrottleMaxEntries = adminLoginThrottleMaxEntries
 	trustedProxyCIDRs, err := parseTrustedProxyCIDRs(lookup("N2API_TRUSTED_PROXY_CIDRS"))
 	if err != nil {
 		return Config{}, err
@@ -175,6 +207,20 @@ func parseNonNegativeInt(value, name string) (int, error) {
 	}
 	if parsed < 0 {
 		return 0, fmt.Errorf("%s must be greater than or equal to 0", name)
+	}
+	return parsed, nil
+}
+
+func parsePositiveIntWithDefault(value, name string, fallback, minimum, maximum int) (int, error) {
+	if strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number: %w", name, err)
+	}
+	if parsed < minimum || parsed > maximum {
+		return 0, fmt.Errorf("%s must be between %d and %d", name, minimum, maximum)
 	}
 	return parsed, nil
 }

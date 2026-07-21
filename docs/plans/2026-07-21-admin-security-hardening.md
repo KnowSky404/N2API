@@ -1,6 +1,6 @@
 # Admin Security Hardening Plan
 
-Status: planned
+Status: in progress
 Public API changes: additive admin endpoints; stricter mutation and proxy behavior
 Data migration: additive session metadata in Task 4
 
@@ -85,6 +85,9 @@ multi-hop chain against the owner's real reverse proxy configuration.
 
 ## Task 2: Throttle Administrator Login
 
+Status: completed locally on 2026-07-21; real reverse-proxy acceptance remains
+manual.
+
 ### Goal
 
 Bound password guessing by normalized IP and username without enumeration.
@@ -104,10 +107,12 @@ Task 1.
 
 ### Implementation
 
-Use a bounded expiring in-memory map for IP and normalized username. Apply
-exponential delay/temporary denial after configured failures, return integer
-`Retry-After`, use a dummy password hash for unknown users, reset the successful
-identity, and aggregate repeated audit events by window.
+Use a bounded expiring in-memory LRU for IP and hashed normalized username.
+Atomically reserve password checks across both identities, fail closed at the
+capacity bound without evicting active failure state, apply exponential
+delay/temporary denial after configured failures, return integer `Retry-After`,
+use a dummy password hash for unknown users, reset the successful identity, and
+globally aggregate repeated audit events by window.
 
 ### Tests And Verification
 
@@ -131,6 +136,11 @@ Required for proxy deployments to confirm the correct client IP is throttled.
 ### Completion Criteria
 
 Both dimensions enforce a bounded retry schedule and emit one aggregated event.
+
+Local core and HTTP tests cover normalization, independent dimensions,
+exponential delay and cap, TTL, fail-closed capacity, concurrent reservations,
+successful reset, uniform error bodies, integer `Retry-After`, dummy password
+verification, and one global failure event per aggregation window.
 
 ### Commit
 

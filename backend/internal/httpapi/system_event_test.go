@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -97,10 +98,11 @@ func TestSystemEventsEndpointRejectsInvalidSince(t *testing.T) {
 	}
 }
 
-func TestInvalidLoginRecordsFixedSecurityEventWithoutPassword(t *testing.T) {
+func TestInvalidLoginRecordsFixedSecurityEventWithoutCredentials(t *testing.T) {
 	recorder := &memorySystemEventRecorder{}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService(), recorder)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"owner","password":"canary-password"}`))
+	username := strings.Repeat("owner", 1024)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"`+username+`","password":"canary-password"}`))
 	req.Header.Set("Content-Type", "application/json")
 	res := httptest.NewRecorder()
 	server.ServeHTTP(res, req)
@@ -111,8 +113,36 @@ func TestInvalidLoginRecordsFixedSecurityEventWithoutPassword(t *testing.T) {
 		t.Fatalf("events = %d, want 1", len(recorder.events))
 	}
 	event := recorder.events[0]
-	if event.Action != systemevent.ActionAuthLoginFailed || event.ErrorCode != "invalid_credentials" || strings.Contains(event.Message, "canary-password") {
+	if event.Action != systemevent.ActionAuthLoginFailed || event.ErrorCode != "invalid_credentials" || event.Target.Name != "administrator" || strings.Contains(event.Message, "canary-password") || strings.Contains(event.Target.Name, username) {
 		t.Fatalf("event = %+v", event)
+	}
+}
+
+func TestLoginThrottleAggregatesRepeatedSecurityEvents(t *testing.T) {
+	recorder := &memorySystemEventRecorder{}
+	cfg := config.Config{AdminLoginThrottleEnabled: true, AdminLoginThrottleFailures: 1, AdminLoginThrottleMaxEntries: 128}
+	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), newFakeProviderService(), recorder)
+	for i, username := range []string{"owner-one", "owner-two"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"`+username+`","password":"wrong"}`))
+		req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i+10)
+		server.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if len(recorder.events) != 1 {
+		t.Fatalf("events = %d, want one aggregated event", len(recorder.events))
+	}
+}
+
+func TestDisabledLoginThrottleRecordsEveryFailedLoginEvent(t *testing.T) {
+	recorder := &memorySystemEventRecorder{}
+	cfg := config.Config{AdminLoginThrottleEnabled: false}
+	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), newFakeProviderService(), recorder)
+	for range 2 {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"owner","password":"wrong"}`))
+		req.RemoteAddr = "192.0.2.10:1234"
+		server.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if len(recorder.events) != 2 {
+		t.Fatalf("events = %d, want one event per failure while throttling is disabled", len(recorder.events))
 	}
 }
 

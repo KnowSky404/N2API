@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -39,6 +40,12 @@ func (s fakeAutoTestStatusSource) ProviderAccountAutoTestStatus() provider.AutoT
 }
 
 type fakeAdminService struct {
+	loginMu              sync.Mutex
+	loginCalls           int
+	loginStarted         chan<- struct{}
+	loginRelease         <-chan struct{}
+	loginErr             error
+	loginPanic           any
 	keys                 []admin.APIKey
 	deletedKeyID         int64
 	deleteKeyErr         error
@@ -215,10 +222,35 @@ func newFakeAdminService() *fakeAdminService {
 }
 
 func (s *fakeAdminService) Login(_ context.Context, username, password string) (admin.Session, error) {
+	s.loginMu.Lock()
+	s.loginCalls++
+	started := s.loginStarted
+	release := s.loginRelease
+	loginErr := s.loginErr
+	loginPanic := s.loginPanic
+	s.loginMu.Unlock()
+	if started != nil {
+		started <- struct{}{}
+	}
+	if release != nil {
+		<-release
+	}
+	if loginErr != nil {
+		return admin.Session{}, loginErr
+	}
+	if loginPanic != nil {
+		panic(loginPanic)
+	}
 	if username != "admin" || password != "secret" {
 		return admin.Session{}, admin.ErrUnauthorized
 	}
 	return admin.Session{Token: "valid-session", AdminID: 1, ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func (s *fakeAdminService) loginCallCount() int {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	return s.loginCalls
 }
 
 func (s *fakeAdminService) Logout(_ context.Context, token string) error {
@@ -1138,19 +1170,217 @@ func TestAdminLoginSetsSecureCookieForHTTPSPublicURL(t *testing.T) {
 
 func TestInvalidAdminLoginReturnsUnauthorized(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
-	recorder := httptest.NewRecorder()
+	for _, payload := range []string{
+		`{"username":"admin","password":"wrong"}`,
+		`{"username":"missing","password":"wrong"}`,
+		`{"username":"","password":"wrong"}`,
+	} {
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(payload)))
 
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"wrong"}`)))
+		if recorder.Code != http.StatusUnauthorized || strings.TrimSpace(recorder.Body.String()) != `{"error":"invalid_credentials"}` {
+			t.Fatalf("status/body = %d/%s, want uniform 401 response", recorder.Code, recorder.Body.String())
+		}
+	}
+}
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", recorder.Code)
+func TestAdminLoginThrottleReturnsRetryAfterAndUniformBody(t *testing.T) {
+	cfg := config.Config{AdminLoginThrottleEnabled: true, AdminLoginThrottleFailures: 2, AdminLoginThrottleMaxEntries: 128}
+	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), nil)
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+		req.RemoteAddr = "192.0.2.10:1234"
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+
+		wantStatus := http.StatusUnauthorized
+		if attempt == 3 {
+			wantStatus = http.StatusTooManyRequests
+		}
+		if recorder.Code != wantStatus || strings.TrimSpace(recorder.Body.String()) != `{"error":"invalid_credentials"}` {
+			t.Fatalf("attempt %d status/body = %d/%s", attempt, recorder.Code, recorder.Body.String())
+		}
+		if attempt >= 2 && recorder.Header().Get("Retry-After") != "1" {
+			t.Fatalf("attempt %d Retry-After = %q, want 1", attempt, recorder.Header().Get("Retry-After"))
+		}
 	}
-	var body map[string]string
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
+}
+
+func TestAdminLoginThrottleAtomicallyBoundsConcurrentPasswordChecks(t *testing.T) {
+	const (
+		threshold = 2
+		requests  = 20
+	)
+	started := make(chan struct{}, requests)
+	release := make(chan struct{})
+	admins := newFakeAdminService()
+	admins.loginStarted = started
+	admins.loginRelease = release
+	server := NewServer(config.Config{
+		AdminLoginThrottleEnabled:    true,
+		AdminLoginThrottleFailures:   threshold,
+		AdminLoginThrottleMaxEntries: 128,
+	}, staticHealth{}, admins, nil)
+
+	responses := make(chan int, requests)
+	for range requests {
+		go func() {
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+			req.RemoteAddr = "192.0.2.10:1234"
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, req)
+			responses <- recorder.Code
+		}()
 	}
-	if body["error"] != "invalid_credentials" {
-		t.Fatalf("error = %q, want invalid_credentials", body["error"])
+
+	for range threshold {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for reserved password checks")
+		}
+	}
+	for range requests - threshold {
+		select {
+		case status := <-responses:
+			if status != http.StatusTooManyRequests {
+				t.Fatalf("unreserved concurrent status = %d, want 429", status)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for throttled concurrent requests")
+		}
+	}
+	if got := admins.loginCallCount(); got != threshold {
+		t.Fatalf("password checks = %d, want threshold %d", got, threshold)
+	}
+
+	close(release)
+	for range threshold {
+		select {
+		case status := <-responses:
+			if status != http.StatusUnauthorized {
+				t.Fatalf("reserved concurrent status = %d, want 401", status)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for reserved concurrent requests")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("more password checks entered than the configured threshold")
+	default:
+	}
+}
+
+func TestAdminLoginThrottleCancelsReservationAfterInternalError(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.loginErr = errors.New("database unavailable")
+	server := NewServer(config.Config{
+		AdminLoginThrottleEnabled:    true,
+		AdminLoginThrottleFailures:   1,
+		AdminLoginThrottleMaxEntries: 128,
+	}, staticHealth{}, admins, nil)
+	send := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+		req.RemoteAddr = "192.0.2.10:1234"
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	if recorder := send(); recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("internal-error status = %d, want 500", recorder.Code)
+	}
+	admins.loginMu.Lock()
+	admins.loginErr = nil
+	admins.loginMu.Unlock()
+	if recorder := send(); recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("post-cancel status = %d body=%s, want 401", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAdminLoginThrottleCancelsReservationAfterPanic(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.loginPanic = "login panic"
+	server := NewServer(config.Config{
+		AdminLoginThrottleEnabled:    true,
+		AdminLoginThrottleFailures:   1,
+		AdminLoginThrottleMaxEntries: 128,
+	}, staticHealth{}, admins, nil)
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+		req.RemoteAddr = "192.0.2.10:1234"
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != "login panic" {
+				t.Fatalf("recovered = %v, want login panic", recovered)
+			}
+		}()
+		request()
+	}()
+	admins.loginMu.Lock()
+	admins.loginPanic = nil
+	admins.loginMu.Unlock()
+	if recorder := request(); recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("post-panic status = %d body=%s, want 401", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAdminLoginThrottleAppliesIPAndUsernameDimensions(t *testing.T) {
+	cfg := config.Config{AdminLoginThrottleEnabled: true, AdminLoginThrottleFailures: 1, AdminLoginThrottleMaxEntries: 128}
+	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), nil)
+	first := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+	first.RemoteAddr = "192.0.2.10:1234"
+	server.ServeHTTP(httptest.NewRecorder(), first)
+
+	tests := []struct {
+		name, username, remoteAddr string
+	}{
+		{name: "same IP different username", username: "other", remoteAddr: "192.0.2.10:4321"},
+		{name: "same username different IP", username: "admin", remoteAddr: "198.51.100.20:1234"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"`+tt.username+`","password":"wrong"}`))
+			req.RemoteAddr = tt.remoteAddr
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusTooManyRequests {
+				t.Fatalf("status = %d body=%s, want 429", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestAdminLoginSuccessResetsThrottleIdentities(t *testing.T) {
+	cfg := config.Config{AdminLoginThrottleEnabled: true, AdminLoginThrottleFailures: 3, AdminLoginThrottleMaxEntries: 128}
+	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), nil)
+	send := func(password string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"`+password+`"}`))
+		req.RemoteAddr = "192.0.2.10:1234"
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+		return recorder
+	}
+	for range 2 {
+		if recorder := send("wrong"); recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("pre-success status = %d", recorder.Code)
+		}
+	}
+	if recorder := send("secret"); recorder.Code != http.StatusOK {
+		t.Fatalf("success status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	for range 2 {
+		recorder := send("wrong")
+		if recorder.Code != http.StatusUnauthorized || recorder.Header().Get("Retry-After") != "" {
+			t.Fatalf("post-reset status/retry = %d/%q", recorder.Code, recorder.Header().Get("Retry-After"))
+		}
 	}
 }
 

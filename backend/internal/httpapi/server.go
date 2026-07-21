@@ -24,6 +24,13 @@ import (
 
 const adminSessionCookieName = "n2api_admin_session"
 
+const (
+	adminLoginThrottleBaseDelay   = time.Second
+	adminLoginThrottleMaxDelay    = time.Minute
+	adminLoginThrottleEntryTTL    = 15 * time.Minute
+	adminLoginThrottleEventWindow = time.Minute
+)
+
 type HealthChecker interface {
 	Ping(ctx context.Context) error
 }
@@ -173,6 +180,18 @@ type selectionBlockedReasonCount struct {
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
 	mux := http.NewServeMux()
 	systemEvents := systemEventRecorderFromOptions(options...)
+	loginThrottleFailures := cfg.AdminLoginThrottleFailures
+	if !cfg.AdminLoginThrottleEnabled {
+		loginThrottleFailures = 0
+	}
+	loginThrottle := admin.NewLoginThrottle(admin.LoginThrottleConfig{
+		FailureThreshold: loginThrottleFailures,
+		BaseDelay:        adminLoginThrottleBaseDelay,
+		MaxDelay:         adminLoginThrottleMaxDelay,
+		EntryTTL:         adminLoginThrottleEntryTTL,
+		EventWindow:      adminLoginThrottleEventWindow,
+		MaxEntries:       cfg.AdminLoginThrottleMaxEntries,
+	})
 	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
 	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
@@ -257,22 +276,37 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
+		clientIP := requestInfoForRequest(r).ClientIP
+		attempt, decision := loginThrottle.BeginAttempt(clientIP, req.Username)
+		if !decision.Allowed {
+			setRetryAfter(w, decision.RetryAfter)
+			if decision.ReportEvent {
+				recordLoginFailureEvent(r.Context(), systemEvents, "login_throttled", http.StatusTooManyRequests, started)
+			}
+			writeError(w, http.StatusTooManyRequests, "invalid_credentials")
+			return
+		}
+		defer loginThrottle.CancelAttempt(attempt)
 
 		session, err := admins.Login(r.Context(), req.Username, req.Password)
 		if err != nil {
 			if errors.Is(err, admin.ErrUnauthorized) {
-				_ = recordHTTPSystemEvent(r.Context(), systemEvents, systemevent.EventIntent{
-					Category: systemevent.CategorySecurity, Severity: systemevent.SeverityWarning,
-					Action: systemevent.ActionAuthLoginFailed, Outcome: systemevent.OutcomeFailure,
-					Target: systemevent.Target{Type: "admin", Name: strings.TrimSpace(req.Username)}, ErrorCode: "invalid_credentials",
-				}, http.StatusUnauthorized, time.Since(started))
+				decision = loginThrottle.RecordFailure(attempt)
+				if decision.RetryAfter > 0 {
+					setRetryAfter(w, decision.RetryAfter)
+				}
+				if !cfg.AdminLoginThrottleEnabled || decision.ReportEvent {
+					recordLoginFailureEvent(r.Context(), systemEvents, "invalid_credentials", http.StatusUnauthorized, started)
+				}
 				writeError(w, http.StatusUnauthorized, "invalid_credentials")
 				return
 			}
+			loginThrottle.CancelAttempt(attempt)
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
 
+		loginThrottle.RecordSuccess(attempt)
 		setSessionCookie(w, session.Token, session.ExpiresAt, secureCookie)
 		writeJSON(w, http.StatusOK, map[string]string{"username": req.Username})
 	})
@@ -1566,6 +1600,22 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	return withRequestInfo(withSystemEventRequestContext(mux, systemEvents), cfg.TrustedProxyCIDRs, cfg.PublicURL)
+}
+
+func recordLoginFailureEvent(ctx context.Context, recorder SystemEventRecorder, errorCode string, statusCode int, started time.Time) {
+	_ = recordHTTPSystemEvent(ctx, recorder, systemevent.EventIntent{
+		Category: systemevent.CategorySecurity, Severity: systemevent.SeverityWarning,
+		Action: systemevent.ActionAuthLoginFailed, Outcome: systemevent.OutcomeFailure,
+		Target: systemevent.Target{Type: "admin", Name: "administrator"}, ErrorCode: errorCode,
+	}, statusCode, time.Since(started))
+}
+
+func setRetryAfter(w http.ResponseWriter, delay time.Duration) {
+	seconds := int64((delay + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 }
 
 func parsePositivePathID(r *http.Request, name string) (int64, error) {

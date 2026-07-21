@@ -35,6 +35,45 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	if len(cfg.TrustedProxyCIDRs) != 0 {
 		t.Fatalf("TrustedProxyCIDRs = %v, want empty", cfg.TrustedProxyCIDRs)
 	}
+	if !cfg.AdminLoginThrottleEnabled || cfg.AdminLoginThrottleFailures != 5 || cfg.AdminLoginThrottleMaxEntries != 4096 {
+		t.Fatalf("login throttle defaults = enabled:%t failures:%d entries:%d", cfg.AdminLoginThrottleEnabled, cfg.AdminLoginThrottleFailures, cfg.AdminLoginThrottleMaxEntries)
+	}
+}
+
+func TestLoadAdminLoginThrottleConfig(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "encryption-secret", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	values := maps.Clone(base)
+	values["N2API_ADMIN_LOGIN_THROTTLE_ENABLED"] = "false"
+	values["N2API_ADMIN_LOGIN_THROTTLE_FAILURES"] = "8"
+	values["N2API_ADMIN_LOGIN_THROTTLE_MAX_ENTRIES"] = "8192"
+	cfg, err := Load(mapLookup(values))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.AdminLoginThrottleEnabled || cfg.AdminLoginThrottleFailures != 8 || cfg.AdminLoginThrottleMaxEntries != 8192 {
+		t.Fatalf("login throttle config = enabled:%t failures:%d entries:%d", cfg.AdminLoginThrottleEnabled, cfg.AdminLoginThrottleFailures, cfg.AdminLoginThrottleMaxEntries)
+	}
+
+	for name, value := range map[string]string{
+		"N2API_ADMIN_LOGIN_THROTTLE_ENABLED":     "sometimes",
+		"N2API_ADMIN_LOGIN_THROTTLE_FAILURES":    "0",
+		"N2API_ADMIN_LOGIN_THROTTLE_MAX_ENTRIES": "127",
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := maps.Clone(base)
+			invalid[name] = value
+			if _, err := Load(mapLookup(invalid)); err == nil {
+				t.Fatal("Load returned nil error")
+			}
+		})
+	}
+	tooManyEntries := maps.Clone(base)
+	tooManyEntries["N2API_ADMIN_LOGIN_THROTTLE_MAX_ENTRIES"] = "16385"
+	if _, err := Load(mapLookup(tooManyEntries)); err == nil {
+		t.Fatal("Load accepted N2API_ADMIN_LOGIN_THROTTLE_MAX_ENTRIES above 16384")
+	}
 }
 
 func TestLoadTrustedProxyCIDRs(t *testing.T) {
