@@ -417,6 +417,7 @@
       <div class="absolute left-0 z-30 mt-2 w-44 max-w-[calc(100vw-2rem)] rounded-lg border border-[#e5e5e5] bg-white p-1 shadow-lg sm:left-auto sm:right-0">
         <a
           class="ui-button ui-button--sm ui-button--start w-full"
+          data-sveltekit-reload
           class:cursor-not-allowed={!requestLogExportEnabled("json")}
           class:opacity-50={!requestLogExportEnabled("json")}
           href={requestLogExportEnabled("json") ? exportRequestLogsURL("json") : undefined}
@@ -429,6 +430,7 @@
         >JSON</a>
         <a
           class="ui-button ui-button--sm ui-button--start w-full"
+          data-sveltekit-reload
           class:cursor-not-allowed={!requestLogExportEnabled("csv")}
           class:opacity-50={!requestLogExportEnabled("csv")}
           href={requestLogExportEnabled("csv") ? exportRequestLogsURL("csv") : undefined}
@@ -441,6 +443,7 @@
         >CSV</a>
         <a
           class="ui-button ui-button--sm ui-button--start w-full"
+          data-sveltekit-reload
           class:cursor-not-allowed={!requestLogExportEnabled("csv")}
           class:opacity-50={!requestLogExportEnabled("csv")}
           href={requestLogExportEnabled("csv") ? exportRequestLogsURL("csv", true) : undefined}
@@ -453,6 +456,7 @@
         >CSV gzip</a>
         <a
           class="ui-button ui-button--sm ui-button--start w-full"
+          data-sveltekit-reload
           class:cursor-not-allowed={!requestLogExportEnabled("jsonl")}
           class:opacity-50={!requestLogExportEnabled("jsonl")}
           href={requestLogExportEnabled("jsonl") ? exportRequestLogsURL("jsonl") : undefined}
@@ -465,6 +469,7 @@
         >JSONL</a>
         <a
           class="ui-button ui-button--sm ui-button--start w-full"
+          data-sveltekit-reload
           class:cursor-not-allowed={!requestLogExportEnabled("jsonl")}
           class:opacity-50={!requestLogExportEnabled("jsonl")}
           href={requestLogExportEnabled("jsonl") ? exportRequestLogsURL("jsonl", true) : undefined}

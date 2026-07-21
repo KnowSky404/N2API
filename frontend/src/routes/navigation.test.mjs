@@ -637,6 +637,7 @@ test('request logs export menu uses bounded native attachment downloads from app
   assert.match(requestLogsPage, /onclick=\{\(event\) => prepareRequestLogExport\(event, "jsonl", true\)\}/);
   assert.match(requestLogsPage, /onpointerdown=\{\(event\) => prepareRequestLogExport\(event, "jsonl", true\)\}/);
   assert.match(requestLogsPage, /oncontextmenu=\{\(event\) => prepareRequestLogExport\(event, "jsonl", true\)\}/);
+  assert.equal((requestLogsPage.match(/data-sveltekit-reload/g) ?? []).length, 5);
   assert.match(requestLogsPage, /aria-disabled=\{!requestLogExportEnabled\("csv"\)\}/);
   assert.match(requestLogsPage, /class:cursor-not-allowed=\{!requestLogExportEnabled\("csv"\)\}/);
   assert.match(requestLogsPage, /class:opacity-50=\{!requestLogExportEnabled\("csv"\)\}/);
