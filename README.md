@@ -46,7 +46,8 @@ Open `http://localhost:3000` and sign in with the admin credentials from
 `.env`. The development Compose file explicitly accepts its HTTP public origin,
 container wildcard bind, and plaintext private-network database topology;
 published-image deployments remain fail-closed until those risks are selected
-individually.
+individually. See the [operator manual](docs/manual.md#host-binding-modes) for
+release loopback, LAN, IPv6, dual-stack, and Docker-network-only bindings.
 
 ## Basic Setup
 

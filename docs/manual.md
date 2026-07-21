@@ -331,6 +331,63 @@ Compose interpolation time, and publishes N2API on `127.0.0.1` by default. Set
 `N2API_BIND_ADDRESS=0.0.0.0` or `::` only when an intentionally public host
 listener is protected by the host firewall or an operator-provided ingress.
 
+### Host Binding Modes
+
+Keep `N2API_HOST=0.0.0.0` inside the container so other Compose services and
+the healthcheck can reach N2API. `N2API_BIND_ADDRESS` controls only the host
+listener created by Docker:
+
+| Deployment path | `N2API_BIND_ADDRESS` | Required operator action |
+| --- | --- | --- |
+| Reverse proxy on the same host | `127.0.0.1` (default), or `::1` for an IPv6-only proxy | Set `N2API_PUBLIC_URL` to the external HTTPS origin and keep the proxy on the selected loopback family. |
+| Trusted IPv4 LAN | a specific host LAN address, or `0.0.0.0` only when every IPv4 interface is intended | Restrict port 3000 with the host firewall. Add `public-http` to `N2API_ACCEPT_RISKS` only when the external origin really uses HTTP. |
+| Direct public IPv4 | `0.0.0.0` | Do not use for secure production: N2API does not terminate TLS, and a firewall does not encrypt credentials or API traffic. Use a TLS ingress on loopback or a Docker network instead. Any temporary public HTTP use requires `public-http`. |
+| IPv6 listener | a specific host IPv6 address, `::1` for loopback, or `::` for all IPv6 interfaces | Confirm the firewall has equivalent IPv6 rules and verify the listener with `ss -lntp`. A single release mapping publishes only the selected address family. |
+| Docker network only | no published port | Remove the inherited port with a Compose override and connect the ingress container to the same Docker network. |
+
+Docker Compose 2.24.4 or later can remove the release port with an override
+file containing:
+
+```yaml
+services:
+  n2api:
+    ports: !override []
+```
+
+Apply that file after the release definition. The ingress can then use
+`http://n2api:3000` on the shared Compose network while
+`N2API_PUBLIC_URL` remains the browser-visible HTTPS origin:
+
+```bash
+docker compose -f deploy/compose.release.yaml -f compose.docker-only.yaml \
+  --env-file .env config --quiet
+docker compose -f deploy/compose.release.yaml -f compose.docker-only.yaml \
+  --env-file .env up -d
+```
+
+For simultaneous IPv4 and IPv6 publishing, use a separate override with both
+long-syntax mappings instead of relying on one `N2API_BIND_ADDRESS` value:
+
+```yaml
+services:
+  n2api:
+    ports: !override
+      - name: http-ipv4
+        target: 3000
+        published: "${N2API_PORT:-3000}"
+        host_ip: "0.0.0.0"
+        protocol: tcp
+      - name: http-ipv6
+        target: 3000
+        published: "${N2API_PORT:-3000}"
+        host_ip: "::"
+        protocol: tcp
+```
+
+Treat this as public on both address families and apply firewall and TLS ingress
+rules to both. A protected dual-stack reverse proxy is preferable to publishing
+N2API's plain HTTP listener directly.
+
 Keep `.env` readable only by its owner, validate the Compose model without
 printing the resolved secrets, then pull and start the release:
 

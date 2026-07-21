@@ -183,6 +183,9 @@ Remove one restriction at a time only with a documented runtime need.
 
 ## Task 4: Make Host Binding Intentional
 
+Task status: implementation present; owner acceptance of loopback as the
+release default remains required
+
 ### Goal
 
 Avoid accidental public exposure while preserving documented LAN/IPv6 use.
@@ -203,6 +206,17 @@ Recommended release mapping is
 values for reverse proxy, LAN, direct public, Docker-only, and IPv6. Development
 Compose may keep a deliberate all-interface default for the current VPS workflow
 only if clearly separated from release behavior.
+
+The current release Compose uses long port syntax with
+`N2API_BIND_ADDRESS=127.0.0.1` by default, while development Compose explicitly
+accepts its wildcard bind risk for the remote VPS workflow. The environment
+example and operator manual cover loopback, LAN, direct public, IPv6, and
+Docker-network-only modes, including explicit Docker-only and dual-stack
+overrides. Local Engine verification confirmed that release values
+`127.0.0.1`, `0.0.0.0`, `::1`, and `::` bind only their selected address family,
+while development Compose publishes on both IPv4 and IPv6. Treat the release
+loopback default as provisional until the owner accepts it; no additional
+technical change is currently needed.
 
 ### Completion Criteria
 
