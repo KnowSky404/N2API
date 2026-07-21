@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first eight Task 4 slices completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first nine Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -451,8 +451,18 @@ target isolation, and idempotent installation.
 Eighth-slice source-event status: completed locally on 2026-07-21. Migration 44,
 the bounded always-on monitor, transactional crossing state, exact Runtime
 events, revoke recovery, and main wiring are covered by focused unit and isolated
-PostgreSQL tests. The 80-percent and 100-percent templates remain the next two
-independent commits.
+PostgreSQL tests. The 100-percent template remains after the independent
+80-percent template commit.
+
+The ninth slice adds `api-key-budget-80-percent-v1` as a disabled Runtime
+warning template. The first 80-percent crossing fires independently for each
+`client_api_key_budget` target, a 24-hour cooldown limits repeats, and the exact
+80-percent recovery action ends only that stream's incident. Catalog, matcher,
+service, Store, HTTP, and documentation tests cover exact fields, target
+isolation, cooldown, recovery, stable order, and idempotent installation.
+
+Ninth-slice status: completed locally on 2026-07-21. Installation remains
+explicit and the created rule starts disabled.
 
 ### Completion Criteria
 

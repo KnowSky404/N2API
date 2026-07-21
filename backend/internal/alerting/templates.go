@@ -8,6 +8,7 @@ const (
 	ProviderAutoTestFailedTemplateKey     = "provider-auto-test-failed-v1"
 	ProviderAccountExpiredTemplateKey     = "provider-account-expired-v1"
 	ProviderAccountCircuitOpenTemplateKey = "provider-account-circuit-open-v1"
+	APIKeyBudget80PercentTemplateKey      = "api-key-budget-80-percent-v1"
 )
 
 var ruleTemplateCatalog = []RuleTemplate{
@@ -73,6 +74,19 @@ var ruleTemplateCatalog = []RuleTemplate{
 		RecoveryAction:     systemevent.ActionProviderAccountRecovered,
 		AggregationCount:   1,
 		CooldownSeconds:    3600,
+		DeduplicationScope: DeduplicationScopeTarget,
+		NotifyRecovery:     true,
+	},
+	{
+		Key:                APIKeyBudget80PercentTemplateKey,
+		Name:               "API key budget at 80 percent",
+		Enabled:            false,
+		Category:           systemevent.CategoryRuntime,
+		Severity:           systemevent.SeverityWarning,
+		EventAction:        systemevent.ActionAPIKeyBudgetThreshold80Crossed,
+		RecoveryAction:     systemevent.ActionAPIKeyBudgetThreshold80Recovered,
+		AggregationCount:   1,
+		CooldownSeconds:    86400,
 		DeduplicationScope: DeduplicationScopeTarget,
 		NotifyRecovery:     true,
 	},

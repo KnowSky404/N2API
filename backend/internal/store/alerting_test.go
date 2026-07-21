@@ -732,6 +732,17 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if err != nil || !created || circuitRule.ID == edited.ID || circuitRule.ID == retentionRule.ID || circuitRule.ID == autoTestRule.ID || circuitRule.ID == expiredRule.ID || circuitRule.TemplateKey != circuitTemplate.TemplateKey || circuitRule.ActionID != firstAction.ID {
 		t.Fatalf("fifth template install = %+v, created=%t, err=%v", circuitRule, created, err)
 	}
+	budget80Template := circuitTemplate
+	budget80Template.TemplateKey = "api-key-budget-80-percent-v1"
+	budget80Template.Name = "API key budget at 80 percent"
+	budget80Template.ActionID = secondAction.ID
+	budget80Template.EventAction = systemevent.ActionAPIKeyBudgetThreshold80Crossed
+	budget80Template.RecoveryAction = systemevent.ActionAPIKeyBudgetThreshold80Recovered
+	budget80Template.CooldownSeconds = 86400
+	budget80Rule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: budget80Template})
+	if err != nil || !created || budget80Rule.ID == edited.ID || budget80Rule.ID == retentionRule.ID || budget80Rule.ID == autoTestRule.ID || budget80Rule.ID == expiredRule.ID || budget80Rule.ID == circuitRule.ID || budget80Rule.TemplateKey != budget80Template.TemplateKey || budget80Rule.ActionID != secondAction.ID {
+		t.Fatalf("sixth template install = %+v, created=%t, err=%v", budget80Rule, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `

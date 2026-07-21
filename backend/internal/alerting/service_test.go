@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 5 {
-		t.Fatalf("RuleTemplates count = %d, want 5", len(templates))
+	if len(templates) != 6 {
+		t.Fatalf("RuleTemplates count = %d, want 6", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -621,6 +621,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		circuitTemplate.DeduplicationScope != DeduplicationScopeTarget || !circuitTemplate.NotifyRecovery {
 		t.Fatalf("circuit template = %+v", circuitTemplate)
 	}
+	budget80Template := templates[5]
+	if budget80Template.Name != "API key budget at 80 percent" || budget80Template.Enabled ||
+		budget80Template.Category != systemevent.CategoryRuntime || budget80Template.Severity != systemevent.SeverityWarning ||
+		budget80Template.EventAction != systemevent.ActionAPIKeyBudgetThreshold80Crossed || budget80Template.RecoveryAction != systemevent.ActionAPIKeyBudgetThreshold80Recovered ||
+		budget80Template.AggregationCount != 1 || budget80Template.AggregationWindowSeconds != 0 || budget80Template.CooldownSeconds != 86400 ||
+		budget80Template.DeduplicationScope != DeduplicationScopeTarget || !budget80Template.NotifyRecovery {
+		t.Fatalf("80 percent budget template = %+v", budget80Template)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -658,6 +666,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	circuitAgain, created, err := service.InstallRuleTemplate(context.Background(), ProviderAccountCircuitOpenTemplateKey, 29)
 	if err != nil || created || circuitAgain.ID != circuitRule.ID || circuitAgain.ActionID != 23 {
 		t.Fatalf("circuit reinstall = %+v, %v, %v", circuitAgain, created, err)
+	}
+	budget80Rule, created, err := service.InstallRuleTemplate(context.Background(), APIKeyBudget80PercentTemplateKey, 31)
+	if err != nil || !created || budget80Rule.TemplateKey != APIKeyBudget80PercentTemplateKey || budget80Rule.ActionID != 31 || budget80Rule.Enabled {
+		t.Fatalf("80 percent budget InstallRuleTemplate = %+v, %v, %v", budget80Rule, created, err)
+	}
+	budget80Again, created, err := service.InstallRuleTemplate(context.Background(), APIKeyBudget80PercentTemplateKey, 37)
+	if err != nil || created || budget80Again.ID != budget80Rule.ID || budget80Again.ActionID != 31 {
+		t.Fatalf("80 percent budget reinstall = %+v, %v, %v", budget80Again, created, err)
 	}
 	for _, input := range []struct {
 		key      string

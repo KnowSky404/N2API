@@ -212,6 +212,47 @@ func TestProviderAccountCircuitOpenTemplateNotifiesPerTargetAndRecovers(t *testi
 	}
 }
 
+func TestAPIKeyBudget80PercentTemplateNotifiesPerStreamAndRecovers(t *testing.T) {
+	template, ok := ruleTemplate(APIKeyBudget80PercentTemplateKey)
+	if !ok {
+		t.Fatal("API key 80 percent budget template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 15
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	failure := triggerEvent()
+	failure.Category = systemevent.CategoryRuntime
+	failure.Severity = systemevent.SeverityWarning
+	failure.Action = systemevent.ActionAPIKeyBudgetThreshold80Crossed
+	failure.Outcome = systemevent.OutcomePartial
+	failure.Target = systemevent.Target{Type: "client_api_key_budget", ID: "42:request:24h", Name: "Codex laptop"}
+	state := RuleState{RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle}
+	state, decision, err := Evaluate(rule, state, failure, now)
+	if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+		t.Fatalf("80 percent evaluation state=%+v decision=%q err=%v", state, decision, err)
+	}
+	state, decision, err = Evaluate(rule, state, failure, now.Add(time.Hour))
+	if err != nil || decision != DecisionSuppress || state.Phase != StatePhaseFiring {
+		t.Fatalf("80 percent cooldown state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	otherStream := failure
+	otherStream.Target.ID = "42:cost:24h"
+	if rule.DeduplicationKeyHash(failure) == rule.DeduplicationKeyHash(otherStream) {
+		t.Fatal("target-scoped template reused the same deduplication key for different budget streams")
+	}
+
+	recovery := failure
+	recovery.Severity = systemevent.SeverityInfo
+	recovery.Action = systemevent.ActionAPIKeyBudgetThreshold80Recovered
+	recovery.Outcome = systemevent.OutcomeSuccess
+	state, decision, err = Evaluate(rule, state, recovery, now.Add(2*time.Hour))
+	if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+		t.Fatalf("80 percent recovery state=%+v decision=%q err=%v", state, decision, err)
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

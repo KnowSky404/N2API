@@ -1053,9 +1053,10 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"`api_key.budget.threshold_80.crossed`",
 			"`api_key.budget.threshold_100.crossed`",
 			"no rule is installed or enabled automatically",
+			"`api-key-budget-80-percent-v1` template",
 		},
 		"../../../docs/plans/2026-07-21-system-event-alerting.md": {
-			"Tasks 1-3 and the first eight Task 4 slices completed locally on 2026-07-21",
+			"Tasks 1-3 and the first nine Task 4 slices completed locally on 2026-07-21",
 			"oldest idle state at capacity",
 			"No default rules, dispatcher, outbound request",
 			"dedicated pgx listener",
@@ -1071,6 +1072,7 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"`api-key-budget-100-percent-v1`",
 			"`api_key_budget_threshold_states`",
 			"Eighth-slice source-event status: completed locally on 2026-07-21",
+			"Ninth-slice status: completed locally on 2026-07-21",
 			"`oauth.refresh.diagnostic.failed`",
 		},
 	}

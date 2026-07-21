@@ -566,6 +566,11 @@ raw errors. The persistent crossing table prevents unchanged usage, restarts,
 or concurrent server instances from duplicating transitions. Source events
 support custom exact-match rules; no rule is installed or enabled automatically.
 
+The `api-key-budget-80-percent-v1` template matches the first 80-percent
+crossing for each API Key budget stream, uses target-scoped deduplication and a
+24-hour cooldown, and can notify when that same stream falls below 80 percent.
+It starts disabled and must be installed against an existing delivery action.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a
