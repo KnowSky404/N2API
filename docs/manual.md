@@ -264,6 +264,11 @@ and uploads the proposed Release body. It does not create Git tags, container
 tags, or GitHub Releases. A later run may select a newer `main` commit, so a
 standalone preview is informational rather than a locked release candidate.
 
+Complete the [release checklist](release-checklist.md) for the exact candidate
+before publish approval. In particular, record the last successful real-backup
+restore drill and every immutable image tag or digest exercised by that drill.
+Generated CI fixtures do not satisfy this operator recovery gate.
+
 For an approval gate, configure the repository's `release` environment with a
 required reviewer. Run the workflow with `mode` set to `publish`; its prepare
 job creates a fresh `release-preview-*` artifact, then the publish job waits for
@@ -479,6 +484,29 @@ report contains counts and status labels only. Success and failure both remove
 the exact temporary containers, network, and volume. A successful generated
 fixture drill is automated evidence; run the same command on a current real
 operator backup before claiming the deployment is recoverable.
+
+### Restore Drill Schedule And Records
+
+Run the isolated restore drill at least once each calendar month and before
+every upgrade. Use a fresh pre-upgrade backup. Prove it first with the currently
+deployed immutable image; when the target release contains migrations, repeat
+the isolated drill with the proposed immutable image before changing the live
+stack. A drill is not complete until cleanup has removed its temporary
+containers, network, and volume.
+
+Use the [release checklist](release-checklist.md) as the drill record. Record
+UTC backup and drill timestamps, source deployment version, exact tested image
+tags or digests, planned window, measured duration, redacted check outcomes,
+retention expiry or deletion condition, and owner sign-off. Allocate at least
+60 minutes or twice the previous measured duration, whichever is longer; this
+is a planning window rather than a recovery-time guarantee.
+
+Keep at least the three most recent successful monthly backups. Retain each
+pre-upgrade backup until the upgraded deployment passes its next monthly
+restore drill. Backups must be encrypted in off-host storage, with decryption
+material stored separately from the dump. Keep real operator dumps and storage
+credentials out of Git, GitHub Actions, logs, and drill records. CI may validate
+only generated non-sensitive fixture dumps.
 
 For an upgrade or rollback, change `N2API_IMAGE` to the target CalVer, then pull
 and recreate the stack:

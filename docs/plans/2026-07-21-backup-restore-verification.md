@@ -1,6 +1,6 @@
 # Backup And Restore Verification Plan
 
-Status: in progress; Task 1 completed locally on 2026-07-21
+Status: in progress; Tasks 1-2 completed locally on 2026-07-21
 Public API changes: optional non-sensitive configuration export/import
 Data migration: none initially
 
@@ -94,6 +94,9 @@ a real operator backup remains the manual recovery claim gate.
 
 ## Task 2: Schedule And Record Restore Drills
 
+Status: completed locally on 2026-07-21; each real-backup drill and owner
+sign-off remains an operator action.
+
 ### Goal
 
 Make restore validation repeatable without exposing a production dump to CI.
@@ -104,8 +107,8 @@ Task 1.
 
 ### Files
 
-- Modify: `docs/manual.md`, release checklist/governance docs
-- Optional create: manually triggered local workflow template without secrets
+- Modify: `docs/manual.md`, `docs/README.md`
+- Create: `docs/release-checklist.md`
 
 ### Implementation
 
@@ -113,10 +116,21 @@ Document monthly/upgrade drills, image-version matching, backup retention,
 encrypted off-host storage, expected duration, and owner sign-off. CI validates
 only a generated fixture dump; operator backups stay local.
 
+The documented baseline requires monthly and pre-upgrade drills, immutable
+current/proposed image identifiers, a measured duration, three successful
+monthly backups, pre-upgrade retention through the next successful monthly
+drill, encrypted off-host storage with separately held key material, and dated
+owner sign-off. The checklist explicitly excludes secrets and real dumps from
+CI and release records.
+
 ### Completion Criteria
 
 Every release checklist asks for the last successful restore drill and tested
 image version.
+
+Local evidence: `docs/release-checklist.md` is linked from both the release
+workflow instructions and the documentation index, and contains the required
+real-backup recovery gate. No real operator drill is claimed by this task.
 
 ### Commit
 
