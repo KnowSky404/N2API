@@ -267,6 +267,7 @@ function requireContract(condition: boolean, stage: string, field: string): void
 
 test("official OpenAI JavaScript SDK matches the N2API contract", async () => {
   const fixture = ContractFixture.fromEnvironment();
+  let succeeded = false;
   try {
     await fixture.provision();
     const client = new OpenAI({
@@ -316,7 +317,9 @@ test("official OpenAI JavaScript SDK matches the N2API contract", async () => {
       authenticationError = error instanceof OpenAI.AuthenticationError && error.status === 401;
     }
     requireContract(authenticationError, "invalid_key", "error_type");
+    succeeded = true;
   } finally {
-    await fixture.cleanup();
+    const preserveFailureState = process.env.N2API_CONTRACT_PRESERVE_FAILURE_STATE === "true";
+    if (succeeded || !preserveFailureState) await fixture.cleanup();
   }
 }, 30_000);

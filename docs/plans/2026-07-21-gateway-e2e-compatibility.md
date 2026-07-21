@@ -270,6 +270,9 @@ manual test.
 
 ## Task 5: Upload Sanitized Failure Artifacts
 
+Status: completed locally on 2026-07-21; pending the next authorized push and
+GitHub Actions run.
+
 ### Goal
 
 Make E2E failures diagnosable without exposing secrets.
@@ -290,10 +293,51 @@ Task 3.
 Collect bounded N2API/PostgreSQL/mock logs, scenario IDs, test reports, and
 redacted Request Log rows on failure. Upload with short retention.
 
+The implemented collector converts raw runner and service output into a strict
+allowlist artifact. It emits only:
+
+- `manifest.json`: schema version, suite, run ID, generation time, counts, and
+  a truncation flag.
+- `events.jsonl`: normalized test lifecycle and bounded failure-stage events.
+- `services.json`: service name, state, health, and exit code.
+- `scenarios.json`: canonical mock scenario, method, route, status, and count.
+- `request-logs.jsonl`: request attribution IDs, canonical route/status/error
+  fields, latency, usage source, retry counts, and timestamp.
+- `safe.marker`: upload gate written only after all output passes the secret
+  and exact-canary scan.
+
+Collection is limited to 500 events, 32 scenarios, and 50 Request Log rows.
+Each output file is limited to 256 KiB and the complete artifact to 1 MiB.
+Artifacts use a run ID and attempt-specific name and are retained for three
+days. Raw logs remain under the Actions runner temporary directory and are
+never uploaded or printed by failure-handling steps.
+
+Gateway and SDK fixtures preserve database state only after a failed test when
+the CI runner explicitly enables the preservation flag. Successful and normal
+local runs continue to clean up through the supported admin API, and the
+Compose cleanup step always removes containers and volumes.
+
+### Tests And Verification
+
+Unit tests cover allowlist conversion, unknown-field dropping, exact-canary
+rejection, sensitive-pattern rejection, and all event/row/file/artifact bounds.
+A local deliberately failed gateway run emitted Bearer, Cookie, and request-body
+canaries into its raw runner log. The collector produced a gated safe artifact
+containing only normalized test-stage events, with zero fixed or dynamic canary
+matches, and the isolated Compose project and volume were removed afterward.
+
+The normal PostgreSQL-backed gateway suite and the pinned JavaScript and Python
+SDK suites also pass with failure-state preservation enabled, proving the
+success cleanup path is unchanged.
+
 ### Completion Criteria
 
 Artifacts identify the failing stage and contain no bearer token, cookie,
 encrypted credential, prompt, or response body.
+
+Local completion is proven by the sanitizer tests and deliberate failure
+drill. Remote completion requires one authorized GitHub Actions run so the
+uploaded artifact can be inspected without exposing protected-account data.
 
 ### Risks And Rollback
 

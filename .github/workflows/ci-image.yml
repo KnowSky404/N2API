@@ -59,18 +59,30 @@ jobs:
           go test -count=1 ./...
 
       - name: Start mock OpenAI upstream
+        id: mock_start
         shell: bash
         run: |
           set -euo pipefail
-          docker compose --project-name n2api-e2e-mock \
-            -f deploy/compose.e2e.yaml up -d --build --wait mock-openai
+          raw_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/raw"
+          mkdir -p "$raw_dir"
+          if ! docker compose --project-name n2api-e2e-mock \
+            -f deploy/compose.e2e.yaml up -d --build --wait mock-openai \
+            >"$raw_dir/compose-up.log" 2>&1; then
+            printf 'stage=compose_start failure=command_failed status=1\n' \
+              >"$raw_dir/mock-smoke.log"
+            exit 1
+          fi
 
       - name: Smoke test mock OpenAI scenarios
+        id: mock_smoke
         shell: bash
         run: |
           set -euo pipefail
-          docker compose --project-name n2api-e2e-mock \
-            -f deploy/compose.e2e.yaml exec -T mock-openai sh -eu <<'MOCK_SMOKE'
+          raw_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/raw"
+          mkdir -p "$raw_dir"
+          if ! docker compose --project-name n2api-e2e-mock \
+            -f deploy/compose.e2e.yaml exec -T mock-openai sh -eu \
+            >"$raw_dir/mock-smoke.log" 2>&1 <<'MOCK_SMOKE'
               base=http://mock-openai:8080
               authorization="Authorization: Bearer e2e-upstream-fixture-key"
               response=$(curl -fsS "$base/healthz")
@@ -121,18 +133,48 @@ jobs:
                 printf '%s\n' "$state" | grep -q "\"scenario\":\"$scenario\""
               done
           MOCK_SMOKE
+          then
+            printf 'stage=mock_smoke failure=command_failed status=1\n' \
+              >>"$raw_dir/mock-smoke.log"
+            exit 1
+          fi
 
-      - name: Show mock OpenAI logs on failure
-        if: failure()
-        run: >-
-          docker compose --project-name n2api-e2e-mock
-          -f deploy/compose.e2e.yaml logs --no-color
+      - name: Collect sanitized mock diagnostics
+        id: mock_diagnostics
+        if: >-
+          failure() &&
+          (steps.mock_start.outcome == 'failure' || steps.mock_smoke.outcome == 'failure')
+        continue-on-error: true
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/raw"
+          safe_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/safe"
+          dev/ci/collect-e2e-diagnostics.sh \
+            n2api-e2e-mock mock-smoke "$raw_dir" "$safe_dir"
+          test -f "$safe_dir/safe.marker"
+          echo "safe=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload sanitized mock diagnostics
+        if: always() && steps.mock_diagnostics.outputs.safe == 'true'
+        timeout-minutes: 3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-diagnostics-mock-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/n2api-diagnostics/mock-smoke/safe
+          if-no-files-found: error
+          retention-days: 3
+          include-hidden-files: false
+          compression-level: 9
 
       - name: Stop mock OpenAI upstream
         if: always()
+        timeout-minutes: 2
         run: >-
           docker compose --project-name n2api-e2e-mock
-          -f deploy/compose.e2e.yaml down --volumes --remove-orphans
+          -f deploy/compose.e2e.yaml
+          down --volumes --remove-orphans --timeout 10
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -162,24 +204,69 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          raw_dir="$RUNNER_TEMP/n2api-diagnostics/gateway/raw"
+          mkdir -p "$raw_dir"
+          if ! docker compose --project-name "$E2E_PROJECT" \
+            -f deploy/compose.e2e.yaml \
+            build gateway-e2e >"$raw_dir/compose-build.log" 2>&1; then
+            printf 'stage=compose_build failure=command_failed status=1\n' \
+              >"$raw_dir/gateway-e2e.log"
+            exit 1
+          fi
+          if ! docker compose --project-name "$E2E_PROJECT" \
+            -f deploy/compose.e2e.yaml \
+            up -d --build --wait postgres mock-openai n2api \
+            >"$raw_dir/compose-up.log" 2>&1; then
+            printf 'stage=compose_start failure=command_failed status=1\n' \
+              >"$raw_dir/gateway-e2e.log"
+            exit 1
+          fi
+          gateway_status=0
           docker compose --project-name "$E2E_PROJECT" \
             -f deploy/compose.e2e.yaml \
-            up --build --abort-on-container-exit \
-            --exit-code-from gateway-e2e gateway-e2e
+            run --rm --no-deps \
+            -e N2API_E2E_PRESERVE_FAILURE_STATE=true \
+            -e N2API_E2E_DIAGNOSTIC_DRILL="${N2API_E2E_DIAGNOSTIC_DRILL:-}" \
+            -e N2API_E2E_DIAGNOSTIC_SECRET_CANARY="${N2API_E2E_DIAGNOSTIC_SECRET_CANARY:-}" \
+            -e N2API_E2E_DIAGNOSTIC_BODY_CANARY="${N2API_E2E_DIAGNOSTIC_BODY_CANARY:-}" \
+            gateway-e2e >"$raw_dir/gateway-e2e.log" 2>&1 || gateway_status=$?
+          if (( gateway_status != 0 )); then
+            printf 'stage=gateway_test failure=command_failed status=%d\n' \
+              "$gateway_status" >>"$raw_dir/gateway-e2e.log"
+            exit "$gateway_status"
+          fi
 
-      - name: Show gateway E2E logs on failure
+      - name: Collect sanitized gateway E2E diagnostics
+        id: gateway_diagnostics
         if: failure() && steps.gateway_e2e.outcome == 'failure'
         continue-on-error: true
-        env:
-          E2E_PROJECT: n2api-gateway-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-        run: >-
-          docker compose --project-name "$E2E_PROJECT"
-          -f deploy/compose.e2e.yaml
-          logs --no-color --timestamps --tail 500
-          postgres mock-openai n2api gateway-e2e
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_dir="$RUNNER_TEMP/n2api-diagnostics/gateway/raw"
+          safe_dir="$RUNNER_TEMP/n2api-diagnostics/gateway/safe"
+          dev/ci/collect-e2e-diagnostics.sh \
+            "n2api-gateway-e2e-${{ github.run_id }}-${{ github.run_attempt }}" \
+            gateway "$raw_dir" "$safe_dir"
+          test -f "$safe_dir/safe.marker"
+          echo "safe=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload sanitized gateway E2E diagnostics
+        if: always() && steps.gateway_diagnostics.outputs.safe == 'true'
+        timeout-minutes: 3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-diagnostics-gateway-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/n2api-diagnostics/gateway/safe
+          if-no-files-found: error
+          retention-days: 3
+          include-hidden-files: false
+          compression-level: 9
 
       - name: Stop PostgreSQL-backed gateway E2E
         if: always()
+        timeout-minutes: 2
         env:
           E2E_PROJECT: n2api-gateway-e2e-${{ github.run_id }}-${{ github.run_attempt }}
         run: >-
@@ -194,39 +281,87 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker compose --project-name "$CONTRACT_PROJECT" \
+          raw_dir="$RUNNER_TEMP/n2api-diagnostics/sdk-contracts/raw"
+          mkdir -p "$raw_dir"
+          if ! docker compose --project-name "$CONTRACT_PROJECT" \
             --profile contracts -f deploy/compose.e2e.yaml \
-            build contracts-javascript contracts-python
-          docker compose --project-name "$CONTRACT_PROJECT" \
+            build contracts-javascript contracts-python \
+            >"$raw_dir/compose-build.log" 2>&1; then
+            printf 'stage=compose_build failure=command_failed status=1\n' \
+              >"$raw_dir/contracts-javascript.log"
+            exit 1
+          fi
+          if ! docker compose --project-name "$CONTRACT_PROJECT" \
             -f deploy/compose.e2e.yaml \
-            up -d --build --wait postgres mock-openai n2api
+            up -d --build --wait postgres mock-openai n2api \
+            >"$raw_dir/compose-up.log" 2>&1; then
+            printf 'stage=compose_start failure=command_failed status=1\n' \
+              >"$raw_dir/contracts-javascript.log"
+            exit 1
+          fi
 
           javascript_status=0
           python_status=0
           docker compose --project-name "$CONTRACT_PROJECT" \
             --profile contracts -f deploy/compose.e2e.yaml \
-            run --rm --no-deps contracts-javascript || javascript_status=$?
+            run --rm --no-deps \
+            -e N2API_CONTRACT_PRESERVE_FAILURE_STATE=true \
+            contracts-javascript \
+            >"$raw_dir/contracts-javascript.log" 2>&1 || javascript_status=$?
           docker compose --project-name "$CONTRACT_PROJECT" \
             --profile contracts -f deploy/compose.e2e.yaml \
-            run --rm --no-deps contracts-python || python_status=$?
+            run --rm --no-deps \
+            -e N2API_CONTRACT_PRESERVE_FAILURE_STATE=true \
+            contracts-python \
+            >"$raw_dir/contracts-python.log" 2>&1 || python_status=$?
+
+          if (( javascript_status != 0 )); then
+            printf 'stage=javascript_contract failure=command_failed status=%d\n' \
+              "$javascript_status" >>"$raw_dir/contracts-javascript.log"
+          fi
+          if (( python_status != 0 )); then
+            printf 'stage=python_contract failure=command_failed status=%d\n' \
+              "$python_status" >>"$raw_dir/contracts-python.log"
+          fi
+
+          printf 'javascript_status=%d\npython_status=%d\n' \
+            "$javascript_status" "$python_status" >"$raw_dir/runner-status.txt"
 
           if (( javascript_status != 0 || python_status != 0 )); then
             exit 1
           fi
 
-      - name: Show SDK contract infrastructure logs on failure
+      - name: Collect sanitized SDK contract diagnostics
+        id: sdk_diagnostics
         if: failure() && steps.sdk_contracts.outcome == 'failure'
         continue-on-error: true
-        env:
-          CONTRACT_PROJECT: n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}
-        run: >-
-          docker compose --project-name "$CONTRACT_PROJECT"
-          -f deploy/compose.e2e.yaml
-          logs --no-color --timestamps --tail 500
-          postgres mock-openai n2api
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_dir="$RUNNER_TEMP/n2api-diagnostics/sdk-contracts/raw"
+          safe_dir="$RUNNER_TEMP/n2api-diagnostics/sdk-contracts/safe"
+          dev/ci/collect-e2e-diagnostics.sh \
+            "n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}" \
+            sdk-contracts "$raw_dir" "$safe_dir"
+          test -f "$safe_dir/safe.marker"
+          echo "safe=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload sanitized SDK contract diagnostics
+        if: always() && steps.sdk_diagnostics.outputs.safe == 'true'
+        timeout-minutes: 3
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-diagnostics-sdk-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/n2api-diagnostics/sdk-contracts/safe
+          if-no-files-found: error
+          retention-days: 3
+          include-hidden-files: false
+          compression-level: 9
 
       - name: Stop official OpenAI SDK contracts
         if: always()
+        timeout-minutes: 2
         env:
           CONTRACT_PROJECT: n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}
         run: >-
@@ -307,7 +442,7 @@ jobs:
               exit 0
             fi
             if [ "$attempt" = "30" ]; then
-              docker logs n2api-ci-postgres
+              echo "PostgreSQL smoke dependency did not become healthy" >&2
               exit 1
             fi
             sleep 1
@@ -339,7 +474,7 @@ jobs:
               break
             fi
             if [ "$attempt" = "30" ]; then
-              docker logs n2api-ci
+              echo "N2API image did not become ready" >&2
               exit 1
             fi
             sleep 1
@@ -361,6 +496,7 @@ jobs:
 
       - name: Stop smoke test containers
         if: always()
+        timeout-minutes: 2
         shell: bash
         run: |
           docker rm -f n2api-ci n2api-ci-postgres || true

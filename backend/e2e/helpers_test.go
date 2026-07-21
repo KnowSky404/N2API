@@ -266,6 +266,9 @@ func uniqueE2ESuffix(t *testing.T) string {
 func registerCleanup(t *testing.T, client *http.Client, env e2eEnvironment, resources *e2eResources) {
 	t.Helper()
 	t.Cleanup(func() {
+		if shouldPreserveFailureState(t.Failed(), os.Getenv("N2API_E2E_PRESERVE_FAILURE_STATE")) {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
 		for _, id := range uniquePositiveIDs(resources.clientKeyID, resources.clientKeyIDs) {
@@ -287,6 +290,10 @@ func registerCleanup(t *testing.T, client *http.Client, env e2eEnvironment, reso
 		_, _ = performJSON(ctx, client, http.MethodPost, env.baseURL+"/api/admin/logout", nil, nil, nil)
 		resources.clientSecret = ""
 	})
+}
+
+func shouldPreserveFailureState(failed bool, raw string) bool {
+	return failed && strings.EqualFold(strings.TrimSpace(raw), "true")
 }
 
 func uniquePositiveIDs(single int64, values []int64) []int64 {

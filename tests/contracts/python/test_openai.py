@@ -256,6 +256,7 @@ def sdk_stage(stage: str, action: Callable[[], T]) -> T:
 class OpenAIContractTest(unittest.TestCase):
     def test_official_openai_python_sdk_matches_n2api_contract(self) -> None:
         fixture = ContractFixture.from_environment()
+        succeeded = False
         try:
             fixture.provision()
             client = OpenAI(
@@ -327,8 +328,13 @@ class OpenAIContractTest(unittest.TestCase):
             self.assertTrue(
                 authentication_error, "stage=invalid_key field=error_type"
             )
+            succeeded = True
         finally:
-            fixture.cleanup()
+            preserve_failure_state = (
+                os.environ.get("N2API_CONTRACT_PRESERVE_FAILURE_STATE") == "true"
+            )
+            if succeeded or not preserve_failure_state:
+                fixture.cleanup()
 
 
 if __name__ == "__main__":
