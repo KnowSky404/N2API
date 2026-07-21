@@ -173,6 +173,8 @@ func adminFailureErrorCode(statusCode int) string {
 		return "not_found"
 	case http.StatusConflict:
 		return "conflict"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
 	default:
 		return "operation_failed"
 	}
@@ -213,6 +215,13 @@ func adminFailureEventForRequest(r *http.Request) (systemevent.Action, systemeve
 		"POST /api/admin/error-passthrough-rules":                     {systemevent.ActionErrorPassthroughRuleCreated, systemevent.CategoryAudit, "error_passthrough_rule"},
 		"PATCH /api/admin/error-passthrough-rules/{id}":               {systemevent.ActionErrorPassthroughRuleUpdated, systemevent.CategoryAudit, "error_passthrough_rule"},
 		"DELETE /api/admin/error-passthrough-rules/{id}":              {systemevent.ActionErrorPassthroughRuleDeleted, systemevent.CategoryAudit, "error_passthrough_rule"},
+		"POST /api/admin/alert-actions":                               {systemevent.ActionAlertActionCreated, systemevent.CategoryAudit, "alert_action"},
+		"PATCH /api/admin/alert-actions/{id}":                         {systemevent.ActionAlertActionUpdated, systemevent.CategoryAudit, "alert_action"},
+		"DELETE /api/admin/alert-actions/{id}":                        {systemevent.ActionAlertActionDeleted, systemevent.CategoryAudit, "alert_action"},
+		"POST /api/admin/alert-actions/{id}/test":                     {systemevent.ActionAlertDeliveryTested, systemevent.CategoryAudit, "alert_action"},
+		"POST /api/admin/alert-rules":                                 {systemevent.ActionAlertRuleCreated, systemevent.CategoryAudit, "alert_rule"},
+		"PATCH /api/admin/alert-rules/{id}":                           {systemevent.ActionAlertRuleUpdated, systemevent.CategoryAudit, "alert_rule"},
+		"DELETE /api/admin/alert-rules/{id}":                          {systemevent.ActionAlertRuleDeleted, systemevent.CategoryAudit, "alert_rule"},
 		"PUT /api/admin/model-settings":                               {systemevent.ActionModelSettingsUpdated, systemevent.CategoryAudit, "model_settings"},
 		"POST /api/admin/provider-accounts/api-upstream":              {systemevent.ActionProviderAccountCreated, systemevent.CategoryAudit, "provider_account"},
 		"POST /api/admin/provider-accounts/codex-oauth/connect":       {systemevent.ActionOAuthConnectFailed, systemevent.CategoryOAuth, "oauth_connection"},

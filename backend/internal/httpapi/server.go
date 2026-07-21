@@ -215,6 +215,8 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	gateway, webFS, autoTestStatusSource, build := parseServerOptions(options...)
 	requestLogRetentionStatusSource := requestLogRetentionStatusSourceFromOptions(options...)
 	alertDeliveryStatusSource := alertDeliveryStatusSourceFromOptions(options...)
+	alertingAdminService := alertingAdminServiceFromOptions(options...)
+	alertActionTester := alertActionTesterFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -407,6 +409,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			recordAdminMutationFailure(auditedRequest.Context(), systemEvents, auditedRequest, captured.statusCode, time.Since(started))
 		}
 	}
+	registerAlertingAdminRoutes(mux, requireAdmin, alertingAdminService, alertActionTester)
 
 	mux.HandleFunc("GET /api/admin/me", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
 		writeJSON(w, http.StatusOK, map[string]string{"username": currentAdmin.Username})
@@ -3047,6 +3050,24 @@ func alertDeliveryStatusSourceFromOptions(options ...any) AlertDeliveryStatusSou
 	for _, option := range options {
 		if source, ok := option.(AlertDeliveryStatusSource); ok {
 			return source
+		}
+	}
+	return nil
+}
+
+func alertingAdminServiceFromOptions(options ...any) AlertingAdminService {
+	for _, option := range options {
+		if service, ok := option.(AlertingAdminService); ok {
+			return service
+		}
+	}
+	return nil
+}
+
+func alertActionTesterFromOptions(options ...any) AlertActionTester {
+	for _, option := range options {
+		if tester, ok := option.(AlertActionTester); ok {
+			return tester
 		}
 	}
 	return nil

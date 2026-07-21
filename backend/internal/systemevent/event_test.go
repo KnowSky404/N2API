@@ -128,7 +128,7 @@ func TestAlertingCRUDActionsAreKnown(t *testing.T) {
 }
 
 func TestAlertDeliveryActionsAreKnownAndInternal(t *testing.T) {
-	for _, action := range []Action{ActionAlertDeliveryFailed, ActionAlertDeliveryQueueOverflow} {
+	for _, action := range []Action{ActionAlertDeliveryTested, ActionAlertDeliveryFailed, ActionAlertDeliveryQueueOverflow} {
 		if !IsKnownAction(action) || !IsAlertDeliveryInternalAction(action) {
 			t.Fatalf("alert delivery action %q was not registered as internal", action)
 		}

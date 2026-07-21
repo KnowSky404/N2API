@@ -18,6 +18,14 @@ const (
 	MaxAggregationCount         = 1024
 	MaxAggregationWindowSeconds = 24 * 60 * 60
 	MaxCooldownSeconds          = 7 * 24 * 60 * 60
+	ActionTestAdmissionWindow   = 30 * time.Second
+)
+
+type ActionTestStatus string
+
+const (
+	ActionTestStatusPassed ActionTestStatus = "passed"
+	ActionTestStatusFailed ActionTestStatus = "failed"
 )
 
 type ActionKind string
@@ -72,16 +80,23 @@ var (
 	ErrNotFound      = errors.New("alerting record not found")
 	ErrRepository    = errors.New("alerting repository operation failed")
 	ErrStateCapacity = errors.New("alerting rule state capacity reached")
+	ErrConflict      = errors.New("alerting record conflict")
 )
 
 type Action struct {
-	ID                    int64      `json:"id"`
-	Name                  string     `json:"name"`
-	Kind                  ActionKind `json:"kind"`
-	Enabled               bool       `json:"enabled"`
-	DestinationConfigured bool       `json:"destinationConfigured"`
-	CreatedAt             time.Time  `json:"createdAt"`
-	UpdatedAt             time.Time  `json:"updatedAt"`
+	ID                    int64            `json:"id"`
+	Name                  string           `json:"name"`
+	Kind                  ActionKind       `json:"kind"`
+	Enabled               bool             `json:"enabled"`
+	DestinationConfigured bool             `json:"destinationConfigured"`
+	LastTestedAt          *time.Time       `json:"lastTestedAt"`
+	LastTestStatus        ActionTestStatus `json:"lastTestStatus"`
+	LastTestHTTPStatus    *int             `json:"lastTestHTTPStatus"`
+	LastTestLatencyMS     int64            `json:"lastTestLatencyMs"`
+	LastTestErrorCode     string           `json:"lastTestErrorCode"`
+	LastTestRetryable     bool             `json:"lastTestRetryable"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	UpdatedAt             time.Time        `json:"updatedAt"`
 }
 
 type ActionInput struct {
@@ -92,10 +107,11 @@ type ActionInput struct {
 }
 
 type ActionUpdateInput struct {
-	Name        string
-	Kind        ActionKind
-	Destination *string `json:"-"`
-	Enabled     bool
+	Name              string
+	Kind              ActionKind
+	Destination       *string `json:"-"`
+	Enabled           bool
+	ExpectedUpdatedAt time.Time
 }
 
 type ActionCreate struct {
@@ -110,20 +126,46 @@ type ActionUpdate struct {
 	Kind                 ActionKind
 	EncryptedDestination *string `json:"-"`
 	Enabled              bool
+	ExpectedUpdatedAt    time.Time
 }
 
 type ActionForDelivery struct {
 	ID                   int64
+	Name                 string
 	Kind                 ActionKind
 	Enabled              bool
 	EncryptedDestination string `json:"-"`
+	UpdatedAt            time.Time
 }
 
 type ResolvedAction struct {
 	ID          int64
+	Name        string
 	Kind        ActionKind
 	Enabled     bool
 	Destination string `json:"-"`
+	UpdatedAt   time.Time
+}
+
+type ActionTestStart struct {
+	Action       ActionForDelivery
+	AttemptToken string
+	StartedAt    time.Time
+}
+
+type ActionTestAttempt struct {
+	Action       ResolvedAction
+	AttemptToken string
+	StartedAt    time.Time
+}
+
+type ActionTestResult struct {
+	TestedAt   time.Time        `json:"testedAt"`
+	Status     ActionTestStatus `json:"status"`
+	HTTPStatus *int             `json:"httpStatus"`
+	LatencyMS  int64            `json:"latencyMs"`
+	ErrorCode  string           `json:"errorCode"`
+	Retryable  bool             `json:"retryable"`
 }
 
 type Rule struct {
@@ -149,7 +191,8 @@ type RuleCreate struct {
 }
 
 type RuleUpdate struct {
-	Rule Rule
+	Rule              Rule
+	ExpectedUpdatedAt time.Time
 }
 
 type RuleState struct {
@@ -166,10 +209,11 @@ type RuleState struct {
 }
 
 type Evaluation struct {
-	Rule          Rule
-	ActionEnabled bool
-	State         RuleState
-	Decision      Decision
+	Rule            Rule
+	ActionEnabled   bool
+	ActionUpdatedAt time.Time
+	State           RuleState
+	Decision        Decision
 }
 
 type Repository interface {
@@ -180,6 +224,8 @@ type Repository interface {
 	ListActions(context.Context) ([]Action, error)
 	GetEncryptedDestination(context.Context, int64) (string, error)
 	GetActionForDelivery(context.Context, int64) (ActionForDelivery, error)
+	BeginActionTest(context.Context, int64, time.Time, string) (ActionTestStart, error)
+	FinalizeActionTest(context.Context, int64, string, ActionTestResult) (Action, error)
 
 	CreateRule(context.Context, RuleCreate) (Rule, error)
 	UpdateRule(context.Context, int64, RuleUpdate) (Rule, error)

@@ -57,9 +57,10 @@ type DispatcherConfig struct {
 }
 
 type deliveryJob struct {
-	rule     Rule
-	decision Decision
-	event    systemevent.Event
+	rule            Rule
+	actionUpdatedAt time.Time
+	decision        Decision
+	event           systemevent.Event
 }
 
 type Dispatcher struct {
@@ -319,7 +320,7 @@ func (dispatcher *Dispatcher) evaluateEvent(ctx context.Context, event systemeve
 		}
 		queue := dispatcher.deliveryQueues[deliveryWorkerIndex(evaluation.Rule, event, len(dispatcher.deliveryQueues))]
 		select {
-		case queue <- deliveryJob{rule: evaluation.Rule, decision: evaluation.Decision, event: event}:
+		case queue <- deliveryJob{rule: evaluation.Rule, actionUpdatedAt: evaluation.ActionUpdatedAt, decision: evaluation.Decision, event: event}:
 		case <-ctx.Done():
 			return
 		}
@@ -387,19 +388,19 @@ func (dispatcher *Dispatcher) deliver(ctx context.Context, job deliveryJob) {
 	if !rule.Enabled || !rule.UpdatedAt.Equal(job.rule.UpdatedAt) {
 		return
 	}
-	action, err := dispatcher.cfg.Service.ResolveActionForDelivery(ctx, rule.ActionID)
-	if err != nil {
-		if !errors.Is(err, ErrNotFound) {
-			dispatcher.recordFailureEvent(rule.ID, rule.ActionID, 0, 0, "alert_delivery_action_unavailable")
-		}
-		return
-	}
-	if !action.Enabled {
-		return
-	}
 	notification := notificationFor(rule, job.decision, job.event)
 	var result DeliveryAttempt
 	for attempt := 1; attempt <= dispatcher.cfg.MaxAttempts; attempt++ {
+		action, err := dispatcher.cfg.Service.ResolveActionForDelivery(ctx, rule.ActionID)
+		if err != nil {
+			if !errors.Is(err, ErrNotFound) {
+				dispatcher.recordFailureEvent(rule.ID, rule.ActionID, 0, 0, "alert_delivery_action_unavailable")
+			}
+			return
+		}
+		if !action.Enabled || !action.UpdatedAt.Equal(job.actionUpdatedAt) {
+			return
+		}
 		result = dispatcher.cfg.Adapter.Deliver(ctx, action, notification)
 		if result.Success {
 			dispatcher.delivered.Add(1)

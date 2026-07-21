@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/alerting"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -36,11 +38,20 @@ func TestAlertingRepositoryCRUDAndStateCapacity(t *testing.T) {
 	if err != nil || storedDestination != "encrypted-destination-one" {
 		t.Fatalf("GetEncryptedDestination = %q, %v", storedDestination, err)
 	}
+	originalActionRevision := action.UpdatedAt
 	action, err = repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
-		Name: "renamed webhook", Kind: alerting.ActionKindGenericWebhook, Enabled: false,
+		Name: "renamed webhook", Kind: alerting.ActionKindGenericWebhook, Enabled: false, ExpectedUpdatedAt: action.UpdatedAt,
 	})
 	if err != nil || action.Name != "renamed webhook" || action.Enabled {
 		t.Fatalf("UpdateAction retaining destination = %+v, %v", action, err)
+	}
+	if !action.UpdatedAt.After(originalActionRevision) {
+		t.Fatalf("action revision = %s, want after %s", action.UpdatedAt, originalActionRevision)
+	}
+	if _, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
+		Name: action.Name, Kind: action.Kind, Enabled: action.Enabled, ExpectedUpdatedAt: originalActionRevision,
+	}); !errors.Is(err, alerting.ErrConflict) {
+		t.Fatalf("stale UpdateAction error = %v, want ErrConflict", err)
 	}
 	storedDestination, _ = repo.GetEncryptedDestination(ctx, action.ID)
 	if storedDestination != "encrypted-destination-one" {
@@ -49,7 +60,7 @@ func TestAlertingRepositoryCRUDAndStateCapacity(t *testing.T) {
 	replacement := "encrypted-destination-two"
 	action, err = repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
 		Name: "renamed webhook", Kind: alerting.ActionKindNtfy,
-		EncryptedDestination: &replacement, Enabled: true,
+		EncryptedDestination: &replacement, Enabled: true, ExpectedUpdatedAt: action.UpdatedAt,
 	})
 	if err != nil || action.Kind != alerting.ActionKindNtfy || !action.Enabled {
 		t.Fatalf("UpdateAction replacing destination = %+v, %v", action, err)
@@ -84,9 +95,16 @@ func TestAlertingRepositoryCRUDAndStateCapacity(t *testing.T) {
 	}
 	ruleInput.Name = "renamed oauth failures"
 	ruleInput.Enabled = false
-	rule, err = repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: ruleInput})
+	originalRuleRevision := rule.UpdatedAt
+	rule, err = repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: ruleInput, ExpectedUpdatedAt: originalRuleRevision})
 	if err != nil || rule.Name != ruleInput.Name || rule.Enabled {
 		t.Fatalf("UpdateRule = %+v, %v", rule, err)
+	}
+	if !rule.UpdatedAt.After(originalRuleRevision) {
+		t.Fatalf("rule revision = %s, want after %s", rule.UpdatedAt, originalRuleRevision)
+	}
+	if _, err := repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: ruleInput, ExpectedUpdatedAt: originalRuleRevision}); !errors.Is(err, alerting.ErrConflict) {
+		t.Fatalf("stale UpdateRule error = %v, want ErrConflict", err)
 	}
 	rules, err := repo.ListRules(ctx)
 	if err != nil || len(rules) != 1 || rules[0].ID != rule.ID {
@@ -95,8 +113,39 @@ func TestAlertingRepositoryCRUDAndStateCapacity(t *testing.T) {
 	if _, err := repo.GetRule(ctx, rule.ID); err != nil {
 		t.Fatalf("GetRule returned error: %v", err)
 	}
-	if err := repo.DeleteAction(ctx, action.ID); err == nil {
-		t.Fatal("DeleteAction removed an action referenced by a rule")
+	if err := repo.DeleteAction(ctx, action.ID); !errors.Is(err, alerting.ErrConflict) {
+		t.Fatalf("DeleteAction referenced action error = %v, want ErrConflict", err)
+	}
+	if _, err := repo.CreateRule(ctx, alerting.RuleCreate{Rule: alerting.Rule{
+		Name: "missing action", ActionID: action.ID + 999, Enabled: true,
+		Severity: systemevent.SeverityError, AggregationCount: 1,
+		CooldownSeconds: 300, DeduplicationScope: alerting.DeduplicationScopeTarget,
+	}}); !errors.Is(err, alerting.ErrNotFound) {
+		t.Fatalf("CreateRule missing action error = %v, want ErrNotFound", err)
+	}
+
+	configRevision := action.UpdatedAt
+	statusCode := 503
+	testResult := alerting.ActionTestResult{
+		TestedAt: time.Date(2026, time.July, 21, 11, 59, 0, 0, time.UTC), Status: alerting.ActionTestStatusFailed,
+		HTTPStatus: &statusCode, LatencyMS: 125, ErrorCode: "alert_delivery_http_status", Retryable: true,
+	}
+	testStart, err := repo.BeginActionTest(ctx, action.ID, configRevision, "0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("BeginActionTest returned error: %v", err)
+	}
+	testedAction, err := repo.FinalizeActionTest(ctx, action.ID, testStart.AttemptToken, testResult)
+	if err != nil {
+		t.Fatalf("FinalizeActionTest returned error: %v", err)
+	}
+	if !testedAction.UpdatedAt.Equal(configRevision) || testedAction.LastTestedAt == nil || testedAction.LastTestStatus != alerting.ActionTestStatusFailed || testedAction.LastTestHTTPStatus == nil || *testedAction.LastTestHTTPStatus != statusCode {
+		t.Fatalf("tested action = %+v, config revision=%s", testedAction, configRevision)
+	}
+	if _, err := repo.BeginActionTest(ctx, action.ID, configRevision.Add(-time.Second), "1123456789abcdef0123456789abcdef"); !errors.Is(err, alerting.ErrConflict) {
+		t.Fatalf("stale BeginActionTest error = %v, want ErrConflict", err)
+	}
+	if _, err := repo.FinalizeActionTest(ctx, action.ID, testStart.AttemptToken, testResult); !errors.Is(err, alerting.ErrConflict) {
+		t.Fatalf("repeated FinalizeActionTest error = %v, want ErrConflict", err)
 	}
 
 	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
@@ -179,11 +228,101 @@ func TestAlertingRepositoryCRUDAndStateCapacity(t *testing.T) {
 	if _, err := repo.GetAction(ctx, action.ID); !errors.Is(err, alerting.ErrNotFound) {
 		t.Fatalf("deleted action error = %v, want ErrNotFound", err)
 	}
-	if _, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{}); !errors.Is(err, alerting.ErrNotFound) {
+	if _, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{ExpectedUpdatedAt: now}); !errors.Is(err, alerting.ErrNotFound) {
 		t.Fatalf("missing action update error = %v, want ErrNotFound", err)
 	}
-	if _, err := repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: ruleInput}); !errors.Is(err, alerting.ErrNotFound) {
+	if _, err := repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: ruleInput, ExpectedUpdatedAt: now}); !errors.Is(err, alerting.ErrNotFound) {
 		t.Fatalf("missing rule update error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAlertingRepositoryAuditEventCommitsAtomically(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	requestCtx := systemevent.WithRequestContext(ctx, systemevent.RequestContext{
+		CorrelationID: systemevent.NewCorrelationID(),
+		Actor:         systemevent.Actor{Type: systemevent.ActorAdmin, ID: 1, Name: "owner"},
+	})
+	createCtx := systemevent.WithIntent(requestCtx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionAlertActionCreated, Outcome: systemevent.OutcomeSuccess,
+		Target: systemevent.Target{Type: "alert_action"},
+	})
+	action, err := repo.CreateAction(createCtx, alerting.ActionCreate{
+		Name: "audited action", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-audited-destination", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAction returned error: %v", err)
+	}
+	var actionName string
+	var actorType string
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT target_name, actor_type
+		FROM system_events
+		WHERE action = $1 AND target_id = $2
+	`, systemevent.ActionAlertActionCreated, strconv.FormatInt(action.ID, 10)).Scan(&actionName, &actorType); err != nil {
+		t.Fatalf("load alert action audit event: %v", err)
+	}
+	if actionName != action.Name || actorType != string(systemevent.ActorAdmin) {
+		t.Fatalf("audit target=%q actor=%q", actionName, actorType)
+	}
+	var count int
+	testedAt := time.Date(2026, time.July, 21, 13, 0, 0, 0, time.UTC)
+	testCtx := systemevent.WithIntent(requestCtx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionAlertDeliveryTested, Outcome: systemevent.OutcomeSuccess,
+		Target:   systemevent.Target{Type: "alert_action"},
+		Metadata: map[string]any{"latency_ms": int64(15), "retryable": false},
+	})
+	testStart, err := repo.BeginActionTest(ctx, action.ID, action.UpdatedAt, "2123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("BeginActionTest returned error: %v", err)
+	}
+	if _, err := repo.FinalizeActionTest(testCtx, action.ID, testStart.AttemptToken, alerting.ActionTestResult{
+		TestedAt: testedAt, Status: alerting.ActionTestStatusPassed, LatencyMS: 15,
+	}); err != nil {
+		t.Fatalf("FinalizeActionTest returned error: %v", err)
+	}
+	if err := repo.pool.QueryRow(ctx, `SELECT count(*) FROM system_events WHERE action = $1 AND target_id = $2`,
+		systemevent.ActionAlertDeliveryTested, strconv.FormatInt(action.ID, 10)).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("test audit event count=%d err=%v", count, err)
+	}
+
+	invalidCtx := systemevent.WithIntent(requestCtx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.Action("unknown.alert.action"), Outcome: systemevent.OutcomeSuccess,
+		Target: systemevent.Target{Type: "alert_action"},
+	})
+	if _, err := repo.CreateAction(invalidCtx, alerting.ActionCreate{
+		Name: "rolled back action", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-rolled-back-destination", Enabled: true,
+	}); err == nil {
+		t.Fatal("CreateAction with invalid audit intent returned nil error")
+	}
+	if err := repo.pool.QueryRow(ctx, `SELECT count(*) FROM alert_actions WHERE name = 'rolled back action'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled back actions = %d, want 0", count)
+	}
+	failedStatus := 503
+	if _, err := repo.pool.Exec(ctx, `UPDATE alert_actions SET last_test_started_at = clock_timestamp() - interval '31 seconds' WHERE id = $1`, action.ID); err != nil {
+		t.Fatal(err)
+	}
+	invalidStart, err := repo.BeginActionTest(ctx, action.ID, action.UpdatedAt, "3123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("BeginActionTest for invalid audit returned error: %v", err)
+	}
+	if _, err := repo.FinalizeActionTest(invalidCtx, action.ID, invalidStart.AttemptToken, alerting.ActionTestResult{
+		TestedAt: testedAt.Add(time.Minute), Status: alerting.ActionTestStatusFailed,
+		HTTPStatus: &failedStatus, LatencyMS: 25, ErrorCode: "alert_delivery_http_status", Retryable: true,
+	}); err == nil {
+		t.Fatal("FinalizeActionTest with invalid audit intent returned nil error")
+	}
+	reloaded, err := repo.GetAction(ctx, action.ID)
+	if err != nil || reloaded.LastTestedAt == nil || !reloaded.LastTestedAt.Equal(testedAt) || reloaded.LastTestStatus != alerting.ActionTestStatusPassed {
+		t.Fatalf("test result after audit rollback = %+v, err=%v", reloaded, err)
 	}
 }
 
@@ -273,7 +412,7 @@ func TestAlertingRepositorySerializesEvaluationAndResetsStateOnRuleUpdate(t *tes
 	}
 
 	rule.AggregationCount = 3
-	if _, err := repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: rule}); err != nil {
+	if _, err := repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: rule, ExpectedUpdatedAt: rule.UpdatedAt}); err != nil {
 		t.Fatalf("UpdateRule returned error: %v", err)
 	}
 	if _, err := repo.GetRuleState(ctx, rule.ID, hash); !errors.Is(err, alerting.ErrNotFound) {
@@ -304,22 +443,245 @@ func TestAlertingRepositoryDeliveryEvaluationUsesLockedRuleAndAction(t *testing.
 	now := time.Date(2026, time.July, 21, 14, 0, 0, 0, time.UTC)
 	event := alertingStoreEvent(systemevent.ActionOAuthRefreshAutomaticFailed, systemevent.SeverityError, systemevent.OutcomeFailure, now)
 	evaluation, err := repo.EvaluateRuleEventForDelivery(ctx, rule.ID, event, now)
-	if err != nil || evaluation.ActionEnabled || evaluation.Decision != alerting.DecisionNone || evaluation.Rule.ID != rule.ID {
+	if err != nil || evaluation.ActionEnabled || evaluation.Decision != alerting.DecisionNone || evaluation.Rule.ID != rule.ID || !evaluation.ActionUpdatedAt.Equal(action.UpdatedAt) {
 		t.Fatalf("disabled action evaluation = %+v, %v", evaluation, err)
 	}
 	if _, err := repo.GetRuleState(ctx, rule.ID, rule.DeduplicationKeyHash(event)); !errors.Is(err, alerting.ErrNotFound) {
 		t.Fatalf("disabled action advanced rule state: %v", err)
 	}
 
-	if _, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
-		Name: action.Name, Kind: action.Kind, Enabled: true,
-	}); err != nil {
+	enabledAction, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
+		Name: action.Name, Kind: action.Kind, Enabled: true, ExpectedUpdatedAt: action.UpdatedAt,
+	})
+	if err != nil {
 		t.Fatalf("enable action: %v", err)
 	}
 	evaluation, err = repo.EvaluateRuleEventForDelivery(ctx, rule.ID, event, now.Add(time.Second))
 	if err != nil || !evaluation.ActionEnabled || evaluation.Decision != alerting.DecisionNotify ||
-		evaluation.Rule.ActionID != action.ID || evaluation.State.Phase != alerting.StatePhaseFiring {
+		evaluation.Rule.ActionID != action.ID || evaluation.State.Phase != alerting.StatePhaseFiring || !evaluation.ActionUpdatedAt.Equal(enabledAction.UpdatedAt) {
 		t.Fatalf("enabled action evaluation = %+v, %v", evaluation, err)
+	}
+}
+
+func TestAlertingRepositoryBeginActionTestSerializesAcrossRepositories(t *testing.T) {
+	ctx := context.Background()
+	repoOne := newTestAlertingRepository(t, ctx)
+	repoTwo := NewAlertingRepository(repoOne.pool)
+	action, err := repoOne.CreateAction(ctx, alerting.ActionCreate{
+		Name: "admission webhook", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-admission-destination", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type beginResult struct {
+		start alerting.ActionTestStart
+		err   error
+	}
+	ready := make(chan struct{})
+	results := make(chan beginResult, 2)
+	for index, repository := range []*AlertingRepository{repoOne, repoTwo} {
+		token := fmt.Sprintf("%032x", index+1)
+		go func(repository *AlertingRepository, token string) {
+			<-ready
+			start, err := repository.BeginActionTest(ctx, action.ID, action.UpdatedAt, token)
+			results <- beginResult{start: start, err: err}
+		}(repository, token)
+	}
+	close(ready)
+	var admitted, rateLimited int
+	for range 2 {
+		result := <-results
+		if result.err == nil {
+			admitted++
+			if result.start.AttemptToken == "" || result.start.StartedAt.IsZero() {
+				t.Fatalf("invalid admitted start: %+v", result.start)
+			}
+			continue
+		}
+		var rateLimit *alerting.RateLimitError
+		if !errors.As(result.err, &rateLimit) || rateLimit.RetryAfter <= 0 || rateLimit.RetryAfter > alerting.ActionTestAdmissionWindow {
+			t.Fatalf("second begin error = %#v", result.err)
+		}
+		rateLimited++
+	}
+	if admitted != 1 || rateLimited != 1 {
+		t.Fatalf("admitted=%d rateLimited=%d, want 1 each", admitted, rateLimited)
+	}
+}
+
+func TestAlertingRepositoryActionTestFinalizeInterleavingsAndAttemptToken(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	action, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "interleaving webhook", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-interleaving-destination", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := alerting.ActionTestResult{
+		TestedAt: time.Date(2026, time.July, 21, 16, 0, 0, 0, time.UTC),
+		Status:   alerting.ActionTestStatusPassed, LatencyMS: 10,
+	}
+
+	first, err := repo.BeginActionTest(ctx, action.ID, action.UpdatedAt, "4123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
+		Name: action.Name, Kind: action.Kind, Enabled: false, ExpectedUpdatedAt: action.UpdatedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalized, err := repo.FinalizeActionTest(ctx, action.ID, first.AttemptToken, result)
+	if err != nil {
+		t.Fatalf("finalize after update returned error: %v", err)
+	}
+	if finalized.LastTestedAt != nil || finalized.LastTestStatus != "" {
+		t.Fatalf("old configuration result was visible: %+v", finalized)
+	}
+	var storedStatus string
+	var resultRevision time.Time
+	if err := repo.pool.QueryRow(ctx, `SELECT last_test_status, last_test_config_updated_at FROM alert_actions WHERE id = $1`, action.ID).Scan(&storedStatus, &resultRevision); err != nil {
+		t.Fatal(err)
+	}
+	if storedStatus != string(alerting.ActionTestStatusPassed) || !resultRevision.Equal(action.UpdatedAt) || resultRevision.Equal(updated.UpdatedAt) {
+		t.Fatalf("stored status=%q result revision=%s old=%s new=%s", storedStatus, resultRevision, action.UpdatedAt, updated.UpdatedAt)
+	}
+
+	if _, err := repo.pool.Exec(ctx, `UPDATE alert_actions SET last_test_started_at = clock_timestamp() - interval '31 seconds' WHERE id = $1`, action.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.BeginActionTest(ctx, action.ID, updated.UpdatedAt, "5123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.FinalizeActionTest(ctx, action.ID, second.AttemptToken, result); err != nil {
+		t.Fatalf("finalize before update returned error: %v", err)
+	}
+	visible, err := repo.GetAction(ctx, action.ID)
+	if err != nil || visible.LastTestedAt == nil || visible.LastTestStatus != alerting.ActionTestStatusPassed {
+		t.Fatalf("current result = %+v, err=%v", visible, err)
+	}
+	afterFinalizeUpdate, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
+		Name: updated.Name, Kind: updated.Kind, Enabled: true, ExpectedUpdatedAt: updated.UpdatedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterFinalizeUpdate.LastTestedAt != nil || afterFinalizeUpdate.LastTestStatus != "" {
+		t.Fatalf("result remained visible after config update: %+v", afterFinalizeUpdate)
+	}
+
+	if _, err := repo.pool.Exec(ctx, `UPDATE alert_actions SET last_test_started_at = clock_timestamp() - interval '31 seconds' WHERE id = $1`, action.ID); err != nil {
+		t.Fatal(err)
+	}
+	staleAttempt, err := repo.BeginActionTest(ctx, action.ID, afterFinalizeUpdate.UpdatedAt, "6123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.pool.Exec(ctx, `UPDATE alert_actions SET last_test_started_at = clock_timestamp() - interval '31 seconds' WHERE id = $1`, action.ID); err != nil {
+		t.Fatal(err)
+	}
+	currentAttempt, err := repo.BeginActionTest(ctx, action.ID, afterFinalizeUpdate.UpdatedAt, "7123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.FinalizeActionTest(ctx, action.ID, staleAttempt.AttemptToken, result); !errors.Is(err, alerting.ErrConflict) {
+		t.Fatalf("stale attempt finalize error = %v, want ErrConflict", err)
+	}
+	if _, err := repo.FinalizeActionTest(ctx, action.ID, currentAttempt.AttemptToken, result); err != nil {
+		t.Fatalf("current attempt finalize error = %v", err)
+	}
+
+	deletedAction, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "deleted during test", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-deleted-destination", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deletedAttempt, err := repo.BeginActionTest(ctx, deletedAction.ID, deletedAction.UpdatedAt, "8123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteAction(ctx, deletedAction.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.FinalizeActionTest(ctx, deletedAction.ID, deletedAttempt.AttemptToken, result); !errors.Is(err, alerting.ErrNotFound) {
+		t.Fatalf("deleted action finalize error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAlertingRepositoryUpdateRuleLocksRuleBeforeTargetAction(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	firstAction, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "first action", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-first", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAction, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "second action", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-second", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleInput := alerting.Rule{
+		Name: "lock order", ActionID: firstAction.ID, Enabled: true,
+		Severity: systemevent.SeverityError, AggregationCount: 1, CooldownSeconds: 30,
+		DeduplicationScope: alerting.DeduplicationScopeTarget,
+	}
+	rule, err := repo.CreateRule(ctx, alerting.RuleCreate{Rule: ruleInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actionLock, err := repo.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer actionLock.Rollback(ctx)
+	if _, err := actionLock.Exec(ctx, `SELECT id FROM alert_actions WHERE id = $1 FOR UPDATE`, secondAction.ID); err != nil {
+		t.Fatal(err)
+	}
+	ruleInput.ActionID = secondAction.ID
+	updateDone := make(chan error, 1)
+	go func() {
+		_, err := repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: ruleInput, ExpectedUpdatedAt: rule.UpdatedAt})
+		updateDone <- err
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	lockedRuleObserved := false
+	for time.Now().Before(deadline) {
+		_, lockErr := repo.pool.Exec(ctx, `SELECT id FROM alert_rules WHERE id = $1 FOR UPDATE NOWAIT`, rule.ID)
+		var pgErr *pgconn.PgError
+		if errors.As(lockErr, &pgErr) && pgErr.Code == "55P03" {
+			lockedRuleObserved = true
+			break
+		}
+		if lockErr != nil {
+			t.Fatalf("probe rule lock: %v", lockErr)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !lockedRuleObserved {
+		t.Fatal("UpdateRule did not lock rule before waiting for target action")
+	}
+	if err := actionLock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-updateDone:
+		if err != nil {
+			t.Fatalf("UpdateRule returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("UpdateRule remained blocked")
 	}
 }
 

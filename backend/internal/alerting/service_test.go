@@ -17,6 +17,8 @@ type memoryRepository struct {
 	destinations         map[int64]string
 	rules                map[int64]Rule
 	states               map[string]RuleState
+	testAttempts         map[int64]ActionTestStart
+	lastTestStartedAt    map[int64]time.Time
 	nextActionID         int64
 	nextRuleID           int64
 	lastActionCreate     ActionCreate
@@ -30,6 +32,7 @@ type memoryRepository struct {
 func newMemoryRepository() *memoryRepository {
 	return &memoryRepository{
 		actions: make(map[int64]Action), destinations: make(map[int64]string), rules: make(map[int64]Rule), states: make(map[string]RuleState),
+		testAttempts: make(map[int64]ActionTestStart), lastTestStartedAt: make(map[int64]time.Time),
 	}
 }
 
@@ -53,6 +56,9 @@ func (r *memoryRepository) UpdateAction(_ context.Context, id int64, input Actio
 	if !ok {
 		return Action{}, ErrNotFound
 	}
+	if !action.UpdatedAt.Equal(input.ExpectedUpdatedAt) {
+		return Action{}, ErrConflict
+	}
 	r.lastActionUpdate = input
 	action.Name, action.Kind, action.Enabled = input.Name, input.Kind, input.Enabled
 	if input.EncryptedDestination != nil {
@@ -60,6 +66,8 @@ func (r *memoryRepository) UpdateAction(_ context.Context, id int64, input Actio
 	}
 	action.DestinationConfigured = r.destinations[id] != ""
 	action.UpdatedAt = time.Unix(2, 0).UTC()
+	action.LastTestedAt, action.LastTestStatus, action.LastTestHTTPStatus = nil, "", nil
+	action.LastTestLatencyMS, action.LastTestErrorCode, action.LastTestRetryable = 0, "", false
 	r.actions[id] = action
 	return action, nil
 }
@@ -73,6 +81,8 @@ func (r *memoryRepository) DeleteAction(_ context.Context, id int64) error {
 	}
 	delete(r.actions, id)
 	delete(r.destinations, id)
+	delete(r.testAttempts, id)
+	delete(r.lastTestStartedAt, id)
 	return nil
 }
 
@@ -106,8 +116,59 @@ func (r *memoryRepository) GetActionForDelivery(_ context.Context, id int64) (Ac
 		return ActionForDelivery{}, ErrNotFound
 	}
 	return ActionForDelivery{
-		ID: action.ID, Kind: action.Kind, Enabled: action.Enabled, EncryptedDestination: r.destinations[id],
+		ID: action.ID, Name: action.Name, Kind: action.Kind, Enabled: action.Enabled,
+		EncryptedDestination: r.destinations[id], UpdatedAt: action.UpdatedAt,
 	}, nil
+}
+
+func (r *memoryRepository) BeginActionTest(_ context.Context, id int64, expectedUpdatedAt time.Time, attemptToken string) (ActionTestStart, error) {
+	if r.err != nil {
+		return ActionTestStart{}, r.err
+	}
+	action, ok := r.actions[id]
+	if !ok {
+		return ActionTestStart{}, ErrNotFound
+	}
+	if !action.UpdatedAt.Equal(expectedUpdatedAt) {
+		return ActionTestStart{}, ErrConflict
+	}
+	now := time.Now().UTC()
+	if lastStartedAt, ok := r.lastTestStartedAt[id]; ok && now.Sub(lastStartedAt) < ActionTestAdmissionWindow {
+		return ActionTestStart{}, &RateLimitError{RetryAfter: ActionTestAdmissionWindow - now.Sub(lastStartedAt)}
+	}
+	start := ActionTestStart{Action: ActionForDelivery{
+		ID: action.ID, Name: action.Name, Kind: action.Kind, Enabled: action.Enabled,
+		EncryptedDestination: r.destinations[id], UpdatedAt: action.UpdatedAt,
+	}, AttemptToken: attemptToken, StartedAt: now}
+	r.testAttempts[id], r.lastTestStartedAt[id] = start, now
+	return start, nil
+}
+
+func (r *memoryRepository) FinalizeActionTest(_ context.Context, id int64, attemptToken string, result ActionTestResult) (Action, error) {
+	if r.err != nil {
+		return Action{}, r.err
+	}
+	action, ok := r.actions[id]
+	if !ok {
+		return Action{}, ErrNotFound
+	}
+	start, ok := r.testAttempts[id]
+	if !ok || start.AttemptToken != attemptToken {
+		return Action{}, ErrConflict
+	}
+	delete(r.testAttempts, id)
+	if !action.UpdatedAt.Equal(start.Action.UpdatedAt) {
+		return action, nil
+	}
+	testedAt := result.TestedAt
+	action.LastTestedAt = &testedAt
+	action.LastTestStatus = result.Status
+	action.LastTestHTTPStatus = result.HTTPStatus
+	action.LastTestLatencyMS = result.LatencyMS
+	action.LastTestErrorCode = result.ErrorCode
+	action.LastTestRetryable = result.Retryable
+	r.actions[id] = action
+	return action, nil
 }
 
 func (r *memoryRepository) CreateRule(_ context.Context, input RuleCreate) (Rule, error) {
@@ -127,8 +188,12 @@ func (r *memoryRepository) UpdateRule(_ context.Context, id int64, input RuleUpd
 	if r.err != nil {
 		return Rule{}, r.err
 	}
-	if _, ok := r.rules[id]; !ok {
+	current, ok := r.rules[id]
+	if !ok {
 		return Rule{}, ErrNotFound
+	}
+	if !current.UpdatedAt.Equal(input.ExpectedUpdatedAt) {
+		return Rule{}, ErrConflict
 	}
 	r.lastRuleUpdate = input
 	rule := input.Rule
@@ -215,13 +280,13 @@ func (r *memoryRepository) EvaluateRuleEventForDelivery(ctx context.Context, rul
 		return Evaluation{}, ErrNotFound
 	}
 	if !action.Enabled {
-		return Evaluation{Rule: rule}, nil
+		return Evaluation{Rule: rule, ActionUpdatedAt: action.UpdatedAt}, nil
 	}
 	state, decision, err := r.EvaluateRuleEvent(ctx, ruleID, event, now)
 	if err != nil {
 		return Evaluation{}, err
 	}
-	return Evaluation{Rule: rule, ActionEnabled: true, State: state, Decision: decision}, nil
+	return Evaluation{Rule: rule, ActionEnabled: true, ActionUpdatedAt: action.UpdatedAt, State: state, Decision: decision}, nil
 }
 
 func TestServiceEncryptsAndRedactsActionDestinations(t *testing.T) {
@@ -314,7 +379,9 @@ func TestServiceUpdateRetainsOrReplacesEncryptedDestination(t *testing.T) {
 		t.Fatalf("CreateAction returned error: %v", err)
 	}
 	original := repo.destinations[action.ID]
-	updated, err := service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{Name: "renamed", Kind: ActionKindGenericWebhook, Enabled: false})
+	updated, err := service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{
+		Name: "renamed", Kind: ActionKindGenericWebhook, Enabled: false, ExpectedUpdatedAt: action.UpdatedAt,
+	})
 	if err != nil {
 		t.Fatalf("UpdateAction retain returned error: %v", err)
 	}
@@ -322,12 +389,85 @@ func TestServiceUpdateRetainsOrReplacesEncryptedDestination(t *testing.T) {
 		t.Fatalf("retained update = %+v stored=%q", updated, repo.destinations[action.ID])
 	}
 	replacement := "https://two.example.test/new"
-	_, err = service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{Name: "renamed", Kind: ActionKindGenericWebhook, Destination: &replacement, Enabled: true})
+	_, err = service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{
+		Name: "renamed", Kind: ActionKindGenericWebhook, Destination: &replacement, Enabled: true, ExpectedUpdatedAt: updated.UpdatedAt,
+	})
 	if err != nil {
 		t.Fatalf("UpdateAction replace returned error: %v", err)
 	}
 	if repo.destinations[action.ID] == original || repo.lastActionUpdate.EncryptedDestination == nil {
 		t.Fatal("UpdateAction did not replace encrypted destination")
+	}
+	empty := ""
+	if _, err := service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{
+		Name: "renamed", Kind: ActionKindGenericWebhook, Destination: &empty, Enabled: true, ExpectedUpdatedAt: updated.UpdatedAt,
+	}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("empty destination error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServiceUpdateRequiresCurrentRevisionAndNewDestinationWhenKindChanges(t *testing.T) {
+	repo := newMemoryRepository()
+	service := NewService(repo, testKeyring(t))
+	action, err := service.CreateAction(context.Background(), ActionInput{
+		Name: "webhook", Kind: ActionKindGenericWebhook, Destination: "https://example.test/hook", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{
+		Name: action.Name, Kind: ActionKindGenericWebhook, Enabled: action.Enabled,
+		ExpectedUpdatedAt: action.UpdatedAt.Add(-time.Second),
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale update error = %v, want ErrConflict", err)
+	}
+	_, err = service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{
+		Name: action.Name, Kind: ActionKindNtfy, Enabled: action.Enabled, ExpectedUpdatedAt: action.UpdatedAt,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("kind change without destination error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServiceUpdateWithoutDestinationDoesNotDecryptStoredSecret(t *testing.T) {
+	repo := newMemoryRepository()
+	service := NewService(repo, testKeyring(t))
+	action, err := service.CreateAction(context.Background(), ActionInput{
+		Name: "webhook", Kind: ActionKindGenericWebhook,
+		Destination: "https://example.test/hook", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.destinations[action.ID] = "corrupted-ciphertext"
+	updated, err := service.UpdateAction(context.Background(), action.ID, ActionUpdateInput{
+		Name: action.Name, Kind: action.Kind, Enabled: false, ExpectedUpdatedAt: action.UpdatedAt,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAction returned error: %v", err)
+	}
+	if updated.Enabled {
+		t.Fatal("UpdateAction did not disable action")
+	}
+}
+
+func TestServicePreservesActionTestRateLimitRetryAfter(t *testing.T) {
+	repo := newMemoryRepository()
+	service := NewService(repo, testKeyring(t))
+	action, err := service.CreateAction(context.Background(), ActionInput{
+		Name: "webhook", Kind: ActionKindGenericWebhook,
+		Destination: "https://example.test/hook", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.lastTestStartedAt[action.ID] = time.Now().UTC()
+
+	_, err = service.BeginActionTest(context.Background(), action.ID, action.UpdatedAt)
+	var rateLimit *RateLimitError
+	if !errors.As(err, &rateLimit) || rateLimit.RetryAfter <= 0 || rateLimit.RetryAfter > ActionTestAdmissionWindow {
+		t.Fatalf("BeginActionTest error = %#v, want typed rate limit with retry interval", err)
 	}
 }
 

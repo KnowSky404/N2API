@@ -14,6 +14,7 @@ const expectedFiles = [
   'src/routes/api-keys/+page.svelte',
   'src/routes/request-logs/+page.svelte',
   'src/routes/system-logs/+page.svelte',
+  'src/routes/alerting/+page.svelte',
   'src/routes/pricing/+page.svelte',
   'src/routes/ops/+page.svelte',
   'src/routes/fingerprints/+page.svelte'
@@ -36,6 +37,7 @@ const fileExists = await preloadFileExistence([
 
 const requestLogsPage = readText('src/routes/request-logs/+page.svelte');
 const systemLogsPage = readText('src/routes/system-logs/+page.svelte');
+const alertingPage = readText('src/routes/alerting/+page.svelte');
 const pricingPage = readText('src/routes/pricing/+page.svelte');
 const modelsPage = readText('src/routes/models/+page.svelte');
 const gatewayPage = readText('src/routes/gateway/+page.svelte');
@@ -72,7 +74,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readText('src/routes/+layout.svelte');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Pricing', 'Ops', 'Fingerprints', 'Active sessions', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Alerts', 'Pricing', 'Ops', 'Fingerprints', 'Active sessions', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -156,6 +158,7 @@ test('admin routes share the dashboard page heading hierarchy', () => {
     'api-keys': 'API keys',
     'request-logs': 'Request logs',
     'system-logs': 'System logs',
+    alerting: 'Alerts',
     pricing: 'Pricing',
     ops: 'Operations monitor',
     fingerprints: 'Fingerprint profiles'
@@ -170,7 +173,7 @@ test('admin routes share the dashboard page heading hierarchy', () => {
 });
 
 test('dense management tables provide a shared mobile stacked view', () => {
-  for (const route of ['api-keys', 'providers', 'routing-pools', 'models', 'request-logs', 'system-logs', 'pricing', 'fingerprints']) {
+  for (const route of ['api-keys', 'providers', 'routing-pools', 'models', 'request-logs', 'system-logs', 'alerting', 'pricing', 'fingerprints']) {
     const source = readText(`src/routes/${route}/+page.svelte`);
     assert.match(source, /ui-table--stacked/, `${route} should opt its primary table into the mobile stacked view`);
     assert.match(source, /data-label=/, `${route} should label stacked table values`);
@@ -226,6 +229,53 @@ test('system logs expose URL-backed filters, layered pagination, and safe detail
   assert.match(adminState, /new URLSearchParams\(\{ limit: '50' \}\)/);
   assert.match(adminState, /params\.set\('cursor', systemEvents\.nextCursor\)/);
   assert.match(adminState, /systemEvents\.items = \[\s*\.\.\.systemEvents\.items/);
+});
+
+test('alerts route manages redacted delivery actions and exact-match rules', () => {
+  assert.match(layoutPage, /href:\s*'\/alerting'/);
+  assert.match(layoutPage, /label:\s*'Alerts'/);
+  assert.match(layoutPage, /icon:\s*BellRing/);
+  assert.match(alertingPage, /health\.tasks\?\.alertDelivery/);
+  assert.equal((alertingPage.match(/<table class="ui-table ui-table--stacked/g) ?? []).length, 2);
+  assert.match(alertingPage, /min-w-\[1040px\]/);
+  assert.doesNotMatch(alertingPage, /sticky right-0[^>]*data-label="Actions"/);
+  for (const label of ['Name', 'Type', 'Destination', 'Enabled', 'Last test', 'Updated', 'Action', 'Filters', 'Threshold', 'Cooldown', 'Scope', 'Recovery', 'Actions']) {
+    assert.match(alertingPage, new RegExp(`data-label="${label}"`));
+  }
+  assert.match(alertingPage, /destinationConfigured \? 'Configured' : 'Missing'/);
+  assert.doesNotMatch(alertingPage, /action\.destination\b/);
+  assert.match(alertingPage, /Leave blank to keep the saved destination/);
+  assert.match(alertingPage, /Enter a new destination when changing the adapter type/);
+  assert.match(alertingPage, /placeholder="provider_account\.tested"/);
+  assert.doesNotMatch(alertingPage, /provider_account\.test_failed/);
+  assert.match(alertingPage, /Close delivery action modal/);
+  assert.match(alertingPage, /Close notification rule modal/);
+  assert.match(alertingPage, /Close delete alert dialog/);
+  assert.match(alertingPage, /role="alertdialog"/);
+  assert.match(alertingPage, /ui-loading-overlay/);
+  assert.match(alertingPage, />thinking</);
+
+  const actionSave = alertingPage.match(/async function saveAction[\s\S]*?\n  \}/)?.[0] ?? '';
+  const ruleSave = alertingPage.match(/async function saveRule[\s\S]*?\n  \}/)?.[0] ?? '';
+  assert.match(actionSave, /expectedUpdatedAt:\s*actionDraft\.expectedUpdatedAt/);
+  assert.match(actionSave, /destination:\s*''/);
+  assert.doesNotMatch(actionSave, /closeActionModal|actionModalOpen = false/);
+  assert.match(ruleSave, /expectedUpdatedAt:\s*ruleDraft\.expectedUpdatedAt/);
+  assert.doesNotMatch(ruleSave, /closeRuleModal|ruleModalOpen = false/);
+  assert.match(alertingPage, /event\.key !== 'Escape'/);
+  assert.doesNotMatch(alertingPage, /event\.target === event\.currentTarget/);
+
+  for (const state of ['alertActions', 'alertRules', 'alertActionTests']) {
+    assert.match(adminState, new RegExp(`export const ${state} = \\$state`));
+  }
+  for (const method of ['loadAlertActions', 'loadAlertRules', 'createAlertAction', 'updateAlertAction', 'deleteAlertAction', 'testAlertAction', 'createAlertRule', 'updateAlertRule', 'deleteAlertRule']) {
+    assert.match(adminState, new RegExp(`export async function ${method}`));
+  }
+  assert.match(adminState, /\/api\/admin\/alert-actions\/\$\{id\}\/test/);
+  assert.match(adminState, /JSON\.stringify\(\{ expectedUpdatedAt \}\)/);
+  assert.match(adminState, /Test rate limit reached\. Try again in \$\{retryAfter\} seconds/);
+  assert.match(adminState, /This action changed on the server/);
+  assert.match(adminState, /clearAlerting\(\)/);
 });
 
 test('editable modals use explicit close controls and persistent unified saves', () => {
@@ -1495,6 +1545,7 @@ test('route pages use shared AuthGate instead of duplicate login forms', () => {
     { name: 'models', path: 'src/routes/models/+page.svelte' },
     { name: 'api-keys', path: 'src/routes/api-keys/+page.svelte' },
     { name: 'request-logs', path: 'src/routes/request-logs/+page.svelte' },
+    { name: 'alerting', path: 'src/routes/alerting/+page.svelte' },
     { name: 'pricing', path: 'src/routes/pricing/+page.svelte' },
     { name: 'ops', path: 'src/routes/ops/+page.svelte' },
     { name: 'fingerprints', path: 'src/routes/fingerprints/+page.svelte' },

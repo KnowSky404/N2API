@@ -90,12 +90,14 @@ func TestMainWiresAlertDispatcherAfterDatabaseCommitNotifications(t *testing.T) 
 	for _, want := range []string{
 		"store.NewAlertingRepository",
 		"alerting.NewService",
+		"alerting.NewHTTPAdapter",
+		"alerting.NewActionTester",
 		"alerting.NewDispatcher",
 		"cfg.AlertDeliveryEnabled",
 		"systemEventRepo.Subscribe",
 		"systemEventRepo.GetByID",
 		"alertDispatcher.Start()",
-		"build, alertDispatcher",
+		"build, alertDispatcher, alertingService, alertActionTester",
 		"server.Shutdown",
 		"alertDispatcher.Shutdown",
 	} {

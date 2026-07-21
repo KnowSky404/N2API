@@ -661,11 +661,36 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 41 {
-		t.Fatalf("migration sources = %d, want 41", len(sources))
+	if len(sources) != 42 {
+		t.Fatalf("migration sources = %d, want 42", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[40].Path != "00041_system_event_notifications.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[41].Path != "00042_alert_action_test_results.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestAlertActionTestResultsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00042_alert_action_test_results.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ADD COLUMN last_test_started_at TIMESTAMPTZ",
+		"ADD COLUMN last_test_attempt_token TEXT NOT NULL DEFAULT ''",
+		"ADD COLUMN last_test_attempt_config_updated_at TIMESTAMPTZ",
+		"ADD COLUMN last_tested_at TIMESTAMPTZ",
+		"ADD COLUMN last_test_config_updated_at TIMESTAMPTZ",
+		"ADD COLUMN last_test_status TEXT NOT NULL DEFAULT ''",
+		"ADD COLUMN last_test_http_status INTEGER",
+		"ADD COLUMN last_test_latency_ms BIGINT NOT NULL DEFAULT 0",
+		"ADD COLUMN last_test_error_code TEXT NOT NULL DEFAULT ''",
+		"ADD COLUMN last_test_retryable BOOLEAN NOT NULL DEFAULT false",
+		"alert_actions_last_test_consistency_check",
+		"DROP COLUMN IF EXISTS last_tested_at",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }
 

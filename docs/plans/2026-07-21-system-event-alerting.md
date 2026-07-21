@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-2 completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -140,6 +140,8 @@ Notification storms are blocking defects. Disable dispatcher startup and rules.
 
 ## Task 3: Add Admin Management And Test Notification
 
+Task status: completed locally on 2026-07-21
+
 ### Goal
 
 Manage actions/rules safely and verify connectivity.
@@ -159,10 +161,54 @@ Tasks 1-2.
 Use redacted destinations, explicit Save/Cancel/X dialogs, test notification
 with rate limiting, delivery status, last result, and no raw response body.
 
+Expose authenticated action and rule list/create/update/delete routes plus one
+saved-action test route. Action responses report only whether a destination is
+configured. Omitting `destination` from an action update preserves the stored
+secret, while changing the action kind requires a replacement destination.
+Action and rule updates carry `expectedUpdatedAt`; stale revisions fail with a
+conflict instead of overwriting a concurrent edit. Deleting an action that is
+still referenced by a rule also returns a conflict. Successful CRUD mutations
+and their audit System Events commit in the same PostgreSQL transaction.
+
+The test route accepts only the saved action ID and expected revision. It never
+accepts an alternate URL, body, or headers, remains usable while the dispatcher
+or action is disabled, performs one bounded attempt, and returns a sanitized
+result without the destination, response body, response headers, or raw network
+error. At most one test runs at a time and each action has a persistent 30-second
+admission window. The last sanitized test result persists without changing the
+action configuration revision. Test audit events are excluded from rule
+matching so a broad audit rule cannot recursively turn one test into another
+notification.
+
+Delivery jobs retain both the rule and action revisions that produced the
+decision. A worker silently discards a job if either configuration changed,
+was disabled, or was deleted before delivery, preventing an old event from
+being sent to a newly configured destination.
+
+Add a focused `/alerting` operational page with compact delivery status,
+Actions and Rules views, shared tables, and responsive stacked rows. Action and
+rule editors use one modal-level Save path with explicit Save, Cancel, and X.
+Save refreshes the editor revision but keeps the dialog open; only Cancel or X
+closes it. Saved destinations are never refilled into the form. CRUD and test
+success use transient top-right notifications, while failures preserve the
+editable draft.
+
+### Tests And Verification
+
+Cover authentication, strict JSON decoding, destination redaction and preserve
+semantics, stale updates, foreign-key conflicts, transactional audit events,
+test admission, single-attempt delivery, fixed error codes, and dispatcher
+revision checks. Run `go test ./...`, `go vet ./...`, `bun test`,
+`bun run check`, and `bun run build`. Use Playwright for the authenticated
+create, test, create-rule, disable, conflict, cleanup, refresh, and mobile modal
+flows, then refresh the local Compose stack without build cache.
+
 ### Completion Criteria
 
 An owner can create, test, disable, and inspect an action without revealing its
-secret.
+secret. Concurrent edits do not overwrite one another, old jobs never cross an
+action revision, last test results survive refresh/restart, and the rendered
+desktop/mobile workflow passes browser verification.
 
 ### Commit
 

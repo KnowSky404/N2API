@@ -491,8 +491,28 @@ only the oldest idle state may be evicted; active firing state is never silently
 discarded. Event evaluation and state admission are serialized per rule so
 concurrent events cannot lose aggregation counts or duplicate a notification
 decision. Updating a rule atomically clears its prior aggregation and firing
-state. The schema creates no action or rule by default, and no Admin API/UI is
-exposed yet.
+state. The schema creates no action or rule by default.
+
+Authenticated owners manage this configuration from the compact `/alerting`
+admin page or the `/api/admin/alert-actions` and `/api/admin/alert-rules`
+endpoints. Action responses expose only `destinationConfigured`; they never
+return the destination or its ciphertext. Action and rule updates require the
+current `expectedUpdatedAt` revision and return `409 stale_update` when another
+edit won the race. An action cannot be deleted while a rule references it.
+Successful create, update, and delete operations commit their audit System Event
+in the same PostgreSQL transaction as the configuration change.
+
+`POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
+requires the same action revision. It remains available when the dispatcher or
+action is disabled, performs one bounded five-second attempt, and returns only a
+sanitized result: pass/fail status, HTTP status when available, latency, a fixed
+error code, and whether the failure is retryable. Response bodies, response
+headers, destination values, ciphertext, and raw network errors are never
+returned or recorded. Tests are globally serialized in the running process and
+each action has a persisted 30-second cooldown. The latest sanitized result is
+stored without changing the action configuration revision and is shown after a
+refresh or restart. Test audit events are excluded from alert-rule matching to
+prevent recursive notifications.
 
 Bounded delivery is independently gated by
 `N2API_ALERT_DELIVERY_ENABLED=false`. When enabled, PostgreSQL publishes each

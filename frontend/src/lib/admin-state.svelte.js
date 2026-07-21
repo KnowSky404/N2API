@@ -182,6 +182,70 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} AlertAction
+ * @property {number} id
+ * @property {string} name
+ * @property {'generic_webhook' | 'ntfy'} kind
+ * @property {boolean} enabled
+ * @property {boolean} destinationConfigured
+ * @property {string | null} lastTestedAt
+ * @property {'passed' | 'failed' | ''} lastTestStatus
+ * @property {number | null} lastTestHTTPStatus
+ * @property {number} lastTestLatencyMs
+ * @property {string} lastTestErrorCode
+ * @property {boolean} lastTestRetryable
+ * @property {string} createdAt
+ * @property {string} updatedAt
+ */
+
+/**
+ * @typedef {object} AlertRule
+ * @property {number} id
+ * @property {string} name
+ * @property {number} actionId
+ * @property {boolean} enabled
+ * @property {string} category
+ * @property {string} severity
+ * @property {string} eventAction
+ * @property {string} recoveryAction
+ * @property {number} aggregationCount
+ * @property {number} aggregationWindowSeconds
+ * @property {number} cooldownSeconds
+ * @property {'rule' | 'target'} deduplicationScope
+ * @property {boolean} notifyRecovery
+ * @property {string} createdAt
+ * @property {string} updatedAt
+ */
+
+/**
+ * @typedef {object} AlertTestResult
+ * @property {string} testedAt
+ * @property {'passed' | 'failed'} status
+ * @property {number | null} httpStatus
+ * @property {number} latencyMs
+ * @property {string} errorCode
+ * @property {boolean} retryable
+ */
+
+/**
+ * @typedef {object} AlertDeliveryStatus
+ * @property {boolean} enabled
+ * @property {boolean} running
+ * @property {number} queueDepth
+ * @property {number} queueCapacity
+ * @property {number} activeWorkers
+ * @property {number} workerCount
+ * @property {number} enqueuedCount
+ * @property {number} deliveredCount
+ * @property {number} failedCount
+ * @property {number} droppedCount
+ * @property {number} retriedCount
+ * @property {string | null} lastDeliveredAt
+ * @property {string | null} lastFailedAt
+ * @property {string} lastErrorCode
+ */
+
+/**
  * @typedef {object} UsageSummaryRow
  * @property {string} id
  * @property {string} label
@@ -418,7 +482,8 @@ export const health = $state({
   error: '',
   status: 'checking',
   database: 'checking',
-  build: /** @type {{ version: string, commit: string, builtAt: string } | null} */ (null)
+  build: /** @type {{ version: string, commit: string, builtAt: string } | null} */ (null),
+  tasks: /** @type {{ alertDelivery?: AlertDeliveryStatus } | null} */ (null)
 });
 
 export const session = $state({ loading: true, authenticated: false, username: '', error: '' });
@@ -490,6 +555,14 @@ export const gatewaySettings = $state({
 /** @typedef {{ kind: 'success' | 'error', title: string, message: string }} ConfigurationExportNotice */
 /** @type {{ exporting: boolean, notice: ConfigurationExportNotice | null }} */
 export const configurationExport = $state({ exporting: false, notice: null });
+/** @type {{ loading: boolean, saving: boolean, deletingId: number, error: string, items: AlertAction[] }} */
+export const alertActions = $state({ loading: false, saving: false, deletingId: 0, error: '', items: [] });
+/** @type {{ loading: boolean, saving: boolean, deletingId: number, error: string, items: AlertRule[] }} */
+export const alertRules = $state({ loading: false, saving: false, deletingId: 0, error: '', items: [] });
+/** @type {{ actionId: number, loading: boolean, error: string, retryAfterSeconds: number, result: AlertTestResult | null }} */
+export const alertActionTests = $state({ actionId: 0, loading: false, error: '', retryAfterSeconds: 0, result: null });
+let alertActionRequestGeneration = 0;
+let alertRuleRequestGeneration = 0;
 /** @type {{ loading: boolean, loadingOlder: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, since: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[], nextCursor: string, hasMore: boolean, appliedFilterQuery: string | null }} */
 export const requestLogs = $state({
   loading: false,
@@ -1014,7 +1087,12 @@ async function requestJSON(path, options = {}) {
     if (response.status === 401 && path !== '/api/admin/login') {
       clearAuthenticatedAdminState();
     }
-    throw new Error(payload.error ?? `Request failed with ${response.status}`);
+    const requestError = /** @type {Error & { status?: number, retryAfter?: string }} */ (
+      new Error(payload.error ?? `Request failed with ${response.status}`)
+    );
+    requestError.status = response.status;
+    requestError.retryAfter = response.headers.get('Retry-After') ?? '';
+    throw requestError;
   }
   if (response.status === 204) return null;
   return response.json();
@@ -1192,6 +1270,14 @@ function clearConfigurationExport() {
   replaceState(configurationExport, { exporting: false, notice: null });
 }
 
+function clearAlerting() {
+  alertActionRequestGeneration += 1;
+  alertRuleRequestGeneration += 1;
+  replaceState(alertActions, { loading: false, saving: false, deletingId: 0, error: '', items: [] });
+  replaceState(alertRules, { loading: false, saving: false, deletingId: 0, error: '', items: [] });
+  replaceState(alertActionTests, { actionId: 0, loading: false, error: '', retryAfterSeconds: 0, result: null });
+}
+
 function clearRequestLogs() {
   replaceState(requestLogs, {
     loading: false,
@@ -1283,12 +1369,14 @@ function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
   if (incrementVersion) sessionVersion += 1;
   replaceState(session, { loading: false, authenticated: false, username: '', error });
   health.build = null;
+  health.tasks = null;
   clearAdminSessions();
   clearProvider();
   clearAPIKeys();
   clearModelSettings();
   clearGatewaySettings();
   clearConfigurationExport();
+  clearAlerting();
   clearRequestLogs();
   clearSystemEvents();
   clearUsage();
@@ -1401,7 +1489,8 @@ export async function loadHealth() {
       error: '',
       status: payload.status ?? 'unknown',
       database: payload.database ?? 'unknown',
-      build: isCurrentAuthenticated(authenticatedVersion) ? (payload.build ?? null) : null
+      build: isCurrentAuthenticated(authenticatedVersion) ? (payload.build ?? null) : null,
+      tasks: isCurrentAuthenticated(authenticatedVersion) ? (payload.tasks ?? null) : null
     });
   } catch (error) {
     if (requestVersion !== healthRequestVersion) return;
@@ -1410,7 +1499,8 @@ export async function loadHealth() {
       error: error instanceof Error ? error.message : 'Health check failed',
       status: 'unavailable',
       database: 'unknown',
-      build: null
+      build: null,
+      tasks: null
     });
   }
 }
@@ -1466,6 +1556,262 @@ export async function loadSession() {
     if (version !== sessionVersion) return;
 
     clearAuthenticatedAdminState(error instanceof Error ? error.message : 'Session check failed');
+  }
+}
+
+/** @param {unknown} payload @returns {AlertAction[]} */
+function alertActionList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    // @ts-expect-error API response is validated by the backend contract.
+    const items = payload.actions ?? payload.items;
+    return Array.isArray(items) ? items : [];
+  }
+  return [];
+}
+
+/** @param {unknown} payload @returns {AlertRule[]} */
+function alertRuleList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    // @ts-expect-error API response is validated by the backend contract.
+    const items = payload.rules ?? payload.items;
+    return Array.isArray(items) ? items : [];
+  }
+  return [];
+}
+
+/** @param {unknown} error */
+function alertRequestStatus(error) {
+  return Number(error && typeof error === 'object' && 'status' in error ? error.status : 0);
+}
+
+/** @param {unknown} error */
+function alertRequestMessage(error) {
+  return error instanceof Error ? error.message : '';
+}
+
+/** @param {unknown} error @param {'action'|'rule'} recordType @param {'save'|'delete'} operation */
+function alertMutationError(error, recordType, operation) {
+  const status = alertRequestStatus(error);
+  const message = alertRequestMessage(error);
+  if (status === 409 && message === 'stale_update') {
+    return `This ${recordType} changed on the server. Refresh and review it before saving again.`;
+  }
+  if (status === 409 && recordType === 'action' && operation === 'delete') {
+    return 'This action is still used by a notification rule. Move or delete those rules first.';
+  }
+  return message || `Failed to ${operation} alert ${recordType}`;
+}
+
+/** @param {string} value */
+function retryAfterSeconds(value) {
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1, Math.ceil(seconds));
+  const date = Date.parse(value);
+  if (Number.isFinite(date)) return Math.max(1, Math.ceil((date - Date.now()) / 1000));
+  return 0;
+}
+
+export async function loadAlertActions() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  const generation = ++alertActionRequestGeneration;
+  alertActions.loading = true;
+  alertActions.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/alert-actions');
+    if (!isCurrentAuthenticated(version) || generation !== alertActionRequestGeneration) return false;
+    alertActions.items = alertActionList(payload);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version) || generation !== alertActionRequestGeneration) return false;
+    alertActions.error = alertRequestMessage(error) || 'Failed to load alert actions';
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version) && generation === alertActionRequestGeneration) alertActions.loading = false;
+  }
+}
+
+export async function loadAlertRules() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  const generation = ++alertRuleRequestGeneration;
+  alertRules.loading = true;
+  alertRules.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/alert-rules');
+    if (!isCurrentAuthenticated(version) || generation !== alertRuleRequestGeneration) return false;
+    alertRules.items = alertRuleList(payload);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version) || generation !== alertRuleRequestGeneration) return false;
+    alertRules.error = alertRequestMessage(error) || 'Failed to load notification rules';
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version) && generation === alertRuleRequestGeneration) alertRules.loading = false;
+  }
+}
+
+/** @param {{ name: string, kind: 'generic_webhook'|'ntfy', destination: string, enabled: boolean }} input */
+export async function createAlertAction(input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return null;
+  alertActions.saving = true;
+  alertActions.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/alert-actions', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    });
+    if (!isCurrentAuthenticated(version)) return null;
+    const action = /** @type {AlertAction} */ (payload?.action ?? payload);
+    await loadAlertActions();
+    return action;
+  } catch (error) {
+    if (isCurrentAuthenticated(version)) alertActions.error = alertMutationError(error, 'action', 'save');
+    return null;
+  } finally {
+    if (isCurrentAuthenticated(version)) alertActions.saving = false;
+  }
+}
+
+/** @param {number} id @param {{ name: string, kind: 'generic_webhook'|'ntfy', destination?: string, enabled: boolean, expectedUpdatedAt: string }} input */
+export async function updateAlertAction(id, input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return null;
+  alertActions.saving = true;
+  alertActions.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/alert-actions/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(input)
+    });
+    if (!isCurrentAuthenticated(version)) return null;
+    const action = /** @type {AlertAction} */ (payload?.action ?? payload);
+    await loadAlertActions();
+    return action;
+  } catch (error) {
+    if (isCurrentAuthenticated(version)) alertActions.error = alertMutationError(error, 'action', 'save');
+    return null;
+  } finally {
+    if (isCurrentAuthenticated(version)) alertActions.saving = false;
+  }
+}
+
+/** @param {number} id */
+export async function deleteAlertAction(id) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  alertActions.deletingId = id;
+  alertActions.error = '';
+  try {
+    await requestJSON(`/api/admin/alert-actions/${id}`, { method: 'DELETE' });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadAlertActions();
+    return true;
+  } catch (error) {
+    if (isCurrentAuthenticated(version)) alertActions.error = alertMutationError(error, 'action', 'delete');
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version)) alertActions.deletingId = 0;
+  }
+}
+
+/** @param {number} id @param {string} expectedUpdatedAt */
+export async function testAlertAction(id, expectedUpdatedAt) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return null;
+  replaceState(alertActionTests, { actionId: id, loading: true, error: '', retryAfterSeconds: 0, result: null });
+  try {
+    const payload = await requestJSON(`/api/admin/alert-actions/${id}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedUpdatedAt })
+    });
+    if (!isCurrentAuthenticated(version)) return null;
+    const result = /** @type {AlertTestResult} */ (payload?.result ?? payload);
+    alertActionTests.result = result;
+    await loadAlertActions();
+    return result;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return null;
+    const status = alertRequestStatus(error);
+    const message = alertRequestMessage(error);
+    if (status === 429) {
+      const retryAfter = retryAfterSeconds(
+        error && typeof error === 'object' && 'retryAfter' in error ? String(error.retryAfter ?? '') : ''
+      );
+      alertActionTests.retryAfterSeconds = retryAfter;
+      alertActionTests.error = retryAfter > 0
+        ? `Test rate limit reached. Try again in ${retryAfter} seconds.`
+        : 'Test rate limit reached. Try again shortly.';
+    } else if (status === 409 && message === 'stale_update') {
+      alertActionTests.error = 'This action changed on the server. Refresh it before testing again.';
+    } else {
+      alertActionTests.error = message || 'Failed to test alert action';
+    }
+    return null;
+  } finally {
+    if (isCurrentAuthenticated(version)) alertActionTests.loading = false;
+  }
+}
+
+/** @param {Omit<AlertRule, 'id'|'createdAt'|'updatedAt'>} input */
+export async function createAlertRule(input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return null;
+  alertRules.saving = true;
+  alertRules.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/alert-rules', { method: 'POST', body: JSON.stringify(input) });
+    if (!isCurrentAuthenticated(version)) return null;
+    const rule = /** @type {AlertRule} */ (payload?.rule ?? payload);
+    await loadAlertRules();
+    return rule;
+  } catch (error) {
+    if (isCurrentAuthenticated(version)) alertRules.error = alertMutationError(error, 'rule', 'save');
+    return null;
+  } finally {
+    if (isCurrentAuthenticated(version)) alertRules.saving = false;
+  }
+}
+
+/** @param {number} id @param {Omit<AlertRule, 'id'|'createdAt'|'updatedAt'> & { expectedUpdatedAt: string }} input */
+export async function updateAlertRule(id, input) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return null;
+  alertRules.saving = true;
+  alertRules.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/alert-rules/${id}`, { method: 'PATCH', body: JSON.stringify(input) });
+    if (!isCurrentAuthenticated(version)) return null;
+    const rule = /** @type {AlertRule} */ (payload?.rule ?? payload);
+    await loadAlertRules();
+    return rule;
+  } catch (error) {
+    if (isCurrentAuthenticated(version)) alertRules.error = alertMutationError(error, 'rule', 'save');
+    return null;
+  } finally {
+    if (isCurrentAuthenticated(version)) alertRules.saving = false;
+  }
+}
+
+/** @param {number} id */
+export async function deleteAlertRule(id) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  alertRules.deletingId = id;
+  alertRules.error = '';
+  try {
+    await requestJSON(`/api/admin/alert-rules/${id}`, { method: 'DELETE' });
+    if (!isCurrentAuthenticated(version)) return false;
+    await loadAlertRules();
+    return true;
+  } catch (error) {
+    if (isCurrentAuthenticated(version)) alertRules.error = alertMutationError(error, 'rule', 'delete');
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version)) alertRules.deletingId = 0;
   }
 }
 

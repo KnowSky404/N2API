@@ -61,7 +61,7 @@ beforeEach(() => {
     revokingOthers: false
   });
   Object.assign(loginForm, { username: '', password: '', submitting: false, error: '' });
-  Object.assign(health, { loading: false, error: '', status: 'ok', database: 'ok', build: null });
+  Object.assign(health, { loading: false, error: '', status: 'ok', database: 'ok', build: null, tasks: null });
   Object.assign(systemEvents, {
     loading: false,
     loadingOlder: false,
@@ -214,18 +214,20 @@ test('stale authenticated health response cannot restore build identity after lo
   resolveHealth(Response.json({
     status: 'ok',
     database: 'ok',
-    build: { version: 'sha-stale', commit: 'stale-commit', builtAt: '2026-07-21T08:30:00Z' }
+    build: { version: 'sha-stale', commit: 'stale-commit', builtAt: '2026-07-21T08:30:00Z' },
+    tasks: { alertDelivery: { enabled: true, running: true } }
   }));
   await pendingHealth;
 
   assert.equal(session.authenticated, false);
   assert.equal(health.build, null);
+  assert.equal(health.tasks, null);
 });
 
 test('public health response survives an earlier unauthenticated session result', async () => {
   let resolveHealth;
   Object.assign(session, { loading: true, authenticated: false, username: '', error: '' });
-  Object.assign(health, { loading: true, error: '', status: 'checking', database: 'checking', build: null });
+  Object.assign(health, { loading: true, error: '', status: 'checking', database: 'checking', build: null, tasks: null });
   globalThis.fetch = async (path) => {
     if (String(path) === '/api/admin/health') {
       return new Promise((resolve) => {
@@ -251,8 +253,30 @@ test('public health response survives an earlier unauthenticated session result'
     error: '',
     status: 'ok',
     database: 'ok',
-    build: null
+    build: null,
+    tasks: null
   });
+});
+
+test('authenticated health exposes sanitized alert delivery task status', async () => {
+  const alertDelivery = {
+    enabled: true,
+    running: true,
+    queueDepth: 1,
+    queueCapacity: 64,
+    activeWorkers: 2,
+    workerCount: 2,
+    deliveredCount: 3,
+    failedCount: 1,
+    droppedCount: 0,
+    retriedCount: 2,
+    lastErrorCode: 'alert_delivery_http_status'
+  };
+  globalThis.fetch = async () => Response.json({ status: 'ok', database: 'ok', tasks: { alertDelivery } });
+
+  await loadHealth();
+
+  assert.deepEqual(health.tasks, { alertDelivery });
 });
 
 test('login 401 reports invalid credentials without clearing authenticated state', async () => {

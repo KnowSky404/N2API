@@ -191,8 +191,11 @@ func runServer() {
 	systemEventRepo := store.NewSystemEventRepository(pool, cfg.EncryptionSecret)
 	alertingRepo := store.NewAlertingRepository(pool)
 	alertingService := alerting.NewService(alertingRepo, cfg.EncryptionKeyring)
+	alertHTTPAdapter := alerting.NewHTTPAdapter(nil)
+	alertActionTester := alerting.NewActionTester(alertingService, alertHTTPAdapter)
 	alertDispatcher := alerting.NewDispatcher(alerting.DispatcherConfig{
 		Enabled: cfg.AlertDeliveryEnabled, Service: alertingService, Recorder: systemEventRepo,
+		Adapter: alertHTTPAdapter,
 		Subscribe: func(ctx context.Context) (alerting.EventSubscription, error) {
 			return systemEventRepo.Subscribe(ctx)
 		},
@@ -278,7 +281,7 @@ func runServer() {
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

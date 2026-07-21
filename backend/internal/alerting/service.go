@@ -32,6 +32,7 @@ func (service *Service) CreateAction(ctx context.Context, input ActionInput) (Ac
 	if err != nil {
 		return Action{}, ErrRepository
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAlertActionCreated, "alert_action")
 	action, err := service.repository.CreateAction(ctx, ActionCreate{
 		Name: strings.TrimSpace(input.Name), Kind: input.Kind, EncryptedDestination: encrypted, Enabled: input.Enabled,
 	})
@@ -42,7 +43,7 @@ func (service *Service) CreateAction(ctx context.Context, input ActionInput) (Ac
 }
 
 func (service *Service) UpdateAction(ctx context.Context, id int64, input ActionUpdateInput) (Action, error) {
-	if id <= 0 || invalidName(input.Name, MaxActionNameLength) || !validActionKind(input.Kind) {
+	if id <= 0 || input.ExpectedUpdatedAt.IsZero() || invalidName(input.Name, MaxActionNameLength) || !validActionKind(input.Kind) {
 		return Action{}, ErrInvalidInput
 	}
 	var encrypted *string
@@ -56,22 +57,18 @@ func (service *Service) UpdateAction(ctx context.Context, id int64, input Action
 		}
 		encrypted = &value
 	} else {
-		current, err := service.repository.GetAction(ctx, id)
+		current, err := service.GetAction(ctx, id)
 		if err != nil {
 			return Action{}, repositoryError(err)
 		}
 		if current.Kind != input.Kind {
-			destination, err := service.DestinationForDelivery(ctx, id)
-			if err != nil {
-				return Action{}, err
-			}
-			if err := validateDestination(input.Kind, destination); err != nil {
-				return Action{}, err
-			}
+			return Action{}, ErrInvalidInput
 		}
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAlertActionUpdated, "alert_action")
 	action, err := service.repository.UpdateAction(ctx, id, ActionUpdate{
-		Name: strings.TrimSpace(input.Name), Kind: input.Kind, EncryptedDestination: encrypted, Enabled: input.Enabled,
+		Name: strings.TrimSpace(input.Name), Kind: input.Kind, EncryptedDestination: encrypted,
+		Enabled: input.Enabled, ExpectedUpdatedAt: input.ExpectedUpdatedAt.UTC(),
 	})
 	if err != nil {
 		return Action{}, repositoryError(err)
@@ -83,6 +80,7 @@ func (service *Service) DeleteAction(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAlertActionDeleted, "alert_action")
 	return repositoryError(service.repository.DeleteAction(ctx, id))
 }
 
@@ -128,7 +126,49 @@ func (service *Service) ResolveActionForDelivery(ctx context.Context, actionID i
 	if err := validateDestination(stored.Kind, destination); err != nil {
 		return ResolvedAction{}, ErrRepository
 	}
-	return ResolvedAction{ID: stored.ID, Kind: stored.Kind, Enabled: stored.Enabled, Destination: destination}, nil
+	return ResolvedAction{
+		ID: stored.ID, Name: stored.Name, Kind: stored.Kind, Enabled: stored.Enabled,
+		Destination: destination, UpdatedAt: stored.UpdatedAt,
+	}, nil
+}
+
+func (service *Service) BeginActionTest(ctx context.Context, actionID int64, expectedUpdatedAt time.Time) (ActionTestAttempt, error) {
+	if actionID <= 0 || expectedUpdatedAt.IsZero() {
+		return ActionTestAttempt{}, ErrInvalidInput
+	}
+	started, err := service.repository.BeginActionTest(ctx, actionID, expectedUpdatedAt.UTC(), systemevent.NewCorrelationID())
+	if err != nil {
+		return ActionTestAttempt{}, repositoryError(err)
+	}
+	destination, err := service.keyring.DecryptStringFor(secret.SecretKindAlertActionDestination, started.Action.EncryptedDestination)
+	if err != nil || validateDestination(started.Action.Kind, destination) != nil {
+		return ActionTestAttempt{}, ErrRepository
+	}
+	return ActionTestAttempt{
+		Action: ResolvedAction{
+			ID: started.Action.ID, Name: started.Action.Name, Kind: started.Action.Kind,
+			Enabled: started.Action.Enabled, Destination: destination, UpdatedAt: started.Action.UpdatedAt,
+		},
+		AttemptToken: started.AttemptToken,
+		StartedAt:    started.StartedAt,
+	}, nil
+}
+
+func (service *Service) FinalizeActionTest(ctx context.Context, attempt ActionTestAttempt, result ActionTestResult) error {
+	if attempt.Action.ID <= 0 || !systemevent.ValidCorrelationID(attempt.AttemptToken) || result.TestedAt.IsZero() || (result.Status != ActionTestStatusPassed && result.Status != ActionTestStatusFailed) || result.LatencyMS < 0 {
+		return ErrInvalidInput
+	}
+	if result.HTTPStatus != nil && (*result.HTTPStatus < 100 || *result.HTTPStatus > 599) || len(result.ErrorCode) > systemevent.MaxCodeLength || strings.ContainsAny(result.ErrorCode, "\r\n") {
+		return ErrInvalidInput
+	}
+	if (result.Status == ActionTestStatusPassed && result.ErrorCode != "") || (result.Status == ActionTestStatusFailed && result.ErrorCode == "") {
+		return ErrInvalidInput
+	}
+	_, err := service.repository.FinalizeActionTest(ctx, attempt.Action.ID, attempt.AttemptToken, result)
+	if err != nil {
+		return repositoryError(err)
+	}
+	return nil
 }
 
 func (service *Service) CreateRule(ctx context.Context, input Rule) (Rule, error) {
@@ -139,6 +179,7 @@ func (service *Service) CreateRule(ctx context.Context, input Rule) (Rule, error
 	if err := input.validate(); err != nil {
 		return Rule{}, err
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAlertRuleCreated, "alert_rule")
 	rule, err := service.repository.CreateRule(ctx, RuleCreate{Rule: input})
 	if err != nil {
 		return Rule{}, repositoryError(err)
@@ -146,8 +187,8 @@ func (service *Service) CreateRule(ctx context.Context, input Rule) (Rule, error
 	return rule, nil
 }
 
-func (service *Service) UpdateRule(ctx context.Context, id int64, input Rule) (Rule, error) {
-	if id <= 0 {
+func (service *Service) UpdateRule(ctx context.Context, id int64, input Rule, expectedUpdatedAt time.Time) (Rule, error) {
+	if id <= 0 || expectedUpdatedAt.IsZero() {
 		return Rule{}, ErrInvalidInput
 	}
 	input.ID = 0
@@ -157,7 +198,8 @@ func (service *Service) UpdateRule(ctx context.Context, id int64, input Rule) (R
 	if err := input.validate(); err != nil {
 		return Rule{}, err
 	}
-	rule, err := service.repository.UpdateRule(ctx, id, RuleUpdate{Rule: input})
+	ctx = withAuditIntent(ctx, systemevent.ActionAlertRuleUpdated, "alert_rule")
+	rule, err := service.repository.UpdateRule(ctx, id, RuleUpdate{Rule: input, ExpectedUpdatedAt: expectedUpdatedAt.UTC()})
 	if err != nil {
 		return Rule{}, repositoryError(err)
 	}
@@ -168,6 +210,7 @@ func (service *Service) DeleteRule(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return ErrInvalidInput
 	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAlertRuleDeleted, "alert_rule")
 	return repositoryError(service.repository.DeleteRule(ctx, id))
 }
 
@@ -273,6 +316,10 @@ func repositoryError(err error) error {
 		return ErrNotFound
 	case errors.Is(err, ErrStateCapacity):
 		return ErrStateCapacity
+	case errors.Is(err, ErrConflict):
+		return ErrConflict
+	case errors.Is(err, ErrRateLimited):
+		return err
 	default:
 		return ErrRepository
 	}

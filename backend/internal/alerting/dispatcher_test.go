@@ -171,6 +171,7 @@ func TestDispatcherPreservesOrderWithinRuleDeduplicationStreamAcrossWorkers(t *t
 }
 
 type interleavedRuleService struct {
+	mu            sync.RWMutex
 	listed        Rule
 	evaluated     Rule
 	resolved      ResolvedAction
@@ -192,10 +193,18 @@ func (service *interleavedRuleService) GetRule(context.Context, int64) (Rule, er
 }
 
 func (service *interleavedRuleService) ResolveActionForDelivery(context.Context, int64) (ResolvedAction, error) {
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 	if service.resolveErr != nil {
 		return ResolvedAction{}, service.resolveErr
 	}
 	return service.resolved, nil
+}
+
+func (service *interleavedRuleService) setResolved(action ResolvedAction) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.resolved = action
 }
 
 func (service *interleavedRuleService) EvaluateRuleEventForDelivery(context.Context, int64, systemevent.Event, time.Time) (Evaluation, error) {
@@ -203,7 +212,29 @@ func (service *interleavedRuleService) EvaluateRuleEventForDelivery(context.Cont
 	if service.evaluationErr != nil {
 		return Evaluation{}, service.evaluationErr
 	}
-	return Evaluation{Rule: service.evaluated, ActionEnabled: true, Decision: DecisionNotify}, nil
+	return Evaluation{Rule: service.evaluated, ActionEnabled: true, ActionUpdatedAt: service.resolved.UpdatedAt, Decision: DecisionNotify}, nil
+}
+
+func TestDispatcherDropsJobWhenActionRevisionChangesBeforeDelivery(t *testing.T) {
+	oldTime := time.Date(2026, time.July, 21, 10, 0, 0, 0, time.UTC)
+	newTime := oldTime.Add(time.Minute)
+	rule := validRule()
+	rule.ID, rule.ActionID, rule.UpdatedAt = 7, 11, oldTime
+	service := &interleavedRuleService{
+		listed: rule, evaluated: rule,
+		resolved: ResolvedAction{
+			ID: 11, Kind: ActionKindGenericWebhook, Enabled: true,
+			Destination: "https://example.test/new", UpdatedAt: newTime,
+		},
+	}
+	adapter := &recordingDeliveryAdapter{}
+	dispatcher := NewDispatcher(DispatcherConfig{Enabled: true, Service: service, Adapter: adapter})
+	dispatcher.deliver(context.Background(), deliveryJob{
+		rule: rule, actionUpdatedAt: oldTime, decision: DecisionNotify, event: triggerEvent(),
+	})
+	if len(adapter.snapshot()) != 0 {
+		t.Fatal("stale action revision was delivered")
+	}
 }
 
 func TestDispatcherUsesRuleVersionLockedDuringEvaluation(t *testing.T) {
@@ -323,6 +354,56 @@ func TestDispatcherRetriesBoundedlyAndRecordsSanitizedFailure(t *testing.T) {
 		t.Fatalf("delivery status = %+v", status)
 	}
 	shutdownDispatcher(t, dispatcher)
+}
+
+func TestDispatcherStopsRetryWhenActionChangesDuringBackoff(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(ResolvedAction) ResolvedAction
+	}{
+		{name: "disabled", mutate: func(action ResolvedAction) ResolvedAction { action.Enabled = false; return action }},
+		{name: "revision changed", mutate: func(action ResolvedAction) ResolvedAction {
+			action.UpdatedAt = action.UpdatedAt.Add(time.Second)
+			action.Destination = "https://example.test/reconfigured"
+			return action
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			revision := time.Date(2026, time.July, 21, 10, 0, 0, 0, time.UTC)
+			rule := validRule()
+			rule.ID, rule.ActionID, rule.UpdatedAt = 7, 11, revision
+			action := ResolvedAction{
+				ID: 11, Kind: ActionKindGenericWebhook, Enabled: true,
+				Destination: "https://example.test/original", UpdatedAt: revision,
+			}
+			service := &interleavedRuleService{evaluated: rule, resolved: action}
+			adapter := &recordingDeliveryAdapter{results: []DeliveryAttempt{
+				{Retryable: true, StatusCode: 503, ErrorCode: "alert_delivery_http_status"},
+				{Success: true},
+			}}
+			dispatcher := NewDispatcher(DispatcherConfig{
+				Enabled: true, Service: service, Adapter: adapter, MaxAttempts: 2,
+				InitialBackoff: 100 * time.Millisecond, MaxBackoff: 100 * time.Millisecond,
+			})
+			done := make(chan struct{})
+			go func() {
+				dispatcher.deliver(context.Background(), deliveryJob{
+					rule: rule, actionUpdatedAt: revision, decision: DecisionNotify, event: triggerEvent(),
+				})
+				close(done)
+			}()
+			waitFor(t, time.Second, func() bool { return len(adapter.snapshot()) == 1 })
+			service.setResolved(test.mutate(action))
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("delivery did not stop after action changed")
+			}
+			if got := len(adapter.snapshot()); got != 1 {
+				t.Fatalf("delivery attempts = %d, want 1", got)
+			}
+		})
+	}
 }
 
 func TestDispatcherQueueSaturationIsNonBlockingAndAggregatesOverflow(t *testing.T) {
