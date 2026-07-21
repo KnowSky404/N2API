@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first eleven Task 4 slices completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first twelve Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -527,6 +527,11 @@ After the source events exist, add `routing-pool-exhausted-v1` in an independent
 commit. The template starts disabled, matches the first Runtime error trigger,
 uses target-scoped deduplication and a one-hour cooldown, and can notify on the
 exact recovery action. Installation remains explicit and idempotent.
+
+Twelfth-slice status: completed locally on 2026-07-21. Catalog, matcher,
+service, Store, HTTP, manual, and documentation-contract coverage assert exact
+fields, key-target isolation, cooldown, recovery, stable order, and idempotent
+installation.
 
 Focused migration and isolated PostgreSQL tests must cover the non-replay
 baseline, ordered checkpoint advancement, the 1000-row and 100-transition

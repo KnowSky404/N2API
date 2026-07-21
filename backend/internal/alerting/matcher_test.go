@@ -301,6 +301,54 @@ func TestAPIKeyBudget100PercentTemplateNotifiesPerStreamAndRecovers(t *testing.T
 	}
 }
 
+func TestRoutingPoolExhaustedTemplateNotifiesPerAPIKeyAndRecoversExactly(t *testing.T) {
+	template, ok := ruleTemplate(RoutingPoolExhaustedTemplateKey)
+	if !ok {
+		t.Fatal("routing pool exhausted template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 17
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	failure := triggerEvent()
+	failure.Category = systemevent.CategoryRuntime
+	failure.Severity = systemevent.SeverityError
+	failure.Action = systemevent.ActionAPIKeyRoutingPoolExhausted
+	failure.Outcome = systemevent.OutcomeFailure
+	failure.Target = systemevent.Target{Type: "client_api_key", ID: "42", Name: "Codex laptop"}
+	state := RuleState{RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle}
+	state, decision, err := Evaluate(rule, state, failure, now)
+	if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+		t.Fatalf("routing exhaustion evaluation state=%+v decision=%q err=%v", state, decision, err)
+	}
+	state, decision, err = Evaluate(rule, state, failure, now.Add(30*time.Minute))
+	if err != nil || decision != DecisionSuppress || state.Phase != StatePhaseFiring {
+		t.Fatalf("routing exhaustion cooldown state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	otherKey := failure
+	otherKey.Target.ID = "43"
+	if rule.DeduplicationKeyHash(failure) == rule.DeduplicationKeyHash(otherKey) {
+		t.Fatal("target-scoped template reused the same deduplication key for different API keys")
+	}
+
+	wrongRecovery := failure
+	wrongRecovery.Severity = systemevent.SeverityInfo
+	wrongRecovery.Action = systemevent.ActionAPIKeyBudgetThreshold100Recovered
+	wrongRecovery.Outcome = systemevent.OutcomeSuccess
+	state, decision, err = Evaluate(rule, state, wrongRecovery, now.Add(40*time.Minute))
+	if err != nil || decision != DecisionNone || state.Phase != StatePhaseFiring {
+		t.Fatalf("unrelated recovery affected routing exhaustion state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	recovery := wrongRecovery
+	recovery.Action = systemevent.ActionAPIKeyRoutingPoolRecovered
+	state, decision, err = Evaluate(rule, state, recovery, now.Add(45*time.Minute))
+	if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+		t.Fatalf("routing exhaustion recovery state=%+v decision=%q err=%v", state, decision, err)
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

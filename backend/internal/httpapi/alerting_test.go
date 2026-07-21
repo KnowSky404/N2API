@@ -103,11 +103,11 @@ func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
 	var catalog struct {
 		Templates []alerting.RuleTemplate `json:"templates"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 7 ||
+	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 8 ||
 		catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey || catalog.Templates[1].Key != alerting.RequestLogRetentionFailedTemplateKey ||
 		catalog.Templates[2].Key != alerting.ProviderAutoTestFailedTemplateKey || catalog.Templates[3].Key != alerting.ProviderAccountExpiredTemplateKey ||
 		catalog.Templates[4].Key != alerting.ProviderAccountCircuitOpenTemplateKey || catalog.Templates[5].Key != alerting.APIKeyBudget80PercentTemplateKey ||
-		catalog.Templates[6].Key != alerting.APIKeyBudget100PercentTemplateKey {
+		catalog.Templates[6].Key != alerting.APIKeyBudget100PercentTemplateKey || catalog.Templates[7].Key != alerting.RoutingPoolExhaustedTemplateKey {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
 

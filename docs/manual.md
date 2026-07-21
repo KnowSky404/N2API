@@ -598,6 +598,11 @@ depth, never request/response content, error text, key material, or pool names.
 Revoking the key emits a recovery with `confirmation: key_revoked` in the revoke
 transaction. Source events support custom exact-match rules; no routing exhaustion rule is installed or enabled automatically.
 
+The `routing-pool-exhausted-v1` template matches the first routing-exhaustion
+event for each API Key, uses target-scoped deduplication and a one-hour cooldown,
+and can notify on the exact routing-pool recovery action for that key. It starts
+disabled and must be installed explicitly against an existing delivery action.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a

@@ -755,6 +755,16 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if err != nil || !created || budget100Rule.ID == edited.ID || budget100Rule.ID == retentionRule.ID || budget100Rule.ID == autoTestRule.ID || budget100Rule.ID == expiredRule.ID || budget100Rule.ID == circuitRule.ID || budget100Rule.ID == budget80Rule.ID || budget100Rule.TemplateKey != budget100Template.TemplateKey || budget100Rule.ActionID != firstAction.ID {
 		t.Fatalf("seventh template install = %+v, created=%t, err=%v", budget100Rule, created, err)
 	}
+	routingTemplate := budget100Template
+	routingTemplate.TemplateKey = alerting.RoutingPoolExhaustedTemplateKey
+	routingTemplate.Name = "API key routing pool exhausted"
+	routingTemplate.ActionID = secondAction.ID
+	routingTemplate.EventAction = systemevent.ActionAPIKeyRoutingPoolExhausted
+	routingTemplate.RecoveryAction = systemevent.ActionAPIKeyRoutingPoolRecovered
+	routingRule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: routingTemplate})
+	if err != nil || !created || routingRule.ID == edited.ID || routingRule.ID == retentionRule.ID || routingRule.ID == autoTestRule.ID || routingRule.ID == expiredRule.ID || routingRule.ID == circuitRule.ID || routingRule.ID == budget80Rule.ID || routingRule.ID == budget100Rule.ID || routingRule.TemplateKey != routingTemplate.TemplateKey || routingRule.ActionID != secondAction.ID {
+		t.Fatalf("eighth template install = %+v, created=%t, err=%v", routingRule, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `

@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 7 {
-		t.Fatalf("RuleTemplates count = %d, want 7", len(templates))
+	if len(templates) != 8 {
+		t.Fatalf("RuleTemplates count = %d, want 8", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey || templates[7].Key != RoutingPoolExhaustedTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -637,6 +637,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		budget100Template.DeduplicationScope != DeduplicationScopeTarget || !budget100Template.NotifyRecovery {
 		t.Fatalf("100 percent budget template = %+v", budget100Template)
 	}
+	routingExhaustedTemplate := templates[7]
+	if routingExhaustedTemplate.Name != "API key routing pool exhausted" || routingExhaustedTemplate.Enabled ||
+		routingExhaustedTemplate.Category != systemevent.CategoryRuntime || routingExhaustedTemplate.Severity != systemevent.SeverityError ||
+		routingExhaustedTemplate.EventAction != systemevent.ActionAPIKeyRoutingPoolExhausted || routingExhaustedTemplate.RecoveryAction != systemevent.ActionAPIKeyRoutingPoolRecovered ||
+		routingExhaustedTemplate.AggregationCount != 1 || routingExhaustedTemplate.AggregationWindowSeconds != 0 || routingExhaustedTemplate.CooldownSeconds != 3600 ||
+		routingExhaustedTemplate.DeduplicationScope != DeduplicationScopeTarget || !routingExhaustedTemplate.NotifyRecovery {
+		t.Fatalf("routing exhaustion template = %+v", routingExhaustedTemplate)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -690,6 +698,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	budget100Again, created, err := service.InstallRuleTemplate(context.Background(), APIKeyBudget100PercentTemplateKey, 43)
 	if err != nil || created || budget100Again.ID != budget100Rule.ID || budget100Again.ActionID != 41 {
 		t.Fatalf("100 percent budget reinstall = %+v, %v, %v", budget100Again, created, err)
+	}
+	routingRule, created, err := service.InstallRuleTemplate(context.Background(), RoutingPoolExhaustedTemplateKey, 47)
+	if err != nil || !created || routingRule.TemplateKey != RoutingPoolExhaustedTemplateKey || routingRule.ActionID != 47 || routingRule.Enabled {
+		t.Fatalf("routing exhaustion InstallRuleTemplate = %+v, %v, %v", routingRule, created, err)
+	}
+	routingAgain, created, err := service.InstallRuleTemplate(context.Background(), RoutingPoolExhaustedTemplateKey, 53)
+	if err != nil || created || routingAgain.ID != routingRule.ID || routingAgain.ActionID != 47 {
+		t.Fatalf("routing exhaustion reinstall = %+v, %v, %v", routingAgain, created, err)
 	}
 	for _, input := range []struct {
 		key      string
