@@ -392,11 +392,13 @@ export const health = $state({
   loading: true,
   error: '',
   status: 'checking',
-  database: 'checking'
+  database: 'checking',
+  build: /** @type {{ version: string, commit: string, builtAt: string } | null} */ (null)
 });
 
 export const session = $state({ loading: true, authenticated: false, username: '', error: '' });
 let sessionVersion = $state(0);
+let healthRequestVersion = 0;
 export const loginForm = $state({ username: '', password: '', submitting: false, error: '' });
 /** @type {{ loading: boolean, error: string, items: AdminSession[], revokingId: number | null, revokingOthers: boolean }} */
 export const adminSessions = $state({ loading: false, error: '', items: [], revokingId: null, revokingOthers: false });
@@ -1209,6 +1211,7 @@ function clearAdminSessions() {
 function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
   if (incrementVersion) sessionVersion += 1;
   replaceState(session, { loading: false, authenticated: false, username: '', error });
+  health.build = null;
   clearAdminSessions();
   clearProvider();
   clearAPIKeys();
@@ -1311,24 +1314,31 @@ function isCurrentAuthenticated(version) {
 }
 
 export async function loadHealth() {
+  const requestVersion = ++healthRequestVersion;
+  const authenticatedVersion = sessionVersion;
   try {
     const response = await fetch('/api/admin/health');
+    if (requestVersion !== healthRequestVersion) return;
     if (!response.ok) {
       throw new Error(`Health check failed with ${response.status}`);
     }
     const payload = await response.json();
-      replaceState(health, {
-        loading: false,
-        error: '',
-        status: payload.status ?? 'unknown',
-        database: payload.database ?? 'unknown'
-      });
-    } catch (error) {
+    if (requestVersion !== healthRequestVersion) return;
+    replaceState(health, {
+      loading: false,
+      error: '',
+      status: payload.status ?? 'unknown',
+      database: payload.database ?? 'unknown',
+      build: isCurrentAuthenticated(authenticatedVersion) ? (payload.build ?? null) : null
+    });
+  } catch (error) {
+    if (requestVersion !== healthRequestVersion) return;
     replaceState(health, {
       loading: false,
       error: error instanceof Error ? error.message : 'Health check failed',
       status: 'unavailable',
-      database: 'unknown'
+      database: 'unknown',
+      build: null
     });
   }
 }
@@ -1361,6 +1371,7 @@ export async function loadSession() {
       username: payload.username ?? '',
       error: ''
     });
+    await loadHealth();
     await loadProvider();
     await loadProviderAccounts();
     await loadModelSettings();

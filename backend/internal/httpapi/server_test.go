@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
@@ -1028,6 +1029,32 @@ func TestHealthzRemainsLivenessAlias(t *testing.T) {
 	}
 }
 
+func TestVersionReturnsOnlyPublicBuildVersion(t *testing.T) {
+	build := buildinfo.Info{
+		Version: "sha-0123456789ab",
+		Commit:  "0123456789abcdef0123456789abcdef01234567",
+		BuiltAt: "2026-07-21T08:30:00Z",
+	}
+	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil, build)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/version", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["version"] != build.Version {
+		t.Fatalf("version = %q, want %q", body["version"], build.Version)
+	}
+	if len(body) != 1 {
+		t.Fatalf("body = %+v, want public version only", body)
+	}
+}
+
 func TestReadyzReturnsComponentStatus(t *testing.T) {
 	webFS := fstest.MapFS{"200.html": {Data: []byte("ready")}}
 	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil, webFS)
@@ -1089,7 +1116,8 @@ func TestReadyzReportsMissingStaticAssets(t *testing.T) {
 }
 
 func TestAdminHealthIncludesDatabaseStatus(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil)
+	build := buildinfo.Info{Version: "sha-0123456789ab", Commit: "secret-detailed-commit", BuiltAt: "2026-07-21T08:30:00Z"}
+	server := NewServer(config.Config{}, staticHealth{err: nil}, newFakeAdminService(), nil, build)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
@@ -1098,8 +1126,9 @@ func TestAdminHealthIncludesDatabaseStatus(t *testing.T) {
 		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
 	var body struct {
-		Status   string `json:"status"`
-		Database string `json:"database"`
+		Status   string          `json:"status"`
+		Database string          `json:"database"`
+		Build    *buildinfo.Info `json:"build"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
@@ -1109,6 +1138,73 @@ func TestAdminHealthIncludesDatabaseStatus(t *testing.T) {
 	}
 	if body.Database != "ok" {
 		t.Fatalf("Database = %q, want ok", body.Database)
+	}
+	if body.Build != nil {
+		t.Fatalf("Build = %+v, want omitted without an authenticated session", body.Build)
+	}
+}
+
+func TestAdminHealthIncludesBuildIdentityForAuthenticatedSession(t *testing.T) {
+	build := buildinfo.Info{
+		Version: "sha-0123456789ab",
+		Commit:  "0123456789abcdef0123456789abcdef01234567",
+		BuiltAt: "2026-07-21T08:30:00Z",
+	}
+	server := NewServer(config.Config{}, staticHealth{err: nil}, newFakeAdminService(), nil, build)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body struct {
+		Status   string          `json:"status"`
+		Database string          `json:"database"`
+		Build    *buildinfo.Info `json:"build"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Status != "ok" || body.Database != "ok" {
+		t.Fatalf("health = %q/%q, want ok/ok", body.Status, body.Database)
+	}
+	if body.Build == nil || *body.Build != build {
+		t.Fatalf("Build = %+v, want %+v", body.Build, build)
+	}
+}
+
+func TestAdminHealthOmitsBuildIdentityForInvalidSession(t *testing.T) {
+	build := buildinfo.Info{
+		Version: "sha-0123456789ab",
+		Commit:  "0123456789abcdef0123456789abcdef01234567",
+		BuiltAt: "2026-07-21T08:30:00Z",
+	}
+	server := NewServer(config.Config{}, staticHealth{err: nil}, newFakeAdminService(), nil, build)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "expired-session"})
+
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body struct {
+		Status   string          `json:"status"`
+		Database string          `json:"database"`
+		Build    *buildinfo.Info `json:"build"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Status != "ok" || body.Database != "ok" {
+		t.Fatalf("health = %q/%q, want ok/ok", body.Status, body.Database)
+	}
+	if body.Build != nil {
+		t.Fatalf("Build = %+v, want omitted for invalid session", body.Build)
 	}
 }
 

@@ -222,6 +222,22 @@ Published images support:
 - `linux/amd64`
 - `linux/arm64`
 
+Every tested image carries the same build identity in the binary and OCI
+metadata:
+
+- `org.opencontainers.image.source` identifies the source repository.
+- `org.opencontainers.image.revision` is the complete Git commit SHA.
+- `org.opencontainers.image.version` is the immutable `sha-<12 characters>`
+  build version.
+- `org.opencontainers.image.created` is the source commit time normalized to
+  UTC RFC 3339.
+
+The commit time, rather than the workflow start time, keeps rebuilds of the
+same commit traceable to one stable identity. CalVer releases promote the
+already-tested manifest without rebuilding it, so a running release continues
+to report its source `sha-<12 characters>` build version while the CalVer tag
+identifies the promoted manifest.
+
 Release `2026071401` predates multi-platform publishing and supports only
 `linux/amd64`. ARM64 hosts must use a later release. Inspect any tag before
 deployment with:
@@ -399,6 +415,7 @@ docker compose -f deploy/compose.release.yaml --env-file .env up -d
 docker compose -f deploy/compose.release.yaml --env-file .env ps
 curl -fsS http://127.0.0.1:3000/readyz
 curl -fsS http://127.0.0.1:3000/livez
+curl -fsS http://127.0.0.1:3000/version
 curl -fsS http://127.0.0.1:3000/api/admin/health
 docker image inspect "ghcr.io/knowsky404/n2api:${N2API_VERSION}" --format '{{.Os}}/{{.Architecture}}'
 ```
@@ -448,9 +465,17 @@ N2API exposes separate process and dependency probes:
   bootstrap, and background runner construction finish before the HTTP server
   starts listening. Provider account availability does not affect readiness.
 - `GET /healthz` remains a compatibility alias for the liveness behavior.
-- `GET /api/admin/health` is the existing database-focused status response used
-  by the admin UI; it will gain richer authenticated operational detail in a
-  later reliability phase.
+- `GET /version` is public and returns only the short build version, for
+  example `{"version":"sha-0123456789ab"}`.
+- `GET /api/admin/health` remains publicly usable for its existing
+  `status`/`database` response. With a valid administrator session cookie, it
+  also includes the complete commit SHA and UTC build time under `build`.
+
+After sign-in, the Dashboard shows the short build version in its compact
+system status. Hover over the value, or focus and activate it, to inspect the
+complete commit and build time. Signing out removes the authenticated build
+detail from client state. Local source builds use explicit non-release values:
+version `dev`, commit `unknown`, and build time `1970-01-01T00:00:00Z`.
 
 Both development and release Compose configurations use `/readyz` for the
 application container healthcheck. A temporary provider outage therefore does

@@ -228,6 +228,9 @@ Release startup has a documented, tested binding and no ambiguous public default
 
 ## Task 5: Expose Build Identity
 
+Task status: completed locally on 2026-07-21; amd64/arm64 CI smoke and release
+promotion verification pending the next authorized push
+
 ### Goal
 
 Make the running binary and image traceable to the tested source.
@@ -252,6 +255,15 @@ perform external update checks in this task.
 ### Completion Criteria
 
 API values and OCI labels match the exact tested source/image digest.
+
+The binary now exposes an explicit short build version publicly and returns
+the complete commit/build timestamp only to an authenticated administrator.
+The Dashboard renders the authenticated short version and clears build details
+on logout. A native ARM64 image built with deterministic test values returned
+matching public/authenticated API identities and all four matching OCI labels;
+CI now enforces the same identity contract on AMD64 and ARM64, while Release
+verifies the labels on every promoted platform before retagging the tested
+manifest.
 
 ### Commit
 

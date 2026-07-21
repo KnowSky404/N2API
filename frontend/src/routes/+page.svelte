@@ -221,7 +221,7 @@
       <p class="mt-2 text-sm text-[#6e6e6e]">Gateway health, capacity, and usage over the last 24 hours.</p>
     </div>
 
-    <dl class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+    <dl class="relative flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
       {#each statusItems as item (item.label)}
         <div class="flex items-center gap-2">
           <span class={`h-2 w-2 shrink-0 rounded-full ${statusDotClass(item.value)}`}></span>
@@ -229,6 +229,30 @@
           <dd class="font-medium capitalize text-[#0d0d0d]">{item.value}</dd>
         </div>
       {/each}
+      {#if health.build}
+        <div class="flex min-w-0 items-center gap-2">
+          <dt class="text-[#6e6e6e]">Build</dt>
+          <dd class="min-w-0">
+            <details>
+              <summary
+                class="max-w-48 cursor-help list-none truncate rounded-sm font-mono text-xs font-medium text-[#0d0d0d] outline-none focus-visible:ring-2 focus-visible:ring-[#10a37f] focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden"
+                title={`Commit ${health.build.commit} | Built ${formatDate(health.build.builtAt)}`}
+                aria-describedby="dashboard-build-details"
+                aria-label={`Build ${health.build.version}, commit ${health.build.commit}, built ${formatDate(health.build.builtAt)}`}
+              >
+                {health.build.version}
+              </summary>
+              <div
+                id="dashboard-build-details"
+                class="pointer-events-none absolute right-0 top-full z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md border border-[#dedede] bg-white p-3 text-xs text-[#3c3c3c] shadow-lg"
+              >
+                <p class="break-all font-mono">Commit {health.build.commit}</p>
+                <p class="mt-1">Built {formatDate(health.build.builtAt)}</p>
+              </div>
+            </details>
+          </dd>
+        </div>
+      {/if}
     </dl>
   </header>
 

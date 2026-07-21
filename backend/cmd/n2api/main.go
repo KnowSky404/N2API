@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
@@ -154,6 +155,7 @@ func (p gatewayUsagePricer) EstimateUsageCost(ctx context.Context, usage gateway
 }
 
 func main() {
+	build := buildinfo.Current()
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		slog.Error("invalid configuration", "error", err)
@@ -246,13 +248,13 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, os.DirFS("frontend/build"), systemEventRepo),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, os.DirFS("frontend/build"), systemEventRepo, build),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		slog.Info("starting n2api", "addr", cfg.Addr())
+		slog.Info("starting n2api", "addr", cfg.Addr(), "version", build.Version, "commit", build.Commit, "built_at", build.BuiltAt)
 		serverErrors <- server.ListenAndServe()
 	}()
 

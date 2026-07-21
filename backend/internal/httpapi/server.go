@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
@@ -197,7 +198,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 	publicURL, _ := url.Parse(cfg.PublicURL)
 	secureCookie := strings.EqualFold(publicURL.Scheme, "https")
-	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
+	gateway, webFS, autoTestStatusSource, build := parseServerOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -207,6 +208,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}
 	mux.HandleFunc("GET /livez", livenessHandler)
 	mux.HandleFunc("GET /healthz", livenessHandler)
+	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"version": build.Version})
+	})
 
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]string{
@@ -236,26 +240,36 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	mux.HandleFunc("GET /api/admin/health", func(w http.ResponseWriter, r *http.Request) {
+		response := func(status, database string) map[string]any {
+			body := map[string]any{
+				"status":   status,
+				"database": database,
+			}
+			if admins == nil {
+				return body
+			}
+			token, ok := readSessionCookie(r)
+			if !ok {
+				return body
+			}
+			if _, err := admins.ValidateSession(r.Context(), token); err != nil {
+				return body
+			}
+			body["build"] = build
+			return body
+		}
+
 		if health == nil {
-			writeJSON(w, http.StatusOK, map[string]string{
-				"status":   "ok",
-				"database": "not_configured",
-			})
+			writeJSON(w, http.StatusOK, response("ok", "not_configured"))
 			return
 		}
 
 		if err := health.Ping(r.Context()); err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-				"status":   "degraded",
-				"database": "error",
-			})
+			writeJSON(w, http.StatusServiceUnavailable, response("degraded", "error"))
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status":   "ok",
-			"database": "ok",
-		})
+		writeJSON(w, http.StatusOK, response("ok", "ok"))
 	})
 
 	mux.HandleFunc("GET /api/admin/bootstrap", func(w http.ResponseWriter, r *http.Request) {
@@ -2955,10 +2969,11 @@ func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.Conn
 	return options, nil
 }
 
-func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAutoTestStatusSource) {
+func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAutoTestStatusSource, buildinfo.Info) {
 	var gateway http.Handler
 	var webFS fs.FS
 	var autoTestStatusSource ProviderAccountAutoTestStatusSource
+	build := buildinfo.Current()
 	for _, option := range options {
 		switch value := option.(type) {
 		case http.Handler:
@@ -2973,9 +2988,11 @@ func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAut
 			if autoTestStatusSource == nil {
 				autoTestStatusSource = value
 			}
+		case buildinfo.Info:
+			build = value
 		}
 	}
-	return gateway, webFS, autoTestStatusSource
+	return gateway, webFS, autoTestStatusSource, build
 }
 
 func serveWeb(w http.ResponseWriter, r *http.Request, webFS fs.FS) bool {

@@ -432,8 +432,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          commit_epoch="$(git show -s --format=%ct "$GITHUB_SHA")"
+          if [[ ! "$commit_epoch" =~ ^[0-9]+$ ]]; then
+            echo "Could not resolve commit timestamp for $GITHUB_SHA" >&2
+            exit 1
+          fi
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
           echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+          echo "BUILD_VERSION=sha-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
+          echo "BUILD_TIME=$(date -u -d "@$commit_epoch" +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          echo "SOURCE_URL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
 
       - name: Docker metadata
         id: meta
@@ -452,7 +460,17 @@ jobs:
           platforms: ${{ matrix.platform }}
           load: true
           tags: n2api:ci-${{ matrix.suffix }}
-          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            N2API_VERSION=${{ env.BUILD_VERSION }}
+            N2API_COMMIT=${{ github.sha }}
+            N2API_BUILD_TIME=${{ env.BUILD_TIME }}
+            N2API_SOURCE=${{ env.SOURCE_URL }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.source=${{ env.SOURCE_URL }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.BUILD_VERSION }}
+            org.opencontainers.image.created=${{ env.BUILD_TIME }}
           cache-from: type=gha,scope=image-${{ matrix.suffix }}
           cache-to: type=gha,mode=max,scope=image-${{ matrix.suffix }}
 
@@ -521,6 +539,9 @@ jobs:
           docker exec n2api-ci wget -qO /tmp/liveness.json http://127.0.0.1:3000/livez
           docker cp n2api-ci:/tmp/liveness.json /tmp/liveness.json
           grep '"status":"ok"' /tmp/liveness.json
+          docker exec n2api-ci wget -qO /tmp/version.json http://127.0.0.1:3000/version
+          docker cp n2api-ci:/tmp/version.json /tmp/version.json
+          grep "\"version\":\"${BUILD_VERSION}\"" /tmp/version.json
           docker exec n2api-ci wget -qO /tmp/bootstrap.json http://127.0.0.1:3000/api/admin/bootstrap
           docker cp n2api-ci:/tmp/bootstrap.json /tmp/bootstrap.json
           grep '"adminUsername":"admin"' /tmp/bootstrap.json
@@ -536,6 +557,25 @@ jobs:
           docker exec n2api-ci test ! -w /app/frontend/build/200.html
           docker exec n2api-ci test -s /etc/ssl/certs/ca-certificates.crt
           docker exec n2api-ci wget -qO /dev/null https://example.com
+          docker exec n2api-ci sh -eu -c '
+            wget -S -O /tmp/login.json -o /tmp/login.headers \
+              --header "Content-Type: application/json" \
+              --post-data "{\"username\":\"admin\",\"password\":\"ci-admin-password\"}" \
+              http://127.0.0.1:3000/api/admin/login
+            cookie="$(sed -n "s/^[[:space:]]*Set-Cookie: \([^;]*\).*/\1/p" /tmp/login.headers | head -n 1)"
+            test -n "$cookie"
+            wget -qO /tmp/admin-health.json --header "Cookie: $cookie" \
+              http://127.0.0.1:3000/api/admin/health
+            rm /tmp/login.json /tmp/login.headers
+          '
+          docker cp n2api-ci:/tmp/admin-health.json /tmp/admin-health.json
+          grep "\"version\":\"${BUILD_VERSION}\"" /tmp/admin-health.json
+          grep "\"commit\":\"${GITHUB_SHA}\"" /tmp/admin-health.json
+          grep "\"builtAt\":\"${BUILD_TIME}\"" /tmp/admin-health.json
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' "n2api:ci-${{ matrix.suffix }}")" = "$SOURCE_URL"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "n2api:ci-${{ matrix.suffix }}")" = "$GITHUB_SHA"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "n2api:ci-${{ matrix.suffix }}")" = "$BUILD_VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "n2api:ci-${{ matrix.suffix }}")" = "$BUILD_TIME"
 
       - name: Verify graceful shutdown
         shell: bash

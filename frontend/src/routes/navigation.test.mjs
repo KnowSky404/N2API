@@ -1243,6 +1243,22 @@ test('dashboard shows gateway scheduling capacity', () => {
   assert.match(dashboardPage, /href="\/providers\?status=blocked"/);
 });
 
+test('dashboard shows authenticated build identity without exposing it after logout', () => {
+  assert.match(adminState, /build:\s*\/\*\*[^]*?version:\s*string[^]*?builtAt:\s*string[^]*?\*\/\s*\(null\)/);
+  assert.match(adminState, /build:\s*isCurrentAuthenticated\(authenticatedVersion\)\s*\?\s*\(payload\.build\s*\?\?\s*null\)\s*:\s*null/);
+  assert.match(adminState, /replaceState\(session,[^]*?authenticated:\s*true[^]*?await loadHealth\(\)/);
+  assert.match(adminState, /clearAuthenticatedAdminState[^]*?health\.build\s*=\s*null/);
+  assert.match(dashboardPage, /\{#if health\.build\}/);
+  assert.match(dashboardPage, />Build<\/dt>/);
+  assert.match(dashboardPage, /health\.build\.version/);
+  assert.match(dashboardPage, /health\.build\.commit/);
+  assert.match(dashboardPage, /health\.build\.builtAt/);
+  assert.match(dashboardPage, /max-w-48[^\"]*truncate/);
+  assert.match(dashboardPage, /<summary/);
+  assert.match(dashboardPage, /aria-describedby="dashboard-build-details"/);
+  assert.match(dashboardPage, /<details>/);
+});
+
 test('dashboard shows gateway runtime scheduling limits', () => {
   for (const label of [
     'Gateway runtime limits',

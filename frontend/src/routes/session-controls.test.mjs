@@ -10,10 +10,14 @@ const {
   changePasswordForm,
   errorPassthroughRules,
   fingerprintProfiles,
+  health,
   loadAdminSessions,
+  loadHealth,
+  loadSession,
   loadSystemEvents,
   login,
   loginForm,
+  logout,
   opsMonitor,
   providerAccountBulkModelsForm,
   providerAccountBulkSchedulingForm,
@@ -57,6 +61,7 @@ beforeEach(() => {
     revokingOthers: false
   });
   Object.assign(loginForm, { username: '', password: '', submitting: false, error: '' });
+  Object.assign(health, { loading: false, error: '', status: 'ok', database: 'ok', build: null });
   Object.assign(systemEvents, {
     loading: false,
     loadingOlder: false,
@@ -185,6 +190,69 @@ test('protected request 401 clears authentication and all session state', async 
   assert.equal(opsMonitor.stats, null);
   assert.deepEqual(fingerprintProfiles, { loading: false, error: '', items: [], saving: false });
   assert.deepEqual(errorPassthroughRules, { loading: false, error: '', items: [], saving: false });
+});
+
+test('stale authenticated health response cannot restore build identity after logout', async () => {
+  let resolveHealth;
+  globalThis.fetch = async (path) => {
+    if (String(path) === '/api/admin/health') {
+      return new Promise((resolve) => {
+        resolveHealth = resolve;
+      });
+    }
+    if (String(path) === '/api/admin/logout') {
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  };
+
+  const pendingHealth = loadHealth();
+  await Promise.resolve();
+  assert.equal(typeof resolveHealth, 'function');
+
+  await logout();
+  resolveHealth(Response.json({
+    status: 'ok',
+    database: 'ok',
+    build: { version: 'sha-stale', commit: 'stale-commit', builtAt: '2026-07-21T08:30:00Z' }
+  }));
+  await pendingHealth;
+
+  assert.equal(session.authenticated, false);
+  assert.equal(health.build, null);
+});
+
+test('public health response survives an earlier unauthenticated session result', async () => {
+  let resolveHealth;
+  Object.assign(session, { loading: true, authenticated: false, username: '', error: '' });
+  Object.assign(health, { loading: true, error: '', status: 'checking', database: 'checking', build: null });
+  globalThis.fetch = async (path) => {
+    if (String(path) === '/api/admin/health') {
+      return new Promise((resolve) => {
+        resolveHealth = resolve;
+      });
+    }
+    if (String(path) === '/api/admin/me') {
+      return Response.json({ error: 'unauthorized' }, { status: 401 });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  };
+
+  const pendingHealth = loadHealth();
+  await Promise.resolve();
+  assert.equal(typeof resolveHealth, 'function');
+  await loadSession();
+  resolveHealth(Response.json({ status: 'ok', database: 'ok' }));
+  await pendingHealth;
+
+  assert.equal(session.authenticated, false);
+  assert.deepEqual(health, {
+    loading: false,
+    error: '',
+    status: 'ok',
+    database: 'ok',
+    build: null
+  });
 });
 
 test('login 401 reports invalid credentials without clearing authenticated state', async () => {

@@ -78,6 +78,9 @@ jobs:
           image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
           source_tag="sha-${source_sha:0:12}"
           source_ref="${image}:${source_tag}"
+          source_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          commit_epoch="$(git show -s --format=%ct "$source_sha")"
+          build_time="$(date -u -d "@$commit_epoch" +'%Y-%m-%dT%H:%M:%SZ')"
           source_digest="$(
             docker buildx imagetools inspect "$source_ref" \
               | sed -n 's/^Digest:[[:space:]]*//p' \
@@ -97,6 +100,24 @@ jobs:
             printf '%s\n' "$source_platforms" >&2
             exit 1
           fi
+
+          for platform in linux/amd64 linux/arm64; do
+            docker pull --platform "$platform" "$source_ref" >/dev/null
+            labels="$(docker image inspect --format '{{json .Config.Labels}}' "$source_ref")"
+            if ! jq -e \
+              --arg source "$source_url" \
+              --arg revision "$source_sha" \
+              --arg version "$source_tag" \
+              --arg created "$build_time" \
+              '."org.opencontainers.image.source" == $source and
+               ."org.opencontainers.image.revision" == $revision and
+               ."org.opencontainers.image.version" == $version and
+               ."org.opencontainers.image.created" == $created' \
+              <<< "$labels" >/dev/null; then
+              echo "$source_ref has invalid build identity labels for $platform" >&2
+              exit 1
+            fi
+          done
 
           mapfile -t sha_versions < <(
             while IFS= read -r tag; do
