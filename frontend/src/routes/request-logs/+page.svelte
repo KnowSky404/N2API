@@ -18,7 +18,7 @@
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
-  import { ChevronDown, Download, Search, SlidersHorizontal, X } from 'lucide-svelte';
+  import { ChevronDown, Download, Eye, Search, SlidersHorizontal, X } from 'lucide-svelte';
 
   let providerAccountsRequested = $state(false);
   let routingPoolsRequested = $state(false);
@@ -29,6 +29,7 @@
   let requestLogDateRange = $state('all');
   let requestLogPage = $state(1);
   let requestLogPageSize = $state(10);
+  let selectedRequestLog = $state(/** @type {import('$lib/admin-state.svelte.js').RequestLog | null} */ (null));
 
   let requestLogPageCount = $derived(Math.max(1, Math.ceil(requestLogs.items.length / requestLogPageSize)));
   let normalizedRequestLogPage = $derived(Math.min(Math.max(requestLogPage, 1), requestLogPageCount));
@@ -350,7 +351,23 @@
     requestLogPage = Math.min(Math.max(targetPage, 1), requestLogPageCount);
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  function openRequestLogDetails(log) {
+    selectedRequestLog = log;
+  }
+
+  function closeRequestLogDetails() {
+    selectedRequestLog = null;
+  }
+
+  /** @param {KeyboardEvent} event */
+  function handleRequestLogKeydown(event) {
+    if (event.key === 'Escape' && selectedRequestLog) closeRequestLogDetails();
+  }
+
 </script>
+
+<svelte:window onkeydown={handleRequestLogKeydown} />
 
 <svelte:head>
   <title>N2API Request Logs</title>
@@ -579,15 +596,15 @@
   </div>
 
   <div class="ui-table-shell ui-table-shell--scroll mt-3">
-    <table class="ui-table ui-table--stacked min-w-[1040px]">
+    <table class="ui-table ui-table--stacked min-w-[820px]">
       <thead class="sticky top-0 z-20">
         <tr>
           <th class="w-[140px]">Time</th>
-          <th class="w-[180px]">Request</th>
-          <th class="w-[240px]">Attribution</th>
-          <th class="w-[160px]">Model</th>
-          <th class="w-[220px]">Usage</th>
-          <th class="w-[180px]">Result</th>
+          <th class="w-[230px]">Request</th>
+          <th class="w-[180px]">Model</th>
+          <th class="w-[170px]">Usage</th>
+          <th class="w-[150px]">Result</th>
+          <th class="w-[72px] text-center">Details</th>
         </tr>
       </thead>
       <tbody>
@@ -611,88 +628,48 @@
             {@const requestLogCost = formatRequestLogCost(log)}
             <tr>
               <td class="whitespace-nowrap text-[#3c3c3c]" data-label="Time">{formatDate(log.createdAt)}</td>
-              <td class="min-w-[190px]" data-label="Request">
-                <div class="min-w-0">
-                  <p class="font-mono text-[13px] text-[#0d0d0d]">{log.method} {log.route}</p>
-                  <p class="mt-1 max-w-[240px] truncate font-mono text-xs text-[#6e6e6e]" title={log.requestId || ''}>{log.requestId || 'No request ID'}</p>
-                </div>
-              </td>
-              <td class="min-w-[240px] text-[#3c3c3c]" data-label="Attribution">
-                <div class="grid gap-1.5">
-                  {#if log.clientKeyId}
-                    <a class="max-w-[220px] truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]" href={`/api-keys?clientKeyId=${log.clientKeyId}`} title="View API key" aria-label="View API key">
-                      {log.clientKey || `Key ${log.clientKeyId}`}
-                    </a>
-                  {:else}
-                    <span>{log.clientKey || 'Unknown key'}</span>
-                  {/if}
-                  {#if log.providerAccountId}
-                    <a class="max-w-[220px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]" href={`/providers?providerAccountId=${log.providerAccountId}`} title="View provider account" aria-label="View provider account">
-                      {log.providerAccountName || `Account ${log.providerAccountId}`} · {log.provider || 'Unknown'} · {accountTypeLabel(log.providerAccountType)}
-                    </a>
-                  {:else}
-                    <span class="text-xs text-[#6e6e6e]">Unassigned provider</span>
-                  {/if}
-                  {#if log.routingPoolId}
-                    <a class="max-w-[220px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]" href={`/routing-pools?routingPoolId=${log.routingPoolId}`} title="View routing pool" aria-label="View routing pool">
-                      {log.routingPoolName || `Pool ${log.routingPoolId}`}
-                    </a>
-                  {:else}
-                    <span class="text-xs text-[#6e6e6e]">Global pool</span>
-                  {/if}
+              <td class="min-w-[220px]" data-label="Request">
+                <div class="flex min-w-0 items-center gap-2">
+                  <span class="shrink-0 rounded-md bg-[#f5f5f5] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#3c3c3c]">{log.method || '-'}</span>
+                  <span class="min-w-0 truncate font-mono text-[13px] text-[#0d0d0d]" title={log.route || ''}>{log.route || '-'}</span>
                 </div>
               </td>
               <td class="min-w-[170px]" data-label="Model">
+                <p class="max-w-[180px] truncate font-mono text-[13px] text-[#3c3c3c]" title={log.model || ''}>{log.model || '-'}</p>
+              </td>
+              <td class="min-w-[160px] font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Usage">
                 <div class="min-w-0">
-                  <p class="font-mono text-[13px] text-[#3c3c3c]">{log.model || '-'}</p>
-                  <p class="mt-1 max-w-[180px] truncate font-mono text-xs text-[#6e6e6e]" title={log.sessionId || ''}>Session {log.sessionId || '-'}</p>
+                  <p>{formatTokens(log.totalTokens)} tokens</p>
+                  <p class="mt-1 font-sans text-xs text-[#6e6e6e]">{requestLogCost}</p>
                 </div>
               </td>
-              <td class="min-w-[190px] font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Usage">
-                <div class="min-w-0">
-                  <p>{formatTokens(log.inputTokens)} in / {formatTokens(log.outputTokens)} out</p>
-                  <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total · {formatTokens(log.cachedInputTokens)} cached</p>
-                  <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.reasoningTokens)} reasoning · {usageSourceLabel(log.usageSource)}</p>
-                  <p class="mt-1 font-sans text-xs text-[#6e6e6e]">Estimated cost {requestLogCost}</p>
+              <td class="min-w-[140px]" data-label="Result">
+                <div class="flex items-center gap-2">
+                  <span
+                    class={[
+                      'inline-flex rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
+                      log.statusCode >= 500
+                        ? 'bg-red-50 text-red-700'
+                        : log.statusCode >= 400
+                          ? 'bg-amber-50 text-amber-700'
+                          : 'bg-[#e8f5f0] text-[#0a7a5e]'
+                    ]}
+                  >
+                    {log.statusCode}
+                  </span>
+                  <span class="whitespace-nowrap font-mono text-xs tabular-nums text-[#6e6e6e]">{log.latencyMs}ms</span>
                 </div>
               </td>
-              <td class="min-w-[180px]" data-label="Result">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <span
-                      class={[
-                        'inline-flex rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
-                        log.statusCode >= 500
-                          ? 'bg-red-50 text-red-700'
-                          : log.statusCode >= 400
-                            ? 'bg-amber-50 text-amber-700'
-                            : 'bg-[#e8f5f0] text-[#0a7a5e]'
-                      ]}
-                    >
-                      {log.statusCode}
-                    </span>
-                    <span class="font-mono text-xs tabular-nums text-[#6e6e6e]">{log.latencyMs}ms</span>
-                  </div>
-                  <div class="mt-2 text-xs text-[#3c3c3c]">
-                  {#if errorHref(log)}
-                    <a class="underline-offset-2 hover:underline" href={errorHref(log)} title={log.error || ''} aria-label="View same error logs">{errorLabel(log.error)}</a>
-                  {:else}
-                    <span title={log.error || ''}>{errorLabel(log.error)}</span>
-                  {/if}
-                  </div>
-                  <p class="mt-2 text-xs tabular-nums text-[#6e6e6e]">{log.gatewayAttemptCount ?? 0} attempts · {log.gatewayFallbackCount ?? 0} fallbacks</p>
-                  {#if log.routingPoolFallbackDepth > 0}
-                    <p class="mt-1 text-xs text-[#6e6e6e]">Fallback depth {log.routingPoolFallbackDepth}</p>
-                  {/if}
-                  {#if log.routingPoolFallbackChain}
-                    <a class="mt-1 block max-w-[170px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]" href={routingPoolFallbackChainHref(log)} title={log.routingPoolFallbackChain} aria-label="View fallback chain logs">
-                      {log.routingPoolFallbackChain}
-                    </a>
-                  {/if}
-                  {#if log.routingPoolError}
-                    <p class="mt-1 text-xs font-medium text-amber-700">{errorLabel(log.routingPoolError)}</p>
-                  {/if}
-                </div>
+              <td class="sm:text-center" data-label="Details">
+                <button
+                  class="ui-button ui-button--icon ui-button--secondary justify-self-start rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d] sm:mx-auto"
+                  type="button"
+                  aria-label={`View details for request ${log.requestId || log.id}`}
+                  title="View request details"
+                  onclick={() => openRequestLogDetails(log)}
+                >
+                  <Eye class="size-4" aria-hidden="true" />
+                </button>
               </td>
             </tr>
           {/each}
@@ -742,3 +719,123 @@
 
 
 </AuthGate>
+
+{#if selectedRequestLog}
+  {@const selectedRequestLogCost = formatRequestLogCost(selectedRequestLog)}
+  <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
+  <div
+    class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="request-log-detail-title"
+    tabindex="-1"
+    onclick={(event) => event.target === event.currentTarget && closeRequestLogDetails()}
+  >
+    <section class="ui-modal-panel ui-modal-panel--lg max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-[#ededed] bg-white p-5 shadow-xl">
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <h2 id="request-log-detail-title" class="text-lg font-semibold text-[#0d0d0d]">Request details</h2>
+          <p class="mt-1 truncate font-mono text-[13px] text-[#6e6e6e]" title={selectedRequestLog.requestId || ''}>{selectedRequestLog.requestId || `Log ${selectedRequestLog.id}`}</p>
+        </div>
+        <button class="ui-button ui-button--icon shrink-0 rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]" type="button" aria-label="Close request details" onclick={closeRequestLogDetails}>
+          <X class="size-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <dl class="mt-5 grid gap-x-6 gap-y-4 sm:grid-cols-2">
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Time</dt><dd class="mt-1 text-sm text-[#0d0d0d]">{formatDate(selectedRequestLog.createdAt)}</dd></div>
+        <div>
+          <dt class="text-xs font-medium text-[#6e6e6e]">Result</dt>
+          <dd class="mt-1 flex items-center gap-2">
+            <span class={['inline-flex rounded-full px-2.5 py-1 text-xs font-medium tabular-nums', selectedRequestLog.statusCode >= 500 ? 'bg-red-50 text-red-700' : selectedRequestLog.statusCode >= 400 ? 'bg-amber-50 text-amber-700' : 'bg-[#e8f5f0] text-[#0a7a5e]']}>{selectedRequestLog.statusCode}</span>
+            <span class="font-mono text-xs tabular-nums text-[#6e6e6e]">{selectedRequestLog.latencyMs}ms</span>
+          </dd>
+        </div>
+        <div class="sm:col-span-2"><dt class="text-xs font-medium text-[#6e6e6e]">Route</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.method || '-'} {selectedRequestLog.route || '-'}</dd></div>
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Model</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.model || '-'}</dd></div>
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Usage source</dt><dd class="mt-1 text-sm text-[#0d0d0d]">{usageSourceLabel(selectedRequestLog.usageSource)}</dd></div>
+        <div class="sm:col-span-2"><dt class="text-xs font-medium text-[#6e6e6e]">Request ID</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.requestId || '-'}</dd></div>
+        <div class="sm:col-span-2"><dt class="text-xs font-medium text-[#6e6e6e]">Session ID</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.sessionId || '-'}</dd></div>
+      </dl>
+
+      <section class="mt-6 border-t border-[#ededed] pt-5" aria-labelledby="request-log-attribution-title">
+        <h3 id="request-log-attribution-title" class="text-sm font-semibold text-[#0d0d0d]">Attribution</h3>
+        <dl class="mt-3 grid gap-x-6 gap-y-4 sm:grid-cols-2">
+          <div>
+            <dt class="text-xs font-medium text-[#6e6e6e]">API key</dt>
+            <dd class="mt-1 text-sm text-[#0d0d0d]">
+              {#if selectedRequestLog.clientKeyId}
+                <a class="break-words font-medium hover:text-[#0a7a5e]" href={`/api-keys?clientKeyId=${selectedRequestLog.clientKeyId}`} title="View API key">{selectedRequestLog.clientKey || `Key ${selectedRequestLog.clientKeyId}`}</a>
+              {:else}
+                {selectedRequestLog.clientKey || 'Unknown key'}
+              {/if}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-xs font-medium text-[#6e6e6e]">Provider account</dt>
+            <dd class="mt-1 text-sm text-[#0d0d0d]">
+              {#if selectedRequestLog.providerAccountId}
+                <a class="break-words font-medium hover:text-[#0a7a5e]" href={`/providers?providerAccountId=${selectedRequestLog.providerAccountId}`} title="View provider account">{selectedRequestLog.providerAccountName || `Account ${selectedRequestLog.providerAccountId}`}</a>
+                <span class="mt-1 block text-xs text-[#6e6e6e]">{selectedRequestLog.provider || 'Unknown'} · {accountTypeLabel(selectedRequestLog.providerAccountType)}</span>
+              {:else}
+                Unassigned provider
+              {/if}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-xs font-medium text-[#6e6e6e]">Routing pool</dt>
+            <dd class="mt-1 text-sm text-[#0d0d0d]">
+              {#if selectedRequestLog.routingPoolId}
+                <a class="break-words font-medium hover:text-[#0a7a5e]" href={`/routing-pools?routingPoolId=${selectedRequestLog.routingPoolId}`} title="View routing pool">{selectedRequestLog.routingPoolName || `Pool ${selectedRequestLog.routingPoolId}`}</a>
+              {:else}
+                Global pool
+              {/if}
+            </dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="mt-6 border-t border-[#ededed] pt-5" aria-labelledby="request-log-usage-title">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 id="request-log-usage-title" class="text-sm font-semibold text-[#0d0d0d]">Usage</h3>
+          <span class="text-xs text-[#6e6e6e]">Estimated cost {selectedRequestLogCost}</span>
+        </div>
+        <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-5">
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Input</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{formatTokens(selectedRequestLog.inputTokens)}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Output</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{formatTokens(selectedRequestLog.outputTokens)}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Cached</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{formatTokens(selectedRequestLog.cachedInputTokens)}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Reasoning</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{formatTokens(selectedRequestLog.reasoningTokens)}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Total</dt><dd class="mt-1 font-mono text-[13px] font-medium tabular-nums text-[#0d0d0d]">{formatTokens(selectedRequestLog.totalTokens)}</dd></div>
+        </dl>
+      </section>
+
+      <section class="mt-6 border-t border-[#ededed] pt-5" aria-labelledby="request-log-routing-title">
+        <h3 id="request-log-routing-title" class="text-sm font-semibold text-[#0d0d0d]">Gateway diagnostics</h3>
+        <dl class="mt-3 grid gap-x-6 gap-y-4 sm:grid-cols-3">
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Attempts</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{selectedRequestLog.gatewayAttemptCount ?? 0}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Fallbacks</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{selectedRequestLog.gatewayFallbackCount ?? 0}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Fallback depth</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{selectedRequestLog.routingPoolFallbackDepth ?? 0}</dd></div>
+          <div class="sm:col-span-3">
+            <dt class="text-xs font-medium text-[#6e6e6e]">Fallback chain</dt>
+            <dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">
+              {#if routingPoolFallbackChainHref(selectedRequestLog)}
+                <a class="underline-offset-2 hover:text-[#0a7a5e] hover:underline" href={routingPoolFallbackChainHref(selectedRequestLog)}>{selectedRequestLog.routingPoolFallbackChain}</a>
+              {:else}
+                -
+              {/if}
+            </dd>
+          </div>
+          <div class="sm:col-span-3"><dt class="text-xs font-medium text-[#6e6e6e]">Routing error</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.routingPoolError ? errorLabel(selectedRequestLog.routingPoolError) : '-'}</dd></div>
+        </dl>
+      </section>
+
+      {#if selectedRequestLog.error}
+        <section class="mt-6 border-t border-[#ededed] pt-5" aria-labelledby="request-log-error-title">
+          <h3 id="request-log-error-title" class="text-sm font-semibold text-[#0d0d0d]">Error</h3>
+          <a class="mt-2 block break-all font-mono text-[13px] text-red-700 underline-offset-2 hover:underline" href={errorHref(selectedRequestLog)} aria-label="View same error logs">{errorLabel(selectedRequestLog.error)}</a>
+          <p class="mt-1 break-all font-mono text-xs text-[#6e6e6e]">{selectedRequestLog.error}</p>
+        </section>
+      {/if}
+    </section>
+  </div>
+{/if}

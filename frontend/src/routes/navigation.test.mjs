@@ -484,17 +484,17 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /formatCostMicrousd/);
 });
 
-test('request logs page shows provider account attribution', () => {
+test('request log details show provider account attribution', () => {
   assert.match(requestLogsPage, /Provider account/);
-  assert.match(requestLogsPage, /log\.provider\s*\|\|/);
-  assert.match(requestLogsPage, /log\.providerAccountName/);
-  assert.match(requestLogsPage, /log\.providerAccountType/);
-  assert.match(requestLogsPage, /log\.providerAccountId/);
+  assert.match(requestLogsPage, /selectedRequestLog\.provider\s*\|\|/);
+  assert.match(requestLogsPage, /selectedRequestLog\.providerAccountName/);
+  assert.match(requestLogsPage, /selectedRequestLog\.providerAccountType/);
+  assert.match(requestLogsPage, /selectedRequestLog\.providerAccountId/);
   assert.match(requestLogsPage, /Routing pool/);
   assert.match(requestLogsPage, /routingPoolChain/);
-  assert.match(requestLogsPage, /log\.routingPoolName/);
-  assert.match(requestLogsPage, /log\.routingPoolId/);
-  assert.match(requestLogsPage, /href=\{`\/routing-pools\?routingPoolId=\$\{log\.routingPoolId\}`\}/);
+  assert.match(requestLogsPage, /selectedRequestLog\.routingPoolName/);
+  assert.match(requestLogsPage, /selectedRequestLog\.routingPoolId/);
+  assert.match(requestLogsPage, /href=\{`\/routing-pools\?routingPoolId=\$\{selectedRequestLog\.routingPoolId\}`\}/);
   assert.match(requestLogsPage, /View routing pool/);
   assert.match(requestLogsPage, /Global pool/);
 });
@@ -510,28 +510,28 @@ test('request logs page shows request model', () => {
   assert.match(requestLogsPage, /log\.model/);
 });
 
-test('request logs page shows sticky session attribution', () => {
-  assert.match(requestLogsPage, /Session \{log\.sessionId/);
-  assert.match(requestLogsPage, /log\.sessionId/);
+test('request log details show sticky session attribution', () => {
+  assert.match(requestLogsPage, /Session ID/);
+  assert.match(requestLogsPage, /selectedRequestLog\.sessionId/);
   assert.match(requestLogsPage, /colspan="6"/);
 });
 
-test('request logs page shows token usage', () => {
+test('request log details show complete token usage', () => {
   assert.match(requestLogsPage, />Usage</);
-  assert.match(requestLogsPage, /log\.inputTokens/);
-  assert.match(requestLogsPage, /log\.outputTokens/);
-  assert.match(requestLogsPage, /log\.totalTokens/);
-  assert.match(requestLogsPage, /log\.cachedInputTokens/);
-  assert.match(requestLogsPage, /log\.reasoningTokens/);
-  assert.match(requestLogsPage, /cached/);
-  assert.match(requestLogsPage, /reasoning/);
-  assert.match(requestLogsPage, /log\.usageSource/);
+  assert.match(requestLogsPage, /selectedRequestLog\.inputTokens/);
+  assert.match(requestLogsPage, /selectedRequestLog\.outputTokens/);
+  assert.match(requestLogsPage, /selectedRequestLog\.totalTokens/);
+  assert.match(requestLogsPage, /selectedRequestLog\.cachedInputTokens/);
+  assert.match(requestLogsPage, /selectedRequestLog\.reasoningTokens/);
+  assert.match(requestLogsPage, />Cached</);
+  assert.match(requestLogsPage, />Reasoning</);
+  assert.match(requestLogsPage, /selectedRequestLog\.usageSource/);
   assert.match(requestLogsPage, /gemini_usage_metadata/);
   assert.match(requestLogsPage, /Gemini/);
   assert.match(requestLogsPage, /anthropic_usage/);
   assert.match(requestLogsPage, /Anthropic/);
   assert.match(requestLogsPage, /formatRequestLogCost/);
-  assert.match(requestLogsPage, /Estimated cost \{requestLogCost\}/);
+  assert.match(requestLogsPage, /Estimated cost \{selectedRequestLogCost\}/);
 });
 
 test('request logs table paginates locally with a bounded sticky scroll area', () => {
@@ -559,7 +559,7 @@ test('request logs page focuses on searchable request records without a usage su
   assert.doesNotMatch(requestLogsPage, /loadUsageSummary/);
   assert.doesNotMatch(requestLogsPage, /function usageRowHref/);
   assert.doesNotMatch(requestLogsPage, /usageGroups/);
-  for (const label of ['Search', 'Status', 'Date', 'Requests', 'Estimated cost', 'Session']) {
+  for (const label of ['Search', 'Status', 'Date', 'Requests', 'Estimated cost', 'Session ID']) {
     assert.match(requestLogsPage, new RegExp(label), `request logs page should include ${label}`);
   }
   assert.match(requestLogsPage, /log\.requestId/);
@@ -581,9 +581,8 @@ test('request logs export links request explicit formats', () => {
 test('request logs page formats gateway error codes for scanning', () => {
   assert.match(requestLogsPage, /function errorLabel/);
   assert.match(requestLogsPage, /function errorHref/);
-  assert.match(requestLogsPage, /errorLabel\(log\.error\)/);
-  assert.match(requestLogsPage, /title=\{log\.error/);
-  assert.match(requestLogsPage, /href=\{errorHref\(log\)\}/);
+  assert.match(requestLogsPage, /errorLabel\(selectedRequestLog\.error\)/);
+  assert.match(requestLogsPage, /href=\{errorHref\(selectedRequestLog\)\}/);
   assert.match(requestLogsPage, /function requestLogDrilldownParams/);
   assert.match(requestLogsPage, /params\.set\('since', requestLogs\.since\)/);
   assert.match(requestLogsPage, /params\.set\('error', log\.error\)/);
@@ -610,16 +609,14 @@ test('request logs page formats gateway error codes for scanning', () => {
 });
 
 test('request logs page shows gateway fallback diagnostics', () => {
-  assert.match(requestLogsPage, /attempts · \{log\.gatewayFallbackCount/);
-  assert.match(requestLogsPage, /log\.gatewayAttemptCount/);
-  assert.match(requestLogsPage, /log\.gatewayFallbackCount/);
-  assert.match(requestLogsPage, /log\.routingPoolFallbackDepth/);
-  assert.match(requestLogsPage, /log\.routingPoolFallbackChain/);
+  assert.match(requestLogsPage, /selectedRequestLog\.gatewayAttemptCount/);
+  assert.match(requestLogsPage, /selectedRequestLog\.gatewayFallbackCount/);
+  assert.match(requestLogsPage, /selectedRequestLog\.routingPoolFallbackDepth/);
+  assert.match(requestLogsPage, /selectedRequestLog\.routingPoolFallbackChain/);
   assert.match(requestLogsPage, /function routingPoolFallbackChainHref/);
   assert.match(requestLogsPage, /params\.set\('routingPoolChain', log\.routingPoolFallbackChain\)/);
-  assert.match(requestLogsPage, /href=\{routingPoolFallbackChainHref\(log\)\}/);
-  assert.match(requestLogsPage, /View fallback chain logs/);
-  assert.match(requestLogsPage, /log\.routingPoolError/);
+  assert.match(requestLogsPage, /href=\{routingPoolFallbackChainHref\(selectedRequestLog\)\}/);
+  assert.match(requestLogsPage, /selectedRequestLog\.routingPoolError/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolError\}/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolChain\}/);
   assert.match(requestLogsPage, /bind:checked=\{requestLogs\.gatewayFallbacks\}/);
@@ -663,10 +660,8 @@ test('request logs page filters by provider account', () => {
   assert.match(requestLogsPage, /providerAccounts/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.providerAccountId\}/);
   assert.match(requestLogsPage, /All provider accounts/);
-  assert.match(requestLogsPage, /href=\{`\/api-keys\?clientKeyId=\$\{log\.clientKeyId\}`\}/);
-  assert.match(requestLogsPage, /View API key/);
-  assert.match(requestLogsPage, /href=\{`\/providers\?providerAccountId=\$\{log\.providerAccountId\}`\}/);
-  assert.match(requestLogsPage, /View provider account/);
+  assert.match(requestLogsPage, /href=\{`\/api-keys\?clientKeyId=\$\{selectedRequestLog\.clientKeyId\}`\}/);
+  assert.match(requestLogsPage, /href=\{`\/providers\?providerAccountId=\$\{selectedRequestLog\.providerAccountId\}`\}/);
   assert.match(requestLogsPage, /routingPools/);
   assert.match(requestLogsPage, /loadRoutingPools\(\)/);
   assert.match(requestLogsPage, /bind:value=\{requestLogs\.routingPoolId\}/);
@@ -682,6 +677,23 @@ test('request logs page filters by provider account', () => {
   assert.match(adminState, /requestLogs\.providerAccountId/);
   assert.match(adminState, /requestLogs\.routingPoolId/);
   assert.match(requestLogsPage, /loadProviderAccounts\(\)/);
+});
+
+test('request logs table keeps scan fields visible and moves diagnostics into details', () => {
+  assert.match(requestLogsPage, /let selectedRequestLog = \$state/);
+  assert.match(requestLogsPage, /function openRequestLogDetails/);
+  assert.match(requestLogsPage, /function closeRequestLogDetails/);
+  assert.match(requestLogsPage, /handleRequestLogKeydown/);
+  assert.match(requestLogsPage, /<th class="w-\[72px\] text-center">Details<\/th>/);
+  assert.match(requestLogsPage, /title="View request details"/);
+  assert.match(requestLogsPage, /onclick=\{\(\) => openRequestLogDetails\(log\)\}/);
+  assert.match(requestLogsPage, /aria-labelledby="request-log-detail-title"/);
+  assert.match(requestLogsPage, /Request details/);
+  assert.match(requestLogsPage, /Gateway diagnostics/);
+  assert.match(requestLogsPage, /Attribution/);
+  assert.match(requestLogsPage, /onclick=\{\(event\) => event\.target === event\.currentTarget && closeRequestLogDetails\(\)\}/);
+  assert.doesNotMatch(requestLogsPage, /<th[^>]*>Attribution<\/th>/);
+  assert.doesNotMatch(requestLogsPage, /min-w-\[1040px\]/);
 });
 
 test('request logs keep advanced diagnostics filters collapsed until requested', () => {
