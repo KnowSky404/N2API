@@ -230,6 +230,14 @@ communicates the intended dependency while the digest makes the resolved bytes
 reproducible on both supported architectures. Update both together; never
 replace a digest without verifying that it belongs to the adjacent tag.
 
+Dependabot checks Go modules, Bun workspaces, Python contract dependencies,
+GitHub Actions, Dockerfiles, and Compose definitions every Monday. Patch and
+minor updates are grouped by ecosystem; major updates remain isolated for
+explicit review. Every dependency pull request must pass the normal `CI Image`
+workflow. Container update pull requests must also pass
+`dev/ci/verify-pinned-dependencies.sh`, keep readable version tags next to
+digests, and smoke-test both supported image architectures before merge.
+
 Every tested image carries the same build identity in the binary and OCI
 metadata:
 

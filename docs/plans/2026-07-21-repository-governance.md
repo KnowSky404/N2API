@@ -1,6 +1,6 @@
 # Repository Governance Plan
 
-Status: planned; license choice remains owner-controlled
+Status: in progress; Task 3 completed locally, owner decisions remain
 Public API changes: none
 Data migration: none
 
@@ -9,9 +9,10 @@ Data migration: none
 The repository has CI Image and Release workflows with commit-pinned actions,
 multi-platform smoke tests, tested-digest publication, attestations, and
 Conventional Commit-based release notes. It has no `LICENSE`, `SECURITY.md`,
-`CONTRIBUTING.md`, issue/PR templates, dependency update config, CodeQL,
-`govulncheck`, frontend audit, container scan, published SBOM, or documented
-supported-version/security-release policy.
+`CONTRIBUTING.md`, issue/PR templates, CodeQL, `govulncheck`, frontend audit,
+container scan, published SBOM, or documented supported-version/security-release
+policy. Dependabot version updates are configured locally across every current
+dependency ecosystem.
 
 ## Task 1: Establish Security And Contribution Policies
 
@@ -86,6 +87,9 @@ The exact license text and repository references match the owner's decision.
 
 ## Task 3: Automate Dependency Updates
 
+Task status: configured locally on 2026-07-21; the first generated update PR
+remains a remote acceptance check after an owner-authorized push
+
 ### Goal
 
 Make pinned Go, Bun, Actions, Docker, and PostgreSQL updates reviewable.
@@ -108,6 +112,12 @@ image digest updates must preserve readable version tags.
 ### Completion Criteria
 
 A dry/config validation and first update PR demonstrate each ecosystem path.
+
+The local configuration covers Go modules, both Bun manifests, the Python uv
+contract manifest, GitHub Actions, Dockerfiles, and Compose definitions. Local
+schema and repository-path checks pass. The first generated update PR cannot be
+observed until this commit reaches GitHub, so that remote evidence remains
+pending without expanding this task's push authorization.
 
 ### Commit
 
