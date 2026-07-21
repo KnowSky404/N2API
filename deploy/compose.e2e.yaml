@@ -1,0 +1,29 @@
+name: n2api-e2e
+
+services:
+  mock-openai:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.e2e
+    environment:
+      N2API_MOCK_ADDR: :8080
+      N2API_MOCK_API_KEY: e2e-upstream-fixture-key
+    expose:
+      - "8080"
+    networks:
+      - e2e
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 2s
+
+networks:
+  e2e:
+    internal: true

@@ -58,6 +58,82 @@ jobs:
           test -n "${N2API_STORE_TEST_DATABASE_URL:-}"
           go test -count=1 ./...
 
+      - name: Start mock OpenAI upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name n2api-e2e-mock \
+            -f deploy/compose.e2e.yaml up -d --build --wait mock-openai
+
+      - name: Smoke test mock OpenAI scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name n2api-e2e-mock \
+            -f deploy/compose.e2e.yaml exec -T mock-openai sh -eu <<'MOCK_SMOKE'
+              base=http://mock-openai:8080
+              authorization="Authorization: Bearer e2e-upstream-fixture-key"
+              response=$(curl -fsS "$base/healthz")
+              printf '%s\n' "$response" | grep -q '"status":"ok"'
+              actual=$(curl -sS -o /dev/null -w "%{http_code}" "$base/v1/models")
+              test "$actual" = 401
+              response=$(curl -fsS -H "$authorization" "$base/v1/models")
+              printf '%s\n' "$response" | grep -q '"object":"list"'
+              response=$(curl -fsS -H "$authorization" -H "Content-Type: application/json" \
+                -d '{"model":"gpt-5"}' "$base/v1/chat/completions")
+              printf '%s\n' "$response" | grep -q '"total_tokens":25'
+              response=$(curl -fsS -N -H "$authorization" -H "Content-Type: application/json" \
+                -d '{"model":"gpt-5","stream":true}' "$base/v1/responses")
+              printf '%s\n' "$response" | grep -q "response.completed"
+
+              for pair in status-401:401 status-403:403 status-429:429 status-500:500 status-503:503; do
+                scenario=${pair%:*}
+                expected=${pair#*:}
+                actual=$(curl -sS -o /dev/null -w "%{http_code}" \
+                  -H "$authorization" \
+                  -H "Content-Type: application/json" \
+                  -H "X-N2API-E2E-Scenario: $scenario" \
+                  -d '{"model":"gpt-5"}' "$base/v1/responses")
+                test "$actual" = "$expected"
+              done
+
+              for scenario in missing-content-type wrong-content-type missing-usage malformed-usage; do
+                curl -fsS -o /dev/null -H "$authorization" -H "Content-Type: application/json" \
+                  -H "X-N2API-E2E-Scenario: $scenario" \
+                  -d '{"model":"gpt-5"}' "$base/v1/responses"
+              done
+
+              for scenario in timeout-before-headers disconnect-before-headers disconnect-after-first-event; do
+                if curl -sS --max-time 1 -o /dev/null \
+                  -H "$authorization" \
+                  -H "Content-Type: application/json" \
+                  -H "X-N2API-E2E-Scenario: $scenario" \
+                  -d '{"model":"gpt-5","stream":true}' "$base/v1/responses"; then
+                  echo "scenario $scenario unexpectedly completed" >&2
+                  exit 1
+                fi
+              done
+
+              state=$(curl -fsS "$base/__mock/state")
+              for scenario in happy status-401 status-403 status-429 status-500 status-503 \
+                missing-content-type wrong-content-type missing-usage malformed-usage \
+                timeout-before-headers disconnect-before-headers disconnect-after-first-event; do
+                printf '%s\n' "$state" | grep -q "\"scenario\":\"$scenario\""
+              done
+          MOCK_SMOKE
+
+      - name: Show mock OpenAI logs on failure
+        if: failure()
+        run: >-
+          docker compose --project-name n2api-e2e-mock
+          -f deploy/compose.e2e.yaml logs --no-color
+
+      - name: Stop mock OpenAI upstream
+        if: always()
+        run: >-
+          docker compose --project-name n2api-e2e-mock
+          -f deploy/compose.e2e.yaml down --volumes --remove-orphans
+
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:

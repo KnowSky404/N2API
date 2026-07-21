@@ -67,6 +67,9 @@ The CI `Test` job runs the real PostgreSQL repository suite.
 
 ## Task 2: Add a Scriptable Mock Upstream
 
+Status: completed locally on 2026-07-21; pending the next authorized push and
+GitHub Actions run.
+
 ### Goal
 
 Provide deterministic JSON, SSE, missing/wrong content type, malformed usage,
@@ -92,6 +95,22 @@ Task 1.
 2. Implement protocol-correct `/v1/models`, `/v1/chat/completions`, and
    `/v1/responses` fixtures and explicit failure fixtures.
 3. Add health and sanitized diagnostic endpoints for CI only.
+
+Implemented scenarios selected by the exact `X-N2API-E2E-Scenario` header:
+
+- `happy`
+- `status-401`, `status-403`, `status-429`, `status-500`, `status-503`
+- `missing-content-type`, `wrong-content-type`
+- `missing-usage`, `malformed-usage`
+- `timeout-before-headers`, `disconnect-before-headers`,
+  `disconnect-after-first-event`
+
+The mock also exposes `GET /healthz`, `GET /__mock/state`, and
+`POST /__mock/reset` only inside the E2E network. Diagnostics contain canonical
+scenario, method, route, status, count, and timestamp fields; they never retain
+headers, query strings, or request bodies. All `/v1/*` routes require the fixed
+synthetic E2E Bearer configured through `N2API_MOCK_API_KEY`, proving the stored
+API-upstream credential reaches the upstream without retaining it.
 
 ### Tests And Verification
 
