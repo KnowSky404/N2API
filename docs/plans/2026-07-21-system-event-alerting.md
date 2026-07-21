@@ -321,6 +321,35 @@ boundary, best-effort detached persistence, credential-only refresh behavior,
 and recovery-event deduplication. Account-expiry and circuit templates remain
 the next independent slices.
 
+The fifth slice closes the remaining health-clear paths before those templates
+ship. Updating an API-upstream key, base URL, or proxy and reauthorizing an
+existing OAuth account replace credentials or configuration but preserve the
+account's current health fields. They do not emit `provider_account.recovered`;
+the operator must run an account test, complete a refresh probe, or explicitly
+reset local status before an expired or open-circuit account becomes schedulable
+again. This prevents configuration writes from masquerading as upstream health
+confirmation.
+
+`Reset local status` remains the intentional escape hatch. When it actually
+clears unhealthy fields, its single transaction keeps the audit
+`provider_account.status_reset` event and also emits one Runtime
+`provider_account.recovered` event with `confirmation: operator_reset`. A reset
+of an already healthy account writes the audit event only. This operator
+override is the sole non-2xx recovery path and must be explicit in the manual;
+automatic credential writes never use it. Negative provider Runtime transitions
+(`expired`, `circuit.opened`, and `rate_limited`) use failure outcome, while
+confirmed or operator-overridden recovery uses success outcome.
+
+Focused Provider and isolated PostgreSQL Store tests must prove that API
+credential edits and OAuth reauthorization preserve status, reason, last-error,
+failure-count, and blocking windows; that the reset audit and recovery events
+commit together only for a real transition; and that event action, category,
+severity, outcome, target, and bounded metadata are exact. Once this slice is
+complete, add `provider-account-expired-v1` and
+`provider-account-circuit-open-v1` as separate disabled, target-scoped template
+commits. Routing exhaustion remains deferred until a bounded persistent
+aggregator emits dedicated trigger and recovery System Events.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.
