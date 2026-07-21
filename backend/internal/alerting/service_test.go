@@ -25,6 +25,7 @@ type memoryRepository struct {
 	lastActionUpdate     ActionUpdate
 	lastRuleCreate       RuleCreate
 	lastRuleUpdate       RuleUpdate
+	lastRuleInstall      RuleCreate
 	err                  error
 	stateCapacityReached bool
 }
@@ -182,6 +183,24 @@ func (r *memoryRepository) CreateRule(_ context.Context, input RuleCreate) (Rule
 	rule.CreatedAt, rule.UpdatedAt = time.Unix(1, 0).UTC(), time.Unix(1, 0).UTC()
 	r.rules[rule.ID] = rule
 	return rule, nil
+}
+
+func (r *memoryRepository) InstallRuleTemplate(_ context.Context, input RuleCreate) (Rule, bool, error) {
+	if r.err != nil {
+		return Rule{}, false, r.err
+	}
+	for _, rule := range r.rules {
+		if rule.TemplateKey == input.Rule.TemplateKey {
+			return rule, false, nil
+		}
+	}
+	r.lastRuleInstall = input
+	r.nextRuleID++
+	rule := input.Rule
+	rule.ID = r.nextRuleID
+	rule.CreatedAt, rule.UpdatedAt = time.Unix(1, 0).UTC(), time.Unix(1, 0).UTC()
+	r.rules[rule.ID] = rule
+	return rule, true, nil
 }
 
 func (r *memoryRepository) UpdateRule(_ context.Context, id int64, input RuleUpdate) (Rule, error) {
@@ -497,11 +516,12 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
 	rule := validRule()
+	rule.TemplateKey = "client-controlled-template"
 	created, err := service.CreateRule(context.Background(), rule)
 	if err != nil {
 		t.Fatalf("CreateRule returned error: %v", err)
 	}
-	if created.ID == 0 || repo.lastRuleCreate.Rule.Name != rule.Name {
+	if created.ID == 0 || created.TemplateKey != "" || repo.lastRuleCreate.Rule.Name != rule.Name || repo.lastRuleCreate.Rule.TemplateKey != "" {
 		t.Fatalf("created rule = %+v", created)
 	}
 
@@ -553,6 +573,43 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 	}
 }
 
+func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
+	templates := RuleTemplates()
+	if len(templates) != 1 {
+		t.Fatalf("RuleTemplates count = %d, want 1", len(templates))
+	}
+	template := templates[0]
+	if template.Key != OAuthRefreshRepeatedTemplateKey || template.Name != "Repeated OAuth refresh failures" || template.Enabled ||
+		template.Category != systemevent.CategoryOAuth || template.Severity != systemevent.SeverityWarning ||
+		template.EventAction != systemevent.ActionOAuthRefreshAutomaticFailed || template.RecoveryAction != systemevent.ActionOAuthRefreshAutomaticSucceeded ||
+		template.AggregationCount != 3 || template.AggregationWindowSeconds != 900 || template.CooldownSeconds != 3600 ||
+		template.DeduplicationScope != DeduplicationScopeTarget || !template.NotifyRecovery {
+		t.Fatalf("template = %+v", template)
+	}
+
+	repo := newMemoryRepository()
+	service := NewService(repo, testKeyring(t))
+	rule, created, err := service.InstallRuleTemplate(context.Background(), OAuthRefreshRepeatedTemplateKey, 7)
+	if err != nil || !created {
+		t.Fatalf("first InstallRuleTemplate = %+v, %v, %v", rule, created, err)
+	}
+	if rule.TemplateKey != OAuthRefreshRepeatedTemplateKey || rule.ActionID != 7 || rule.Enabled || repo.lastRuleInstall.Rule.TemplateKey != OAuthRefreshRepeatedTemplateKey {
+		t.Fatalf("installed rule = %+v input=%+v", rule, repo.lastRuleInstall)
+	}
+	again, created, err := service.InstallRuleTemplate(context.Background(), OAuthRefreshRepeatedTemplateKey, 99)
+	if err != nil || created || again.ID != rule.ID || again.ActionID != 7 {
+		t.Fatalf("second InstallRuleTemplate = %+v, %v, %v", again, created, err)
+	}
+	for _, input := range []struct {
+		key      string
+		actionID int64
+	}{{"unknown", 7}, {OAuthRefreshRepeatedTemplateKey, 0}} {
+		if _, _, err := service.InstallRuleTemplate(context.Background(), input.key, input.actionID); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("InstallRuleTemplate(%q, %d) error = %v", input.key, input.actionID, err)
+		}
+	}
+}
+
 func TestServiceEvaluatesAndPersistsRuleEventsThroughRepository(t *testing.T) {
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -578,7 +635,7 @@ func TestServiceEvaluatesAndPersistsRuleEventsThroughRepository(t *testing.T) {
 func validRule() Rule {
 	return Rule{
 		Name: "oauth refresh failures", ActionID: 1, Enabled: true,
-		Category: "oauth", Severity: "error", EventAction: "oauth.refresh.automatic.failed",
+		Category: "oauth", Severity: "warning", EventAction: "oauth.refresh.automatic.failed",
 		RecoveryAction: "oauth.refresh.automatic.succeeded", AggregationCount: 2,
 		AggregationWindowSeconds: 60, CooldownSeconds: 300,
 		DeduplicationScope: DeduplicationScopeTarget, NotifyRecovery: true,

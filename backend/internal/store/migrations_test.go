@@ -1,10 +1,12 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 )
 
@@ -661,11 +663,82 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 42 {
-		t.Fatalf("migration sources = %d, want 42", len(sources))
+	if len(sources) != 43 {
+		t.Fatalf("migration sources = %d, want 43", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[41].Path != "00042_alert_action_test_results.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[42].Path != "00043_alert_rule_template_key.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestAlertRuleTemplateKeyMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00043_alert_rule_template_key.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ADD COLUMN template_key TEXT NOT NULL DEFAULT ''",
+		"alert_rules_template_key_check",
+		"^[a-z0-9][a-z0-9._-]{0,127}$",
+		"CREATE UNIQUE INDEX alert_rules_template_key_unique_idx",
+		"ON alert_rules (template_key)",
+		"WHERE template_key <> ''",
+		"DROP COLUMN IF EXISTS template_key",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
+func TestAlertRuleTemplateKeyMigrationRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	columnExists := func() bool {
+		t.Helper()
+		var exists bool
+		if err := repo.pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = current_schema()
+					AND table_name = 'alert_rules'
+					AND column_name = 'template_key'
+			)
+		`).Scan(&exists); err != nil {
+			t.Fatalf("inspect template_key column: %v", err)
+		}
+		return exists
+	}
+	if !columnExists() {
+		t.Fatal("template_key column missing after migration up")
+	}
+
+	migrations, err := migrationDirFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDBFromPool(repo.pool)
+	t.Cleanup(func() { _ = db.Close() })
+	provider, err := goose.NewProvider(
+		goose.DialectPostgres,
+		db,
+		migrations,
+		goose.WithTableName("schema_migrations"),
+		goose.WithDisableGlobalRegistry(true),
+	)
+	if err != nil {
+		t.Fatalf("create migration provider: %v", err)
+	}
+	result, err := provider.Down(ctx)
+	if err != nil {
+		t.Fatalf("roll back alert rule template migration: %v", err)
+	}
+	if result == nil || result.Source.Version != 43 {
+		t.Fatalf("migration down result = %+v, want version 43", result)
+	}
+	if columnExists() {
+		t.Fatal("template_key column remains after migration down")
 	}
 }
 

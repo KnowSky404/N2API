@@ -6,10 +6,13 @@ globalThis.$state = (value) => value;
 const {
   alertActionTests,
   alertActions,
+  alertRuleTemplates,
   alertRules,
   createAlertAction,
   deleteAlertAction,
+  installAlertRuleTemplate,
   loadAlertActions,
+  loadAlertRuleTemplates,
   loadAlertRules,
   session,
   testAlertAction,
@@ -40,6 +43,7 @@ function rule(overrides = {}) {
   return {
     id: 9,
     name: 'Provider failures',
+    templateKey: '',
     actionId: 7,
     enabled: true,
     category: 'runtime',
@@ -57,11 +61,118 @@ function rule(overrides = {}) {
   };
 }
 
+function template(overrides = {}) {
+  return {
+    key: 'oauth-refresh-repeated-v1',
+    name: 'Repeated OAuth refresh failures',
+    enabled: false,
+    category: 'oauth',
+    severity: 'warning',
+    eventAction: 'oauth.refresh.automatic.failed',
+    recoveryAction: 'oauth.refresh.automatic.succeeded',
+    aggregationCount: 3,
+    aggregationWindowSeconds: 900,
+    cooldownSeconds: 3600,
+    deduplicationScope: 'target',
+    notifyRecovery: true,
+    ...overrides
+  };
+}
+
 beforeEach(() => {
   Object.assign(session, { loading: false, authenticated: true, username: 'owner', error: '' });
   Object.assign(alertActions, { loading: false, saving: false, deletingId: 0, error: '', items: [] });
   Object.assign(alertRules, { loading: false, saving: false, deletingId: 0, error: '', items: [] });
+  Object.assign(alertRuleTemplates, { loading: false, installingKey: '', error: '', items: [] });
   Object.assign(alertActionTests, { actionId: 0, loading: false, error: '', retryAfterSeconds: 0, result: null });
+});
+
+test('loadAlertRuleTemplates ignores an older response after a new load starts', async () => {
+  let resolveFirst;
+  let resolveSecond;
+  let calls = 0;
+  globalThis.fetch = async () => new Promise((resolve) => {
+    calls += 1;
+    if (calls === 1) resolveFirst = resolve;
+    else resolveSecond = resolve;
+  });
+
+  const first = loadAlertRuleTemplates();
+  const second = loadAlertRuleTemplates();
+  resolveSecond(Response.json({ templates: [template({ key: 'new', name: 'New' })] }));
+  await second;
+  resolveFirst(Response.json({ templates: [template({ key: 'old', name: 'Old' })] }));
+  await first;
+
+  assert.equal(alertRuleTemplates.items.length, 1);
+  assert.equal(alertRuleTemplates.items[0].name, 'New');
+  assert.equal(alertRuleTemplates.loading, false);
+});
+
+test('installAlertRuleTemplate sends only the action and refreshes rules', async () => {
+  const installed = rule({
+    templateKey: 'oauth-refresh-repeated-v1',
+    name: 'Repeated OAuth refresh failures',
+    enabled: false,
+    category: 'oauth',
+    severity: 'warning',
+    eventAction: 'oauth.refresh.automatic.failed',
+    recoveryAction: 'oauth.refresh.automatic.succeeded',
+    aggregationCount: 3,
+    aggregationWindowSeconds: 900,
+    cooldownSeconds: 3600,
+    notifyRecovery: true
+  });
+  const requests = [];
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({ path: String(path), options });
+    if (options.method === 'POST') return Response.json({ rule: installed, created: true }, { status: 201 });
+    return Response.json({ rules: [installed] });
+  };
+
+  const result = await installAlertRuleTemplate('oauth-refresh-repeated-v1', 7);
+
+  assert.equal(requests[0].path, '/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install');
+  assert.deepEqual(JSON.parse(requests[0].options.body), { actionId: 7 });
+  assert.equal(requests[1].path, '/api/admin/alert-rules');
+  assert.equal(result.created, true);
+  assert.equal(result.rule.enabled, false);
+  assert.equal(alertRules.items[0].templateKey, 'oauth-refresh-repeated-v1');
+  assert.equal(alertRuleTemplates.installingKey, '');
+});
+
+test('installAlertRuleTemplate returns an existing rule from an idempotent install', async () => {
+  const installed = rule({ templateKey: 'oauth-refresh-repeated-v1', enabled: false });
+  globalThis.fetch = async (_path, options = {}) => options.method === 'POST'
+    ? Response.json({ rule: installed, created: false })
+    : Response.json({ rules: [installed] });
+
+  const result = await installAlertRuleTemplate('oauth-refresh-repeated-v1', 7);
+
+  assert.equal(result.created, false);
+  assert.equal(result.rule.id, 9);
+});
+
+test('a late template install response cannot restore state after a 401 reset', async () => {
+  let resolveInstall;
+  globalThis.fetch = async (path) => {
+    if (String(path).includes('/alert-rule-templates/')) {
+      return new Promise((resolve) => { resolveInstall = resolve; });
+    }
+    return Response.json({ error: 'unauthorized' }, { status: 401 });
+  };
+
+  const pending = installAlertRuleTemplate('oauth-refresh-repeated-v1', 7);
+  await Promise.resolve();
+  await loadAlertRules();
+  resolveInstall(Response.json({ rule: rule({ templateKey: 'oauth-refresh-repeated-v1' }), created: true }, { status: 201 }));
+  const result = await pending;
+
+  assert.equal(result, null);
+  assert.equal(session.authenticated, false);
+  assert.deepEqual(alertRules.items, []);
+  assert.deepEqual(alertRuleTemplates.items, []);
+  assert.equal(alertRuleTemplates.installingKey, '');
 });
 
 test('loadAlertActions ignores an older response after a new load starts', async () => {
@@ -245,6 +356,7 @@ test('action delete conflicts explain that referenced rules must move first', as
 test('a protected alert request 401 clears all alert and session state', async () => {
   alertActions.items = [action()];
   alertRules.items = [rule()];
+  alertRuleTemplates.items = [template()];
   alertActionTests.result = { testedAt: '', status: 'passed', httpStatus: 204, latencyMs: 1, errorCode: '', retryable: false };
   globalThis.fetch = async () => Response.json({ error: 'unauthorized' }, { status: 401 });
 
@@ -253,5 +365,6 @@ test('a protected alert request 401 clears all alert and session state', async (
   assert.equal(session.authenticated, false);
   assert.deepEqual(alertActions.items, []);
   assert.deepEqual(alertRules.items, []);
+  assert.deepEqual(alertRuleTemplates.items, []);
   assert.equal(alertActionTests.result, null);
 });

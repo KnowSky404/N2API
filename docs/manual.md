@@ -502,6 +502,21 @@ edit won the race. An action cannot be deleted while a rule references it.
 Successful create, update, and delete operations commit their audit System Event
 in the same PostgreSQL transaction as the configuration change.
 
+The rule editor also exposes a server-owned template catalog at
+`GET /api/admin/alert-rule-templates`. Installing a template requires an
+existing delivery action through
+`POST /api/admin/alert-rule-templates/{key}/install`. Installation is explicit,
+creates the rule disabled, and is idempotent by the persisted template key:
+retries return the existing rule without changing its delivery action, enabled
+state, or later owner edits. Deleting a template-derived rule is allowed; it is
+created again only when an owner explicitly installs the template again. The
+catalog currently includes `oauth-refresh-repeated-v1`, which matches three
+automatic OAuth refresh failures for the same event target within 15 minutes,
+uses a one-hour cooldown, and can notify on the next automatic refresh success.
+Model-test refresh failures use the separate
+`oauth.refresh.diagnostic.failed` action and therefore do not contribute to
+this operational threshold.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a

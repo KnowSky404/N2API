@@ -20,6 +20,7 @@ type AlertingAdminService interface {
 	DeleteAction(context.Context, int64) error
 	ListRules(context.Context) ([]alerting.Rule, error)
 	CreateRule(context.Context, alerting.Rule) (alerting.Rule, error)
+	InstallRuleTemplate(context.Context, string, int64) (alerting.Rule, bool, error)
 	UpdateRule(context.Context, int64, alerting.Rule, time.Time) (alerting.Rule, error)
 	DeleteRule(context.Context, int64) error
 }
@@ -229,6 +230,37 @@ func registerAlertingAdminRoutes(
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string][]alerting.Rule{"rules": rules})
+	}))
+
+	mux.HandleFunc("GET /api/admin/alert-rule-templates", requireAdmin(func(w http.ResponseWriter, _ *http.Request, _ admin.Admin) {
+		writeJSON(w, http.StatusOK, map[string][]alerting.RuleTemplate{"templates": alerting.RuleTemplates()})
+	}))
+
+	mux.HandleFunc("POST /api/admin/alert-rule-templates/{key}/install", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if service == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		var request struct {
+			ActionID int64 `json:"actionId"`
+		}
+		if err := decodeJSON(w, r, &request); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		rule, created, err := service.InstallRuleTemplate(r.Context(), r.PathValue("key"), request.ActionID)
+		if err != nil {
+			writeAlertingError(w, err, false)
+			return
+		}
+		status := http.StatusOK
+		if created {
+			status = http.StatusCreated
+		}
+		writeJSON(w, status, struct {
+			Rule    alerting.Rule `json:"rule"`
+			Created bool          `json:"created"`
+		}{Rule: rule, Created: created})
 	}))
 
 	mux.HandleFunc("POST /api/admin/alert-rules", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

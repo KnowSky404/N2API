@@ -170,6 +170,7 @@ type ActionTestResult struct {
 
 type Rule struct {
 	ID                       int64                `json:"id"`
+	TemplateKey              string               `json:"templateKey,omitempty"`
 	Name                     string               `json:"name"`
 	ActionID                 int64                `json:"actionId"`
 	Enabled                  bool                 `json:"enabled"`
@@ -184,6 +185,21 @@ type Rule struct {
 	NotifyRecovery           bool                 `json:"notifyRecovery"`
 	CreatedAt                time.Time            `json:"createdAt"`
 	UpdatedAt                time.Time            `json:"updatedAt"`
+}
+
+type RuleTemplate struct {
+	Key                      string               `json:"key"`
+	Name                     string               `json:"name"`
+	Enabled                  bool                 `json:"enabled"`
+	Category                 systemevent.Category `json:"category"`
+	Severity                 systemevent.Severity `json:"severity"`
+	EventAction              systemevent.Action   `json:"eventAction"`
+	RecoveryAction           systemevent.Action   `json:"recoveryAction"`
+	AggregationCount         int                  `json:"aggregationCount"`
+	AggregationWindowSeconds int                  `json:"aggregationWindowSeconds"`
+	CooldownSeconds          int                  `json:"cooldownSeconds"`
+	DeduplicationScope       DeduplicationScope   `json:"deduplicationScope"`
+	NotifyRecovery           bool                 `json:"notifyRecovery"`
 }
 
 type RuleCreate struct {
@@ -228,6 +244,7 @@ type Repository interface {
 	FinalizeActionTest(context.Context, int64, string, ActionTestResult) (Action, error)
 
 	CreateRule(context.Context, RuleCreate) (Rule, error)
+	InstallRuleTemplate(context.Context, RuleCreate) (Rule, bool, error)
 	UpdateRule(context.Context, int64, RuleUpdate) (Rule, error)
 	DeleteRule(context.Context, int64) error
 	GetRule(context.Context, int64) (Rule, error)

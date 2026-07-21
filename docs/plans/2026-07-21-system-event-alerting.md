@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first Task 4 rule completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -216,6 +216,9 @@ desktop/mobile workflow passes browser verification.
 
 ## Task 4: Add Operational Rules Incrementally
 
+Task status: in progress; repeated automatic OAuth refresh failures completed
+locally on 2026-07-21
+
 ### Goal
 
 Map existing signals to useful defaults without alert noise.
@@ -230,6 +233,23 @@ Add independent commits for repeated OAuth refresh failure/account expiry;
 circuit/routing exhaustion; 80/100 percent budget thresholds; 5xx/latency/fallback
 windows; cleanup/storage failures; and optional version availability. Version
 checks are off by default and never required for startup.
+
+The first slice adds a versioned server-side rule-template catalog rather than
+seeding a database rule. An owner explicitly selects an existing delivery
+action and installs `oauth-refresh-repeated-v1`; the installed rule starts
+disabled and remains an ordinary editable/deletable rule. Its persisted
+`template_key` makes retries and concurrent installation idempotent without
+overwriting the selected action, enabled state, or later edits. The template
+matches three `oauth.refresh.automatic.failed` warning events for one target in
+15 minutes, applies a one-hour cooldown, and recognizes
+`oauth.refresh.automatic.succeeded` as recovery. Model-test refresh failures
+emit `oauth.refresh.diagnostic.failed` so diagnostics do not inflate the
+operational failure window.
+
+Account-expiry and circuit presets remain deferred until their recovery events
+are emitted only after confirmed recovery. Request-derived thresholds require a
+bounded periodic aggregator with persistent crossing state before templates can
+be added without per-request event noise.
 
 ### Completion Criteria
 

@@ -20,6 +20,7 @@ import (
 )
 
 const truncateStoreTestDataSQL = `TRUNCATE
+	alert_rule_states, alert_rules, alert_actions,
 	system_events, request_logs, provider_account_test_results, provider_session_bindings,
 	routing_pool_accounts, routing_pools, client_api_key_models, client_api_keys,
 	provider_account_models, provider_account_credentials, provider_accounts,

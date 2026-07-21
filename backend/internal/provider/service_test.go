@@ -3917,10 +3917,11 @@ func TestProviderServiceAttachesLifecycleIntentsAndPreservesBatchID(t *testing.T
 func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testing.T) {
 	expired := time.Now().Add(-time.Minute)
 	for _, testCase := range []struct {
-		name        string
-		refresh     func(*Service, Account) error
-		wantAction  systemevent.Action
-		wantTrigger string
+		name         string
+		refresh      func(*Service, Account) error
+		wantAction   systemevent.Action
+		wantTrigger  string
+		wantSeverity systemevent.Severity
 	}{
 		{
 			name: "manual",
@@ -3928,8 +3929,9 @@ func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testi
 				_, err := service.RefreshAccount(context.Background(), account.ID)
 				return err
 			},
-			wantAction:  systemevent.ActionOAuthRefreshManualFailed,
-			wantTrigger: string(RefreshTriggerManual),
+			wantAction:   systemevent.ActionOAuthRefreshManualFailed,
+			wantTrigger:  string(RefreshTriggerManual),
+			wantSeverity: systemevent.SeverityWarning,
 		},
 		{
 			name: "gateway request",
@@ -3937,8 +3939,9 @@ func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testi
 				_, err := service.AccessTokenForAccount(context.Background(), account)
 				return err
 			},
-			wantAction:  systemevent.ActionOAuthRefreshAutomaticFailed,
-			wantTrigger: string(RefreshTriggerGatewayRequest),
+			wantAction:   systemevent.ActionOAuthRefreshAutomaticFailed,
+			wantTrigger:  string(RefreshTriggerGatewayRequest),
+			wantSeverity: systemevent.SeverityWarning,
 		},
 		{
 			name: "model test",
@@ -3946,8 +3949,9 @@ func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testi
 				_, err := service.selectedAccountForDiagnostic(context.Background(), account)
 				return err
 			},
-			wantAction:  systemevent.ActionOAuthRefreshAutomaticFailed,
-			wantTrigger: string(RefreshTriggerModelTest),
+			wantAction:   systemevent.ActionOAuthRefreshDiagnosticFailed,
+			wantTrigger:  string(RefreshTriggerModelTest),
+			wantSeverity: systemevent.SeverityWarning,
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -3962,7 +3966,7 @@ func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testi
 				t.Fatal("refresh did not attach an event intent")
 			}
 			intent := repo.intents[len(repo.intents)-1]
-			if intent.Action != testCase.wantAction || intent.Metadata["trigger"] != testCase.wantTrigger {
+			if intent.Action != testCase.wantAction || intent.Metadata["trigger"] != testCase.wantTrigger || intent.Severity != testCase.wantSeverity {
 				t.Fatalf("intent = %+v, want action %q trigger %q", intent, testCase.wantAction, testCase.wantTrigger)
 			}
 			encoded, err := json.Marshal(intent)
@@ -3978,6 +3982,27 @@ func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testi
 				t.Fatalf("ValidateIntent returned error: %v", err)
 			}
 		})
+	}
+}
+
+func TestDiagnosticRefreshSuccessUsesAutomaticRecoveryAction(t *testing.T) {
+	expired := time.Now().Add(-time.Minute)
+	repo := newMemoryRepo()
+	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{refresh: TokenResponse{
+		AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600,
+	}})
+
+	if _, err := service.selectedAccountForDiagnostic(context.Background(), account); err != nil {
+		t.Fatalf("selectedAccountForDiagnostic returned error: %v", err)
+	}
+	if len(repo.intents) == 0 {
+		t.Fatal("diagnostic refresh success did not attach an event intent")
+	}
+	intent := repo.intents[len(repo.intents)-1]
+	if intent.Action != systemevent.ActionOAuthRefreshAutomaticSucceeded || intent.Severity != systemevent.SeverityInfo || intent.Metadata["trigger"] != string(RefreshTriggerModelTest) {
+		t.Fatalf("intent = %+v, want automatic refresh recovery", intent)
 	}
 }
 
@@ -4408,7 +4433,8 @@ func (r *memoryRepo) RecordAccountTestResult(ctx context.Context, providerName s
 	return ErrNotConnected
 }
 
-func (r *memoryRepo) UpdateOAuthCredential(_ context.Context, providerName string, accountID int64, credential AccountCredential) error {
+func (r *memoryRepo) UpdateOAuthCredential(ctx context.Context, providerName string, accountID int64, credential AccountCredential) error {
+	r.captureIntent(ctx)
 	for i := range r.accounts {
 		if r.accounts[i].Provider != providerName || r.accounts[i].ID != accountID {
 			continue

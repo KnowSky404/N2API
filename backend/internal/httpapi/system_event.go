@@ -220,6 +220,7 @@ func adminFailureEventForRequest(r *http.Request) (systemevent.Action, systemeve
 		"DELETE /api/admin/alert-actions/{id}":                        {systemevent.ActionAlertActionDeleted, systemevent.CategoryAudit, "alert_action"},
 		"POST /api/admin/alert-actions/{id}/test":                     {systemevent.ActionAlertDeliveryTested, systemevent.CategoryAudit, "alert_action"},
 		"POST /api/admin/alert-rules":                                 {systemevent.ActionAlertRuleCreated, systemevent.CategoryAudit, "alert_rule"},
+		"POST /api/admin/alert-rule-templates/{key}/install":          {systemevent.ActionAlertRuleCreated, systemevent.CategoryAudit, "alert_rule"},
 		"PATCH /api/admin/alert-rules/{id}":                           {systemevent.ActionAlertRuleUpdated, systemevent.CategoryAudit, "alert_rule"},
 		"DELETE /api/admin/alert-rules/{id}":                          {systemevent.ActionAlertRuleDeleted, systemevent.CategoryAudit, "alert_rule"},
 		"PUT /api/admin/model-settings":                               {systemevent.ActionModelSettingsUpdated, systemevent.CategoryAudit, "model_settings"},

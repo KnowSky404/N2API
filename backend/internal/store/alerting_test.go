@@ -90,14 +90,14 @@ func TestAlertingRepositoryCRUDAndStateCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRule returned error: %v", err)
 	}
-	if rule.ID == 0 || rule.Name != ruleInput.Name || rule.ActionID != action.ID {
+	if rule.ID == 0 || rule.Name != ruleInput.Name || rule.ActionID != action.ID || rule.TemplateKey != "" {
 		t.Fatalf("created rule = %+v", rule)
 	}
 	ruleInput.Name = "renamed oauth failures"
 	ruleInput.Enabled = false
 	originalRuleRevision := rule.UpdatedAt
 	rule, err = repo.UpdateRule(ctx, rule.ID, alerting.RuleUpdate{Rule: ruleInput, ExpectedUpdatedAt: originalRuleRevision})
-	if err != nil || rule.Name != ruleInput.Name || rule.Enabled {
+	if err != nil || rule.Name != ruleInput.Name || rule.Enabled || rule.TemplateKey != "" {
 		t.Fatalf("UpdateRule = %+v, %v", rule, err)
 	}
 	if !rule.UpdatedAt.After(originalRuleRevision) {
@@ -338,7 +338,7 @@ func TestAlertingRepositorySerializesEvaluationAndResetsStateOnRuleUpdate(t *tes
 	}
 	rule, err := repo.CreateRule(ctx, alerting.RuleCreate{Rule: alerting.Rule{
 		Name: "concurrent oauth failures", ActionID: action.ID, Enabled: true,
-		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityError,
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityWarning,
 		EventAction:      systemevent.ActionOAuthRefreshAutomaticFailed,
 		RecoveryAction:   systemevent.ActionOAuthRefreshAutomaticSucceeded,
 		AggregationCount: 2, AggregationWindowSeconds: 60, CooldownSeconds: 300,
@@ -348,7 +348,7 @@ func TestAlertingRepositorySerializesEvaluationAndResetsStateOnRuleUpdate(t *tes
 		t.Fatalf("CreateRule returned error: %v", err)
 	}
 	now := time.Date(2026, time.July, 21, 13, 0, 0, 0, time.UTC)
-	trigger := alertingStoreEvent(systemevent.ActionOAuthRefreshAutomaticFailed, systemevent.SeverityError, systemevent.OutcomeFailure, now)
+	trigger := alertingStoreEvent(systemevent.ActionOAuthRefreshAutomaticFailed, systemevent.SeverityWarning, systemevent.OutcomeFailure, now)
 	hash := rule.DeduplicationKeyHash(trigger)
 
 	unmatched := trigger
@@ -432,7 +432,7 @@ func TestAlertingRepositoryDeliveryEvaluationUsesLockedRuleAndAction(t *testing.
 	}
 	rule, err := repo.CreateRule(ctx, alerting.RuleCreate{Rule: alerting.Rule{
 		Name: "single failure", ActionID: action.ID, Enabled: true,
-		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityError,
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityWarning,
 		EventAction:      systemevent.ActionOAuthRefreshAutomaticFailed,
 		AggregationCount: 1, CooldownSeconds: 300,
 		DeduplicationScope: alerting.DeduplicationScopeTarget,
@@ -441,7 +441,7 @@ func TestAlertingRepositoryDeliveryEvaluationUsesLockedRuleAndAction(t *testing.
 		t.Fatalf("CreateRule: %v", err)
 	}
 	now := time.Date(2026, time.July, 21, 14, 0, 0, 0, time.UTC)
-	event := alertingStoreEvent(systemevent.ActionOAuthRefreshAutomaticFailed, systemevent.SeverityError, systemevent.OutcomeFailure, now)
+	event := alertingStoreEvent(systemevent.ActionOAuthRefreshAutomaticFailed, systemevent.SeverityWarning, systemevent.OutcomeFailure, now)
 	evaluation, err := repo.EvaluateRuleEventForDelivery(ctx, rule.ID, event, now)
 	if err != nil || evaluation.ActionEnabled || evaluation.Decision != alerting.DecisionNone || evaluation.Rule.ID != rule.ID || !evaluation.ActionUpdatedAt.Equal(action.UpdatedAt) {
 		t.Fatalf("disabled action evaluation = %+v, %v", evaluation, err)
@@ -612,6 +612,133 @@ func TestAlertingRepositoryActionTestFinalizeInterleavingsAndAttemptToken(t *tes
 	}
 	if _, err := repo.FinalizeActionTest(ctx, deletedAction.ID, deletedAttempt.AttemptToken, result); !errors.Is(err, alerting.ErrNotFound) {
 		t.Fatalf("deleted action finalize error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdits(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	firstAction, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "first template action", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-template-one", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAction, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "second template action", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-template-two", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repo.InstallRuleTemplate(ctx, alerting.RuleCreate{Rule: alerting.Rule{ActionID: firstAction.ID}}); !errors.Is(err, alerting.ErrInvalidInput) {
+		t.Fatalf("empty template key error = %v, want ErrInvalidInput", err)
+	}
+	template := alerting.Rule{
+		TemplateKey: "oauth-refresh-repeated-v1", Name: "Repeated OAuth refresh failures",
+		ActionID: firstAction.ID, Enabled: false, Category: systemevent.CategoryOAuth,
+		Severity: systemevent.SeverityWarning, EventAction: systemevent.ActionOAuthRefreshAutomaticFailed,
+		RecoveryAction:   systemevent.ActionOAuthRefreshAutomaticSucceeded,
+		AggregationCount: 3, AggregationWindowSeconds: 900, CooldownSeconds: 3600,
+		DeduplicationScope: alerting.DeduplicationScopeTarget, NotifyRecovery: true,
+	}
+	auditCtx := systemevent.WithIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionAlertRuleCreated, Outcome: systemevent.OutcomeSuccess,
+		Target: systemevent.Target{Type: "alert_rule"},
+	})
+	installed, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: template})
+	if err != nil || !created || installed.ID == 0 || installed.TemplateKey != template.TemplateKey || installed.Enabled {
+		t.Fatalf("first install = %+v, created=%t, err=%v", installed, created, err)
+	}
+
+	editedInput := installed
+	editedInput.Name = "Owner-reviewed OAuth failures"
+	editedInput.Enabled = true
+	updateCtx := systemevent.WithIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionAlertRuleUpdated, Outcome: systemevent.OutcomeSuccess,
+		Target: systemevent.Target{Type: "alert_rule"},
+	})
+	edited, err := repo.UpdateRule(updateCtx, installed.ID, alerting.RuleUpdate{Rule: editedInput, ExpectedUpdatedAt: installed.UpdatedAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.TemplateKey != template.TemplateKey {
+		t.Fatalf("updated template key = %q", edited.TemplateKey)
+	}
+
+	template.ActionID = secondAction.ID
+	reinstalled, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: template})
+	if err != nil || created {
+		t.Fatalf("reinstall = %+v, created=%t, err=%v", reinstalled, created, err)
+	}
+	if reinstalled.ID != edited.ID || reinstalled.ActionID != firstAction.ID || reinstalled.Name != edited.Name || !reinstalled.Enabled {
+		t.Fatalf("reinstall overwrote edited rule: %+v", reinstalled)
+	}
+
+	var createdAudits int
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM system_events
+		WHERE action = $1 AND target_type = 'alert_rule' AND target_id = $2
+	`, systemevent.ActionAlertRuleCreated, strconv.FormatInt(installed.ID, 10)).Scan(&createdAudits); err != nil {
+		t.Fatal(err)
+	}
+	if createdAudits != 1 {
+		t.Fatalf("created audit count = %d, want 1", createdAudits)
+	}
+}
+
+func TestAlertingRepositorySerializesConcurrentRuleTemplateInstall(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	action, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "concurrent template action", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-template", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := alerting.Rule{
+		TemplateKey: "oauth-refresh-repeated-v1", Name: "Repeated OAuth refresh failures",
+		ActionID: action.ID, Enabled: false, Category: systemevent.CategoryOAuth,
+		Severity: systemevent.SeverityWarning, EventAction: systemevent.ActionOAuthRefreshAutomaticFailed,
+		RecoveryAction:   systemevent.ActionOAuthRefreshAutomaticSucceeded,
+		AggregationCount: 3, AggregationWindowSeconds: 900, CooldownSeconds: 3600,
+		DeduplicationScope: alerting.DeduplicationScopeTarget, NotifyRecovery: true,
+	}
+
+	type result struct {
+		rule    alerting.Rule
+		created bool
+		err     error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			<-start
+			rule, created, err := repo.InstallRuleTemplate(ctx, alerting.RuleCreate{Rule: template})
+			results <- result{rule: rule, created: created, err: err}
+		}()
+	}
+	close(start)
+	first := <-results
+	second := <-results
+	if first.err != nil || second.err != nil || first.rule.ID == 0 || first.rule.ID != second.rule.ID {
+		t.Fatalf("concurrent installs = %+v / %+v", first, second)
+	}
+	if first.created == second.created {
+		t.Fatalf("concurrent created flags = %t/%t, want exactly one", first.created, second.created)
+	}
+	var count int
+	if err := repo.pool.QueryRow(ctx, `SELECT count(*) FROM alert_rules WHERE template_key = $1`, template.TemplateKey).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("template rule count = %d, want 1", count)
 	}
 }
 

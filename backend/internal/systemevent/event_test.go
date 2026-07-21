@@ -137,3 +137,9 @@ func TestAlertDeliveryActionsAreKnownAndInternal(t *testing.T) {
 		t.Fatal("alert rule configuration action was incorrectly classified as delivery-internal")
 	}
 }
+
+func TestOAuthRefreshDiagnosticFailureActionIsKnown(t *testing.T) {
+	if !IsKnownAction(ActionOAuthRefreshDiagnosticFailed) {
+		t.Fatalf("action %q is not registered", ActionOAuthRefreshDiagnosticFailed)
+	}
+}

@@ -26,6 +26,9 @@ type fakeAlertingAdminService struct {
 	updateRuleID         int64
 	updateRule           alerting.Rule
 	updateRuleExpectedAt time.Time
+	installTemplateKey   string
+	installActionID      int64
+	installCreated       bool
 }
 
 func (service *fakeAlertingAdminService) ListActions(context.Context) ([]alerting.Action, error) {
@@ -54,6 +57,10 @@ func (service *fakeAlertingAdminService) UpdateRule(_ context.Context, id int64,
 func (service *fakeAlertingAdminService) DeleteRule(context.Context, int64) error {
 	return service.err
 }
+func (service *fakeAlertingAdminService) InstallRuleTemplate(_ context.Context, key string, actionID int64) (alerting.Rule, bool, error) {
+	service.installTemplateKey, service.installActionID = key, actionID
+	return service.rule, service.installCreated, service.err
+}
 
 type fakeAlertActionTester struct {
 	result   alerting.ActionTestResult
@@ -73,12 +80,51 @@ func TestAlertingAdminRoutesRequireAuthentication(t *testing.T) {
 		httptest.NewRequest(http.MethodGet, "/api/admin/alert-actions", nil),
 		httptest.NewRequest(http.MethodPost, "/api/admin/alert-actions/7/test", strings.NewReader(`{"expectedUpdatedAt":"2026-07-21T12:00:00Z"}`)),
 		httptest.NewRequest(http.MethodGet, "/api/admin/alert-rules", nil),
+		httptest.NewRequest(http.MethodGet, "/api/admin/alert-rule-templates", nil),
+		httptest.NewRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", strings.NewReader(`{"actionId":7}`)),
 	} {
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, request)
 		if response.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s status = %d, want 401", request.Method, request.URL.Path, response.Code)
 		}
+	}
+}
+
+func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
+	service := &fakeAlertingAdminService{rule: alerting.Rule{ID: 9, TemplateKey: alerting.OAuthRefreshRepeatedTemplateKey, ActionID: 7}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, service)
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodGet, "/api/admin/alert-rule-templates", ""))
+	if response.Code != http.StatusOK {
+		t.Fatalf("catalog status=%d body=%s", response.Code, response.Body.String())
+	}
+	var catalog struct {
+		Templates []alerting.RuleTemplate `json:"templates"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 1 || catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey {
+		t.Fatalf("catalog=%+v err=%v", catalog, err)
+	}
+
+	service.installCreated = true
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", `{"actionId":7}`))
+	if response.Code != http.StatusCreated || service.installTemplateKey != alerting.OAuthRefreshRepeatedTemplateKey || service.installActionID != 7 || !strings.Contains(response.Body.String(), `"created":true`) {
+		t.Fatalf("created install status=%d body=%s service=%+v", response.Code, response.Body.String(), service)
+	}
+
+	service.installCreated = false
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", `{"actionId":7}`))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"created":false`) {
+		t.Fatalf("existing install status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", `{"actionId":7,"extra":true}`))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "bad_request") {
+		t.Fatalf("strict install status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

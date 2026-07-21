@@ -1015,13 +1015,15 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"latest sanitized result",
 		},
 		"../../../docs/plans/2026-07-21-system-event-alerting.md": {
-			"Tasks 1-3 completed locally on 2026-07-21",
+			"Tasks 1-3 and the first Task 4 rule completed locally on 2026-07-21",
 			"oldest idle state at capacity",
 			"No default rules, dispatcher, outbound request",
 			"dedicated pgx listener",
 			"event after commit",
 			"stably shards each rule/deduplication stream",
 			"Persistent delivery is deferred",
+			"`oauth-refresh-repeated-v1`",
+			"`oauth.refresh.diagnostic.failed`",
 		},
 	}
 

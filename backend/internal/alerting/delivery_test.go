@@ -258,7 +258,7 @@ func TestNotificationForHasStableDeliveryID(t *testing.T) {
 	rule := Rule{ID: 17, Name: "OAuth failures"}
 	event := systemevent.Event{
 		ID: 91, OccurredAt: time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC),
-		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityError,
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityWarning,
 		Action: systemevent.ActionOAuthRefreshAutomaticFailed, Outcome: systemevent.OutcomeFailure,
 		Target:        systemevent.Target{Type: "provider_account", ID: "9", Name: "personal"},
 		CorrelationID: "delivery-correlation", ErrorCode: "oauth_refresh_failed", Message: "refresh failed",
@@ -288,7 +288,7 @@ func testNotification() Notification {
 		DeliveryID: "0123456789abcdef0123456789abcdef", Decision: DecisionNotify,
 		RuleID: 17, RuleName: "Repeated OAuth refresh failure",
 		OccurredAt: time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC),
-		Category:   systemevent.CategoryOAuth, Severity: systemevent.SeverityError,
+		Category:   systemevent.CategoryOAuth, Severity: systemevent.SeverityWarning,
 		Action: systemevent.ActionOAuthRefreshAutomaticFailed, Outcome: systemevent.OutcomeFailure,
 		Target:    systemevent.Target{Type: "provider_account", ID: "9", Name: "personal"},
 		ErrorCode: "oauth_refresh_failed", Message: "refresh failed", CorrelationID: "delivery-correlation",

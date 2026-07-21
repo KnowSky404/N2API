@@ -18,7 +18,7 @@ func TestRuleMatchesExactFiltersAndRejectsOversizedMetadata(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*systemevent.Event){
 		"category": func(event *systemevent.Event) { event.Category = systemevent.CategoryRuntime },
-		"severity": func(event *systemevent.Event) { event.Severity = systemevent.SeverityWarning },
+		"severity": func(event *systemevent.Event) { event.Severity = systemevent.SeverityError },
 		"action":   func(event *systemevent.Event) { event.Action = systemevent.ActionOAuthRefreshManualFailed },
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -163,7 +163,7 @@ func TestTargetScopeUsesUnambiguousLengthPrefixedComponents(t *testing.T) {
 func triggerEvent() systemevent.Event {
 	return systemevent.Event{
 		ID: 1, OccurredAt: time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC),
-		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityError,
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityWarning,
 		Action: systemevent.ActionOAuthRefreshAutomaticFailed, Outcome: systemevent.OutcomeFailure,
 		Actor:         systemevent.Actor{Type: systemevent.ActorSystem},
 		Target:        systemevent.Target{Type: "provider_account", ID: "42"},

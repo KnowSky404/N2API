@@ -35,7 +35,7 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 		"alerting.go": {
 			"CreateAction": "insertIntentSystemEvent", "UpdateAction": "insertIntentSystemEvent",
 			"DeleteAction": "insertIntentSystemEvent", "FinalizeActionTest": "insertIntentSystemEvent",
-			"CreateRule": "insertIntentSystemEvent", "UpdateRule": "insertIntentSystemEvent",
+			"CreateRule": "insertIntentSystemEvent", "InstallRuleTemplate": "insertIntentSystemEvent", "UpdateRule": "insertIntentSystemEvent",
 			"DeleteRule": "insertIntentSystemEvent",
 		},
 		"provider.go": {

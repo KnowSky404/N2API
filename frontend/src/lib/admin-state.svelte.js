@@ -202,6 +202,7 @@ import { copyText } from '$lib/clipboard.js';
  * @typedef {object} AlertRule
  * @property {number} id
  * @property {string} name
+ * @property {string} [templateKey]
  * @property {number} actionId
  * @property {boolean} enabled
  * @property {string} category
@@ -215,6 +216,22 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} notifyRecovery
  * @property {string} createdAt
  * @property {string} updatedAt
+ */
+
+/**
+ * @typedef {object} AlertRuleTemplate
+ * @property {string} key
+ * @property {string} name
+ * @property {boolean} enabled
+ * @property {string} category
+ * @property {string} severity
+ * @property {string} eventAction
+ * @property {string} recoveryAction
+ * @property {number} aggregationCount
+ * @property {number} aggregationWindowSeconds
+ * @property {number} cooldownSeconds
+ * @property {'rule' | 'target'} deduplicationScope
+ * @property {boolean} notifyRecovery
  */
 
 /**
@@ -559,10 +576,14 @@ export const configurationExport = $state({ exporting: false, notice: null });
 export const alertActions = $state({ loading: false, saving: false, deletingId: 0, error: '', items: [] });
 /** @type {{ loading: boolean, saving: boolean, deletingId: number, error: string, items: AlertRule[] }} */
 export const alertRules = $state({ loading: false, saving: false, deletingId: 0, error: '', items: [] });
+/** @type {{ loading: boolean, installingKey: string, error: string, items: AlertRuleTemplate[] }} */
+export const alertRuleTemplates = $state({ loading: false, installingKey: '', error: '', items: [] });
 /** @type {{ actionId: number, loading: boolean, error: string, retryAfterSeconds: number, result: AlertTestResult | null }} */
 export const alertActionTests = $state({ actionId: 0, loading: false, error: '', retryAfterSeconds: 0, result: null });
 let alertActionRequestGeneration = 0;
 let alertRuleRequestGeneration = 0;
+let alertRuleTemplateRequestGeneration = 0;
+let alertRuleTemplateInstallGeneration = 0;
 /** @type {{ loading: boolean, loadingOlder: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, since: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[], nextCursor: string, hasMore: boolean, appliedFilterQuery: string | null }} */
 export const requestLogs = $state({
   loading: false,
@@ -1273,8 +1294,11 @@ function clearConfigurationExport() {
 function clearAlerting() {
   alertActionRequestGeneration += 1;
   alertRuleRequestGeneration += 1;
+  alertRuleTemplateRequestGeneration += 1;
+  alertRuleTemplateInstallGeneration += 1;
   replaceState(alertActions, { loading: false, saving: false, deletingId: 0, error: '', items: [] });
   replaceState(alertRules, { loading: false, saving: false, deletingId: 0, error: '', items: [] });
+  replaceState(alertRuleTemplates, { loading: false, installingKey: '', error: '', items: [] });
   replaceState(alertActionTests, { actionId: 0, loading: false, error: '', retryAfterSeconds: 0, result: null });
 }
 
@@ -1581,6 +1605,16 @@ function alertRuleList(payload) {
   return [];
 }
 
+/** @param {unknown} payload @returns {AlertRuleTemplate[]} */
+function alertRuleTemplateList(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    // @ts-expect-error API response is validated by the backend contract.
+    return Array.isArray(payload.templates) ? payload.templates : [];
+  }
+  return [];
+}
+
 /** @param {unknown} error */
 function alertRequestStatus(error) {
   return Number(error && typeof error === 'object' && 'status' in error ? error.status : 0);
@@ -1650,6 +1684,26 @@ export async function loadAlertRules() {
     return false;
   } finally {
     if (isCurrentAuthenticated(version) && generation === alertRuleRequestGeneration) alertRules.loading = false;
+  }
+}
+
+export async function loadAlertRuleTemplates() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  const generation = ++alertRuleTemplateRequestGeneration;
+  alertRuleTemplates.loading = true;
+  alertRuleTemplates.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/alert-rule-templates');
+    if (!isCurrentAuthenticated(version) || generation !== alertRuleTemplateRequestGeneration) return false;
+    alertRuleTemplates.items = alertRuleTemplateList(payload);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version) || generation !== alertRuleTemplateRequestGeneration) return false;
+    alertRuleTemplates.error = alertRequestMessage(error) || 'Failed to load notification rule templates';
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version) && generation === alertRuleTemplateRequestGeneration) alertRuleTemplates.loading = false;
   }
 }
 
@@ -1756,7 +1810,7 @@ export async function testAlertAction(id, expectedUpdatedAt) {
   }
 }
 
-/** @param {Omit<AlertRule, 'id'|'createdAt'|'updatedAt'>} input */
+/** @param {Omit<AlertRule, 'id'|'templateKey'|'createdAt'|'updatedAt'>} input */
 export async function createAlertRule(input) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return null;
@@ -1776,7 +1830,43 @@ export async function createAlertRule(input) {
   }
 }
 
-/** @param {number} id @param {Omit<AlertRule, 'id'|'createdAt'|'updatedAt'> & { expectedUpdatedAt: string }} input */
+/** @param {string} key @param {number} actionId */
+export async function installAlertRuleTemplate(key, actionId) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || alertRuleTemplates.installingKey || !key || actionId <= 0) return null;
+  const generation = ++alertRuleTemplateInstallGeneration;
+  alertRuleTemplates.installingKey = key;
+  alertRuleTemplates.error = '';
+  try {
+    const payload = await requestJSON(`/api/admin/alert-rule-templates/${encodeURIComponent(key)}/install`, {
+      method: 'POST',
+      body: JSON.stringify({ actionId })
+    });
+    if (!isCurrentAuthenticated(version) || generation !== alertRuleTemplateInstallGeneration) return null;
+    const result = /** @type {{ rule: AlertRule, created: boolean }} */ ({
+      rule: payload?.rule,
+      created: Boolean(payload?.created)
+    });
+    if (!result.rule) {
+      alertRuleTemplates.error = 'Template installation returned no notification rule';
+      return null;
+    }
+    await loadAlertRules();
+    if (!isCurrentAuthenticated(version) || generation !== alertRuleTemplateInstallGeneration) return null;
+    return result;
+  } catch (error) {
+    if (isCurrentAuthenticated(version) && generation === alertRuleTemplateInstallGeneration) {
+      alertRuleTemplates.error = alertRequestMessage(error) || 'Failed to install notification rule template';
+    }
+    return null;
+  } finally {
+    if (isCurrentAuthenticated(version) && generation === alertRuleTemplateInstallGeneration) {
+      alertRuleTemplates.installingKey = '';
+    }
+  }
+}
+
+/** @param {number} id @param {Omit<AlertRule, 'id'|'templateKey'|'createdAt'|'updatedAt'> & { expectedUpdatedAt: string }} input */
 export async function updateAlertRule(id, input) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return null;

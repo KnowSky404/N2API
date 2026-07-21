@@ -3,6 +3,7 @@
   import {
     alertActionTests,
     alertActions,
+    alertRuleTemplates,
     alertRules,
     createAlertAction,
     createAlertRule,
@@ -10,7 +11,9 @@
     deleteAlertRule,
     formatDate,
     health,
+    installAlertRuleTemplate,
     loadAlertActions,
+    loadAlertRuleTemplates,
     loadAlertRules,
     loadHealth,
     session,
@@ -39,6 +42,8 @@
   let actionFormError = $state('');
   let ruleModalOpen = $state(false);
   let ruleEditingId = $state(0);
+  let ruleStartingPoint = $state(/** @type {'custom'|'template'} */ ('custom'));
+  let selectedRuleTemplateKey = $state('');
   let ruleFormError = $state('');
   let deleteTarget = $state(/** @type {{ type: 'action'|'rule', id: number, name: string } | null} */ (null));
   let notice = $state(/** @type {{ kind: 'success'|'warning'|'error', title: string, message: string } | null} */ (null));
@@ -51,7 +56,11 @@
   const actionsBusy = $derived(
     alertActions.saving || alertActions.deletingId > 0 || alertActionTests.loading
   );
-  const rulesBusy = $derived(alertRules.saving || alertRules.deletingId > 0);
+  const ruleSaveBusy = $derived(alertRules.saving || alertRuleTemplates.installingKey !== '');
+  const rulesBusy = $derived(ruleSaveBusy || alertRules.deletingId > 0);
+  const selectedRuleTemplate = $derived(
+    alertRuleTemplates.items.find((template) => template.key === selectedRuleTemplateKey) ?? null
+  );
   const deleteBusy = $derived(
     deleteTarget?.type === 'action'
       ? alertActions.deletingId === deleteTarget.id
@@ -71,6 +80,7 @@
   function emptyRuleDraft() {
     return {
       name: '',
+      templateKey: '',
       actionId: 0,
       enabled: true,
       category: '',
@@ -102,12 +112,14 @@
       requested = false;
       actionModalOpen = false;
       ruleModalOpen = false;
+      ruleStartingPoint = 'custom';
+      selectedRuleTemplateKey = '';
       deleteTarget = null;
       return;
     }
     if (!requested) {
       requested = true;
-      void Promise.all([loadAlertActions(), loadAlertRules(), loadHealth()]);
+      void Promise.all([loadAlertActions(), loadAlertRules(), loadAlertRuleTemplates(), loadHealth()]);
     }
   });
 
@@ -115,13 +127,18 @@
   function handleKeydown(event) {
     if (event.key !== 'Escape') return;
     if (actionModalOpen && !alertActions.saving && !alertActionTests.loading) closeActionModal();
-    else if (ruleModalOpen && !alertRules.saving) closeRuleModal();
+    else if (ruleModalOpen && !ruleSaveBusy) closeRuleModal();
     else if (deleteTarget && !deleteBusy) deleteTarget = null;
   }
 
   async function refreshAlerting() {
-    const [actionsLoaded, rulesLoaded] = await Promise.all([loadAlertActions(), loadAlertRules(), loadHealth()]);
-    if (actionsLoaded && rulesLoaded) {
+    const [actionsLoaded, rulesLoaded, templatesLoaded] = await Promise.all([
+      loadAlertActions(),
+      loadAlertRules(),
+      loadAlertRuleTemplates(),
+      loadHealth()
+    ]);
+    if (actionsLoaded && rulesLoaded && templatesLoaded) {
       showNotice({ kind: 'success', title: 'Alerts refreshed', message: 'Actions, rules, and delivery status are current.' });
     }
   }
@@ -239,6 +256,8 @@
     draft.actionId = alertActions.items[0]?.id ?? 0;
     Object.assign(ruleDraft, draft);
     ruleEditingId = 0;
+    ruleStartingPoint = 'custom';
+    selectedRuleTemplateKey = alertRuleTemplates.items[0]?.key ?? '';
     ruleFormError = '';
     alertRules.error = '';
     ruleModalOpen = true;
@@ -248,6 +267,7 @@
   function openEditRule(rule) {
     Object.assign(ruleDraft, {
       name: rule.name,
+      templateKey: rule.templateKey || '',
       actionId: rule.actionId,
       enabled: rule.enabled,
       category: rule.category || '',
@@ -262,24 +282,60 @@
       expectedUpdatedAt: rule.updatedAt
     });
     ruleEditingId = rule.id;
+    ruleStartingPoint = 'custom';
+    selectedRuleTemplateKey = rule.templateKey || '';
     ruleFormError = '';
     alertRules.error = '';
     ruleModalOpen = true;
   }
 
   function closeRuleModal() {
-    if (alertRules.saving) return;
+    if (ruleSaveBusy) return;
     ruleModalOpen = false;
     ruleEditingId = 0;
+    ruleStartingPoint = 'custom';
+    selectedRuleTemplateKey = '';
     ruleFormError = '';
     alertRules.error = '';
     Object.assign(ruleDraft, emptyRuleDraft());
+  }
+
+  /** @param {Event} event */
+  function changeRuleStartingPoint(event) {
+    const value = /** @type {HTMLSelectElement} */ (event.currentTarget).value;
+    ruleStartingPoint = value === 'template' ? 'template' : 'custom';
+    ruleFormError = '';
+    alertRuleTemplates.error = '';
+    if (ruleStartingPoint === 'template' && !selectedRuleTemplateKey) {
+      selectedRuleTemplateKey = alertRuleTemplates.items[0]?.key ?? '';
+    }
   }
 
   /** @param {SubmitEvent} event */
   async function saveRule(event) {
     event.preventDefault();
     ruleFormError = '';
+    if (!ruleEditingId && ruleStartingPoint === 'template') {
+      if (!selectedRuleTemplateKey) {
+        ruleFormError = 'Select a rule template.';
+        return;
+      }
+      if (!ruleDraft.actionId) {
+        ruleFormError = 'Select a delivery action.';
+        return;
+      }
+      const installed = await installAlertRuleTemplate(selectedRuleTemplateKey, Number(ruleDraft.actionId));
+      if (!installed) return;
+      openEditRule(installed.rule);
+      showNotice({
+        kind: 'success',
+        title: installed.created ? 'Rule installed' : 'Rule already installed',
+        message: installed.created
+          ? `${installed.rule.name} is saved disabled. Review it before enabling delivery.`
+          : `${installed.rule.name} is open for review.`
+      });
+      return;
+    }
     const name = ruleDraft.name.trim();
     const eventAction = ruleDraft.eventAction.trim();
     const recoveryAction = ruleDraft.recoveryAction.trim();
@@ -413,8 +469,8 @@
         <p class="ui-page-description">Notification destinations, exact-match System Event rules, and bounded delivery status.</p>
       </div>
       <div class="ui-page-actions">
-        <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={alertActions.loading || alertRules.loading || actionsBusy || rulesBusy} onclick={refreshAlerting}>
-          <RefreshCw class={alertActions.loading || alertRules.loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
+        <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={alertActions.loading || alertRules.loading || alertRuleTemplates.loading || actionsBusy || rulesBusy} onclick={refreshAlerting}>
+          <RefreshCw class={alertActions.loading || alertRules.loading || alertRuleTemplates.loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
           Refresh
         </button>
         <button class="ui-button ui-button--sm ui-button--primary" type="button" onclick={openCreateAction}>
@@ -506,8 +562,8 @@
         <div><h2 id="alert-rules-title" class="ui-section-title">Notification rules</h2><p class="mt-1 text-sm text-[#6e6e6e]">Exact System Event filters with bounded aggregation, cooldown, and recovery.</p></div>
         <button class="ui-button ui-button--sm ui-button--primary" type="button" disabled={alertActions.items.length === 0} onclick={openCreateRule} title={alertActions.items.length === 0 ? 'Create a delivery action first' : undefined}><Plus class="size-4" aria-hidden="true" />Add rule</button>
       </div>
-      {#if alertRules.error && !ruleModalOpen && deleteTarget?.type !== 'rule'}
-        <div class="mb-3 flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between" role="alert"><span>{alertRules.error}</span><button class="ui-button ui-button--sm ui-button--secondary border-red-200 text-red-700" type="button" onclick={loadAlertRules}>Retry</button></div>
+      {#if (alertRules.error || alertRuleTemplates.error) && !ruleModalOpen && deleteTarget?.type !== 'rule'}
+        <div class="mb-3 flex flex-col gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between" role="alert"><span>{alertRules.error || alertRuleTemplates.error}</span><button class="ui-button ui-button--sm ui-button--secondary border-red-200 text-red-700" type="button" onclick={refreshAlerting}>Retry</button></div>
       {/if}
       <div class="ui-table-shell">
         <table class="ui-table ui-table--stacked min-w-[1040px]">
@@ -568,18 +624,51 @@
   <div class="ui-modal-backdrop ui-modal-backdrop--top" role="presentation">
     <div class="ui-modal-panel ui-modal-panel--xl" aria-modal="true" aria-labelledby="alert-rule-dialog-title" role="dialog">
       <form onsubmit={saveRule}>
-      <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4"><div><h2 id="alert-rule-dialog-title" class="text-lg font-semibold text-[#0d0d0d]">{ruleEditingId ? 'Edit notification rule' : 'Add notification rule'}</h2><p class="mt-1 text-sm text-[#6e6e6e]">All populated event fields are exact-match filters.</p></div><button class="ui-button ui-button--icon ui-button--secondary" type="button" disabled={alertRules.saving} onclick={closeRuleModal} aria-label="Close notification rule modal" title="Close"><X class="size-4" aria-hidden="true" /></button></div>
-      <div class="mt-5 grid gap-5">
-        <div class="grid gap-4 sm:grid-cols-2">
-          <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Name<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.name} maxlength="128" required /></label>
-          <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Delivery action<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.actionId} required>{#each alertActions.items as action}<option value={action.id}>{action.name}{action.enabled ? '' : ' (disabled)'}</option>{/each}</select></label>
+        <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
+          <div>
+            <h2 id="alert-rule-dialog-title" class="text-lg font-semibold text-[#0d0d0d]">{ruleEditingId ? 'Edit notification rule' : 'Add notification rule'}</h2>
+            <p class="mt-1 text-sm text-[#6e6e6e]">All populated event fields are exact-match filters.</p>
+          </div>
+          <button class="ui-button ui-button--icon ui-button--secondary" type="button" disabled={ruleSaveBusy} onclick={closeRuleModal} aria-label="Close notification rule modal" title="Close"><X class="size-4" aria-hidden="true" /></button>
         </div>
-        <div><h3 class="text-sm font-semibold text-[#0d0d0d]">Event filters</h3><div class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Category<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.category}><option value="">Any category</option><option value="audit">Audit</option><option value="security">Security</option><option value="oauth">OAuth</option><option value="scheduler">Scheduler</option><option value="runtime">Runtime</option></select></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Severity<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.severity}><option value="">Any severity</option><option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option></select></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Event action<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.eventAction} placeholder="provider_account.tested" /></label></div></div>
-        <div><h3 class="text-sm font-semibold text-[#0d0d0d]">Threshold and cooldown</h3><div class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Match count<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="1" max="1024" step="1" bind:value={ruleDraft.aggregationCount} required /></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Window (seconds)<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" max="86400" step="1" bind:value={ruleDraft.aggregationWindowSeconds} required /></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Cooldown (seconds)<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" max="604800" step="1" bind:value={ruleDraft.cooldownSeconds} required /></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Deduplication scope<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.deduplicationScope}><option value="rule">Rule</option><option value="target">Event target</option></select></label></div></div>
-        <div class="grid gap-3 border-t border-[#ededed] pt-4"><label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]"><input class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]" type="checkbox" bind:checked={ruleDraft.notifyRecovery} />Send recovery notification</label>{#if ruleDraft.notifyRecovery}<label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Recovery event action<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.recoveryAction} placeholder="provider_account.recovered" required /></label>{/if}<label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]"><input class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]" type="checkbox" bind:checked={ruleDraft.enabled} />Enabled</label></div>
-        {#if ruleFormError || alertRules.error}<p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{ruleFormError || alertRules.error}</p>{/if}
-      </div>
-      <div class="ui-modal-actions"><button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={alertRules.saving} onclick={closeRuleModal}>Cancel</button><button class="ui-button ui-button--sm ui-button--primary" type="submit" disabled={alertRules.saving}>{alertRules.saving ? 'Saving' : 'Save'}</button></div>
+        <div class="mt-5 grid gap-5">
+          {#if !ruleEditingId}
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Starting point<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" value={ruleStartingPoint} onchange={changeRuleStartingPoint}><option value="custom">Custom</option><option value="template">Template</option></select></label>
+              {#if ruleStartingPoint === 'template'}
+                <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Template<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={selectedRuleTemplateKey} disabled={alertRuleTemplates.loading || alertRuleTemplates.items.length === 0} required><option value="" disabled>{alertRuleTemplates.loading ? 'Loading templates' : 'Select template'}</option>{#each alertRuleTemplates.items as template}<option value={template.key}>{template.name}</option>{/each}</select></label>
+                <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Delivery action<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.actionId} required>{#each alertActions.items as action}<option value={action.id}>{action.name}{action.enabled ? '' : ' (disabled)'}</option>{/each}</select></label>
+              {/if}
+            </div>
+          {/if}
+
+          {#if ruleEditingId || ruleStartingPoint === 'custom'}
+            <div class="grid gap-4 sm:grid-cols-2">
+              <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Name<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.name} maxlength="128" required /></label>
+              <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Delivery action<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.actionId} required>{#each alertActions.items as action}<option value={action.id}>{action.name}{action.enabled ? '' : ' (disabled)'}</option>{/each}</select></label>
+            </div>
+            <div><h3 class="text-sm font-semibold text-[#0d0d0d]">Event filters</h3><div class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Category<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.category}><option value="">Any category</option><option value="audit">Audit</option><option value="security">Security</option><option value="oauth">OAuth</option><option value="scheduler">Scheduler</option><option value="runtime">Runtime</option></select></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Severity<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.severity}><option value="">Any severity</option><option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option></select></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Event action<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.eventAction} placeholder="provider_account.tested" /></label></div></div>
+            <div><h3 class="text-sm font-semibold text-[#0d0d0d]">Threshold and cooldown</h3><div class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Match count<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="1" max="1024" step="1" bind:value={ruleDraft.aggregationCount} required /></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Window (seconds)<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" max="86400" step="1" bind:value={ruleDraft.aggregationWindowSeconds} required /></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Cooldown (seconds)<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" type="number" min="0" max="604800" step="1" bind:value={ruleDraft.cooldownSeconds} required /></label><label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Deduplication scope<select class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.deduplicationScope}><option value="rule">Rule</option><option value="target">Event target</option></select></label></div></div>
+            <div class="grid gap-3 border-t border-[#ededed] pt-4"><label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]"><input class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]" type="checkbox" bind:checked={ruleDraft.notifyRecovery} />Send recovery notification</label>{#if ruleDraft.notifyRecovery}<label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">Recovery event action<input class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]" bind:value={ruleDraft.recoveryAction} placeholder="provider_account.recovered" required /></label>{/if}<label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]"><input class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]" type="checkbox" bind:checked={ruleDraft.enabled} />Enabled</label></div>
+          {:else if selectedRuleTemplate}
+            <div>
+              <h3 class="text-sm font-semibold text-[#0d0d0d]">Configuration</h3>
+              <dl class="mt-3 grid gap-x-6 gap-y-4 border-y border-[#ededed] py-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Trigger</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRuleTemplate.eventAction}</dd></div>
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Filters</dt><dd class="mt-1 text-[#0d0d0d]">{selectedRuleTemplate.category} / {selectedRuleTemplate.severity}</dd></div>
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Threshold</dt><dd class="mt-1 text-[#0d0d0d]">{selectedRuleTemplate.aggregationCount} in {durationLabel(selectedRuleTemplate.aggregationWindowSeconds)}</dd></div>
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Cooldown</dt><dd class="mt-1 text-[#0d0d0d]">{durationLabel(selectedRuleTemplate.cooldownSeconds)}</dd></div>
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Scope</dt><dd class="mt-1 capitalize text-[#0d0d0d]">{selectedRuleTemplate.deduplicationScope}</dd></div>
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Initial status</dt><dd class="mt-1 text-[#0d0d0d]">{selectedRuleTemplate.enabled ? 'Enabled' : 'Disabled'}</dd></div>
+                <div class="sm:col-span-2 lg:col-span-3"><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Recovery</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRuleTemplate.notifyRecovery ? selectedRuleTemplate.recoveryAction : 'Off'}</dd></div>
+              </dl>
+            </div>
+          {:else if !alertRuleTemplates.loading}
+            <p class="text-sm text-[#6e6e6e]">No rule templates available.</p>
+          {/if}
+          {#if ruleFormError || alertRules.error || alertRuleTemplates.error}<p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{ruleFormError || alertRules.error || alertRuleTemplates.error}</p>{/if}
+        </div>
+        <div class="ui-modal-actions"><button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={ruleSaveBusy} onclick={closeRuleModal}>Cancel</button><button class="ui-button ui-button--sm ui-button--primary" type="submit" disabled={ruleSaveBusy}>{ruleSaveBusy ? (alertRuleTemplates.installingKey ? 'Installing' : 'Saving') : 'Save'}</button></div>
       </form>
     </div>
   </div>

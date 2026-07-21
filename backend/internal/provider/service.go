@@ -81,6 +81,8 @@ func oauthRefreshIntent(account Account, trigger RefreshTrigger, succeeded bool,
 	outcome := systemevent.OutcomeFailure
 	if trigger == RefreshTriggerManual {
 		action = systemevent.ActionOAuthRefreshManualFailed
+	} else if !succeeded && trigger == RefreshTriggerModelTest {
+		action = systemevent.ActionOAuthRefreshDiagnosticFailed
 	}
 	if succeeded {
 		severity = systemevent.SeverityInfo

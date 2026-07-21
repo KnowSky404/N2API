@@ -321,6 +321,70 @@ func (r *AlertingRepository) CreateRule(ctx context.Context, input alerting.Rule
 	return created, nil
 }
 
+func (r *AlertingRepository) InstallRuleTemplate(ctx context.Context, input alerting.RuleCreate) (alerting.Rule, bool, error) {
+	rule := input.Rule
+	if rule.TemplateKey == "" {
+		return alerting.Rule{}, false, alerting.ErrInvalidInput
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return alerting.Rule{}, false, fmt.Errorf("begin alert rule template install: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	existing, err := scanAlertRule(tx.QueryRow(ctx, `
+		SELECT `+alertRuleColumnsSQL+`
+		FROM alert_rules
+		WHERE template_key = $1
+		FOR UPDATE
+	`, rule.TemplateKey))
+	if err == nil {
+		return existing, false, nil
+	}
+	if err != pgx.ErrNoRows {
+		return alerting.Rule{}, false, fmt.Errorf("find installed alert rule template: %w", err)
+	}
+	if err := lockAlertAction(ctx, tx, rule.ActionID); err != nil {
+		return alerting.Rule{}, false, err
+	}
+
+	created, err := scanAlertRule(tx.QueryRow(ctx, `
+		INSERT INTO alert_rules (
+			template_key, name, action_id, enabled, category, severity, event_action,
+			recovery_action, aggregation_count, aggregation_window_seconds,
+			cooldown_seconds, deduplication_scope, notify_recovery
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT (template_key) WHERE template_key <> '' DO NOTHING
+		RETURNING `+alertRuleColumnsSQL,
+		rule.TemplateKey, rule.Name, rule.ActionID, rule.Enabled, rule.Category,
+		rule.Severity, rule.EventAction, rule.RecoveryAction, rule.AggregationCount,
+		rule.AggregationWindowSeconds, rule.CooldownSeconds,
+		rule.DeduplicationScope, rule.NotifyRecovery,
+	))
+	if err == pgx.ErrNoRows {
+		existing, err := scanAlertRule(tx.QueryRow(ctx, `
+			SELECT `+alertRuleColumnsSQL+`
+			FROM alert_rules
+			WHERE template_key = $1
+			FOR UPDATE
+		`, rule.TemplateKey))
+		if err != nil {
+			return alerting.Rule{}, false, fmt.Errorf("load concurrently installed alert rule template: %w", err)
+		}
+		return existing, false, nil
+	}
+	if err != nil {
+		return alerting.Rule{}, false, fmt.Errorf("install alert rule template: %w", err)
+	}
+	if err := insertIntentSystemEvent(ctx, tx, alertRuleTarget(created), nil); err != nil {
+		return alerting.Rule{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return alerting.Rule{}, false, fmt.Errorf("commit alert rule template install: %w", err)
+	}
+	return created, true, nil
+}
+
 func (r *AlertingRepository) UpdateRule(ctx context.Context, id int64, input alerting.RuleUpdate) (alerting.Rule, error) {
 	rule := input.Rule
 	tx, err := r.pool.Begin(ctx)
@@ -421,14 +485,14 @@ func (r *AlertingRepository) ListRules(ctx context.Context) ([]alerting.Rule, er
 	return rules, nil
 }
 
-const alertRuleColumnsSQL = `id, name, action_id, enabled, category, severity,
+const alertRuleColumnsSQL = `id, template_key, name, action_id, enabled, category, severity,
 	event_action, recovery_action, aggregation_count, aggregation_window_seconds,
 	cooldown_seconds, deduplication_scope, notify_recovery, created_at, updated_at`
 
 func scanAlertRule(row rowScanner) (alerting.Rule, error) {
 	var rule alerting.Rule
 	err := row.Scan(
-		&rule.ID, &rule.Name, &rule.ActionID, &rule.Enabled, &rule.Category, &rule.Severity,
+		&rule.ID, &rule.TemplateKey, &rule.Name, &rule.ActionID, &rule.Enabled, &rule.Category, &rule.Severity,
 		&rule.EventAction, &rule.RecoveryAction, &rule.AggregationCount,
 		&rule.AggregationWindowSeconds, &rule.CooldownSeconds,
 		&rule.DeduplicationScope, &rule.NotifyRecovery, &rule.CreatedAt, &rule.UpdatedAt,

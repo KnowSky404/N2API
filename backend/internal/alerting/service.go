@@ -173,6 +173,7 @@ func (service *Service) FinalizeActionTest(ctx context.Context, attempt ActionTe
 
 func (service *Service) CreateRule(ctx context.Context, input Rule) (Rule, error) {
 	input.ID = 0
+	input.TemplateKey = ""
 	input.Name = strings.TrimSpace(input.Name)
 	input.CreatedAt = time.Time{}
 	input.UpdatedAt = time.Time{}
@@ -192,6 +193,7 @@ func (service *Service) UpdateRule(ctx context.Context, id int64, input Rule, ex
 		return Rule{}, ErrInvalidInput
 	}
 	input.ID = 0
+	input.TemplateKey = ""
 	input.Name = strings.TrimSpace(input.Name)
 	input.CreatedAt = time.Time{}
 	input.UpdatedAt = time.Time{}
@@ -204,6 +206,23 @@ func (service *Service) UpdateRule(ctx context.Context, id int64, input Rule, ex
 		return Rule{}, repositoryError(err)
 	}
 	return rule, nil
+}
+
+func (service *Service) InstallRuleTemplate(ctx context.Context, key string, actionID int64) (Rule, bool, error) {
+	template, ok := ruleTemplate(key)
+	if !ok || actionID <= 0 {
+		return Rule{}, false, ErrInvalidInput
+	}
+	rule := template.rule(actionID)
+	if err := rule.validate(); err != nil {
+		return Rule{}, false, err
+	}
+	ctx = withAuditIntent(ctx, systemevent.ActionAlertRuleCreated, "alert_rule")
+	installed, created, err := service.repository.InstallRuleTemplate(ctx, RuleCreate{Rule: rule})
+	if err != nil {
+		return Rule{}, false, repositoryError(err)
+	}
+	return installed, created, nil
 }
 
 func (service *Service) DeleteRule(ctx context.Context, id int64) error {

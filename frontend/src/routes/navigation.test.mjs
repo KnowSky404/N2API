@@ -248,6 +248,12 @@ test('alerts route manages redacted delivery actions and exact-match rules', () 
   assert.match(alertingPage, /Enter a new destination when changing the adapter type/);
   assert.match(alertingPage, /placeholder="provider_account\.tested"/);
   assert.doesNotMatch(alertingPage, /provider_account\.test_failed/);
+  assert.match(alertingPage, />Starting point<select/);
+  assert.match(alertingPage, /<option value="custom">Custom<\/option><option value="template">Template<\/option>/);
+  assert.match(alertingPage, /bind:value=\{selectedRuleTemplateKey\}/);
+  assert.match(alertingPage, /ruleEditingId \|\| ruleStartingPoint === 'custom'/);
+  assert.match(alertingPage, /selectedRuleTemplate\.eventAction/);
+  assert.match(alertingPage, /selectedRuleTemplate\.enabled \? 'Enabled' : 'Disabled'/);
   assert.match(alertingPage, /Close delivery action modal/);
   assert.match(alertingPage, /Close notification rule modal/);
   assert.match(alertingPage, /Close delete alert dialog/);
@@ -261,17 +267,21 @@ test('alerts route manages redacted delivery actions and exact-match rules', () 
   assert.match(actionSave, /destination:\s*''/);
   assert.doesNotMatch(actionSave, /closeActionModal|actionModalOpen = false/);
   assert.match(ruleSave, /expectedUpdatedAt:\s*ruleDraft\.expectedUpdatedAt/);
+  assert.match(ruleSave, /installAlertRuleTemplate\(selectedRuleTemplateKey, Number\(ruleDraft\.actionId\)\)/);
+  assert.match(ruleSave, /openEditRule\(installed\.rule\)/);
   assert.doesNotMatch(ruleSave, /closeRuleModal|ruleModalOpen = false/);
   assert.match(alertingPage, /event\.key !== 'Escape'/);
   assert.doesNotMatch(alertingPage, /event\.target === event\.currentTarget/);
 
-  for (const state of ['alertActions', 'alertRules', 'alertActionTests']) {
+  for (const state of ['alertActions', 'alertRules', 'alertRuleTemplates', 'alertActionTests']) {
     assert.match(adminState, new RegExp(`export const ${state} = \\$state`));
   }
-  for (const method of ['loadAlertActions', 'loadAlertRules', 'createAlertAction', 'updateAlertAction', 'deleteAlertAction', 'testAlertAction', 'createAlertRule', 'updateAlertRule', 'deleteAlertRule']) {
+  for (const method of ['loadAlertActions', 'loadAlertRules', 'loadAlertRuleTemplates', 'installAlertRuleTemplate', 'createAlertAction', 'updateAlertAction', 'deleteAlertAction', 'testAlertAction', 'createAlertRule', 'updateAlertRule', 'deleteAlertRule']) {
     assert.match(adminState, new RegExp(`export async function ${method}`));
   }
   assert.match(adminState, /\/api\/admin\/alert-actions\/\$\{id\}\/test/);
+  assert.match(adminState, /\/api\/admin\/alert-rule-templates/);
+  assert.match(adminState, /JSON\.stringify\(\{ actionId \}\)/);
   assert.match(adminState, /JSON\.stringify\(\{ expectedUpdatedAt \}\)/);
   assert.match(adminState, /Test rate limit reached\. Try again in \$\{retryAfter\} seconds/);
   assert.match(adminState, /This action changed on the server/);

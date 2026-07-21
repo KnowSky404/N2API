@@ -115,6 +115,7 @@ const (
 	ActionOAuthRefreshManualFailed           Action = "oauth.refresh.manual.failed"
 	ActionOAuthRefreshAutomaticSucceeded     Action = "oauth.refresh.automatic.succeeded"
 	ActionOAuthRefreshAutomaticFailed        Action = "oauth.refresh.automatic.failed"
+	ActionOAuthRefreshDiagnosticFailed       Action = "oauth.refresh.diagnostic.failed"
 	ActionSchedulerProviderAutoTestCompleted Action = "scheduler.provider_account_auto_test.completed"
 	ActionSchedulerAPIKeyPurgeCompleted      Action = "scheduler.api_key_purge.completed"
 	ActionSchedulerEventRetentionCompleted   Action = "scheduler.system_event_retention.completed"
@@ -436,7 +437,7 @@ var knownActions = map[Action]struct{}{
 	ActionProviderAccountBatchPaused: {}, ActionProviderAccountBatchStatusReset: {}, ActionProviderAccountBatchTested: {},
 	ActionProviderAccountBatchRefreshed: {}, ActionProviderAccountBatchModelsReplaced: {},
 	ActionOAuthConnectStarted: {}, ActionOAuthConnectFailed: {}, ActionOAuthCallbackCompleted: {}, ActionOAuthCallbackFailed: {}, ActionOAuthRefreshManualSucceeded: {}, ActionOAuthRefreshManualFailed: {},
-	ActionOAuthRefreshAutomaticSucceeded: {}, ActionOAuthRefreshAutomaticFailed: {}, ActionSchedulerProviderAutoTestCompleted: {},
+	ActionOAuthRefreshAutomaticSucceeded: {}, ActionOAuthRefreshAutomaticFailed: {}, ActionOAuthRefreshDiagnosticFailed: {}, ActionSchedulerProviderAutoTestCompleted: {},
 	ActionSchedulerAPIKeyPurgeCompleted: {}, ActionSchedulerEventRetentionCompleted: {},
 	ActionSchedulerRequestLogRetentionSucceeded: {}, ActionSchedulerRequestLogRetentionFailed: {}, ActionProviderAccountCircuitOpened: {},
 	ActionProviderAccountRateLimited: {}, ActionProviderAccountExpired: {}, ActionProviderAccountRecovered: {},
