@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 4 {
-		t.Fatalf("RuleTemplates count = %d, want 4", len(templates))
+	if len(templates) != 5 {
+		t.Fatalf("RuleTemplates count = %d, want 5", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -613,6 +613,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		expiredTemplate.DeduplicationScope != DeduplicationScopeTarget || !expiredTemplate.NotifyRecovery {
 		t.Fatalf("expired template = %+v", expiredTemplate)
 	}
+	circuitTemplate := templates[4]
+	if circuitTemplate.Name != "Provider account circuit open" || circuitTemplate.Enabled ||
+		circuitTemplate.Category != systemevent.CategoryRuntime || circuitTemplate.Severity != systemevent.SeverityWarning ||
+		circuitTemplate.EventAction != systemevent.ActionProviderAccountCircuitOpened || circuitTemplate.RecoveryAction != systemevent.ActionProviderAccountRecovered ||
+		circuitTemplate.AggregationCount != 1 || circuitTemplate.AggregationWindowSeconds != 0 || circuitTemplate.CooldownSeconds != 3600 ||
+		circuitTemplate.DeduplicationScope != DeduplicationScopeTarget || !circuitTemplate.NotifyRecovery {
+		t.Fatalf("circuit template = %+v", circuitTemplate)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -642,6 +650,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	expiredAgain, created, err := service.InstallRuleTemplate(context.Background(), ProviderAccountExpiredTemplateKey, 19)
 	if err != nil || created || expiredAgain.ID != expiredRule.ID || expiredAgain.ActionID != 17 {
 		t.Fatalf("expired reinstall = %+v, %v, %v", expiredAgain, created, err)
+	}
+	circuitRule, created, err := service.InstallRuleTemplate(context.Background(), ProviderAccountCircuitOpenTemplateKey, 23)
+	if err != nil || !created || circuitRule.TemplateKey != ProviderAccountCircuitOpenTemplateKey || circuitRule.ActionID != 23 || circuitRule.Enabled {
+		t.Fatalf("circuit InstallRuleTemplate = %+v, %v, %v", circuitRule, created, err)
+	}
+	circuitAgain, created, err := service.InstallRuleTemplate(context.Background(), ProviderAccountCircuitOpenTemplateKey, 29)
+	if err != nil || created || circuitAgain.ID != circuitRule.ID || circuitAgain.ActionID != 23 {
+		t.Fatalf("circuit reinstall = %+v, %v, %v", circuitAgain, created, err)
 	}
 	for _, input := range []struct {
 		key      string

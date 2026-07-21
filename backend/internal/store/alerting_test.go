@@ -722,6 +722,16 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if err != nil || !created || expiredRule.ID == edited.ID || expiredRule.ID == retentionRule.ID || expiredRule.ID == autoTestRule.ID || expiredRule.TemplateKey != expiredTemplate.TemplateKey || expiredRule.ActionID != secondAction.ID {
 		t.Fatalf("fourth template install = %+v, created=%t, err=%v", expiredRule, created, err)
 	}
+	circuitTemplate := expiredTemplate
+	circuitTemplate.TemplateKey = "provider-account-circuit-open-v1"
+	circuitTemplate.Name = "Provider account circuit open"
+	circuitTemplate.ActionID = firstAction.ID
+	circuitTemplate.EventAction = systemevent.ActionProviderAccountCircuitOpened
+	circuitTemplate.CooldownSeconds = 3600
+	circuitRule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: circuitTemplate})
+	if err != nil || !created || circuitRule.ID == edited.ID || circuitRule.ID == retentionRule.ID || circuitRule.ID == autoTestRule.ID || circuitRule.ID == expiredRule.ID || circuitRule.TemplateKey != circuitTemplate.TemplateKey || circuitRule.ActionID != firstAction.ID {
+		t.Fatalf("fifth template install = %+v, created=%t, err=%v", circuitRule, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `

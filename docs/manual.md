@@ -537,6 +537,13 @@ target. OAuth reauthorization and API-upstream configuration edits preserve the
 current health state, so they do not recover a firing rule. Recovery follows a
 confirmed 2xx gateway/account-probe response or an explicit **Reset local
 status** operator override.
+The `provider-account-circuit-open-v1` template matches the first
+`provider_account.circuit.opened` Runtime warning for each Provider account,
+uses a one-hour cooldown, and can notify when that same account emits
+`provider_account.recovered`. It also starts disabled and uses account-target
+deduplication. Circuit-open state remains active through credential or proxy
+edits; a confirmed 2xx gateway/account-probe response or explicit **Reset local
+status** operator override supplies the recovery event.
 
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or

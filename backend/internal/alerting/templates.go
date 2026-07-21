@@ -3,10 +3,11 @@ package alerting
 import "github.com/KnowSky404/N2API/backend/internal/systemevent"
 
 const (
-	OAuthRefreshRepeatedTemplateKey      = "oauth-refresh-repeated-v1"
-	RequestLogRetentionFailedTemplateKey = "request-log-retention-failed-v1"
-	ProviderAutoTestFailedTemplateKey    = "provider-auto-test-failed-v1"
-	ProviderAccountExpiredTemplateKey    = "provider-account-expired-v1"
+	OAuthRefreshRepeatedTemplateKey       = "oauth-refresh-repeated-v1"
+	RequestLogRetentionFailedTemplateKey  = "request-log-retention-failed-v1"
+	ProviderAutoTestFailedTemplateKey     = "provider-auto-test-failed-v1"
+	ProviderAccountExpiredTemplateKey     = "provider-account-expired-v1"
+	ProviderAccountCircuitOpenTemplateKey = "provider-account-circuit-open-v1"
 )
 
 var ruleTemplateCatalog = []RuleTemplate{
@@ -59,6 +60,19 @@ var ruleTemplateCatalog = []RuleTemplate{
 		RecoveryAction:     systemevent.ActionProviderAccountRecovered,
 		AggregationCount:   1,
 		CooldownSeconds:    86400,
+		DeduplicationScope: DeduplicationScopeTarget,
+		NotifyRecovery:     true,
+	},
+	{
+		Key:                ProviderAccountCircuitOpenTemplateKey,
+		Name:               "Provider account circuit open",
+		Enabled:            false,
+		Category:           systemevent.CategoryRuntime,
+		Severity:           systemevent.SeverityWarning,
+		EventAction:        systemevent.ActionProviderAccountCircuitOpened,
+		RecoveryAction:     systemevent.ActionProviderAccountRecovered,
+		AggregationCount:   1,
+		CooldownSeconds:    3600,
 		DeduplicationScope: DeduplicationScopeTarget,
 		NotifyRecovery:     true,
 	},
