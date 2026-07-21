@@ -97,3 +97,11 @@ func TestSessionRevocationActionsAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestRequestLogExportLifecycleActionsAreKnown(t *testing.T) {
+	for _, action := range []Action{ActionRequestLogExportAccepted, ActionRequestLogExportCompleted, ActionRequestLogExported} {
+		if !IsKnownAction(action) {
+			t.Fatalf("action %q is not registered", action)
+		}
+	}
+}

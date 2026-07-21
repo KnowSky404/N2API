@@ -23,7 +23,7 @@ const (
 	defaultModel                  = "gpt-4.1"
 	maxModels                     = 100
 	maxModelNameLen               = 128
-	maxRequestLogQueryLen         = 200
+	maxRequestLogQueryLen         = MaxRequestLogQueryLength
 	maxSessionCreatedIPBytes      = 64
 	maxSessionUserAgentBytes      = 256
 	sessionTouchInterval          = time.Minute
@@ -38,6 +38,10 @@ const (
 )
 
 const DefaultRequestLogRetentionBatchSize = 1000
+const MaxRequestLogExportRows = 1_000_000
+const MaxRequestLogQueryLength = 200
+const MaxRequestLogFilterValueLength = 100
+const MaxRequestLogRoutingPoolChainLength = 200
 
 var (
 	ErrNotFound     = errors.New("not found")
@@ -188,10 +192,16 @@ type RequestLogPage struct {
 	HasMore    bool         `json:"hasMore"`
 }
 
+type RequestLogExportResult struct {
+	RowCount     int  `json:"rowCount"`
+	LimitReached bool `json:"limitReached"`
+}
+
 type RequestLogFilter struct {
 	Limit             int
 	Cursor            string
 	Since             time.Time
+	Before            time.Time
 	RequestID         string
 	Query             string
 	StatusClass       string
@@ -373,6 +383,7 @@ type Repository interface {
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, filter RequestLogFilter) (RequestLogPage, error)
+	StreamRequestLogs(ctx context.Context, filter RequestLogFilter, maxRows int, visit func(RequestLog) error) (RequestLogExportResult, error)
 	TryAcquireRequestLogRetention(ctx context.Context) (RequestLogRetentionLease, bool, error)
 	GetRequestLogRetentionStats(ctx context.Context, before time.Time) (RequestLogRetentionStats, error)
 	GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (UsageSummary, error)
@@ -1002,10 +1013,38 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	if filter.Limit > 200 {
 		filter.Limit = 200
 	}
+	filter, err := normalizeRequestLogFilter(filter)
+	if err != nil {
+		return RequestLogPage{}, err
+	}
+	return s.repo.ListRequestLogs(ctx, filter)
+}
+
+func (s *Service) StreamRequestLogs(ctx context.Context, filter RequestLogFilter, maxRows int, visit func(RequestLog) error) (RequestLogExportResult, error) {
+	if maxRows <= 0 || maxRows > MaxRequestLogExportRows || visit == nil {
+		return RequestLogExportResult{}, ErrInvalidInput
+	}
+	filter, err := normalizeRequestLogFilter(filter)
+	if err != nil || filter.Cursor != "" || filter.Since.IsZero() || filter.Before.IsZero() {
+		return RequestLogExportResult{}, ErrInvalidInput
+	}
+	return s.repo.StreamRequestLogs(ctx, filter, maxRows, visit)
+}
+
+func normalizeRequestLogFilter(filter RequestLogFilter) (RequestLogFilter, error) {
 	filter.Cursor = strings.TrimSpace(filter.Cursor)
 	filter.Query = strings.TrimSpace(filter.Query)
 	if len(filter.Cursor) > 1024 || len(filter.Query) > maxRequestLogQueryLen {
-		return RequestLogPage{}, ErrInvalidInput
+		return RequestLogFilter{}, ErrInvalidInput
+	}
+	if !filter.Since.IsZero() {
+		filter.Since = filter.Since.UTC()
+	}
+	if !filter.Before.IsZero() {
+		filter.Before = filter.Before.UTC()
+	}
+	if !filter.Since.IsZero() && !filter.Before.IsZero() && !filter.Since.Before(filter.Before) {
+		return RequestLogFilter{}, ErrInvalidInput
 	}
 	filter.RequestID = strings.TrimSpace(filter.RequestID)
 	filter.Model = strings.TrimSpace(filter.Model)
@@ -1014,8 +1053,8 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	filter.UsageSource = strings.TrimSpace(filter.UsageSource)
 	filter.RoutingPoolError = strings.TrimSpace(filter.RoutingPoolError)
 	filter.RoutingPoolChain = strings.TrimSpace(filter.RoutingPoolChain)
-	if len(filter.RequestID) > 100 || len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.Error) > 100 || len(filter.UsageSource) > 100 || len(filter.RoutingPoolError) > 100 || len(filter.RoutingPoolChain) > 200 {
-		return RequestLogPage{}, ErrInvalidInput
+	if len(filter.RequestID) > MaxRequestLogFilterValueLength || len(filter.Model) > MaxRequestLogFilterValueLength || len(filter.SessionID) > MaxRequestLogFilterValueLength || len(filter.Error) > MaxRequestLogFilterValueLength || len(filter.UsageSource) > MaxRequestLogFilterValueLength || len(filter.RoutingPoolError) > MaxRequestLogFilterValueLength || len(filter.RoutingPoolChain) > MaxRequestLogRoutingPoolChainLength {
+		return RequestLogFilter{}, ErrInvalidInput
 	}
 	filter.StatusClass = strings.TrimSpace(filter.StatusClass)
 	if filter.StatusClass == "" {
@@ -1024,21 +1063,21 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	switch filter.StatusClass {
 	case RequestLogStatusAll, RequestLogStatusSuccess, RequestLogStatusClientError, RequestLogStatusServerError:
 	default:
-		return RequestLogPage{}, ErrInvalidInput
+		return RequestLogFilter{}, ErrInvalidInput
 	}
 	if filter.StatusCode != 0 && (filter.StatusCode < 100 || filter.StatusCode > 599) {
-		return RequestLogPage{}, ErrInvalidInput
+		return RequestLogFilter{}, ErrInvalidInput
 	}
 	if filter.ProviderAccountID < 0 {
-		return RequestLogPage{}, ErrInvalidInput
+		return RequestLogFilter{}, ErrInvalidInput
 	}
 	if filter.RoutingPoolID < 0 {
-		return RequestLogPage{}, ErrInvalidInput
+		return RequestLogFilter{}, ErrInvalidInput
 	}
 	if filter.ClientKeyID < 0 {
-		return RequestLogPage{}, ErrInvalidInput
+		return RequestLogFilter{}, ErrInvalidInput
 	}
-	return s.repo.ListRequestLogs(ctx, filter)
+	return filter, nil
 }
 
 func (s *Service) GetUsageSummary(ctx context.Context, rangeName, groupBy string) (UsageSummary, error) {

@@ -75,6 +75,8 @@ const (
 	ActionRoutingPoolAccountsReplaced        Action = "routing_pool.accounts.replaced"
 	ActionRequestLogCleanupCompleted         Action = "request_log.cleanup.completed"
 	ActionRequestLogExported                 Action = "request_log.exported"
+	ActionRequestLogExportAccepted           Action = "request_log.export.accepted"
+	ActionRequestLogExportCompleted          Action = "request_log.export.completed"
 	ActionGatewaySettingsUpdated             Action = "gateway_settings.updated"
 	ActionModelSettingsUpdated               Action = "model_settings.updated"
 	ActionUsagePricingUpdated                Action = "usage_pricing.updated"
@@ -414,6 +416,7 @@ var knownActions = map[Action]struct{}{
 	ActionAPIKeyModelPolicyUpdated: {}, ActionAPIKeyLimitsUpdated: {}, ActionAPIKeyBudgetsUpdated: {}, ActionAPIKeyRoutingPoolUpdated: {},
 	ActionAPIKeyRevoked: {}, ActionAPIKeyDeleted: {}, ActionAPIKeyPurged: {}, ActionRoutingPoolCreated: {}, ActionRoutingPoolUpdated: {},
 	ActionRoutingPoolDeleted: {}, ActionRoutingPoolAccountsReplaced: {}, ActionRequestLogCleanupCompleted: {}, ActionRequestLogExported: {},
+	ActionRequestLogExportAccepted: {}, ActionRequestLogExportCompleted: {},
 	ActionGatewaySettingsUpdated: {}, ActionModelSettingsUpdated: {}, ActionUsagePricingUpdated: {}, ActionUsagePricingSynced: {},
 	ActionUsagePricingShutdownRemoved: {}, ActionUsagePricingUpcomingIgnored: {}, ActionFingerprintProfileCreated: {}, ActionFingerprintProfileUpdated: {},
 	ActionFingerprintProfileDeleted: {}, ActionErrorPassthroughRuleCreated: {}, ActionErrorPassthroughRuleUpdated: {}, ActionErrorPassthroughRuleDeleted: {},

@@ -603,6 +603,8 @@ The authenticated `GET /api/admin/request-logs` endpoint returns `logs`, `hasMor
 
 The Request Logs page keeps active filters in the URL and loads 50 rows at a time. Use **Load older** to append the next cursor page without replacing rows already under review. Applying or clearing filters starts a fresh first page; if a saved cursor is no longer valid, the page also recovers by restarting from the current URL-backed filters.
 
+Request Log CSV and JSONL exports stream the currently applied filters over an explicit half-open UTC range (`since <= created_at < before`) and do not accumulate the result in application memory. Select a bounded date range before using those formats. Each export writes at most `N2API_REQUEST_LOG_EXPORT_MAX_ROWS` rows and runs for at most `N2API_REQUEST_LOG_EXPORT_TIMEOUT_SECONDS`; defaults are 100000 rows and 60 seconds, with valid ranges of 1000-1000000 rows and 5-300 seconds. Reaching the row limit produces a valid, explicitly truncated download and records that outcome in the export event. CSV and JSONL also offer gzip downloads. CSV text cells beginning with a spreadsheet formula marker are escaped before CSV encoding. The compatibility JSON download remains limited to 200 rows.
+
 API upstream accounts and `OPENAI_API_BASE_URL` require HTTPS by default so
 upstream API keys are not sent over plaintext HTTP. Set
 `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP

@@ -187,6 +187,8 @@ Cleanup is bounded, observable, single-run, cancellable, and restart-safe.
 
 ## Task 4: Stream Bounded CSV And JSONL Exports
 
+Status: completed locally on 2026-07-21.
+
 ### Goal
 
 Export large ranges without accumulating all rows in memory.
@@ -211,6 +213,13 @@ support CSV and JSONL with optional gzip, protect `=`, `+`, `-`, and `@` CSV
 cells, name files by UTC range, and cancel database work on disconnect. Audit
 the accepted export before body streaming and record a final outcome separately
 without recursive failure.
+
+The implementation uses one ordered `LIMIT max+1` scan and writes at most
+`max` rows. The extra row marks the download and final event as explicitly
+truncated; it does not run a second preflight scan. JSON remains a compatibility
+download with a fixed 200-row cap. CSV and JSONL use the half-open range
+`since <= created_at < before`, a bounded execution timeout, and an explicit
+export DTO so future fields are not added to downloads accidentally.
 
 ### Tests And Verification
 

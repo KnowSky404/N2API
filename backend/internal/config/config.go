@@ -38,6 +38,8 @@ type Config struct {
 	RequestLogRetentionRunnerEnabled       bool
 	RequestLogRetentionInterval            time.Duration
 	RequestLogRetentionBatchSize           int
+	RequestLogExportMaxRows                int
+	RequestLogExportTimeout                time.Duration
 	SystemEventRetentionDays               int
 	TrustedProxyCIDRs                      []netip.Prefix
 	AdminLoginThrottleEnabled              bool
@@ -58,6 +60,8 @@ const (
 	minRequestLogRetentionInterval         = 5 * time.Minute
 	maxRequestLogRetentionInterval         = 7 * 24 * time.Hour
 	defaultRequestLogRetentionBatchSize    = 1000
+	defaultRequestLogExportMaxRows         = 100000
+	defaultRequestLogExportTimeout         = 60 * time.Second
 	defaultSystemEventRetentionDays        = 365
 	defaultAdminLoginThrottleFailures      = 5
 	defaultAdminLoginThrottleMaxEntries    = 4096
@@ -173,6 +177,28 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.RequestLogRetentionBatchSize = requestLogRetentionBatchSize
+	requestLogExportMaxRows, err := parsePositiveIntWithDefault(
+		lookup("N2API_REQUEST_LOG_EXPORT_MAX_ROWS"),
+		"N2API_REQUEST_LOG_EXPORT_MAX_ROWS",
+		defaultRequestLogExportMaxRows,
+		1000,
+		1000000,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.RequestLogExportMaxRows = requestLogExportMaxRows
+	requestLogExportTimeoutSeconds, err := parsePositiveIntWithDefault(
+		lookup("N2API_REQUEST_LOG_EXPORT_TIMEOUT_SECONDS"),
+		"N2API_REQUEST_LOG_EXPORT_TIMEOUT_SECONDS",
+		int(defaultRequestLogExportTimeout/time.Second),
+		5,
+		300,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.RequestLogExportTimeout = time.Duration(requestLogExportTimeoutSeconds) * time.Second
 	retentionDays, err := parseSystemEventRetentionDays(lookup("N2API_SYSTEM_EVENT_RETENTION_DAYS"))
 	if err != nil {
 		return Config{}, err

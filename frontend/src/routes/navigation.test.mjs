@@ -618,12 +618,34 @@ test('request logs page focuses on searchable request records without a usage su
   assert.match(requestLogsPage, /Clear filters/);
 });
 
-test('request logs export links request explicit formats', () => {
+test('request logs export menu uses bounded native attachment downloads from applied filters', () => {
   assert.match(requestLogsPage, /<summary[\s\S]*Export/);
-  assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("csv"\)\}[\s\S]*>CSV<\/a>/);
-  assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("json"\)\}[\s\S]*>JSON<\/a>/);
-  assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("jsonl"\)\}[\s\S]*>JSONL<\/a>/);
-  assert.match(requestLogsPage, /appliedRequestLogFilterParams\(\)/);
+  assert.match(requestLogsPage, /requestLogs\.appliedFilterQuery !== null/);
+  assert.match(requestLogsPage, /new URLSearchParams\(requestLogs\.appliedFilterQuery \?\? ''\)/);
+  assert.match(requestLogsPage, /appliedRequestLogExportSince > 0/);
+  assert.match(requestLogsPage, /appliedRequestLogExportSince < Math\.floor\(Date\.now\(\) \/ 1000\)/);
+  assert.match(requestLogsPage, /href=\{requestLogExportEnabled\("json"\) \? exportRequestLogsURL\("json"\) : undefined\}/);
+  assert.match(requestLogsPage, /href=\{requestLogExportEnabled\("csv"\) \? exportRequestLogsURL\("csv"\) : undefined\}/);
+  assert.match(requestLogsPage, /href=\{requestLogExportEnabled\("csv"\) \? exportRequestLogsURL\("csv", true\) : undefined\}/);
+  assert.match(requestLogsPage, /href=\{requestLogExportEnabled\("jsonl"\) \? exportRequestLogsURL\("jsonl"\) : undefined\}/);
+  assert.match(requestLogsPage, /href=\{requestLogExportEnabled\("jsonl"\) \? exportRequestLogsURL\("jsonl", true\) : undefined\}/);
+  assert.match(requestLogsPage, /params\.set\('before', String\(Math\.floor\(Date\.now\(\) \/ 1000\)\)\)/);
+  assert.match(requestLogsPage, /if \(gzip\) params\.set\('gzip', '1'\)/);
+  assert.match(requestLogsPage, /if \(format === 'json'\) params\.set\('limit', '200'\)/);
+  assert.match(requestLogsPage, /function prepareRequestLogExport\(event, format, gzip = false\)/);
+  assert.match(requestLogsPage, /event\.currentTarget\.href = exportRequestLogsURL\(format, gzip\)/);
+  assert.match(requestLogsPage, /onclick=\{\(event\) => prepareRequestLogExport\(event, "jsonl", true\)\}/);
+  assert.match(requestLogsPage, /onpointerdown=\{\(event\) => prepareRequestLogExport\(event, "jsonl", true\)\}/);
+  assert.match(requestLogsPage, /oncontextmenu=\{\(event\) => prepareRequestLogExport\(event, "jsonl", true\)\}/);
+  assert.match(requestLogsPage, /aria-disabled=\{!requestLogExportEnabled\("csv"\)\}/);
+  assert.match(requestLogsPage, /class:cursor-not-allowed=\{!requestLogExportEnabled\("csv"\)\}/);
+  assert.match(requestLogsPage, /class:opacity-50=\{!requestLogExportEnabled\("csv"\)\}/);
+  assert.match(requestLogsPage, /title=\{requestLogExportTitle\("csv"\)\}/);
+  assert.match(requestLogsPage, /Wait for the current request log results to load/);
+  assert.match(requestLogsPage, /Export requires a bounded date range/);
+  assert.match(requestLogsPage, /left-0[^\"]*sm:left-auto[^\"]*sm:right-0/);
+  assert.doesNotMatch(requestLogsPage, /target="_blank"/);
+  assert.doesNotMatch(requestLogsPage, /\bfetch\(|\bBlob\b|URL\.createObjectURL/);
   assert.match(adminState, /requestLogs\.providerAccountId !== 'all'/);
   assert.match(adminState, /requestLogs\.routingPoolId !== 'all'/);
   assert.match(adminState, /requestLogs\.clientKeyId !== 'all'/);

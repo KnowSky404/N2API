@@ -223,6 +223,48 @@ func TestLoadRequestLogRetentionRunnerConfig(t *testing.T) {
 	}
 }
 
+func TestLoadRequestLogExportConfig(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	cfg, err := Load(mapLookup(base))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if cfg.RequestLogExportMaxRows != 100000 || cfg.RequestLogExportTimeout != 60*time.Second {
+		t.Fatalf("default request log export config = rows %d timeout %s", cfg.RequestLogExportMaxRows, cfg.RequestLogExportTimeout)
+	}
+
+	values := maps.Clone(base)
+	values["N2API_REQUEST_LOG_EXPORT_MAX_ROWS"] = "1000000"
+	values["N2API_REQUEST_LOG_EXPORT_TIMEOUT_SECONDS"] = "300"
+	cfg, err = Load(mapLookup(values))
+	if err != nil {
+		t.Fatalf("Load configured returned error: %v", err)
+	}
+	if cfg.RequestLogExportMaxRows != 1000000 || cfg.RequestLogExportTimeout != 300*time.Second {
+		t.Fatalf("configured request log export config = rows %d timeout %s", cfg.RequestLogExportMaxRows, cfg.RequestLogExportTimeout)
+	}
+
+	for _, test := range []struct {
+		name  string
+		value string
+	}{
+		{name: "N2API_REQUEST_LOG_EXPORT_MAX_ROWS", value: "999"},
+		{name: "N2API_REQUEST_LOG_EXPORT_MAX_ROWS", value: "1000001"},
+		{name: "N2API_REQUEST_LOG_EXPORT_TIMEOUT_SECONDS", value: "4"},
+		{name: "N2API_REQUEST_LOG_EXPORT_TIMEOUT_SECONDS", value: "301"},
+	} {
+		t.Run(test.name+"="+test.value, func(t *testing.T) {
+			invalid := maps.Clone(base)
+			invalid[test.name] = test.value
+			if _, err := Load(mapLookup(invalid)); err == nil {
+				t.Fatal("Load returned nil error")
+			}
+		})
+	}
+}
+
 func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL":               "postgres://example",

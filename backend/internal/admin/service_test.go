@@ -1056,6 +1056,92 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 }
 
+func TestStreamRequestLogsNormalizesFilterAndForwardsRows(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.logs = []RequestLog{
+		{ID: 3, RequestID: "req_3"},
+		{ID: 2, RequestID: "req_2"},
+		{ID: 1, RequestID: "req_1"},
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	since := time.Date(2026, time.July, 21, 10, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	before := since.Add(2 * time.Hour)
+	var visited []int64
+
+	result, err := service.StreamRequestLogs(context.Background(), RequestLogFilter{
+		Since:       since,
+		Before:      before,
+		Query:       "  codex  ",
+		StatusClass: "",
+		Model:       " gpt-5 ",
+	}, 2, func(log RequestLog) error {
+		visited = append(visited, log.ID)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamRequestLogs returned error: %v", err)
+	}
+	if result.RowCount != 2 || !result.LimitReached {
+		t.Fatalf("result = %+v, want two rows and limit reached", result)
+	}
+	if !slices.Equal(visited, []int64{3, 2}) {
+		t.Fatalf("visited IDs = %v, want [3 2]", visited)
+	}
+	if repo.lastStreamMaxRows != 2 || repo.lastLogFilter.Query != "codex" || repo.lastLogFilter.Model != "gpt-5" || repo.lastLogFilter.StatusClass != RequestLogStatusAll {
+		t.Fatalf("stream arguments = max %d filter %+v", repo.lastStreamMaxRows, repo.lastLogFilter)
+	}
+	if !repo.lastLogFilter.Since.Equal(since.UTC()) || !repo.lastLogFilter.Before.Equal(before.UTC()) {
+		t.Fatalf("stream range = %s to %s, want UTC %s to %s", repo.lastLogFilter.Since, repo.lastLogFilter.Before, since.UTC(), before.UTC())
+	}
+}
+
+func TestStreamRequestLogsRejectsInvalidContractBeforeRepositoryCall(t *testing.T) {
+	since := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	for _, testCase := range []struct {
+		name    string
+		filter  RequestLogFilter
+		maxRows int
+		visit   func(RequestLog) error
+	}{
+		{name: "cursor", filter: RequestLogFilter{Cursor: "opaque"}, maxRows: 10, visit: func(RequestLog) error { return nil }},
+		{name: "zero max rows", maxRows: 0, visit: func(RequestLog) error { return nil }},
+		{name: "over max rows", filter: RequestLogFilter{Since: since, Before: since.Add(time.Hour)}, maxRows: MaxRequestLogExportRows + 1, visit: func(RequestLog) error { return nil }},
+		{name: "missing range", maxRows: 10, visit: func(RequestLog) error { return nil }},
+		{name: "missing before", filter: RequestLogFilter{Since: since}, maxRows: 10, visit: func(RequestLog) error { return nil }},
+		{name: "equal bounds", filter: RequestLogFilter{Since: since, Before: since}, maxRows: 10, visit: func(RequestLog) error { return nil }},
+		{name: "reversed bounds", filter: RequestLogFilter{Since: since, Before: since.Add(-time.Second)}, maxRows: 10, visit: func(RequestLog) error { return nil }},
+		{name: "nil visitor", maxRows: 10},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo := newMemoryRepo()
+			service := NewService(repo, Config{SessionTTL: time.Hour})
+			if _, err := service.StreamRequestLogs(context.Background(), testCase.filter, testCase.maxRows, testCase.visit); !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("StreamRequestLogs error = %v, want ErrInvalidInput", err)
+			}
+			if repo.streamCalls != 0 {
+				t.Fatalf("repository stream calls = %d, want zero", repo.streamCalls)
+			}
+		})
+	}
+}
+
+func TestStreamRequestLogsPropagatesVisitorError(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.logs = []RequestLog{{ID: 1, RequestID: "req_1"}}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	wantErr := errors.New("visitor stopped")
+
+	result, err := service.StreamRequestLogs(context.Background(), RequestLogFilter{Since: time.Unix(1, 0), Before: time.Unix(2, 0)}, 10, func(RequestLog) error {
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("StreamRequestLogs error = %v, want visitor error", err)
+	}
+	if result.RowCount != 0 || result.LimitReached {
+		t.Fatalf("result = %+v, want zero successfully visited rows", result)
+	}
+}
+
 func TestGetUsageSummaryValidatesRangeAndGroup(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1747,6 +1833,8 @@ type memoryRepo struct {
 	touchErr                  error
 	logs                      []RequestLog
 	lastLogFilter             RequestLogFilter
+	lastStreamMaxRows         int
+	streamCalls               int
 	budgetUsage               map[int64]APIKeyBudgetUsage
 	routingPools              map[int64]RoutingPool
 	usageSummary              UsageSummary
@@ -2205,6 +2293,27 @@ func (r *memoryRepo) ListRequestLogs(_ context.Context, filter RequestLogFilter)
 		limit = len(r.logs)
 	}
 	return RequestLogPage{Logs: append([]RequestLog(nil), r.logs[:limit]...)}, nil
+}
+
+func (r *memoryRepo) StreamRequestLogs(ctx context.Context, filter RequestLogFilter, maxRows int, visit func(RequestLog) error) (RequestLogExportResult, error) {
+	r.streamCalls++
+	r.lastLogFilter = filter
+	r.lastStreamMaxRows = maxRows
+	result := RequestLogExportResult{}
+	for index, log := range r.logs {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if index >= maxRows {
+			result.LimitReached = true
+			break
+		}
+		if err := visit(log); err != nil {
+			return result, err
+		}
+		result.RowCount++
+	}
+	return result, nil
 }
 
 func (r *memoryRepo) TryAcquireRequestLogRetention(_ context.Context) (RequestLogRetentionLease, bool, error) {

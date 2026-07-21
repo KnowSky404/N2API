@@ -74,6 +74,11 @@ type fakeAdminService struct {
 	requestLogNextCursor string
 	requestLogFilter     admin.RequestLogFilter
 	requestLogErr        error
+	requestLogErrAfter   int
+	requestLogExportWait bool
+	requestLogStarted    chan struct{}
+	requestLogCanceled   chan struct{}
+	requestLogExportRows int
 	systemEventPage      admin.SystemEventPage
 	systemEventFilter    admin.SystemEventFilter
 	systemEventErr       error
@@ -569,6 +574,42 @@ func (s *fakeAdminService) ListRequestLogs(_ context.Context, filter admin.Reque
 		HasMore:    s.requestLogHasMore,
 		NextCursor: s.requestLogNextCursor,
 	}, nil
+}
+
+func (s *fakeAdminService) StreamRequestLogs(ctx context.Context, filter admin.RequestLogFilter, maxRows int, visit func(admin.RequestLog) error) (admin.RequestLogExportResult, error) {
+	s.requestLogFilter = filter
+	s.requestLogExportRows = maxRows
+	if s.requestLogExportWait {
+		if s.requestLogStarted != nil {
+			close(s.requestLogStarted)
+		}
+		<-ctx.Done()
+		if s.requestLogCanceled != nil {
+			close(s.requestLogCanceled)
+		}
+		return admin.RequestLogExportResult{}, ctx.Err()
+	}
+	if s.requestLogErr != nil && s.requestLogErrAfter <= 0 {
+		return admin.RequestLogExportResult{}, s.requestLogErr
+	}
+	result := admin.RequestLogExportResult{}
+	for index, log := range s.logs {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if index == maxRows {
+			result.LimitReached = true
+			break
+		}
+		if err := visit(log); err != nil {
+			return result, err
+		}
+		result.RowCount++
+		if s.requestLogErr != nil && result.RowCount == s.requestLogErrAfter {
+			return result, s.requestLogErr
+		}
+	}
+	return result, nil
 }
 
 func (s *fakeAdminService) ListSystemEvents(_ context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error) {
@@ -4866,7 +4907,7 @@ func TestExportRequestLogsRequiresSessionAndReturnsCSV(t *testing.T) {
 		CreatedAt:                time.Unix(5000, 0).UTC(),
 	}}
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=csv&limit=10000&requestId=req_csv&q=codex&statusClass=client_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=upstream_rate_limited&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=csv&since=100&before=200&limit=10000&requestId=req_csv&q=codex&statusClass=client_error&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=upstream_rate_limited&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -4888,7 +4929,7 @@ func TestExportRequestLogsRequiresSessionAndReturnsCSV(t *testing.T) {
 	if !strings.Contains(body, `9,req_csv,"codex ""daily"", key",openai,7,codex_oauth,"primary ""oauth""",9,primary,1,primary -> secondary,routing_pool_exhausted,gpt-5,workspace-123,/v1/chat/completions,POST,429,123,upstream_rate_limited,10,20,30,4,6,stream,42,true,2,1,1970-01-01T01:23:20Z`) {
 		t.Fatalf("CSV body missing escaped row: %q", body)
 	}
-	if admins.requestLogFilter.Limit != 10000 || admins.requestLogFilter.Query != "codex" || admins.requestLogFilter.StatusClass != admin.RequestLogStatusClientError {
+	if admins.requestLogExportRows != 10000 || admins.requestLogFilter.Query != "codex" || admins.requestLogFilter.StatusClass != admin.RequestLogStatusClientError {
 		t.Fatalf("request log filter = %+v, want export query filters", admins.requestLogFilter)
 	}
 	if admins.requestLogFilter.RequestID != "req_csv" {
@@ -4928,7 +4969,7 @@ func TestExportRequestLogsReturnsJSONAndRejectsUnknownFormat(t *testing.T) {
 		{ID: 1, RequestID: "req_jsonl_1", Model: "gpt-5", StatusCode: 200, CreatedAt: time.Unix(6000, 0).UTC()},
 		{ID: 2, RequestID: "req_jsonl_2", Model: "gpt-5-mini", StatusCode: 429, Error: "rate_limited", CreatedAt: time.Unix(6001, 0).UTC()},
 	}
-	req = httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=jsonl&limit=2", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=jsonl&since=100&before=200&limit=2", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 

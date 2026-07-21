@@ -3,7 +3,6 @@
   import { page } from '$app/state';
   import {
     accountLabel,
-    appliedRequestLogFilterParams,
     apiKeys,
     formatDate,
     formatRequestLogCost,
@@ -159,11 +158,53 @@
       'error', 'usageSource', 'statusCode', 'routingPoolError', 'routingPoolChain', 'gatewayFallbacks'
     ].some((key) => params.has(key));
   }
-  /** @param {string} [format] */
-  function exportRequestLogsURL(format) {
-    const params = appliedRequestLogFilterParams();
-    if (format) params.set('format', format);
+  const requestLogExportRangeTitle = 'Export requires a bounded date range. Apply a date filter first.';
+  const requestLogExportLoadingTitle = 'Wait for the current request log results to load.';
+  let requestLogExportReady = $derived(requestLogs.appliedFilterQuery !== null);
+  let appliedRequestLogExportSince = $derived(
+    Number(new URLSearchParams(requestLogs.appliedFilterQuery ?? '').get('since') ?? 0)
+  );
+  let appliedRequestLogExportHasSince = $derived(
+    requestLogExportReady
+      && Number.isSafeInteger(appliedRequestLogExportSince)
+      && appliedRequestLogExportSince > 0
+      && appliedRequestLogExportSince < Math.floor(Date.now() / 1000)
+  );
+
+  /** @param {'csv' | 'json' | 'jsonl'} format @param {boolean} [gzip] */
+  function exportRequestLogsURL(format, gzip = false) {
+    const params = new URLSearchParams(requestLogs.appliedFilterQuery ?? '');
+    params.set('format', format);
+    if (appliedRequestLogExportHasSince) {
+      params.set('before', String(Math.floor(Date.now() / 1000)));
+    }
+    if (format === 'json') params.set('limit', '200');
+    if (gzip) params.set('gzip', '1');
     return '/api/admin/request-logs/export?' + params.toString();
+  }
+
+  /** @param {'csv' | 'json' | 'jsonl'} format */
+  function requestLogExportEnabled(format) {
+    return format === 'json' ? requestLogExportReady : appliedRequestLogExportHasSince;
+  }
+
+  /** @param {'csv' | 'json' | 'jsonl'} format */
+  function requestLogExportTitle(format) {
+    if (!requestLogExportReady) return requestLogExportLoadingTitle;
+    return format === 'json' || appliedRequestLogExportHasSince ? undefined : requestLogExportRangeTitle;
+  }
+
+  /**
+   * @param {MouseEvent & { currentTarget: HTMLAnchorElement }} event
+   * @param {'csv' | 'json' | 'jsonl'} format
+   * @param {boolean} [gzip]
+   */
+  function prepareRequestLogExport(event, format, gzip = false) {
+    if (!requestLogExportEnabled(format)) {
+      event.preventDefault();
+      return;
+    }
+    event.currentTarget.href = exportRequestLogsURL(format, gzip);
   }
 
 
@@ -373,10 +414,67 @@
         Export
         <ChevronDown class="size-3.5 transition-transform group-open:rotate-180" aria-hidden="true" />
       </summary>
-      <div class="absolute right-0 z-30 mt-2 w-40 rounded-lg border border-[#e5e5e5] bg-white p-1 shadow-lg">
-        <a class="ui-button ui-button--sm ui-button--start w-full" href={exportRequestLogsURL("csv")} target="_blank" rel="noopener noreferrer">CSV</a>
-        <a class="ui-button ui-button--sm ui-button--start w-full" href={exportRequestLogsURL("json")} target="_blank" rel="noopener noreferrer">JSON</a>
-        <a class="ui-button ui-button--sm ui-button--start w-full" href={exportRequestLogsURL("jsonl")} target="_blank" rel="noopener noreferrer">JSONL</a>
+      <div class="absolute left-0 z-30 mt-2 w-44 max-w-[calc(100vw-2rem)] rounded-lg border border-[#e5e5e5] bg-white p-1 shadow-lg sm:left-auto sm:right-0">
+        <a
+          class="ui-button ui-button--sm ui-button--start w-full"
+          class:cursor-not-allowed={!requestLogExportEnabled("json")}
+          class:opacity-50={!requestLogExportEnabled("json")}
+          href={requestLogExportEnabled("json") ? exportRequestLogsURL("json") : undefined}
+          aria-disabled={!requestLogExportEnabled("json")}
+          tabindex={requestLogExportEnabled("json") ? undefined : -1}
+          title={requestLogExportTitle("json")}
+          onpointerdown={(event) => prepareRequestLogExport(event, "json")}
+          oncontextmenu={(event) => prepareRequestLogExport(event, "json")}
+          onclick={(event) => prepareRequestLogExport(event, "json")}
+        >JSON</a>
+        <a
+          class="ui-button ui-button--sm ui-button--start w-full"
+          class:cursor-not-allowed={!requestLogExportEnabled("csv")}
+          class:opacity-50={!requestLogExportEnabled("csv")}
+          href={requestLogExportEnabled("csv") ? exportRequestLogsURL("csv") : undefined}
+          aria-disabled={!requestLogExportEnabled("csv")}
+          tabindex={requestLogExportEnabled("csv") ? undefined : -1}
+          title={requestLogExportTitle("csv")}
+          onpointerdown={(event) => prepareRequestLogExport(event, "csv")}
+          oncontextmenu={(event) => prepareRequestLogExport(event, "csv")}
+          onclick={(event) => prepareRequestLogExport(event, "csv")}
+        >CSV</a>
+        <a
+          class="ui-button ui-button--sm ui-button--start w-full"
+          class:cursor-not-allowed={!requestLogExportEnabled("csv")}
+          class:opacity-50={!requestLogExportEnabled("csv")}
+          href={requestLogExportEnabled("csv") ? exportRequestLogsURL("csv", true) : undefined}
+          aria-disabled={!requestLogExportEnabled("csv")}
+          tabindex={requestLogExportEnabled("csv") ? undefined : -1}
+          title={requestLogExportTitle("csv")}
+          onpointerdown={(event) => prepareRequestLogExport(event, "csv", true)}
+          oncontextmenu={(event) => prepareRequestLogExport(event, "csv", true)}
+          onclick={(event) => prepareRequestLogExport(event, "csv", true)}
+        >CSV gzip</a>
+        <a
+          class="ui-button ui-button--sm ui-button--start w-full"
+          class:cursor-not-allowed={!requestLogExportEnabled("jsonl")}
+          class:opacity-50={!requestLogExportEnabled("jsonl")}
+          href={requestLogExportEnabled("jsonl") ? exportRequestLogsURL("jsonl") : undefined}
+          aria-disabled={!requestLogExportEnabled("jsonl")}
+          tabindex={requestLogExportEnabled("jsonl") ? undefined : -1}
+          title={requestLogExportTitle("jsonl")}
+          onpointerdown={(event) => prepareRequestLogExport(event, "jsonl")}
+          oncontextmenu={(event) => prepareRequestLogExport(event, "jsonl")}
+          onclick={(event) => prepareRequestLogExport(event, "jsonl")}
+        >JSONL</a>
+        <a
+          class="ui-button ui-button--sm ui-button--start w-full"
+          class:cursor-not-allowed={!requestLogExportEnabled("jsonl")}
+          class:opacity-50={!requestLogExportEnabled("jsonl")}
+          href={requestLogExportEnabled("jsonl") ? exportRequestLogsURL("jsonl", true) : undefined}
+          aria-disabled={!requestLogExportEnabled("jsonl")}
+          tabindex={requestLogExportEnabled("jsonl") ? undefined : -1}
+          title={requestLogExportTitle("jsonl")}
+          onpointerdown={(event) => prepareRequestLogExport(event, "jsonl", true)}
+          oncontextmenu={(event) => prepareRequestLogExport(event, "jsonl", true)}
+          onclick={(event) => prepareRequestLogExport(event, "jsonl", true)}
+        >JSONL gzip</a>
       </div>
     </details>
   </div>

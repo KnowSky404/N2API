@@ -278,7 +278,7 @@ func TestBrowserSecurityPreservesDownloadsAndGatewayStreams(t *testing.T) {
 	})
 	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService(), gateway)
 
-	exportReq := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=csv", nil)
+	exportReq := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs/export?format=csv&since=100&before=200", nil)
 	exportReq.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
 	exportRecorder := httptest.NewRecorder()
 	server.ServeHTTP(exportRecorder, exportReq)

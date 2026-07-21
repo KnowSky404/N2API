@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
@@ -123,6 +126,7 @@ func TestRequestLogFilterDigestCoversEveryContentFilter(t *testing.T) {
 	base := admin.RequestLogFilter{}
 	variants := map[string]admin.RequestLogFilter{
 		"Since":             {Since: time.Unix(1, 0).UTC()},
+		"Before":            {Before: time.Unix(2, 0).UTC()},
 		"RequestID":         {RequestID: "req_1"},
 		"Query":             {Query: "codex"},
 		"StatusClass":       {StatusClass: admin.RequestLogStatusServerError},
@@ -152,6 +156,116 @@ func TestRequestLogFilterDigestCoversEveryContentFilter(t *testing.T) {
 		if got := requestLogFilterDigest(variant); got == baseDigest {
 			t.Fatalf("RequestLogFilter field %s does not change the filter digest", name)
 		}
+	}
+}
+
+func TestRequestLogFilterDigestPreservesLegacyBytesWithoutBefore(t *testing.T) {
+	filter := admin.RequestLogFilter{Since: time.Unix(1, 0).UTC(), Query: "codex", StatusClass: admin.RequestLogStatusAll}
+	legacyPayload, err := json.Marshal(struct {
+		Since             string `json:"since"`
+		RequestID         string `json:"requestId"`
+		Query             string `json:"query"`
+		StatusClass       string `json:"statusClass"`
+		StatusCode        int    `json:"statusCode"`
+		ProviderAccountID int64  `json:"providerAccountId"`
+		RoutingPoolID     int64  `json:"routingPoolId"`
+		ClientKeyID       int64  `json:"clientKeyId"`
+		Model             string `json:"model"`
+		SessionID         string `json:"sessionId"`
+		Error             string `json:"error"`
+		UsageSource       string `json:"usageSource"`
+		RoutingPoolError  string `json:"routingPoolError"`
+		RoutingPoolChain  string `json:"routingPoolChain"`
+		GatewayFallbacks  bool   `json:"gatewayFallbacks"`
+	}{Since: filter.Since.Format(time.RFC3339Nano), Query: filter.Query, StatusClass: filter.StatusClass})
+	if err != nil {
+		t.Fatalf("Marshal legacy payload returned error: %v", err)
+	}
+	want := sha256.Sum256(legacyPayload)
+	if got := requestLogFilterDigest(filter); got != base64.RawURLEncoding.EncodeToString(want[:]) {
+		t.Fatalf("digest = %q, want legacy digest", got)
+	}
+}
+
+func TestAdminRepositoryStreamsRequestLogsInRangeOrderAndReportsLimit(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	key, err := repo.CreateAPIKey(ctx, "export-key", "hash-export-key", "n2api_", "encrypted-export-key", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	since := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	before := since.Add(4 * time.Minute)
+	insertRequestLog(t, repo.pool, key.ID, since.Add(-time.Minute), 200, 10, 100)
+	insertRequestLog(t, repo.pool, key.ID, since, 200, 10, 100)
+	insertRequestLog(t, repo.pool, key.ID, since.Add(time.Minute), 200, 10, 100)
+	insertRequestLog(t, repo.pool, key.ID, since.Add(2*time.Minute), 500, 10, 100)
+	insertRequestLog(t, repo.pool, key.ID, since.Add(3*time.Minute), 200, 10, 100)
+	insertRequestLog(t, repo.pool, key.ID, before, 200, 10, 100)
+
+	var visited []time.Time
+	result, err := repo.StreamRequestLogs(ctx, admin.RequestLogFilter{
+		Since:       since,
+		Before:      before,
+		StatusClass: admin.RequestLogStatusSuccess,
+	}, 2, func(log admin.RequestLog) error {
+		visited = append(visited, log.CreatedAt)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamRequestLogs returned error: %v", err)
+	}
+	if result.RowCount != 2 || !result.LimitReached {
+		t.Fatalf("result = %+v, want two rows and limit reached", result)
+	}
+	want := []time.Time{since.Add(3 * time.Minute), since.Add(time.Minute)}
+	if !slices.Equal(visited, want) {
+		t.Fatalf("visited times = %v, want %v", visited, want)
+	}
+
+	visited = nil
+	result, err = repo.StreamRequestLogs(ctx, admin.RequestLogFilter{
+		Since:       since,
+		Before:      before,
+		StatusClass: admin.RequestLogStatusSuccess,
+	}, 10, func(log admin.RequestLog) error {
+		visited = append(visited, log.CreatedAt)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unbounded fixture StreamRequestLogs returned error: %v", err)
+	}
+	if result.RowCount != 3 || result.LimitReached {
+		t.Fatalf("result = %+v, want three rows without limit reached", result)
+	}
+}
+
+func TestAdminRepositoryStreamRequestLogsStopsOnVisitorErrorAndCanceledContext(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	key, err := repo.CreateAPIKey(ctx, "export-stop-key", "hash-export-stop-key", "n2api_", "encrypted-export-stop-key", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	insertRequestLog(t, repo.pool, key.ID, time.Now().UTC(), 200, 10, 100)
+	wantErr := errors.New("visitor stopped")
+
+	now := time.Now().UTC()
+	rangeFilter := admin.RequestLogFilter{Since: now.Add(-time.Hour), Before: now.Add(time.Hour)}
+	result, err := repo.StreamRequestLogs(ctx, rangeFilter, 10, func(admin.RequestLog) error {
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("visitor error = %v, want %v", err, wantErr)
+	}
+	if result.RowCount != 0 {
+		t.Fatalf("visitor error result = %+v, want zero successful callbacks", result)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repo.StreamRequestLogs(canceled, rangeFilter, 10, func(admin.RequestLog) error { return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled stream error = %v, want context.Canceled", err)
 	}
 }
 

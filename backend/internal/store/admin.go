@@ -1109,6 +1109,42 @@ type requestLogCursor struct {
 	FilterDigest string    `json:"f"`
 }
 
+const requestLogSelectSQL = `SELECT
+	l.id,
+	l.request_id,
+	COALESCE(k.name || ' (' || k.prefix || ')', ''),
+	l.provider,
+	COALESCE(l.provider_account_id, 0),
+	COALESCE(NULLIF(l.provider_account_type, ''), a.account_type, ''),
+	COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, ''),
+	COALESCE(l.routing_pool_id, 0),
+	COALESCE(l.routing_pool_name, ''),
+	COALESCE(l.routing_pool_fallback_depth, 0),
+	COALESCE(l.routing_pool_fallback_chain, ''),
+	COALESCE(l.routing_pool_error, ''),
+	l.model,
+	l.session_id,
+	l.route,
+	l.method,
+	l.status_code,
+	l.latency_ms,
+	l.error,
+	l.input_tokens,
+	l.output_tokens,
+	l.total_tokens,
+	l.cached_input_tokens,
+	l.reasoning_tokens,
+	l.usage_source,
+	l.estimated_cost_microusd,
+	COALESCE((l.pricing_snapshot->>'matched')::boolean, false),
+	COALESCE(l.gateway_attempt_count, 0),
+	COALESCE(l.gateway_fallback_count, 0),
+	l.created_at
+FROM request_logs l
+LEFT JOIN client_api_keys k ON k.id = l.client_key_id
+LEFT JOIN provider_accounts a ON a.id = l.provider_account_id
+`
+
 func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) (admin.RequestLogPage, error) {
 	if filter.Limit < 1 || filter.Limit > 200 {
 		return admin.RequestLogPage{}, admin.ErrInvalidInput
@@ -1130,42 +1166,7 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.Requ
 	args = append(args, filter.Limit+1)
 	limitParam := len(args)
 
-	rows, err := r.pool.Query(ctx, `
-		SELECT
-			l.id,
-			l.request_id,
-			COALESCE(k.name || ' (' || k.prefix || ')', ''),
-			l.provider,
-			COALESCE(l.provider_account_id, 0),
-			COALESCE(NULLIF(l.provider_account_type, ''), a.account_type, ''),
-			COALESCE(NULLIF(l.provider_account_name, ''), NULLIF(a.display_name, ''), a.name, ''),
-			COALESCE(l.routing_pool_id, 0),
-			COALESCE(l.routing_pool_name, ''),
-			COALESCE(l.routing_pool_fallback_depth, 0),
-			COALESCE(l.routing_pool_fallback_chain, ''),
-			COALESCE(l.routing_pool_error, ''),
-			l.model,
-			l.session_id,
-			l.route,
-			l.method,
-			l.status_code,
-			l.latency_ms,
-			l.error,
-			l.input_tokens,
-			l.output_tokens,
-			l.total_tokens,
-			l.cached_input_tokens,
-			l.reasoning_tokens,
-			l.usage_source,
-			l.estimated_cost_microusd,
-			COALESCE((l.pricing_snapshot->>'matched')::boolean, false),
-			COALESCE(l.gateway_attempt_count, 0),
-			COALESCE(l.gateway_fallback_count, 0),
-			l.created_at
-		FROM request_logs l
-		LEFT JOIN client_api_keys k ON k.id = l.client_key_id
-		LEFT JOIN provider_accounts a ON a.id = l.provider_account_id
-		`+whereSQL+`
+	rows, err := r.pool.Query(ctx, requestLogSelectSQL+whereSQL+`
 		ORDER BY l.created_at DESC, l.id DESC
 		LIMIT $`+strconv.Itoa(limitParam)+`
 	`, args...)
@@ -1176,39 +1177,8 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.Requ
 
 	logs := make([]admin.RequestLog, 0, filter.Limit+1)
 	for rows.Next() {
-		var log admin.RequestLog
-		if err := rows.Scan(
-			&log.ID,
-			&log.RequestID,
-			&log.ClientKey,
-			&log.Provider,
-			&log.ProviderAccountID,
-			&log.ProviderAccountType,
-			&log.ProviderAccountName,
-			&log.RoutingPoolID,
-			&log.RoutingPoolName,
-			&log.RoutingPoolFallbackDepth,
-			&log.RoutingPoolFallbackChain,
-			&log.RoutingPoolError,
-			&log.Model,
-			&log.SessionID,
-			&log.Route,
-			&log.Method,
-			&log.StatusCode,
-			&log.LatencyMS,
-			&log.Error,
-			&log.InputTokens,
-			&log.OutputTokens,
-			&log.TotalTokens,
-			&log.CachedInputTokens,
-			&log.ReasoningTokens,
-			&log.UsageSource,
-			&log.EstimatedCostMicrousd,
-			&log.PricingMatched,
-			&log.GatewayAttemptCount,
-			&log.GatewayFallbackCount,
-			&log.CreatedAt,
-		); err != nil {
+		log, err := scanRequestLog(rows)
+		if err != nil {
 			return admin.RequestLogPage{}, err
 		}
 		logs = append(logs, log)
@@ -1236,29 +1206,116 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.Requ
 	return page, nil
 }
 
+func (r *AdminRepository) StreamRequestLogs(ctx context.Context, filter admin.RequestLogFilter, maxRows int, visit func(admin.RequestLog) error) (admin.RequestLogExportResult, error) {
+	if maxRows <= 0 || maxRows > admin.MaxRequestLogExportRows || visit == nil || filter.Cursor != "" || filter.Since.IsZero() || filter.Before.IsZero() {
+		return admin.RequestLogExportResult{}, admin.ErrInvalidInput
+	}
+	whereSQL, args := requestLogFilterSQL(filter)
+	args = append(args, maxRows+1)
+	limitParam := len(args)
+	rows, err := r.pool.Query(ctx, requestLogSelectSQL+whereSQL+`
+		ORDER BY l.created_at DESC, l.id DESC
+		LIMIT $`+strconv.Itoa(limitParam)+`
+	`, args...)
+	if err != nil {
+		return admin.RequestLogExportResult{}, err
+	}
+	defer rows.Close()
+
+	result := admin.RequestLogExportResult{}
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if result.RowCount == maxRows {
+			result.LimitReached = true
+			return result, nil
+		}
+		log, err := scanRequestLog(rows)
+		if err != nil {
+			return result, err
+		}
+		if err := visit(log); err != nil {
+			return result, err
+		}
+		result.RowCount++
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func scanRequestLog(row rowScanner) (admin.RequestLog, error) {
+	var log admin.RequestLog
+	err := row.Scan(
+		&log.ID,
+		&log.RequestID,
+		&log.ClientKey,
+		&log.Provider,
+		&log.ProviderAccountID,
+		&log.ProviderAccountType,
+		&log.ProviderAccountName,
+		&log.RoutingPoolID,
+		&log.RoutingPoolName,
+		&log.RoutingPoolFallbackDepth,
+		&log.RoutingPoolFallbackChain,
+		&log.RoutingPoolError,
+		&log.Model,
+		&log.SessionID,
+		&log.Route,
+		&log.Method,
+		&log.StatusCode,
+		&log.LatencyMS,
+		&log.Error,
+		&log.InputTokens,
+		&log.OutputTokens,
+		&log.TotalTokens,
+		&log.CachedInputTokens,
+		&log.ReasoningTokens,
+		&log.UsageSource,
+		&log.EstimatedCostMicrousd,
+		&log.PricingMatched,
+		&log.GatewayAttemptCount,
+		&log.GatewayFallbackCount,
+		&log.CreatedAt,
+	)
+	if err != nil {
+		return admin.RequestLog{}, err
+	}
+	log.CreatedAt = log.CreatedAt.UTC()
+	return log, nil
+}
+
 func requestLogFilterDigest(filter admin.RequestLogFilter) string {
 	since := ""
 	if !filter.Since.IsZero() {
 		since = filter.Since.UTC().Format(time.RFC3339Nano)
 	}
+	var before *string
+	if !filter.Before.IsZero() {
+		value := filter.Before.UTC().Format(time.RFC3339Nano)
+		before = &value
+	}
 	payload, _ := json.Marshal(struct {
-		Since             string `json:"since"`
-		RequestID         string `json:"requestId"`
-		Query             string `json:"query"`
-		StatusClass       string `json:"statusClass"`
-		StatusCode        int    `json:"statusCode"`
-		ProviderAccountID int64  `json:"providerAccountId"`
-		RoutingPoolID     int64  `json:"routingPoolId"`
-		ClientKeyID       int64  `json:"clientKeyId"`
-		Model             string `json:"model"`
-		SessionID         string `json:"sessionId"`
-		Error             string `json:"error"`
-		UsageSource       string `json:"usageSource"`
-		RoutingPoolError  string `json:"routingPoolError"`
-		RoutingPoolChain  string `json:"routingPoolChain"`
-		GatewayFallbacks  bool   `json:"gatewayFallbacks"`
+		Since             string  `json:"since"`
+		Before            *string `json:"before,omitempty"`
+		RequestID         string  `json:"requestId"`
+		Query             string  `json:"query"`
+		StatusClass       string  `json:"statusClass"`
+		StatusCode        int     `json:"statusCode"`
+		ProviderAccountID int64   `json:"providerAccountId"`
+		RoutingPoolID     int64   `json:"routingPoolId"`
+		ClientKeyID       int64   `json:"clientKeyId"`
+		Model             string  `json:"model"`
+		SessionID         string  `json:"sessionId"`
+		Error             string  `json:"error"`
+		UsageSource       string  `json:"usageSource"`
+		RoutingPoolError  string  `json:"routingPoolError"`
+		RoutingPoolChain  string  `json:"routingPoolChain"`
+		GatewayFallbacks  bool    `json:"gatewayFallbacks"`
 	}{
-		Since: since, RequestID: filter.RequestID, Query: filter.Query,
+		Since: since, Before: before, RequestID: filter.RequestID, Query: filter.Query,
 		StatusClass: filter.StatusClass, StatusCode: filter.StatusCode,
 		ProviderAccountID: filter.ProviderAccountID, RoutingPoolID: filter.RoutingPoolID,
 		ClientKeyID: filter.ClientKeyID, Model: filter.Model, SessionID: filter.SessionID,
@@ -1438,8 +1495,13 @@ func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {
 	}
 
 	if !filter.Since.IsZero() {
-		args = append(args, filter.Since)
+		args = append(args, filter.Since.UTC())
 		conditions = append(conditions, "l.created_at >= $"+strconv.Itoa(len(args)))
+	}
+
+	if !filter.Before.IsZero() {
+		args = append(args, filter.Before.UTC())
+		conditions = append(conditions, "l.created_at < $"+strconv.Itoa(len(args)))
 	}
 
 	if filter.StatusCode > 0 {

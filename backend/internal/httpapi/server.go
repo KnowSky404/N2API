@@ -62,6 +62,7 @@ type AdminService interface {
 	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (admin.APIKey, error)
 	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) (admin.RequestLogPage, error)
+	StreamRequestLogs(ctx context.Context, filter admin.RequestLogFilter, maxRows int, visit func(admin.RequestLog) error) (admin.RequestLogExportResult, error)
 	ListSystemEvents(ctx context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error)
 	CleanupRequestLogs(ctx context.Context, now time.Time) (admin.RequestLogCleanupResult, error)
 	GetRequestLogRetentionStats(ctx context.Context, now time.Time) (admin.RequestLogRetentionStats, error)
@@ -979,7 +980,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/request-logs/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleExportRequestLogs(w, r, admins, systemEvents)
+		handleExportRequestLogs(w, r, admins, systemEvents, cfg.RequestLogExportMaxRows, cfg.RequestLogExportTimeout)
 	}))
 	mux.HandleFunc("GET /api/admin/system-events", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		filter, err := buildSystemEventFilter(r)
@@ -3164,125 +3165,4 @@ func parseLimitParam(r *http.Request, defaultLimit, maxLimit int) (int, error) {
 		limit = maxLimit
 	}
 	return limit, nil
-}
-
-func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins AdminService, recorder SystemEventRecorder) {
-	started := time.Now()
-	filter := buildRequestLogFilter(r)
-	format := r.URL.Query().Get("format")
-	if format == "" {
-		format = "json"
-	}
-	if format != "json" && format != "csv" && format != "jsonl" {
-		writeError(w, http.StatusBadRequest, "invalid_input")
-		return
-	}
-
-	page, err := admins.ListRequestLogs(r.Context(), filter)
-	if err != nil {
-		if errors.Is(err, admin.ErrInvalidInput) {
-			writeError(w, http.StatusBadRequest, "invalid_input")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	logs := page.Logs
-	if err := recordHTTPSystemEvent(r.Context(), recorder, systemevent.EventIntent{
-		Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
-		Action: systemevent.ActionRequestLogExported, Outcome: systemevent.OutcomeSuccess,
-		Target:   systemevent.Target{Type: "request_log_collection"},
-		Metadata: map[string]any{"format": format, "row_count": len(logs)},
-	}, http.StatusOK, time.Since(started)); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-
-	switch format {
-	case "csv":
-		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		w.Header().Set("Content-Disposition", `attachment; filename="n2api-request-logs.csv"`)
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, "id,request_id,client_key,provider,provider_account_id,provider_account_type,provider_account_name,routing_pool_id,routing_pool_name,routing_pool_fallback_depth,routing_pool_fallback_chain,routing_pool_error,model,session_id,route,method,status_code,latency_ms,error,input_tokens,output_tokens,total_tokens,cached_input_tokens,reasoning_tokens,usage_source,estimated_cost_microusd,pricing_matched,gateway_attempt_count,gateway_fallback_count,created_at\n")
-		for _, log := range logs {
-			_, _ = fmt.Fprintf(w, "%d,%s,%s,%s,%d,%s,%s,%d,%s,%d,%s,%s,%s,%s,%s,%s,%d,%d,%s,%d,%d,%d,%d,%d,%s,%d,%t,%d,%d,%s\n",
-				log.ID, csvEscape(log.RequestID), csvEscape(log.ClientKey), csvEscape(log.Provider),
-				log.ProviderAccountID, csvEscape(log.ProviderAccountType), csvEscape(log.ProviderAccountName),
-				log.RoutingPoolID, csvEscape(log.RoutingPoolName), log.RoutingPoolFallbackDepth,
-				csvEscape(log.RoutingPoolFallbackChain), csvEscape(log.RoutingPoolError),
-				csvEscape(log.Model), csvEscape(log.SessionID), csvEscape(log.Route), csvEscape(log.Method),
-				log.StatusCode, log.LatencyMS, csvEscape(log.Error),
-				log.InputTokens, log.OutputTokens, log.TotalTokens, log.CachedInputTokens, log.ReasoningTokens,
-				csvEscape(log.UsageSource), log.EstimatedCostMicrousd, log.PricingMatched,
-				log.GatewayAttemptCount, log.GatewayFallbackCount, log.CreatedAt.Format(time.RFC3339))
-		}
-	case "jsonl":
-		w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-		w.Header().Set("Content-Disposition", `attachment; filename="n2api-request-logs.jsonl"`)
-		w.WriteHeader(http.StatusOK)
-		encoder := json.NewEncoder(w)
-		for _, log := range logs {
-			_ = encoder.Encode(log)
-		}
-	default:
-		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
-	}
-}
-
-func csvEscape(s string) string {
-	if strings.ContainsAny(s, "\",\n") {
-		return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
-	}
-	return s
-}
-
-func buildRequestLogFilter(r *http.Request) admin.RequestLogFilter {
-	filter := admin.RequestLogFilter{
-		Limit:       200,
-		Since:       parseSinceParam(r),
-		StatusClass: "all",
-	}
-	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
-		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 && parsed <= 10000 {
-			filter.Limit = parsed
-		}
-	}
-	if q := r.URL.Query().Get("q"); q != "" {
-		filter.Query = q
-	}
-	filter.RequestID = r.URL.Query().Get("requestId")
-	switch sc := r.URL.Query().Get("statusClass"); sc {
-	case "all", "success", "client_error", "server_error":
-		filter.StatusClass = sc
-	}
-	if raw := r.URL.Query().Get("statusCode"); raw != "" {
-		if code, err := strconv.Atoi(raw); err == nil && code >= 100 && code <= 599 {
-			filter.StatusCode = code
-		}
-	}
-	if raw := r.URL.Query().Get("providerAccountId"); raw != "" {
-		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
-			filter.ProviderAccountID = id
-		}
-	}
-	if raw := r.URL.Query().Get("routingPoolId"); raw != "" {
-		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
-			filter.RoutingPoolID = id
-		}
-	}
-	if raw := r.URL.Query().Get("clientKeyId"); raw != "" {
-		if id, err := strconv.ParseInt(raw, 10, 64); err == nil && id > 0 {
-			filter.ClientKeyID = id
-		}
-	}
-	filter.Model = r.URL.Query().Get("model")
-	filter.SessionID = r.URL.Query().Get("sessionId")
-	filter.Error = r.URL.Query().Get("error")
-	filter.UsageSource = r.URL.Query().Get("usageSource")
-	filter.RoutingPoolError = r.URL.Query().Get("routingPoolError")
-	filter.RoutingPoolChain = r.URL.Query().Get("routingPoolChain")
-	if raw := r.URL.Query().Get("gatewayFallbacks"); raw == "1" || raw == "true" {
-		filter.GatewayFallbacks = true
-	}
-	return filter
 }
