@@ -1,6 +1,6 @@
 # Request Log Lifecycle Plan
 
-Status: planned
+Status: in progress
 Public API changes: additive cursor fields; export limits become explicit
 Data migration: cursor/query index changes only after measurement
 
@@ -16,6 +16,9 @@ rows during this review, so it cannot justify speculative indexes.
 
 ## Task 1: Add A Signed Cursor Page Contract
 
+Status: completed locally on 2026-07-21; representative index measurement
+remains deferred to Task 5.
+
 ### Goal
 
 Page older rows stably with existing filters and no offset scans.
@@ -29,7 +32,7 @@ None.
 - Modify: `backend/internal/admin/service.go`, `service_test.go`
 - Modify: `backend/internal/store/admin.go`, `admin_test.go`
 - Modify: `backend/internal/httpapi/server.go`, `server_test.go`
-- Create: `backend/internal/store/migrations/00038_request_log_cursor_index.sql` if EXPLAIN shows the existing index is insufficient
+- Create: `backend/internal/store/migrations/00039_request_log_cursor_index.sql` if EXPLAIN shows the existing index is insufficient
 - Test: service, store PostgreSQL integration, HTTP, migration
 - Document: `docs/manual.md`
 

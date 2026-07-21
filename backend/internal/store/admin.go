@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -15,12 +18,14 @@ import (
 )
 
 type AdminRepository struct {
-	pool *pgxpool.Pool
+	pool                   *pgxpool.Pool
+	requestLogCursorSecret []byte
 }
 
 const modelSettingsKey = "model_settings"
 const usagePricingKey = "usage_pricing"
 const gatewaySettingsKey = "gateway_settings"
+const requestLogCursorVersion = 1
 const apiKeySelectColumns = `
 	k.id, k.name, k.prefix, k.encrypted_secret <> '', k.created_at, k.last_used_at, k.revoked_at, k.disabled_at,
 	k.model_policy, k.requests_per_minute, k.tokens_per_minute,
@@ -29,8 +34,9 @@ const apiKeySelectColumns = `
 	k.routing_pool_id, COALESCE(rp.name, '')
 `
 
-func NewAdminRepository(pool *pgxpool.Pool) *AdminRepository {
-	return &AdminRepository{pool: pool}
+func NewAdminRepository(pool *pgxpool.Pool, cursorSecret string) *AdminRepository {
+	key := sha256.Sum256([]byte("n2api-request-log-cursor\x00" + cursorSecret))
+	return &AdminRepository{pool: pool, requestLogCursorSecret: key[:]}
 }
 
 func scanAPIKey(key *admin.APIKey) []any {
@@ -1093,9 +1099,32 @@ func (r *AdminRepository) TouchAPIKey(ctx context.Context, id int64, usedAt time
 	return nil
 }
 
-func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error) {
+type requestLogCursor struct {
+	Version      int       `json:"v"`
+	CreatedAt    time.Time `json:"t"`
+	ID           int64     `json:"i"`
+	FilterDigest string    `json:"f"`
+}
+
+func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) (admin.RequestLogPage, error) {
+	if filter.Limit < 1 || filter.Limit > 200 {
+		return admin.RequestLogPage{}, admin.ErrInvalidInput
+	}
 	whereSQL, args := requestLogFilterSQL(filter)
-	args = append(args, filter.Limit)
+	if filter.Cursor != "" {
+		cursor, err := r.decodeRequestLogCursor(filter.Cursor, filter)
+		if err != nil {
+			return admin.RequestLogPage{}, err
+		}
+		args = append(args, cursor.CreatedAt.UTC(), cursor.ID)
+		condition := "(l.created_at, l.id) < ($" + strconv.Itoa(len(args)-1) + ", $" + strconv.Itoa(len(args)) + ")"
+		if whereSQL == "" {
+			whereSQL = "WHERE " + condition
+		} else {
+			whereSQL += " AND " + condition
+		}
+	}
+	args = append(args, filter.Limit+1)
 	limitParam := len(args)
 
 	rows, err := r.pool.Query(ctx, `
@@ -1138,11 +1167,11 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.Requ
 		LIMIT $`+strconv.Itoa(limitParam)+`
 	`, args...)
 	if err != nil {
-		return nil, err
+		return admin.RequestLogPage{}, err
 	}
 	defer rows.Close()
 
-	var logs []admin.RequestLog
+	logs := make([]admin.RequestLog, 0, filter.Limit+1)
 	for rows.Next() {
 		var log admin.RequestLog
 		if err := rows.Scan(
@@ -1177,14 +1206,95 @@ func (r *AdminRepository) ListRequestLogs(ctx context.Context, filter admin.Requ
 			&log.GatewayFallbackCount,
 			&log.CreatedAt,
 		); err != nil {
-			return nil, err
+			return admin.RequestLogPage{}, err
 		}
 		logs = append(logs, log)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return admin.RequestLogPage{}, err
 	}
-	return logs, nil
+	page := admin.RequestLogPage{Logs: logs}
+	if len(logs) > filter.Limit {
+		page.HasMore = true
+		page.Logs = logs[:filter.Limit]
+		last := page.Logs[len(page.Logs)-1]
+		cursor := requestLogCursor{
+			Version:      requestLogCursorVersion,
+			CreatedAt:    last.CreatedAt.UTC(),
+			ID:           last.ID,
+			FilterDigest: requestLogFilterDigest(filter),
+		}
+		var err error
+		page.NextCursor, err = r.encodeRequestLogCursor(cursor)
+		if err != nil {
+			return admin.RequestLogPage{}, err
+		}
+	}
+	return page, nil
+}
+
+func requestLogFilterDigest(filter admin.RequestLogFilter) string {
+	since := ""
+	if !filter.Since.IsZero() {
+		since = filter.Since.UTC().Format(time.RFC3339Nano)
+	}
+	payload, _ := json.Marshal(struct {
+		Since             string `json:"since"`
+		RequestID         string `json:"requestId"`
+		Query             string `json:"query"`
+		StatusClass       string `json:"statusClass"`
+		StatusCode        int    `json:"statusCode"`
+		ProviderAccountID int64  `json:"providerAccountId"`
+		RoutingPoolID     int64  `json:"routingPoolId"`
+		ClientKeyID       int64  `json:"clientKeyId"`
+		Model             string `json:"model"`
+		SessionID         string `json:"sessionId"`
+		Error             string `json:"error"`
+		UsageSource       string `json:"usageSource"`
+		RoutingPoolError  string `json:"routingPoolError"`
+		RoutingPoolChain  string `json:"routingPoolChain"`
+		GatewayFallbacks  bool   `json:"gatewayFallbacks"`
+	}{
+		Since: since, RequestID: filter.RequestID, Query: filter.Query,
+		StatusClass: filter.StatusClass, StatusCode: filter.StatusCode,
+		ProviderAccountID: filter.ProviderAccountID, RoutingPoolID: filter.RoutingPoolID,
+		ClientKeyID: filter.ClientKeyID, Model: filter.Model, SessionID: filter.SessionID,
+		Error: filter.Error, UsageSource: filter.UsageSource, RoutingPoolError: filter.RoutingPoolError,
+		RoutingPoolChain: filter.RoutingPoolChain, GatewayFallbacks: filter.GatewayFallbacks,
+	})
+	digest := sha256.Sum256(payload)
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func (r *AdminRepository) encodeRequestLogCursor(cursor requestLogCursor) (string, error) {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, r.requestLogCursorSecret)
+	_, _ = mac.Write(payload)
+	return base64.RawURLEncoding.EncodeToString(append(payload, mac.Sum(nil)...)), nil
+}
+
+func (r *AdminRepository) decodeRequestLogCursor(value string, filter admin.RequestLogFilter) (requestLogCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(decoded) <= sha256.Size {
+		return requestLogCursor{}, admin.ErrInvalidInput
+	}
+	payload, signature := decoded[:len(decoded)-sha256.Size], decoded[len(decoded)-sha256.Size:]
+	mac := hmac.New(sha256.New, r.requestLogCursorSecret)
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return requestLogCursor{}, admin.ErrInvalidInput
+	}
+	var cursor requestLogCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil ||
+		cursor.Version != requestLogCursorVersion || cursor.CreatedAt.IsZero() || cursor.ID < 1 ||
+		!hmac.Equal([]byte(cursor.FilterDigest), []byte(requestLogFilterDigest(filter))) {
+		return requestLogCursor{}, admin.ErrInvalidInput
+	}
+	cursor.CreatedAt = cursor.CreatedAt.UTC()
+	return cursor, nil
 }
 
 func (r *AdminRepository) DeleteRequestLogsBefore(ctx context.Context, before time.Time) (int64, error) {

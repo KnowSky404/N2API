@@ -61,7 +61,7 @@ type AdminService interface {
 	ReplaceRoutingPoolAccounts(ctx context.Context, id int64, accounts []admin.RoutingPoolAccount) (admin.RoutingPool, error)
 	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (admin.APIKey, error)
 	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
-	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error)
+	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) (admin.RequestLogPage, error)
 	ListSystemEvents(ctx context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error)
 	CleanupRequestLogs(ctx context.Context, now time.Time) (admin.RequestLogCleanupResult, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
@@ -938,6 +938,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		since := parseSinceParam(r)
 		filter := admin.RequestLogFilter{
 			Limit:             limit,
+			Cursor:            r.URL.Query().Get("cursor"),
 			Since:             since,
 			RequestID:         r.URL.Query().Get("requestId"),
 			Query:             r.URL.Query().Get("q"),
@@ -954,7 +955,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			RoutingPoolChain:  r.URL.Query().Get("routingPoolChain"),
 			GatewayFallbacks:  gatewayFallbacks,
 		}
-		logs, err := admins.ListRequestLogs(r.Context(), filter)
+		page, err := admins.ListRequestLogs(r.Context(), filter)
 		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")
@@ -963,7 +964,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string][]admin.RequestLog{"logs": logs})
+		writeJSON(w, http.StatusOK, page)
 	}))
 
 	mux.HandleFunc("GET /api/admin/request-logs/export", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -3148,7 +3149,7 @@ func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins Admi
 		return
 	}
 
-	logs, err := admins.ListRequestLogs(r.Context(), filter)
+	page, err := admins.ListRequestLogs(r.Context(), filter)
 	if err != nil {
 		if errors.Is(err, admin.ErrInvalidInput) {
 			writeError(w, http.StatusBadRequest, "invalid_input")
@@ -3157,6 +3158,7 @@ func handleExportRequestLogs(w http.ResponseWriter, r *http.Request, admins Admi
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
+	logs := page.Logs
 	if err := recordHTTPSystemEvent(r.Context(), recorder, systemevent.EventIntent{
 		Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
 		Action: systemevent.ActionRequestLogExported, Outcome: systemevent.OutcomeSuccess,

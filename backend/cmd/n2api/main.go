@@ -177,7 +177,7 @@ func main() {
 	}
 	systemEventRepo := store.NewSystemEventRepository(pool, cfg.EncryptionSecret)
 
-	adminRepo := store.NewAdminRepository(pool)
+	adminRepo := store.NewAdminRepository(pool, cfg.EncryptionSecret)
 	adminService := admin.NewService(adminRepo, admin.Config{
 		SessionTTL:       cfg.AdminSessionTTL,
 		EncryptionSecret: cfg.EncryptionSecret,

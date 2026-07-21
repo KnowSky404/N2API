@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,6 +26,133 @@ const truncateStoreTestDataSQL = `TRUNCATE
 
 func TestAdminRepositoryImplementsInterface(t *testing.T) {
 	var _ admin.Repository = (*AdminRepository)(nil)
+}
+
+func TestRequestLogCursorIsAuthenticatedAndFilterBound(t *testing.T) {
+	repo := NewAdminRepository(nil, "cursor-secret")
+	filter := admin.RequestLogFilter{
+		Limit:       25,
+		StatusClass: admin.RequestLogStatusAll,
+		Model:       "gpt-5",
+	}
+	want := requestLogCursor{
+		Version:      requestLogCursorVersion,
+		CreatedAt:    time.Unix(1234, 567).UTC(),
+		ID:           42,
+		FilterDigest: requestLogFilterDigest(filter),
+	}
+	encoded, err := repo.encodeRequestLogCursor(want)
+	if err != nil {
+		t.Fatalf("encodeRequestLogCursor returned error: %v", err)
+	}
+	got, err := repo.decodeRequestLogCursor(encoded, filter)
+	if err != nil {
+		t.Fatalf("decodeRequestLogCursor returned error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("decoded cursor = %+v, want %+v", got, want)
+	}
+
+	changedLimit := filter
+	changedLimit.Limit = 100
+	if _, err := repo.decodeRequestLogCursor(encoded, changedLimit); err != nil {
+		t.Fatalf("cursor must not bind page size: %v", err)
+	}
+	changedLimit.Cursor = "ignored-current-cursor"
+	if _, err := repo.decodeRequestLogCursor(encoded, changedLimit); err != nil {
+		t.Fatalf("cursor must not bind the current cursor value: %v", err)
+	}
+
+	equivalentSince := filter
+	equivalentSince.Since = time.Date(2026, time.July, 21, 14, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	filterWithUTC := filter
+	filterWithUTC.Since = time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	want.FilterDigest = requestLogFilterDigest(filterWithUTC)
+	encodedWithSince, err := repo.encodeRequestLogCursor(want)
+	if err != nil {
+		t.Fatalf("encodeRequestLogCursor with since returned error: %v", err)
+	}
+	if _, err := repo.decodeRequestLogCursor(encodedWithSince, equivalentSince); err != nil {
+		t.Fatalf("cursor must canonicalize equivalent since instants to UTC: %v", err)
+	}
+
+	tampered := encoded
+	if tampered[0] == 'A' {
+		tampered = "B" + tampered[1:]
+	} else {
+		tampered = "A" + tampered[1:]
+	}
+	if _, err := repo.decodeRequestLogCursor(tampered, filter); !errors.Is(err, admin.ErrInvalidInput) {
+		t.Fatalf("tampered cursor error = %v, want ErrInvalidInput", err)
+	}
+
+	changedFilter := filter
+	changedFilter.Model = "gpt-5-mini"
+	if _, err := repo.decodeRequestLogCursor(encoded, changedFilter); !errors.Is(err, admin.ErrInvalidInput) {
+		t.Fatalf("filter-mismatched cursor error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := repo.decodeRequestLogCursor("not-a-cursor", filter); !errors.Is(err, admin.ErrInvalidInput) {
+		t.Fatalf("malformed cursor error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := NewAdminRepository(nil, "different-secret").decodeRequestLogCursor(encoded, filter); !errors.Is(err, admin.ErrInvalidInput) {
+		t.Fatalf("wrong-secret cursor error = %v, want ErrInvalidInput", err)
+	}
+	for name, invalid := range map[string]requestLogCursor{
+		"unknown version": {Version: requestLogCursorVersion + 1, CreatedAt: want.CreatedAt, ID: want.ID, FilterDigest: requestLogFilterDigest(filter)},
+		"zero time":       {Version: requestLogCursorVersion, ID: want.ID, FilterDigest: requestLogFilterDigest(filter)},
+		"zero id":         {Version: requestLogCursorVersion, CreatedAt: want.CreatedAt, FilterDigest: requestLogFilterDigest(filter)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value, err := repo.encodeRequestLogCursor(invalid)
+			if err != nil {
+				t.Fatalf("encode invalid cursor: %v", err)
+			}
+			if _, err := repo.decodeRequestLogCursor(value, filter); !errors.Is(err, admin.ErrInvalidInput) {
+				t.Fatalf("decode invalid cursor error = %v, want ErrInvalidInput", err)
+			}
+		})
+	}
+	for _, limit := range []int{0, 201} {
+		if _, err := repo.ListRequestLogs(context.Background(), admin.RequestLogFilter{Limit: limit}); !errors.Is(err, admin.ErrInvalidInput) {
+			t.Fatalf("ListRequestLogs limit %d error = %v, want ErrInvalidInput", limit, err)
+		}
+	}
+}
+
+func TestRequestLogFilterDigestCoversEveryContentFilter(t *testing.T) {
+	base := admin.RequestLogFilter{}
+	variants := map[string]admin.RequestLogFilter{
+		"Since":             {Since: time.Unix(1, 0).UTC()},
+		"RequestID":         {RequestID: "req_1"},
+		"Query":             {Query: "codex"},
+		"StatusClass":       {StatusClass: admin.RequestLogStatusServerError},
+		"StatusCode":        {StatusCode: 503},
+		"ProviderAccountID": {ProviderAccountID: 1},
+		"RoutingPoolID":     {RoutingPoolID: 1},
+		"ClientKeyID":       {ClientKeyID: 1},
+		"Model":             {Model: "gpt-5"},
+		"SessionID":         {SessionID: "session-1"},
+		"Error":             {Error: "upstream_error"},
+		"UsageSource":       {UsageSource: "responses"},
+		"RoutingPoolError":  {RoutingPoolError: "routing_pool_empty"},
+		"RoutingPoolChain":  {RoutingPoolChain: "primary -> secondary"},
+		"GatewayFallbacks":  {GatewayFallbacks: true},
+	}
+	baseDigest := requestLogFilterDigest(base)
+	filterType := reflect.TypeOf(base)
+	for i := range filterType.NumField() {
+		name := filterType.Field(i).Name
+		if name == "Limit" || name == "Cursor" {
+			continue
+		}
+		variant, ok := variants[name]
+		if !ok {
+			t.Fatalf("RequestLogFilter field %s has no filter-digest coverage", name)
+		}
+		if got := requestLogFilterDigest(variant); got == baseDigest {
+			t.Fatalf("RequestLogFilter field %s does not change the filter digest", name)
+		}
+	}
 }
 
 func TestSessionValidationUsesConditionalAtomicTouch(t *testing.T) {
@@ -648,7 +776,112 @@ func newTestAdminRepository(t *testing.T) *AdminRepository {
 	if _, err := pool.Exec(context.Background(), truncateStoreTestDataSQL); err != nil {
 		t.Fatalf("test database cleanup failed: %v", err)
 	}
-	return NewAdminRepository(pool)
+	return NewAdminRepository(pool, "store-test-cursor-secret")
+}
+
+func TestAdminRepositoryPagesRequestLogsWithoutDuplicatesOrOmissions(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	key, err := repo.CreateAPIKey(ctx, "cursor-key", "hash-cursor-key", "n2api_", "encrypted-cursor-key", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	base := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	for _, createdAt := range []time.Time{
+		base.Add(-3 * time.Minute),
+		base.Add(-2 * time.Minute),
+		base.Add(-time.Minute),
+		base,
+		base,
+	} {
+		insertRequestLog(t, repo.pool, key.ID, createdAt, 200, 10, 100)
+	}
+	expectedIDs := map[int64]bool{}
+	rows, err := repo.pool.Query(ctx, "SELECT id FROM request_logs")
+	if err != nil {
+		t.Fatalf("query original request log IDs: %v", err)
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			t.Fatalf("scan original request log ID: %v", err)
+		}
+		expectedIDs[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatalf("iterate original request log IDs: %v", err)
+	}
+	rows.Close()
+
+	filter := admin.RequestLogFilter{Limit: 2, StatusClass: admin.RequestLogStatusAll}
+	first, err := repo.ListRequestLogs(ctx, filter)
+	if err != nil {
+		t.Fatalf("ListRequestLogs first page returned error: %v", err)
+	}
+	if len(first.Logs) != 2 || !first.HasMore || first.NextCursor == "" {
+		t.Fatalf("first page = %+v, want two logs and a next cursor", first)
+	}
+	if !first.Logs[0].CreatedAt.Equal(first.Logs[1].CreatedAt) || first.Logs[0].ID <= first.Logs[1].ID {
+		t.Fatalf("equal-timestamp order = (%s,%d), (%s,%d), want ID descending", first.Logs[0].CreatedAt, first.Logs[0].ID, first.Logs[1].CreatedAt, first.Logs[1].ID)
+	}
+
+	if _, err := repo.pool.Exec(ctx, "DELETE FROM request_logs WHERE id = $1", first.Logs[1].ID); err != nil {
+		t.Fatalf("delete page boundary row: %v", err)
+	}
+	insertRequestLog(t, repo.pool, key.ID, base.Add(time.Minute), 200, 10, 100)
+	var concurrentID int64
+	if err := repo.pool.QueryRow(ctx, "SELECT max(id) FROM request_logs").Scan(&concurrentID); err != nil {
+		t.Fatalf("query concurrently inserted request log ID: %v", err)
+	}
+
+	filter.Cursor = first.NextCursor
+	second, err := repo.ListRequestLogs(ctx, filter)
+	if err != nil {
+		t.Fatalf("ListRequestLogs second page returned error: %v", err)
+	}
+	if len(second.Logs) != 2 || !second.HasMore || second.NextCursor == "" {
+		t.Fatalf("second page = %+v, want two logs and a next cursor", second)
+	}
+	filter.Cursor = second.NextCursor
+	third, err := repo.ListRequestLogs(ctx, filter)
+	if err != nil {
+		t.Fatalf("ListRequestLogs third page returned error: %v", err)
+	}
+	if len(third.Logs) != 1 || third.HasMore || third.NextCursor != "" {
+		t.Fatalf("third page = %+v, want one terminal log", third)
+	}
+
+	seen := map[int64]bool{}
+	for _, page := range []admin.RequestLogPage{first, second, third} {
+		for _, log := range page.Logs {
+			if seen[log.ID] {
+				t.Fatalf("request log %d appeared more than once", log.ID)
+			}
+			seen[log.ID] = true
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("traversed %d unique logs, want 5", len(seen))
+	}
+	if seen[concurrentID] {
+		t.Fatalf("newer request log %d appeared in older-page traversal", concurrentID)
+	}
+	for id := range expectedIDs {
+		if !seen[id] {
+			t.Fatalf("original request log %d was omitted", id)
+		}
+	}
+
+	mismatched := admin.RequestLogFilter{
+		Limit:       2,
+		Cursor:      first.NextCursor,
+		StatusClass: admin.RequestLogStatusServerError,
+	}
+	if _, err := repo.ListRequestLogs(ctx, mismatched); !errors.Is(err, admin.ErrInvalidInput) {
+		t.Fatalf("filter-mismatched ListRequestLogs error = %v, want ErrInvalidInput", err)
+	}
 }
 
 func TestAdminRepositoryManagesOwnedActiveSessions(t *testing.T) {

@@ -62,7 +62,10 @@ type fakeAdminService struct {
 	deletedKeyID         int64
 	deleteKeyErr         error
 	logs                 []admin.RequestLog
+	requestLogHasMore    bool
+	requestLogNextCursor string
 	requestLogFilter     admin.RequestLogFilter
+	requestLogErr        error
 	systemEventPage      admin.SystemEventPage
 	systemEventFilter    admin.SystemEventFilter
 	systemEventErr       error
@@ -539,16 +542,23 @@ func (s *fakeAdminService) GetAPIKeyBudgetUsage(_ context.Context, key admin.API
 	return usage, nil
 }
 
-func (s *fakeAdminService) ListRequestLogs(_ context.Context, filter admin.RequestLogFilter) ([]admin.RequestLog, error) {
+func (s *fakeAdminService) ListRequestLogs(_ context.Context, filter admin.RequestLogFilter) (admin.RequestLogPage, error) {
 	s.requestLogFilter = filter
+	if s.requestLogErr != nil {
+		return admin.RequestLogPage{}, s.requestLogErr
+	}
 	if filter.StatusClass == "bad" {
-		return nil, admin.ErrInvalidInput
+		return admin.RequestLogPage{}, admin.ErrInvalidInput
 	}
 	limit := filter.Limit
 	if limit > len(s.logs) {
 		limit = len(s.logs)
 	}
-	return s.logs[:limit], nil
+	return admin.RequestLogPage{
+		Logs:       s.logs[:limit],
+		HasMore:    s.requestLogHasMore,
+		NextCursor: s.requestLogNextCursor,
+	}, nil
 }
 
 func (s *fakeAdminService) ListSystemEvents(_ context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error) {
@@ -4700,7 +4710,9 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 
 	admins := newFakeAdminService()
 	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&requestId=req_3&q=codex&statusClass=server_error&statusCode=503&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=api_key_token_rate_limited&routingPoolError=routing_pool_unavailable&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1&since=2000", nil)
+	admins.requestLogHasMore = true
+	admins.requestLogNextCursor = "opaque-next"
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?limit=20&cursor=opaque-current&requestId=req_3&q=codex&statusClass=server_error&statusCode=503&providerAccountId=7&routingPoolId=9&clientKeyId=12&model=gpt-5&sessionId=workspace-123&error=api_key_token_rate_limited&routingPoolError=routing_pool_unavailable&routingPoolChain=primary+-%3E+secondary&gatewayFallbacks=1&since=2000", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder = httptest.NewRecorder()
 
@@ -4710,13 +4722,21 @@ func TestListRequestLogsRequiresSessionAndReturnsLogs(t *testing.T) {
 		t.Fatalf("status = %d, want 200", recorder.Code)
 	}
 	var body struct {
-		Logs []admin.RequestLog `json:"logs"`
+		Logs       []admin.RequestLog `json:"logs"`
+		HasMore    bool               `json:"hasMore"`
+		NextCursor string             `json:"nextCursor"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
 	if len(body.Logs) != 1 || body.Logs[0].RequestID != "req_3" {
 		t.Fatalf("logs = %+v", body.Logs)
+	}
+	if !body.HasMore || body.NextCursor != "opaque-next" {
+		t.Fatalf("page metadata = hasMore:%t nextCursor:%q, want true/opaque-next", body.HasMore, body.NextCursor)
+	}
+	if admins.requestLogFilter.Cursor != "opaque-current" {
+		t.Fatalf("request log cursor = %q, want opaque-current", admins.requestLogFilter.Cursor)
 	}
 	if admins.requestLogFilter.Limit != 20 || admins.requestLogFilter.Query != "codex" || admins.requestLogFilter.StatusClass != admin.RequestLogStatusServerError {
 		t.Fatalf("request log filter = %+v, want limit 20 query codex status server_error", admins.requestLogFilter)
@@ -5107,6 +5127,21 @@ func TestListRequestLogsRejectsInvalidFilter(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
+func TestListRequestLogsRejectsInvalidCursor(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.requestLogErr = admin.ErrInvalidInput
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/request-logs?cursor=tampered", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), `"error":"invalid_input"`) {
+		t.Fatalf("status/body = %d %s, want 400 invalid_input", recorder.Code, recorder.Body.String())
 	}
 }
 

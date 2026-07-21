@@ -597,6 +597,8 @@ Routing pool fallback is explicit. The routing pool fallback chain can point to 
 
 Request Logs support exact **Provider account**, **Routing pool**, **API key**, **Model filter**, **Usage source**, and **Session filter** fields. On Gateway management and Dashboard, 24h usage rows for **Top provider accounts**, **Top usage sources**, **Top routing pools**, **Top routing pool chains**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, usage-source, routing-pool, routing-pool-chain, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 
+The authenticated `GET /api/admin/request-logs` endpoint returns `logs`, `hasMore`, and `nextCursor`. When `hasMore` is true, pass the opaque `nextCursor` value back as `cursor` while keeping every filter unchanged to load older rows. Cursors are signed and filter-bound but not encrypted; clients must not parse or modify them. Restart from the first page when the API returns `400 invalid_input`, such as after a cursor is changed, a filter is changed, or the server encryption secret is rotated. Page size may change between requests without invalidating a cursor.
+
 API upstream accounts and `OPENAI_API_BASE_URL` require HTTPS by default so
 upstream API keys are not sent over plaintext HTTP. Set
 `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP

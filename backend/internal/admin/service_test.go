@@ -902,7 +902,8 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	since := time.Unix(2000, 0).UTC()
 
-	logs, err := service.ListRequestLogs(context.Background(), RequestLogFilter{
+	page, err := service.ListRequestLogs(context.Background(), RequestLogFilter{
+		Cursor:            " opaque-cursor ",
 		RequestID:         " req_3 ",
 		Query:             "  gpt-5  ",
 		StatusClass:       "server_error",
@@ -920,11 +921,15 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRequestLogs returned error: %v", err)
 	}
+	logs := page.Logs
 	if repo.lastLogFilter.Limit != 50 {
 		t.Fatalf("repository limit = %d, want default 50", repo.lastLogFilter.Limit)
 	}
 	if repo.lastLogFilter.Query != "gpt-5" {
 		t.Fatalf("repository query = %q, want gpt-5", repo.lastLogFilter.Query)
+	}
+	if repo.lastLogFilter.Cursor != "opaque-cursor" {
+		t.Fatalf("repository cursor = %q, want opaque-cursor", repo.lastLogFilter.Cursor)
 	}
 	if repo.lastLogFilter.RequestID != "req_3" {
 		t.Fatalf("repository request ID = %q, want req_3", repo.lastLogFilter.RequestID)
@@ -996,6 +1001,9 @@ func TestListRequestLogsClampsLimitAndReturnsRepositoryLogs(t *testing.T) {
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Query: strings.Repeat("x", 201)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long query error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{Cursor: strings.Repeat("x", 1025)}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListRequestLogs long cursor error = %v, want ErrInvalidInput", err)
 	}
 	if _, err := service.ListRequestLogs(context.Background(), RequestLogFilter{RequestID: strings.Repeat("x", 101)}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ListRequestLogs long request ID error = %v, want ErrInvalidInput", err)
@@ -2128,13 +2136,13 @@ func (r *memoryRepo) TouchAPIKey(_ context.Context, id int64, usedAt time.Time) 
 	return nil
 }
 
-func (r *memoryRepo) ListRequestLogs(_ context.Context, filter RequestLogFilter) ([]RequestLog, error) {
+func (r *memoryRepo) ListRequestLogs(_ context.Context, filter RequestLogFilter) (RequestLogPage, error) {
 	r.lastLogFilter = filter
 	limit := filter.Limit
 	if limit > len(r.logs) {
 		limit = len(r.logs)
 	}
-	return append([]RequestLog(nil), r.logs[:limit]...), nil
+	return RequestLogPage{Logs: append([]RequestLog(nil), r.logs[:limit]...)}, nil
 }
 
 func (r *memoryRepo) DeleteRequestLogsBefore(_ context.Context, before time.Time) (int64, error) {

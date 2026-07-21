@@ -178,8 +178,15 @@ type RequestLog struct {
 	CreatedAt                time.Time `json:"createdAt"`
 }
 
+type RequestLogPage struct {
+	Logs       []RequestLog `json:"logs"`
+	NextCursor string       `json:"nextCursor"`
+	HasMore    bool         `json:"hasMore"`
+}
+
 type RequestLogFilter struct {
 	Limit             int
+	Cursor            string
 	Since             time.Time
 	RequestID         string
 	Query             string
@@ -346,7 +353,7 @@ type Repository interface {
 	GetAPIKeyBudgetUsage(ctx context.Context, keyID int64, now time.Time) (APIKeyBudgetUsage, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
-	ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error)
+	ListRequestLogs(ctx context.Context, filter RequestLogFilter) (RequestLogPage, error)
 	DeleteRequestLogsBefore(ctx context.Context, before time.Time) (int64, error)
 	GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (UsagePricing, error)
@@ -968,16 +975,17 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (APIKey
 	return key, nil
 }
 
-func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) ([]RequestLog, error) {
+func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) (RequestLogPage, error) {
 	if filter.Limit <= 0 {
 		filter.Limit = 50
 	}
 	if filter.Limit > 200 {
 		filter.Limit = 200
 	}
+	filter.Cursor = strings.TrimSpace(filter.Cursor)
 	filter.Query = strings.TrimSpace(filter.Query)
-	if len(filter.Query) > maxRequestLogQueryLen {
-		return nil, ErrInvalidInput
+	if len(filter.Cursor) > 1024 || len(filter.Query) > maxRequestLogQueryLen {
+		return RequestLogPage{}, ErrInvalidInput
 	}
 	filter.RequestID = strings.TrimSpace(filter.RequestID)
 	filter.Model = strings.TrimSpace(filter.Model)
@@ -987,7 +995,7 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	filter.RoutingPoolError = strings.TrimSpace(filter.RoutingPoolError)
 	filter.RoutingPoolChain = strings.TrimSpace(filter.RoutingPoolChain)
 	if len(filter.RequestID) > 100 || len(filter.Model) > 100 || len(filter.SessionID) > 100 || len(filter.Error) > 100 || len(filter.UsageSource) > 100 || len(filter.RoutingPoolError) > 100 || len(filter.RoutingPoolChain) > 200 {
-		return nil, ErrInvalidInput
+		return RequestLogPage{}, ErrInvalidInput
 	}
 	filter.StatusClass = strings.TrimSpace(filter.StatusClass)
 	if filter.StatusClass == "" {
@@ -996,19 +1004,19 @@ func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) 
 	switch filter.StatusClass {
 	case RequestLogStatusAll, RequestLogStatusSuccess, RequestLogStatusClientError, RequestLogStatusServerError:
 	default:
-		return nil, ErrInvalidInput
+		return RequestLogPage{}, ErrInvalidInput
 	}
 	if filter.StatusCode != 0 && (filter.StatusCode < 100 || filter.StatusCode > 599) {
-		return nil, ErrInvalidInput
+		return RequestLogPage{}, ErrInvalidInput
 	}
 	if filter.ProviderAccountID < 0 {
-		return nil, ErrInvalidInput
+		return RequestLogPage{}, ErrInvalidInput
 	}
 	if filter.RoutingPoolID < 0 {
-		return nil, ErrInvalidInput
+		return RequestLogPage{}, ErrInvalidInput
 	}
 	if filter.ClientKeyID < 0 {
-		return nil, ErrInvalidInput
+		return RequestLogPage{}, ErrInvalidInput
 	}
 	return s.repo.ListRequestLogs(ctx, filter)
 }
