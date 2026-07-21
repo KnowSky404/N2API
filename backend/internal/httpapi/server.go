@@ -195,7 +195,8 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		EventWindow:      adminLoginThrottleEventWindow,
 		MaxEntries:       cfg.AdminLoginThrottleMaxEntries,
 	})
-	secureCookie := strings.HasPrefix(cfg.PublicURL, "https://")
+	publicURL, _ := url.Parse(cfg.PublicURL)
+	secureCookie := strings.EqualFold(publicURL.Scheme, "https")
 	gateway, webFS, autoTestStatusSource := parseServerOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)

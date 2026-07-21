@@ -7,6 +7,11 @@ services:
       - path: ../.env.example
       - path: ../.env
         required: false
+    environment:
+      N2API_ACCEPT_RISKS: ${N2API_ACCEPT_RISKS:-public-bind,database-plaintext}
+      N2API_ADMIN_PASSWORD: ${N2API_ADMIN_PASSWORD:-n2api-local-admin-password}
+      N2API_ENCRYPTION_SECRET: ${N2API_ENCRYPTION_SECRET:-n2api-local-encryption-secret-at-least-32-bytes}
+      DATABASE_URL: ${DATABASE_URL:-postgres://n2api:n2api-local-postgres-password@postgres:5432/n2api?sslmode=disable}
     ports:
       - "${N2API_PORT:-3000}:3000"
     depends_on:
@@ -24,7 +29,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-n2api}
       POSTGRES_USER: ${POSTGRES_USER:-n2api}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-n2api-local-postgres-password}
     volumes:
       - n2api-postgres:/var/lib/postgresql
     healthcheck:

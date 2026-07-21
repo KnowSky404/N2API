@@ -458,6 +458,7 @@ jobs:
             -e N2API_HOST=127.0.0.1 \
             -e N2API_PORT=3000 \
             -e N2API_PUBLIC_URL=http://127.0.0.1:3000 \
+            -e N2API_ACCEPT_RISKS=database-plaintext \
             -e DATABASE_URL=postgres://n2api:ci-postgres-password@n2api-ci-postgres:5432/n2api?sslmode=disable \
             -e N2API_ADMIN_USERNAME=admin \
             -e N2API_ADMIN_PASSWORD=ci-admin-password \

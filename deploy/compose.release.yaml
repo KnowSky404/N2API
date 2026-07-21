@@ -4,11 +4,21 @@ services:
     pull_policy: always
     restart: unless-stopped
     env_file:
-      - path: ../.env.example
       - path: ../.env
-        required: false
+        required: true
+    environment:
+      N2API_HOST: ${N2API_HOST:-0.0.0.0}
+      N2API_PUBLIC_URL: ${N2API_PUBLIC_URL:?N2API_PUBLIC_URL is required}
+      N2API_ACCEPT_RISKS: ${N2API_ACCEPT_RISKS:?N2API_ACCEPT_RISKS is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      N2API_ADMIN_PASSWORD: ${N2API_ADMIN_PASSWORD:?N2API_ADMIN_PASSWORD is required}
+      N2API_ENCRYPTION_SECRET: ${N2API_ENCRYPTION_SECRET:?N2API_ENCRYPTION_SECRET is required}
     ports:
-      - "${N2API_PORT:-3000}:3000"
+      - name: http
+        target: 3000
+        published: "${N2API_PORT:-3000}"
+        host_ip: "${N2API_BIND_ADDRESS:-127.0.0.1}"
+        protocol: tcp
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,7 +35,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-n2api}
       POSTGRES_USER: ${POSTGRES_USER:-n2api}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - n2api-postgres:/var/lib/postgresql
     healthcheck:

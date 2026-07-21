@@ -3,10 +3,14 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Config struct {
@@ -51,9 +55,21 @@ const (
 	defaultAdminLoginThrottleFailures      = 5
 	defaultAdminLoginThrottleMaxEntries    = 4096
 	defaultAdminSessionTTLHours            = 168
+	minimumAdminPasswordBytes              = 12
+	minimumEncryptionSecretBytes           = 32
+)
+
+const (
+	riskPublicHTTP        = "public-http"
+	riskPublicBind        = "public-bind"
+	riskDatabasePlaintext = "database-plaintext"
 )
 
 func Load(lookup func(string) string) (Config, error) {
+	acceptedRisks, err := parseAcceptedRisks(lookup("N2API_ACCEPT_RISKS"))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Host:          valueOrDefault(lookup("N2API_HOST"), "0.0.0.0"),
 		PublicURL:     valueOrDefault(lookup("N2API_PUBLIC_URL"), "http://localhost:3000"),
@@ -184,6 +200,9 @@ func Load(lookup func(string) string) (Config, error) {
 	if cfg.AdminPassword == "" {
 		return Config{}, errors.New("N2API_ADMIN_PASSWORD is required")
 	}
+	if err := validateStartupSecurity(&cfg, acceptedRisks); err != nil {
+		return Config{}, err
+	}
 
 	return cfg, nil
 }
@@ -289,4 +308,205 @@ func parseTrustedProxyCIDRs(value string) ([]netip.Prefix, error) {
 		prefixes = append(prefixes, prefix)
 	}
 	return prefixes, nil
+}
+
+func parseAcceptedRisks(value string) (map[string]struct{}, error) {
+	accepted := make(map[string]struct{})
+	if strings.TrimSpace(value) == "" {
+		return accepted, nil
+	}
+	allowed := map[string]struct{}{
+		riskPublicHTTP:        {},
+		riskPublicBind:        {},
+		riskDatabasePlaintext: {},
+	}
+	for _, raw := range strings.Split(value, ",") {
+		risk := strings.TrimSpace(raw)
+		if risk == "" {
+			return nil, errors.New("N2API_ACCEPT_RISKS must contain only comma-separated documented risk names")
+		}
+		if _, ok := allowed[risk]; !ok {
+			return nil, errors.New("N2API_ACCEPT_RISKS must contain only comma-separated documented risk names")
+		}
+		accepted[risk] = struct{}{}
+	}
+	return accepted, nil
+}
+
+func validateStartupSecurity(cfg *Config, acceptedRisks map[string]struct{}) error {
+	publicURL, err := validatePublicURL(cfg.PublicURL, acceptedRisks)
+	if err != nil {
+		return err
+	}
+	cfg.PublicURL = publicURL
+	if !isLoopbackHost(cfg.Host) && !acceptsRisk(acceptedRisks, riskPublicBind) {
+		return errors.New("N2API_ACCEPT_RISKS must include public-bind when N2API_HOST is not loopback")
+	}
+	if err := validateSecrets(cfg.AdminPassword, cfg.EncryptionSecret); err != nil {
+		return err
+	}
+	if err := validateDatabaseURL(cfg.DatabaseURL, acceptedRisks); err != nil {
+		return err
+	}
+	openAIAPIBaseURL, err := validateUpstreamURL("OPENAI_API_BASE_URL", cfg.OpenAIAPIBaseURL, cfg.AllowHTTPAPIUpstreams)
+	if err != nil {
+		return err
+	}
+	cfg.OpenAIAPIBaseURL = openAIAPIBaseURL
+	openAIOAuthAuthURL, err := validateUpstreamURL("OPENAI_OAUTH_AUTH_URL", cfg.OpenAIOAuthAuthURL, false)
+	if err != nil {
+		return err
+	}
+	cfg.OpenAIOAuthAuthURL = openAIOAuthAuthURL
+	openAIOAuthTokenURL, err := validateUpstreamURL("OPENAI_OAUTH_TOKEN_URL", cfg.OpenAIOAuthTokenURL, false)
+	if err != nil {
+		return err
+	}
+	cfg.OpenAIOAuthTokenURL = openAIOAuthTokenURL
+	return nil
+}
+
+func validatePublicURL(value string, acceptedRisks map[string]struct{}) (string, error) {
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || validURLHost(parsed.Host) == "" {
+		return "", errors.New("N2API_PUBLIC_URL must be an absolute HTTP or HTTPS origin")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New("N2API_PUBLIC_URL must be an absolute HTTP or HTTPS origin")
+	}
+	if parsed.User != nil || parsed.ForceQuery || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return "", errors.New("N2API_PUBLIC_URL must not contain credentials, query, fragment, or a non-root path")
+	}
+	if isPlaceholderHost(parsed.Hostname()) {
+		return "", errors.New("N2API_PUBLIC_URL must not use a placeholder host")
+	}
+	if scheme == "http" && !isLoopbackHost(parsed.Hostname()) && !acceptsRisk(acceptedRisks, riskPublicHTTP) {
+		return "", errors.New("N2API_ACCEPT_RISKS must include public-http when N2API_PUBLIC_URL uses HTTP with a non-loopback host")
+	}
+	parsed.Scheme = scheme
+	parsed.Path = ""
+	parsed.RawPath = ""
+	return parsed.String(), nil
+}
+
+func validateSecrets(adminPassword, encryptionSecret string) error {
+	if len(adminPassword) < minimumAdminPasswordBytes || isKnownPlaceholder(adminPassword) {
+		return fmt.Errorf("N2API_ADMIN_PASSWORD must be at least %d bytes and must not be a known placeholder", minimumAdminPasswordBytes)
+	}
+	if len(encryptionSecret) < minimumEncryptionSecretBytes || isKnownPlaceholder(encryptionSecret) {
+		return fmt.Errorf("N2API_ENCRYPTION_SECRET must be at least %d bytes and must not be a known placeholder", minimumEncryptionSecretBytes)
+	}
+	if adminPassword == encryptionSecret {
+		return errors.New("N2API_ADMIN_PASSWORD and N2API_ENCRYPTION_SECRET must be different")
+	}
+	return nil
+}
+
+func validateDatabaseURL(value string, acceptedRisks map[string]struct{}) error {
+	poolConfig, err := pgxpool.ParseConfig(value)
+	if err != nil {
+		return errors.New("DATABASE_URL must be a valid PostgreSQL connection string")
+	}
+	if isKnownPlaceholder(poolConfig.ConnConfig.Password) {
+		return errors.New("DATABASE_URL must not contain a placeholder password")
+	}
+	permitsPlaintext := poolConfig.ConnConfig.TLSConfig == nil
+	for _, fallback := range poolConfig.ConnConfig.Fallbacks {
+		if fallback.TLSConfig == nil {
+			permitsPlaintext = true
+			break
+		}
+	}
+	if permitsPlaintext && !acceptsRisk(acceptedRisks, riskDatabasePlaintext) {
+		return errors.New("N2API_ACCEPT_RISKS must include database-plaintext when DATABASE_URL permits a plaintext connection")
+	}
+	return nil
+}
+
+func validateUpstreamURL(name, value string, allowHTTP bool) (string, error) {
+	parsed, err := url.Parse(value)
+	if err != nil || !parsed.IsAbs() || parsed.Opaque != "" || validURLHost(parsed.Host) == "" || parsed.User != nil {
+		return "", fmt.Errorf("%s must be an absolute HTTP or HTTPS URL without credentials", name)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("%s must use HTTP or HTTPS", name)
+	}
+	if scheme == "http" && !allowHTTP {
+		if name == "OPENAI_API_BASE_URL" {
+			return "", errors.New("N2API_ALLOW_HTTP_API_UPSTREAMS must be true when OPENAI_API_BASE_URL uses HTTP")
+		}
+		return "", fmt.Errorf("%s must use HTTPS", name)
+	}
+	parsed.Scheme = scheme
+	return parsed.String(), nil
+}
+
+func acceptsRisk(accepted map[string]struct{}, risk string) bool {
+	_, ok := accepted[risk]
+	return ok
+}
+
+func validURLHost(raw string) string {
+	host := strings.TrimSpace(raw)
+	if host == "" || strings.ContainsAny(host, ",/\\?#@\r\n\t ") {
+		return ""
+	}
+	if strings.Count(host, ":") > 1 && !strings.HasPrefix(host, "[") {
+		return ""
+	}
+	parsed, err := url.Parse("//" + host)
+	if err != nil || parsed.Host != host || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	if parsed.Hostname() == "" || strings.HasSuffix(host, ":") {
+		return ""
+	}
+	if port := parsed.Port(); port != "" {
+		value, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || value == 0 {
+			return ""
+		}
+	}
+	return host
+}
+
+func isLoopbackHost(value string) bool {
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+func isPlaceholderHost(value string) bool {
+	host := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+	if host == "example.com" || strings.HasSuffix(host, ".example.com") ||
+		host == "example.net" || strings.HasSuffix(host, ".example.net") ||
+		host == "example.org" || strings.HasSuffix(host, ".example.org") ||
+		host == "example" || strings.HasSuffix(host, ".example") ||
+		host == "test" || strings.HasSuffix(host, ".test") ||
+		host == "invalid" || strings.HasSuffix(host, ".invalid") {
+		return true
+	}
+	return strings.Contains(host, "your-domain") || strings.Contains(host, "change-me")
+}
+
+func isKnownPlaceholder(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "change-me") ||
+		strings.Contains(normalized, "replace-me") ||
+		normalized == "changeme" ||
+		normalized == "password" ||
+		normalized == "admin" ||
+		normalized == "your-password" ||
+		normalized == "your-secret"
 }

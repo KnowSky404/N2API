@@ -49,6 +49,7 @@ services:
       N2API_HOST: 0.0.0.0
       N2API_PORT: 3000
       N2API_PUBLIC_URL: http://n2api:3000
+      N2API_ACCEPT_RISKS: public-http,public-bind,database-plaintext
       N2API_ADMIN_USERNAME: admin
       N2API_ADMIN_PASSWORD: e2e-admin-password
       N2API_ENCRYPTION_SECRET: e2e-encryption-secret-with-enough-length

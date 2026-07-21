@@ -267,6 +267,8 @@ unchanged until the owner selects a policy.
 
 ## Task 5: Reject Unsafe Startup Configuration
 
+Status: completed locally on 2026-07-21
+
 ### Goal
 
 Catch placeholder and internally inconsistent production settings before listen.
@@ -309,11 +311,19 @@ required.
 
 Known unsafe production combinations cannot start silently.
 
+Configuration tests cover canonical public origins, reserved placeholder hosts,
+secret length and separation, pgx TLS fallbacks, structured upstream URLs, and
+non-leaking errors. Development, release, E2E, and CI image-smoke paths declare
+only their required risks; release Compose requires a real environment file and
+publishes to host loopback by default.
+
 ### Commit
 
 `feat(config): reject unsafe deployment settings`
 
 ## Task 6: Evaluate Optional TOTP
+
+Status: blocked on owner decision
 
 ### Goal
 

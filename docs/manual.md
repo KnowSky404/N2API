@@ -9,11 +9,45 @@ deployment target is Docker Compose on a small VPS.
 From the repository root:
 
 ```bash
-cp .env.example .env
-docker compose -f deploy/compose.yaml --env-file .env up --build
+docker compose -f deploy/compose.yaml up --build
 ```
 
-The default app URL is `http://localhost:3000`.
+The default app URL is `http://localhost:3000`. This zero-configuration path
+uses predictable development-only credentials. To customize them, copy
+`.env.example` to `.env`, replace every `change-me` value, and then add
+`--env-file .env` to the command.
+
+## Startup Configuration Safety
+
+N2API validates security-sensitive configuration before opening its listener.
+`N2API_PUBLIC_URL` must be an absolute HTTP or HTTPS origin with no credentials,
+query, fragment, or non-root path. Administrator passwords must contain at
+least 12 bytes, encryption secrets at least 32 bytes, and the two values must
+be different. Known template values are rejected. PostgreSQL connection
+strings are parsed with the same pgx parser used at runtime, and startup errors
+name variables without echoing credentials or connection strings.
+
+Some valid development and container topologies are intentionally unsafe. They
+must be acknowledged individually in the comma-separated
+`N2API_ACCEPT_RISKS` variable:
+
+- `public-http` permits a non-loopback `N2API_PUBLIC_URL` to use HTTP.
+- `public-bind` permits `N2API_HOST` to listen on a non-loopback address.
+- `database-plaintext` permits a PostgreSQL primary or fallback connection
+  without TLS.
+
+Unknown values, empty list elements, and a blanket `all` value are rejected.
+These acknowledgements never bypass malformed URLs or connection strings,
+placeholder or short secrets, or identical administrator and encryption
+secrets. The development Compose file supplies only `public-bind` and
+`database-plaintext` by default and uses separate local-only credentials when
+no `.env` exists. Set `N2API_ACCEPT_RISKS` explicitly in `.env` to narrow or
+replace those development defaults.
+
+`OPENAI_API_BASE_URL` and the OpenAI OAuth endpoints are also parsed at
+startup. OAuth authorization and token endpoints must use HTTPS. The API base
+URL may use HTTP only when `N2API_ALLOW_HTTP_API_UPSTREAMS=true`, matching the
+explicit opt-in used for API-key upstream accounts.
 
 ## Reverse Proxy Trust
 
@@ -229,6 +263,15 @@ Replace every `change-me` value before starting the stack. At minimum, set:
   makes encrypted provider credentials unrecoverable.
 - `N2API_PUBLIC_URL` to the externally visible origin, including `https://`
   when TLS terminates in front of N2API.
+- `N2API_ACCEPT_RISKS=public-bind,database-plaintext` when using the bundled
+  release topology. The application must listen on the container network, and
+  the bundled PostgreSQL service does not enable TLS. For an external
+  TLS-required PostgreSQL service, omit `database-plaintext`.
+
+The release Compose file requires `.env`, rejects missing required variables at
+Compose interpolation time, and publishes N2API on `127.0.0.1` by default. Set
+`N2API_BIND_ADDRESS=0.0.0.0` or `::` only when an intentionally public host
+listener is protected by the host firewall or an operator-provided ingress.
 
 Keep `.env` readable only by its owner, validate the Compose model without
 printing the resolved secrets, then pull and start the release:
@@ -246,9 +289,8 @@ docker image inspect "ghcr.io/knowsky404/n2api:${N2API_VERSION}" --format '{{.Os
 ```
 
 The final command must print `linux/arm64` on an ARM64 host. The release Compose
-file publishes port `3000` on the host. Restrict that port with the host
-firewall or an operator-provided ingress configuration when direct public
-access is not intended.
+file publishes port `3000` on host loopback unless `N2API_BIND_ADDRESS` changes
+it.
 
 After the stack is healthy, sign in, connect and test a provider account,
 enable its supported models, create a client API key, and verify `/v1/models`
@@ -403,7 +445,11 @@ Routing pool fallback is explicit. The routing pool fallback chain can point to 
 
 Request Logs support exact **Provider account**, **Routing pool**, **API key**, **Model filter**, **Usage source**, and **Session filter** fields. On Gateway management and Dashboard, 24h usage rows for **Top provider accounts**, **Top usage sources**, **Top routing pools**, **Top routing pool chains**, **Top client keys**, **Top models**, and **Top sessions** link to Request Logs with exact provider-account, usage-source, routing-pool, routing-pool-chain, API-key, model, and sticky-session filters when the row identifies a concrete entity.
 
-API upstream accounts require HTTPS by default so upstream API keys are not sent over plaintext HTTP. Set `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP upstreams that you control.
+API upstream accounts and `OPENAI_API_BASE_URL` require HTTPS by default so
+upstream API keys are not sent over plaintext HTTP. Set
+`N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP
+upstreams that you control. This setting does not permit HTTP OpenAI OAuth
+authorization or token endpoints.
 
 For sticky session routing, clients can send `session_id` in the POST body. If a client needs a header instead, prefer `X-N2API-Session-ID` through reverse proxies; `session_id` remains supported but contains an underscore and may be dropped by default proxy settings. If N2API is behind Nginx and clients send the `session_id` header, set `underscores_in_headers on;` in the relevant `http` or `server` block. A body `session_id` overrides either header.
 

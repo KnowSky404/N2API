@@ -1191,16 +1191,20 @@ func TestAdminLoginSetsSessionCookie(t *testing.T) {
 }
 
 func TestAdminLoginSetsSecureCookieForHTTPSPublicURL(t *testing.T) {
-	server := NewServer(config.Config{PublicURL: "https://n2api.example.com"}, staticHealth{}, newFakeAdminService(), nil)
-	recorder := httptest.NewRecorder()
+	for _, publicURL := range []string{"https://n2api.example.com", "HTTPS://n2api.example.com"} {
+		t.Run(publicURL, func(t *testing.T) {
+			server := NewServer(config.Config{PublicURL: publicURL}, staticHealth{}, newFakeAdminService(), nil)
+			recorder := httptest.NewRecorder()
 
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"secret"}`)))
+			server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"admin","password":"secret"}`)))
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", recorder.Code)
-	}
-	if cookie := recorder.Result().Cookies()[0]; !cookie.Secure {
-		t.Fatalf("Secure = false, want true")
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", recorder.Code)
+			}
+			if cookie := recorder.Result().Cookies()[0]; !cookie.Secure {
+				t.Fatalf("Secure = false, want true")
+			}
+		})
 	}
 }
 
