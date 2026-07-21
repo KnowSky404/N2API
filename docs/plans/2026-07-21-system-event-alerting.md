@@ -284,6 +284,37 @@ It is additive and requires no migration or public API shape change. Rollback is
 the single feature commit; existing installed rules cannot exist before the
 template ships, and every newly installed rule starts disabled.
 
+The fourth slice must make Provider account recovery a confirmed health
+transition before account-expiry or circuit presets are added. Selecting an
+account and acquiring its concurrency slot records an attempt by updating only
+`last_used_at`; it must not clear health state, erase refresh diagnostics, or
+emit `provider_account.recovered`. A gateway request confirms recovery only
+after its final upstream response is 2xx. Network errors, 3xx, 4xx, 5xx,
+authorization failures, and configured error passthrough never confirm
+recovery. When one account fails and a fallback succeeds, only the successful
+account recovers.
+
+Account probes use the same strict success boundary: only 2xx clears health
+state. Network errors and every non-2xx response record a failed test without a
+recovery transition. Refreshing credentials for an existing OAuth account uses
+the credential-only update path so token refresh success preserves account
+health until a later gateway or probe 2xx confirms recovery. The existing
+transactional `UpdateAccount(ClearStatus: true)` path remains the recovery
+write, including its state-change guard so repeated healthy requests cannot
+emit duplicate recovery events. Recovery persistence is best effort in the
+gateway and must not replace an already successful, potentially billable
+upstream response with a local 500.
+
+Focused gateway tests must cover 2xx, network failure, authorization refresh,
+fallback, non-2xx, and error-passthrough branches. Provider and Store tests must
+prove that attempts preserve every health field, probes require 2xx, existing
+OAuth refreshes preserve health until confirmation, and only the first actual
+health transition emits `provider_account.recovered`. Streaming responses use
+their 2xx headers as the confirmation point because the current copy pipeline
+does not expose a distinct successful end-of-stream result. Concurrent success
+and failure writes remain last-writer-wins for V1; timestamp-ordered health
+transitions are deferred unless real concurrency evidence requires them.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.
