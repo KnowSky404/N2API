@@ -1,6 +1,6 @@
 # Request Log Lifecycle Plan
 
-Status: in progress
+Status: completed locally on 2026-07-21
 Public API changes: additive cursor fields; export limits become explicit
 Data migration: cursor/query index changes only after measurement
 
@@ -246,6 +246,8 @@ Export memory stays bounded and limits/cancellation are enforced.
 
 ## Task 5: Measure And Rationalize Indexes
 
+Status: completed locally on 2026-07-21.
+
 ### Goal
 
 Keep only indexes justified by representative queries.
@@ -262,13 +264,71 @@ Tasks 1-4 and a synthetic long-running data profile.
 
 ### Implementation
 
-Capture `EXPLAIN (ANALYZE, BUFFERS)` for default cursor and common exact filters.
-Review duplicate provider/model indexes from migrations 00009-00011. Do not add
-trigram or a broad matrix of indexes without measured benefit.
+The opt-in `TestRequestLogQueryProfile` creates a random isolated schema, runs
+all migrations, generates one million skewed Request Logs spanning almost 90
+days, runs `ANALYZE`, and captures warm `EXPLAIN (ANALYZE, BUFFERS, FORMAT
+JSON)` evidence. The matrix covers first/deep cursor pages, hot and cold
+account/model/pool exports, client-key pages, hot and cold budget aggregation,
+request/session exact filters, usage summary, retention candidates, index
+bytes, and a 100,000-row write probe. Page and export cases reuse the production
+Request Log select and joins. The schema is dropped after the test.
+
+The approved migration:
+
+- removes the physically duplicate provider-account and model usage indexes;
+- removes the provider/time index because no production predicate filters by
+  provider and the usage summary did not select it;
+- adds `(client_key_id, created_at DESC, id DESC)` for client-key filtering and
+  rolling budget reads; and
+- bounds the budget aggregate itself to the oldest relevant 30-day cutoff.
+
+The existing `(created_at DESC)` index remains. Expanding it to `(created_at
+DESC,id DESC)` reduced sub-millisecond cursor work but added about 22 MB and
+caused a representative hot account export to select a bitmap scan with an
+external merge spill. Extending the account index did not prevent that bitmap
+plan. Request ID, session, trigram, status, error, usage-source, and fallback
+indexes remain deferred because their measured benefit did not justify the
+additional write and storage matrix.
+
+### Measurement Evidence
+
+The accepted legacy/candidate run on PostgreSQL 18.4 produced:
+
+| Measurement | Legacy | Candidate |
+| --- | ---: | ---: |
+| Total Request Log index bytes | 159,391,744 | 140,419,072 |
+| 100,000-row indexed write probe | 1,342.424 ms | 968.899 ms |
+| Client-key page | 3.738 ms | 0.575 ms |
+| Cold-key bounded budget aggregate | 62.562 ms | 3.867 ms |
+| Default cursor page | 0.410 ms | 0.397 ms |
+| Deep cursor page | 0.395 ms | 0.410 ms |
+| Hot account export | 270.428 ms | 258.640 ms |
+| Retention candidate batch | 5.633 ms | 5.689 ms |
+
+The candidate removed all duplicate index definitions, reduced total index
+storage by about 11.9%, and reduced the synthetic write probe by about 27.8%.
+The accepted export and retention plans had no temporary reads or writes. The
+hot key remains a deliberate worst case: PostgreSQL can prefer the bounded time
+index or a sequential scan when one key owns half the table, while the new
+client-key index materially improves selective keys and list filters.
+
+These figures are comparative evidence from one synthetic run, not production
+latency guarantees. Rerun the profile after materially changing data shape,
+PostgreSQL, request filters, or retention behavior.
+
+### Operational Risk And Rollback
+
+The forward migration creates one index and drops three. Normal N2API startup
+runs migrations before readiness, so Request Log writes are not served during
+the build. On a very large external database, schedule the upgrade with enough
+temporary disk and a maintenance window because a normal index build blocks
+table writes. The down migration restores the exact legacy index set.
 
 ### Completion Criteria
 
-Every changed index has before/after plan evidence and stated write/storage cost.
+Every changed index has before/after plan evidence and stated write/storage
+cost. The accepted candidate has no duplicate definitions or representative
+export spill, and preserves bounded cursor and retention behavior.
 
 ### Commit
 

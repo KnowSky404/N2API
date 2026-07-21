@@ -1015,6 +1015,7 @@ func (r *AdminRepository) GetAPIKeyBudgetUsage(ctx context.Context, keyID int64,
 			COALESCE(SUM(estimated_cost_microusd) FILTER (WHERE created_at >= $3), 0)
 		FROM request_logs
 		WHERE client_key_id = $1
+			AND created_at >= $3
 	`, keyID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(
 		&usage.RequestsUsed24h,
 		&usage.TokensUsed24h,

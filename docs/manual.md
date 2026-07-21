@@ -655,6 +655,27 @@ Each runner creates its own account, routing pool, and client key through the
 admin API, keeps generated secrets in memory only, and performs best-effort API
 cleanup. Removing the isolated PostgreSQL volume is the final cleanup boundary.
 
+### Request Log Query Profile
+
+Run the opt-in Request Log profile against a disposable PostgreSQL database
+after materially changing filters, retention queries, data distribution, or
+the PostgreSQL major version. The database role must be allowed to create and
+drop schemas. The test creates a uniquely named schema, loads one million
+synthetic rows, reports `EXPLAIN (ANALYZE, BUFFERS)` and index/write metrics,
+and drops only that schema during cleanup.
+
+```bash
+cd backend
+GOCACHE=/tmp/n2api-request-log-profile-go-build \
+N2API_REQUEST_LOG_QUERY_PROFILE=1 \
+N2API_STORE_TEST_DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DISPOSABLE_DATABASE?sslmode=require' \
+go test -count=1 -run TestRequestLogQueryProfile -v ./internal/store
+```
+
+Do not treat one profile run as a fixed latency target. Compare plan shape,
+temporary I/O, buffer activity, total index bytes, and the write probe before
+accepting an index change.
+
 Before upgrading an existing deployment, back up PostgreSQL because the upgrade adds unified provider account tables and client API key model-policy metadata.
 
 ## Required Services

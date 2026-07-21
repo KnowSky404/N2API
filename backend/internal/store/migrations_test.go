@@ -661,11 +661,32 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 38 {
-		t.Fatalf("migration sources = %d, want 38", len(sources))
+	if len(sources) != 39 {
+		t.Fatalf("migration sources = %d, want 39", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[37].Path != "00038_admin_session_metadata.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[38].Path != "00039_request_log_index_rationalization.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestRequestLogIndexRationalizationMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00039_request_log_index_rationalization.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"DROP INDEX IF EXISTS request_logs_provider_account_usage_idx",
+		"DROP INDEX IF EXISTS request_logs_model_usage_idx",
+		"DROP INDEX IF EXISTS request_logs_provider_created_at_idx",
+		"request_logs_client_key_created_at_id_idx",
+		"ON request_logs (client_key_id, created_at DESC, id DESC)",
+		"CREATE INDEX IF NOT EXISTS request_logs_provider_created_at_idx",
+		"CREATE INDEX IF NOT EXISTS request_logs_provider_account_usage_idx",
+		"CREATE INDEX IF NOT EXISTS request_logs_model_usage_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }
 
