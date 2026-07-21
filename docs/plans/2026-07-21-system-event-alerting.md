@@ -474,6 +474,60 @@ order, and idempotent installation.
 Tenth-slice status: completed locally on 2026-07-21. Installation remains
 explicit and the created rule starts disabled.
 
+The eleventh source-event slice projects per-API-Key routing exhaustion from
+Request Logs. A trigger row must have
+`routing_pool_error = 'routing_pool_exhausted'` and a non-null client key. A
+firing incident recovers only after a later log for the same key records a real
+upstream `2xx`, a non-null `provider_account_id`, and an empty
+`routing_pool_error`. Local `/v1/models` responses, no-traffic periods, budget or
+rate-limit rejections, and every other failure do not recover it. The alert
+target is the API Key rather than a routing pool because a successful fallback
+log identifies the pool that actually served the request, not necessarily the
+pool whose chain was previously exhausted.
+
+Migration `00045` adds one persisted `routing_exhaustion_v1` Request Log
+checkpoint and an `api_key_routing_exhaustion_states` table containing only
+currently firing keys. The migration initializes the checkpoint to the current
+maximum Request Log ID so an upgrade does not replay retained history or create
+stale incidents; only logs committed after migration 45 are projected. The
+always-on monitor starts with the server, runs immediately and once per minute,
+reads at most 1000 log rows in ID order, and emits at most 100 transitions per
+cycle. It stops before a row that would exceed the transition bound and resumes
+from the last committed checkpoint. A PostgreSQL transaction advisory lock
+allows only one instance to project a cycle at a time; lock contention is a
+normal skip.
+
+Checkpoint movement, firing-state insert/delete, and Runtime System Events
+commit in one transaction. A failed event write therefore rolls back the
+transition and checkpoint together. Trigger events use Runtime error/failure
+action `api_key.routing_pool.exhausted`; recovery events use Runtime info/success
+action `api_key.routing_pool.recovered`. Both target `client_api_key/<key-id>`
+with the current key name. Trigger metadata is limited to `client_key_id`,
+`request_log_id`, `routing_pool_id`, and `fallback_depth`; recovery metadata is
+limited to `client_key_id`, `request_log_id`, and `provider_account_id`. No model,
+request or response content, error text, pool name, key prefix, or secret is
+copied into the event.
+
+Revoking an API Key closes an active routing-exhaustion state in the existing
+revoke transaction and emits `api_key.routing_pool.recovered` with
+`confirmation: key_revoked`. This prevents the state-table foreign-key cascade
+from leaving the matching alert-rule state firing after physical cleanup.
+
+After the source events exist, add `routing-pool-exhausted-v1` in an independent
+commit. The template starts disabled, matches the first Runtime error trigger,
+uses target-scoped deduplication and a one-hour cooldown, and can notify on the
+exact recovery action. Installation remains explicit and idempotent.
+
+Focused migration and isolated PostgreSQL tests must cover the non-replay
+baseline, ordered checkpoint advancement, the 1000-row and 100-transition
+bounds, lock contention, unchanged firing idempotence, exact recovery predicates,
+different-key isolation, transaction rollback, and revoke recovery. Runner and
+main tests must prove immediate execution, one-minute cadence, cancellation,
+cursor-free restart from the database checkpoint, and sanitized failure logs.
+System Event, catalog, matcher, service, Store, HTTP, manual, and documentation
+tests must assert exact fields, cooldown/recovery behavior, stable template
+order, and idempotent installation.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.

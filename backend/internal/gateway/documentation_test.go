@@ -1075,6 +1075,9 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"Eighth-slice source-event status: completed locally on 2026-07-21",
 			"Ninth-slice status: completed locally on 2026-07-21",
 			"Tenth-slice status: completed locally on 2026-07-21",
+			"`routing_exhaustion_v1` Request Log",
+			"`api_key.routing_pool.exhausted`",
+			"`routing-pool-exhausted-v1`",
 			"`oauth.refresh.diagnostic.failed`",
 		},
 	}
