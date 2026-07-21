@@ -545,6 +545,27 @@ deduplication. Circuit-open state remains active through credential or proxy
 edits; a confirmed 2xx gateway/account-probe response or explicit **Reset local
 status** operator override supplies the recovery event.
 
+API Key budget threshold source events are projected from Request Logs by an
+always-on monitor that runs once at startup and every five minutes. Each cycle
+processes at most 100 keys and each key is locked and evaluated in its own
+PostgreSQL transaction. Request-count, token-count, and estimated-cost budgets
+for rolling 24-hour and 30-day windows are independent. Crossing 80 percent
+emits `api_key.budget.threshold_80.crossed`; crossing 100 percent emits
+`api_key.budget.threshold_100.crossed`. A direct jump to 100 percent emits both.
+The corresponding `.recovered` action is emitted only when that exact stream
+falls below its threshold. Setting a budget to `0`, raising its limit, or aging
+usage out of the rolling window can therefore recover an incident on the next
+cycle. Revoking a key recovers all its active budget incidents in the revoke
+transaction.
+
+Budget events use `client_api_key_budget` targets whose IDs contain only the
+numeric key ID, budget kind, and window. Metadata is limited to those fields,
+the threshold, current use, limit, and the `key_revoked` confirmation when
+applicable. It never includes the key secret or prefix, Request Log payloads, or
+raw errors. The persistent crossing table prevents unchanged usage, restarts,
+or concurrent server instances from duplicating transitions. Source events
+support custom exact-match rules; no rule is installed or enabled automatically.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a

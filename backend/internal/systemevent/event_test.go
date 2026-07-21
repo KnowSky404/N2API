@@ -143,3 +143,16 @@ func TestOAuthRefreshDiagnosticFailureActionIsKnown(t *testing.T) {
 		t.Fatalf("action %q is not registered", ActionOAuthRefreshDiagnosticFailed)
 	}
 }
+
+func TestAPIKeyBudgetThresholdActionsAreKnown(t *testing.T) {
+	for _, action := range []Action{
+		ActionAPIKeyBudgetThreshold80Crossed,
+		ActionAPIKeyBudgetThreshold80Recovered,
+		ActionAPIKeyBudgetThreshold100Crossed,
+		ActionAPIKeyBudgetThreshold100Recovered,
+	} {
+		if !IsKnownAction(action) {
+			t.Fatalf("action %q is not registered", action)
+		}
+	}
+}

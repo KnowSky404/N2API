@@ -65,6 +65,10 @@ const (
 	ActionAPIKeyModelPolicyUpdated           Action = "api_key.model_policy.updated"
 	ActionAPIKeyLimitsUpdated                Action = "api_key.limits.updated"
 	ActionAPIKeyBudgetsUpdated               Action = "api_key.budgets.updated"
+	ActionAPIKeyBudgetThreshold80Crossed     Action = "api_key.budget.threshold_80.crossed"
+	ActionAPIKeyBudgetThreshold80Recovered   Action = "api_key.budget.threshold_80.recovered"
+	ActionAPIKeyBudgetThreshold100Crossed    Action = "api_key.budget.threshold_100.crossed"
+	ActionAPIKeyBudgetThreshold100Recovered  Action = "api_key.budget.threshold_100.recovered"
 	ActionAPIKeyRoutingPoolUpdated           Action = "api_key.routing_pool.updated"
 	ActionAPIKeyRevoked                      Action = "api_key.revoked"
 	ActionAPIKeyDeleted                      Action = "api_key.deleted"
@@ -426,6 +430,8 @@ var knownActions = map[Action]struct{}{
 	ActionAuthPasswordChanged: {}, ActionAuthPasswordChangeFailed: {}, ActionAuthBootstrapCreated: {}, ActionAuthBootstrapUsernameUpdated: {},
 	ActionAPIKeyCreated: {}, ActionAPIKeySecretViewed: {}, ActionAPIKeyRenamed: {}, ActionAPIKeyEnabled: {}, ActionAPIKeyDisabled: {}, ActionAPIKeyStatusUpdateFailed: {},
 	ActionAPIKeyModelPolicyUpdated: {}, ActionAPIKeyLimitsUpdated: {}, ActionAPIKeyBudgetsUpdated: {}, ActionAPIKeyRoutingPoolUpdated: {},
+	ActionAPIKeyBudgetThreshold80Crossed: {}, ActionAPIKeyBudgetThreshold80Recovered: {},
+	ActionAPIKeyBudgetThreshold100Crossed: {}, ActionAPIKeyBudgetThreshold100Recovered: {},
 	ActionAPIKeyRevoked: {}, ActionAPIKeyDeleted: {}, ActionAPIKeyPurged: {}, ActionRoutingPoolCreated: {}, ActionRoutingPoolUpdated: {},
 	ActionRoutingPoolDeleted: {}, ActionRoutingPoolAccountsReplaced: {}, ActionRequestLogCleanupCompleted: {}, ActionRequestLogExported: {},
 	ActionRequestLogExportAccepted: {}, ActionRequestLogExportCompleted: {}, ActionConfigurationExported: {},

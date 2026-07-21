@@ -663,11 +663,31 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 43 {
-		t.Fatalf("migration sources = %d, want 43", len(sources))
+	if len(sources) != 44 {
+		t.Fatalf("migration sources = %d, want 44", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[42].Path != "00043_alert_rule_template_key.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[43].Path != "00044_api_key_budget_threshold_states.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestAPIKeyBudgetThresholdStatesMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00044_api_key_budget_threshold_states.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE api_key_budget_threshold_states",
+		"client_key_id BIGINT NOT NULL REFERENCES client_api_keys(id) ON DELETE CASCADE",
+		"budget_kind IN ('request', 'token', 'cost')",
+		"window_name IN ('24h', '30d')",
+		"threshold_percent IN (80, 100)",
+		"PRIMARY KEY (client_key_id, budget_kind, window_name, threshold_percent)",
+		"DROP TABLE IF EXISTS api_key_budget_threshold_states",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }
 
@@ -731,6 +751,13 @@ func TestAlertRuleTemplateKeyMigrationRoundTrip(t *testing.T) {
 		t.Fatalf("create migration provider: %v", err)
 	}
 	result, err := provider.Down(ctx)
+	if err != nil {
+		t.Fatalf("roll back API key budget threshold migration: %v", err)
+	}
+	if result == nil || result.Source.Version != 44 {
+		t.Fatalf("migration down result = %+v, want version 44", result)
+	}
+	result, err = provider.Down(ctx)
 	if err != nil {
 		t.Fatalf("roll back alert rule template migration: %v", err)
 	}

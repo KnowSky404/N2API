@@ -68,6 +68,8 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"adminService.GetGatewaySettings",
 		"admin.NewRequestLogRetentionRunner",
 		"requestLogRetentionRunner.Run",
+		"admin.NewAPIKeyBudgetMonitor",
+		"go apiKeyBudgetMonitor.Run(ctx)",
 		"ProviderAccountAutoTestEnabled",
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",

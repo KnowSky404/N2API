@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first seven Task 4 slices completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first eight Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -415,8 +415,9 @@ prefix with `.recovered`. The 80-percent trigger is Runtime warning/partial, the
 info/success. Every event targets `client_api_key_budget` with ID
 `<key-id>:<request|token|cost>:<24h|30d>` and the API Key name. Safe metadata is
 limited to `client_key_id`, `budget_kind`, `window`, `threshold_percent`,
-`used`, and `limit`; it never includes the key prefix or secret, request data,
-or error text. The event message names the kind, window, and threshold so
+`used`, and `limit`, plus `confirmation` on key revocation; it never includes
+the key prefix or secret, request data, or error text. The event message names
+the kind, window, and threshold so
 notification destinations remain useful even though alert payloads do not
 include metadata.
 
@@ -446,6 +447,12 @@ must assert exact actions, category, severity, outcome, target, and metadata.
 Each template then requires the existing catalog, matcher, service, Store, HTTP,
 manual, and documentation-contract coverage for ordering, cooldown, recovery,
 target isolation, and idempotent installation.
+
+Eighth-slice source-event status: completed locally on 2026-07-21. Migration 44,
+the bounded always-on monitor, transactional crossing state, exact Runtime
+events, revoke recovery, and main wiring are covered by focused unit and isolated
+PostgreSQL tests. The 80-percent and 100-percent templates remain the next two
+independent commits.
 
 ### Completion Criteria
 

@@ -465,16 +465,28 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 	defer tx.Rollback(ctx)
 	var updatedID int64
 	var name string
+	var requestBudget24h, tokenBudget24h, requestBudget30d, tokenBudget30d int64
+	var costBudget24h, costBudget30d int64
 	err = tx.QueryRow(ctx, `
 		UPDATE client_api_keys
 		SET revoked_at = COALESCE(revoked_at, now())
 		WHERE id = $1
-		RETURNING id, name
-	`, id).Scan(&updatedID, &name)
+		RETURNING id, name,
+			request_budget_24h, token_budget_24h, cost_budget_microusd_24h,
+			request_budget_30d, token_budget_30d, cost_budget_microusd_30d
+	`, id).Scan(
+		&updatedID, &name,
+		&requestBudget24h, &tokenBudget24h, &costBudget24h,
+		&requestBudget30d, &tokenBudget30d, &costBudget30d,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.APIKey{}, admin.ErrNotFound
 	}
 	if err != nil {
+		return admin.APIKey{}, err
+	}
+	snapshot := apiKeyBudgetSnapshotFromValues(updatedID, name, requestBudget24h, tokenBudget24h, costBudget24h, requestBudget30d, tokenBudget30d, costBudget30d)
+	if err := recoverAPIKeyBudgetThresholdsForRevocation(ctx, tx, snapshot, time.Now().UTC()); err != nil {
 		return admin.APIKey{}, err
 	}
 	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
