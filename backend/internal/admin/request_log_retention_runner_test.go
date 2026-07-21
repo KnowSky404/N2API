@@ -171,6 +171,28 @@ func TestRequestLogRetentionRunnerTreatsLockContentionAsSkip(t *testing.T) {
 	}
 }
 
+func TestRequestLogRetentionRunnerDoesNotRecordShutdownCancellationAsFailure(t *testing.T) {
+	service := &fakeRequestLogRetentionService{
+		settings: GatewaySettings{RequestLogRetentionDays: 7},
+		runErr:   context.Canceled,
+	}
+	recorder := &captureRequestLogRetentionEvents{}
+	runner := NewRequestLogRetentionRunner(service, RequestLogRetentionRunnerConfig{Enabled: true}, slog.Default())
+	runner.SetSystemEventRecorder(recorder)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	runner.runCycle(ctx)
+
+	status := runner.RequestLogRetentionStatus()
+	if status.Running || status.LastErrorAt == nil || status.LastErrorCode != "request_log_retention_canceled" {
+		t.Fatalf("canceled status = %+v", status)
+	}
+	if len(recorder.events) != 0 {
+		t.Fatalf("shutdown cancellation events = %+v, want none", recorder.events)
+	}
+}
+
 func TestRequestLogRetentionRunnerRunsImmediately(t *testing.T) {
 	service := &fakeRequestLogRetentionService{
 		settings: GatewaySettings{RequestLogRetentionDays: 7},

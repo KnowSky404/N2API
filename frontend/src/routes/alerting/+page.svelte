@@ -430,7 +430,7 @@
     return `${value}s`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AlertRule} rule */
+  /** @param {import('$lib/admin-state.svelte.js').AlertRule | import('$lib/admin-state.svelte.js').AlertRuleTemplate} rule */
   function thresholdLabel(rule) {
     return rule.aggregationCount <= 1
       ? 'Every match'
@@ -655,8 +655,8 @@
               <h3 class="text-sm font-semibold text-[#0d0d0d]">Configuration</h3>
               <dl class="mt-3 grid gap-x-6 gap-y-4 border-y border-[#ededed] py-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
                 <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Trigger</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRuleTemplate.eventAction}</dd></div>
-                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Filters</dt><dd class="mt-1 text-[#0d0d0d]">{selectedRuleTemplate.category} / {selectedRuleTemplate.severity}</dd></div>
-                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Threshold</dt><dd class="mt-1 text-[#0d0d0d]">{selectedRuleTemplate.aggregationCount} in {durationLabel(selectedRuleTemplate.aggregationWindowSeconds)}</dd></div>
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Filters</dt><dd class="mt-1 text-[#0d0d0d]">{selectedRuleTemplate.category || 'Any category'} / {selectedRuleTemplate.severity || 'Any severity'}</dd></div>
+                <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Threshold</dt><dd class="mt-1 text-[#0d0d0d]">{thresholdLabel(selectedRuleTemplate)}</dd></div>
                 <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Cooldown</dt><dd class="mt-1 text-[#0d0d0d]">{durationLabel(selectedRuleTemplate.cooldownSeconds)}</dd></div>
                 <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Scope</dt><dd class="mt-1 capitalize text-[#0d0d0d]">{selectedRuleTemplate.deduplicationScope}</dd></div>
                 <div><dt class="text-xs font-medium uppercase text-[#6e6e6e]">Initial status</dt><dd class="mt-1 text-[#0d0d0d]">{selectedRuleTemplate.enabled ? 'Enabled' : 'Disabled'}</dd></div>

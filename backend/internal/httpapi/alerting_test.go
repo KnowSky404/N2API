@@ -103,17 +103,21 @@ func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
 	var catalog struct {
 		Templates []alerting.RuleTemplate `json:"templates"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 1 || catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey {
+	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 2 ||
+		catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey || catalog.Templates[1].Key != alerting.RequestLogRetentionFailedTemplateKey {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
 
+	service.rule.TemplateKey = alerting.RequestLogRetentionFailedTemplateKey
 	service.installCreated = true
 	response = httptest.NewRecorder()
-	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", `{"actionId":7}`))
-	if response.Code != http.StatusCreated || service.installTemplateKey != alerting.OAuthRefreshRepeatedTemplateKey || service.installActionID != 7 || !strings.Contains(response.Body.String(), `"created":true`) {
+	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/request-log-retention-failed-v1/install", `{"actionId":7}`))
+	if response.Code != http.StatusCreated || service.installTemplateKey != alerting.RequestLogRetentionFailedTemplateKey || service.installActionID != 7 ||
+		!strings.Contains(response.Body.String(), `"created":true`) || !strings.Contains(response.Body.String(), `"templateKey":"request-log-retention-failed-v1"`) {
 		t.Fatalf("created install status=%d body=%s service=%+v", response.Code, response.Body.String(), service)
 	}
 
+	service.rule.TemplateKey = alerting.OAuthRefreshRepeatedTemplateKey
 	service.installCreated = false
 	response = httptest.NewRecorder()
 	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", `{"actionId":7}`))

@@ -253,6 +253,8 @@ test('alerts route manages redacted delivery actions and exact-match rules', () 
   assert.match(alertingPage, /bind:value=\{selectedRuleTemplateKey\}/);
   assert.match(alertingPage, /ruleEditingId \|\| ruleStartingPoint === 'custom'/);
   assert.match(alertingPage, /selectedRuleTemplate\.eventAction/);
+  assert.match(alertingPage, /selectedRuleTemplate\.severity \|\| 'Any severity'/);
+  assert.match(alertingPage, /thresholdLabel\(selectedRuleTemplate\)/);
   assert.match(alertingPage, /selectedRuleTemplate\.enabled \? 'Enabled' : 'Disabled'/);
   assert.match(alertingPage, /Close delivery action modal/);
   assert.match(alertingPage, /Close notification rule modal/);

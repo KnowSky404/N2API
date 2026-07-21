@@ -137,10 +137,11 @@ func (r *RequestLogRetentionRunner) runCycle(ctx context.Context) {
 		}
 		finished := r.now().UTC()
 		r.finishFailure(finished, result, errorCode)
-		r.recordEvent(ctx, started, result, runErr, errorCode)
-		if ctx.Err() == nil {
-			r.logger.Warn("request log retention failed", "error", runErr, "deleted_count", result.Deleted, "batch_count", result.Batches)
+		if ctx.Err() != nil {
+			return
 		}
+		r.recordEvent(ctx, started, result, runErr, errorCode)
+		r.logger.Warn("request log retention failed", "error", runErr, "deleted_count", result.Deleted, "batch_count", result.Batches)
 		return
 	}
 	finished := r.now().UTC()

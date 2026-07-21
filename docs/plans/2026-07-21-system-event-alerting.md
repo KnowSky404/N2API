@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first Task 4 rule completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first two Task 4 rules completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -216,8 +216,8 @@ desktop/mobile workflow passes browser verification.
 
 ## Task 4: Add Operational Rules Incrementally
 
-Task status: in progress; repeated automatic OAuth refresh failures completed
-locally on 2026-07-21
+Task status: in progress; repeated automatic OAuth refresh failures and Request
+Log retention failures completed locally on 2026-07-21
 
 ### Goal
 
@@ -245,6 +245,17 @@ matches three `oauth.refresh.automatic.failed` warning events for one target in
 `oauth.refresh.automatic.succeeded` as recovery. Model-test refresh failures
 emit `oauth.refresh.diagnostic.failed` so diagnostics do not inflate the
 operational failure window.
+
+The second slice adds `request-log-retention-failed-v1`. It matches both full
+`error` failures and partial `warning` failures by leaving severity unrestricted,
+fires on the first failed scheduled cycle, uses rule-scoped deduplication and a
+24-hour cooldown, and recognizes the next successful scheduled cycle as
+recovery. Parent-context cancellation during shutdown updates task status but
+does not emit the failed action, preventing a normal restart from triggering
+the rule. The runner can be configured as frequently as every five minutes;
+alternating success/failure cycles can still flap because recovery ends the
+firing incident, so the template remains disabled until an owner reviews the
+deployment's interval and failure behavior.
 
 Account-expiry and circuit presets remain deferred until their recovery events
 are emitted only after confirmed recovery. Request-derived thresholds require a

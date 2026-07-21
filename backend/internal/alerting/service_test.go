@@ -575,16 +575,27 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 1 {
-		t.Fatalf("RuleTemplates count = %d, want 1", len(templates))
+	if len(templates) != 2 {
+		t.Fatalf("RuleTemplates count = %d, want 2", len(templates))
 	}
-	template := templates[0]
-	if template.Key != OAuthRefreshRepeatedTemplateKey || template.Name != "Repeated OAuth refresh failures" || template.Enabled ||
-		template.Category != systemevent.CategoryOAuth || template.Severity != systemevent.SeverityWarning ||
-		template.EventAction != systemevent.ActionOAuthRefreshAutomaticFailed || template.RecoveryAction != systemevent.ActionOAuthRefreshAutomaticSucceeded ||
-		template.AggregationCount != 3 || template.AggregationWindowSeconds != 900 || template.CooldownSeconds != 3600 ||
-		template.DeduplicationScope != DeduplicationScopeTarget || !template.NotifyRecovery {
-		t.Fatalf("template = %+v", template)
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey {
+		t.Fatalf("template order = %+v", templates)
+	}
+	oauthTemplate := templates[0]
+	if oauthTemplate.Name != "Repeated OAuth refresh failures" || oauthTemplate.Enabled ||
+		oauthTemplate.Category != systemevent.CategoryOAuth || oauthTemplate.Severity != systemevent.SeverityWarning ||
+		oauthTemplate.EventAction != systemevent.ActionOAuthRefreshAutomaticFailed || oauthTemplate.RecoveryAction != systemevent.ActionOAuthRefreshAutomaticSucceeded ||
+		oauthTemplate.AggregationCount != 3 || oauthTemplate.AggregationWindowSeconds != 900 || oauthTemplate.CooldownSeconds != 3600 ||
+		oauthTemplate.DeduplicationScope != DeduplicationScopeTarget || !oauthTemplate.NotifyRecovery {
+		t.Fatalf("OAuth template = %+v", oauthTemplate)
+	}
+	retentionTemplate := templates[1]
+	if retentionTemplate.Name != "Request log retention failures" || retentionTemplate.Enabled ||
+		retentionTemplate.Category != systemevent.CategoryScheduler || retentionTemplate.Severity != "" ||
+		retentionTemplate.EventAction != systemevent.ActionSchedulerRequestLogRetentionFailed || retentionTemplate.RecoveryAction != systemevent.ActionSchedulerRequestLogRetentionSucceeded ||
+		retentionTemplate.AggregationCount != 1 || retentionTemplate.AggregationWindowSeconds != 0 || retentionTemplate.CooldownSeconds != 86400 ||
+		retentionTemplate.DeduplicationScope != DeduplicationScopeRule || !retentionTemplate.NotifyRecovery {
+		t.Fatalf("retention template = %+v", retentionTemplate)
 	}
 
 	repo := newMemoryRepository()
@@ -599,6 +610,10 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	again, created, err := service.InstallRuleTemplate(context.Background(), OAuthRefreshRepeatedTemplateKey, 99)
 	if err != nil || created || again.ID != rule.ID || again.ActionID != 7 {
 		t.Fatalf("second InstallRuleTemplate = %+v, %v, %v", again, created, err)
+	}
+	retentionRule, created, err := service.InstallRuleTemplate(context.Background(), RequestLogRetentionFailedTemplateKey, 11)
+	if err != nil || !created || retentionRule.TemplateKey != RequestLogRetentionFailedTemplateKey || retentionRule.ActionID != 11 || retentionRule.Enabled {
+		t.Fatalf("retention InstallRuleTemplate = %+v, %v, %v", retentionRule, created, err)
 	}
 	for _, input := range []struct {
 		key      string

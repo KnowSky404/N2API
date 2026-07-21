@@ -677,6 +677,22 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if reinstalled.ID != edited.ID || reinstalled.ActionID != firstAction.ID || reinstalled.Name != edited.Name || !reinstalled.Enabled {
 		t.Fatalf("reinstall overwrote edited rule: %+v", reinstalled)
 	}
+	retentionTemplate := template
+	retentionTemplate.TemplateKey = "request-log-retention-failed-v1"
+	retentionTemplate.Name = "Request log retention failures"
+	retentionTemplate.ActionID = secondAction.ID
+	retentionTemplate.Category = systemevent.CategoryScheduler
+	retentionTemplate.Severity = ""
+	retentionTemplate.EventAction = systemevent.ActionSchedulerRequestLogRetentionFailed
+	retentionTemplate.RecoveryAction = systemevent.ActionSchedulerRequestLogRetentionSucceeded
+	retentionTemplate.AggregationCount = 1
+	retentionTemplate.AggregationWindowSeconds = 0
+	retentionTemplate.CooldownSeconds = 86400
+	retentionTemplate.DeduplicationScope = alerting.DeduplicationScopeRule
+	retentionRule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: retentionTemplate})
+	if err != nil || !created || retentionRule.ID == edited.ID || retentionRule.TemplateKey != retentionTemplate.TemplateKey || retentionRule.ActionID != secondAction.ID {
+		t.Fatalf("second template install = %+v, created=%t, err=%v", retentionRule, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `

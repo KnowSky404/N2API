@@ -56,6 +56,42 @@ func TestRuleNeverMatchesAlertDeliveryInternalEvents(t *testing.T) {
 	}
 }
 
+func TestRequestLogRetentionTemplateMatchesFullAndPartialFailuresAndRecovers(t *testing.T) {
+	template, ok := ruleTemplate(RequestLogRetentionFailedTemplateKey)
+	if !ok {
+		t.Fatal("request log retention template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 11
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	for _, severity := range []systemevent.Severity{systemevent.SeverityError, systemevent.SeverityWarning} {
+		t.Run(string(severity), func(t *testing.T) {
+			failure := triggerEvent()
+			failure.Category = systemevent.CategoryScheduler
+			failure.Severity = severity
+			failure.Action = systemevent.ActionSchedulerRequestLogRetentionFailed
+			failure.Target = systemevent.Target{Type: "request_log_collection", ID: "retention"}
+			state := RuleState{
+				RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle,
+			}
+			state, decision, err := Evaluate(rule, state, failure, now)
+			if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+				t.Fatalf("failure evaluation state=%+v decision=%q err=%v", state, decision, err)
+			}
+
+			recovery := failure
+			recovery.Severity = systemevent.SeverityInfo
+			recovery.Action = systemevent.ActionSchedulerRequestLogRetentionSucceeded
+			recovery.Outcome = systemevent.OutcomeSuccess
+			state, decision, err = Evaluate(rule, state, recovery, now.Add(time.Minute))
+			if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+				t.Fatalf("recovery evaluation state=%+v decision=%q err=%v", state, decision, err)
+			}
+		})
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

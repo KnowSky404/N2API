@@ -2,22 +2,39 @@ package alerting
 
 import "github.com/KnowSky404/N2API/backend/internal/systemevent"
 
-const OAuthRefreshRepeatedTemplateKey = "oauth-refresh-repeated-v1"
+const (
+	OAuthRefreshRepeatedTemplateKey      = "oauth-refresh-repeated-v1"
+	RequestLogRetentionFailedTemplateKey = "request-log-retention-failed-v1"
+)
 
-var ruleTemplateCatalog = []RuleTemplate{{
-	Key:                      OAuthRefreshRepeatedTemplateKey,
-	Name:                     "Repeated OAuth refresh failures",
-	Enabled:                  false,
-	Category:                 systemevent.CategoryOAuth,
-	Severity:                 systemevent.SeverityWarning,
-	EventAction:              systemevent.ActionOAuthRefreshAutomaticFailed,
-	RecoveryAction:           systemevent.ActionOAuthRefreshAutomaticSucceeded,
-	AggregationCount:         3,
-	AggregationWindowSeconds: 900,
-	CooldownSeconds:          3600,
-	DeduplicationScope:       DeduplicationScopeTarget,
-	NotifyRecovery:           true,
-}}
+var ruleTemplateCatalog = []RuleTemplate{
+	{
+		Key:                      OAuthRefreshRepeatedTemplateKey,
+		Name:                     "Repeated OAuth refresh failures",
+		Enabled:                  false,
+		Category:                 systemevent.CategoryOAuth,
+		Severity:                 systemevent.SeverityWarning,
+		EventAction:              systemevent.ActionOAuthRefreshAutomaticFailed,
+		RecoveryAction:           systemevent.ActionOAuthRefreshAutomaticSucceeded,
+		AggregationCount:         3,
+		AggregationWindowSeconds: 900,
+		CooldownSeconds:          3600,
+		DeduplicationScope:       DeduplicationScopeTarget,
+		NotifyRecovery:           true,
+	},
+	{
+		Key:                RequestLogRetentionFailedTemplateKey,
+		Name:               "Request log retention failures",
+		Enabled:            false,
+		Category:           systemevent.CategoryScheduler,
+		EventAction:        systemevent.ActionSchedulerRequestLogRetentionFailed,
+		RecoveryAction:     systemevent.ActionSchedulerRequestLogRetentionSucceeded,
+		AggregationCount:   1,
+		CooldownSeconds:    86400,
+		DeduplicationScope: DeduplicationScopeRule,
+		NotifyRecovery:     true,
+	},
+}
 
 func RuleTemplates() []RuleTemplate {
 	return append([]RuleTemplate(nil), ruleTemplateCatalog...)

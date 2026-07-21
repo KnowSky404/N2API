@@ -510,12 +510,18 @@ creates the rule disabled, and is idempotent by the persisted template key:
 retries return the existing rule without changing its delivery action, enabled
 state, or later owner edits. Deleting a template-derived rule is allowed; it is
 created again only when an owner explicitly installs the template again. The
-catalog currently includes `oauth-refresh-repeated-v1`, which matches three
+catalog includes `oauth-refresh-repeated-v1`, which matches three
 automatic OAuth refresh failures for the same event target within 15 minutes,
 uses a one-hour cooldown, and can notify on the next automatic refresh success.
 Model-test refresh failures use the separate
 `oauth.refresh.diagnostic.failed` action and therefore do not contribute to
-this operational threshold.
+this operational threshold. It also includes
+`request-log-retention-failed-v1`, which matches either complete or partial
+automatic Request Log retention failures, uses a 24-hour cooldown, and can
+notify when the next scheduled retention cycle succeeds. Shutdown cancellation
+updates task status but does not emit the failure signal. Disabling the runner,
+disabling the saved retention policy, persistent lock contention, or failure to
+record a System Event can leave a firing rule without a recovery event.
 
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
