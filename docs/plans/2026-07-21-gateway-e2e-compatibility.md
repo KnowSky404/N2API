@@ -141,6 +141,9 @@ Every required transport failure can be reproduced deterministically.
 
 ## Task 3: Prove the PostgreSQL-backed Happy Path
 
+Status: completed locally on 2026-07-21; pending the next authorized push and
+GitHub Actions run.
+
 ### Goal
 
 Drive a real N2API process through authentication, policy, pool selection,
@@ -170,6 +173,10 @@ Tasks 1-2 and readiness endpoints from the deployment plan.
 ### Tests And Verification
 
 Run the E2E Compose project from a clean database twice to prove repeatability.
+
+Completed locally with two distinct Compose project names. Both clean runs
+passed `TestGatewayPostgresBackedHappyPath`, and each project was removed with
+its PostgreSQL volume after completion.
 
 ### Compatibility And Security
 

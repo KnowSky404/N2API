@@ -5,6 +5,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.e2e
+      target: mock-openai
     environment:
       N2API_MOCK_ADDR: :8080
       N2API_MOCK_API_KEY: e2e-upstream-fixture-key
@@ -24,6 +25,81 @@ services:
       retries: 10
       start_period: 2s
 
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: n2api_e2e
+      POSTGRES_USER: n2api
+      POSTGRES_PASSWORD: e2e-postgres-password
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - e2e
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n2api -d n2api_e2e"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  n2api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      N2API_HOST: 0.0.0.0
+      N2API_PORT: 3000
+      N2API_PUBLIC_URL: http://n2api:3000
+      N2API_ADMIN_USERNAME: admin
+      N2API_ADMIN_PASSWORD: e2e-admin-password
+      N2API_ENCRYPTION_SECRET: e2e-encryption-secret-with-enough-length
+      N2API_ALLOW_HTTP_API_UPSTREAMS: "true"
+      N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED: "false"
+      N2API_SYSTEM_EVENT_RETENTION_DAYS: 0
+      DATABASE_URL: postgres://n2api:e2e-postgres-password@postgres:5432/n2api_e2e?sslmode=disable
+    expose:
+      - "3000"
+    networks:
+      - e2e
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/readyz"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+
+  gateway-e2e:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.e2e
+      target: gateway-e2e
+    environment:
+      N2API_E2E_BASE_URL: http://n2api:3000
+      N2API_E2E_DATABASE_URL: postgres://n2api:e2e-postgres-password@postgres:5432/n2api_e2e?sslmode=disable
+      N2API_E2E_ADMIN_USERNAME: admin
+      N2API_E2E_ADMIN_PASSWORD: e2e-admin-password
+      N2API_E2E_MOCK_BASE_URL: http://mock-openai:8080
+      N2API_E2E_MOCK_API_KEY: e2e-upstream-fixture-key
+    networks:
+      - e2e
+    depends_on:
+      mock-openai:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      n2api:
+        condition: service_healthy
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
 networks:
   e2e:
     internal: true
+
+volumes:
+  postgres-data:

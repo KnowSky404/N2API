@@ -1,14 +1,25 @@
-FROM golang:1.26-alpine AS mock-openai-builder
+FROM golang:1.26-alpine AS e2e-go-base
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
+
+FROM e2e-go-base AS mock-openai-builder
 RUN CGO_ENABLED=0 go build -trimpath -o /out/mock-openai ./cmd/mock-openai
 
-FROM alpine:3.23
+FROM alpine:3.23 AS mock-openai
 RUN apk add --no-cache curl
 WORKDIR /app
 COPY --from=mock-openai-builder /out/mock-openai /app/mock-openai
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/app/mock-openai"]
+
+FROM e2e-go-base AS gateway-e2e-builder
+RUN CGO_ENABLED=0 go test -c -o /out/gateway-e2e ./e2e
+
+FROM alpine:3.23 AS gateway-e2e
+WORKDIR /app
+COPY --from=gateway-e2e-builder /out/gateway-e2e /app/gateway-e2e
+USER 65532:65532
+ENTRYPOINT ["/app/gateway-e2e", "-test.v", "-test.timeout=3m"]
