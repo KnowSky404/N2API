@@ -603,6 +603,14 @@ event for each API Key, uses target-scoped deduplication and a one-hour cooldown
 and can notify on the exact routing-pool recovery action for that key. It starts
 disabled and must be installed explicitly against an existing delivery action.
 
+The hourly API Key physical-cleanup runner emits
+`scheduler.api_key_purge.failed` when a purge transaction fails. The event
+targets `client_api_key_collection`, contains only the configured seven-day
+retention duration, and never includes database errors or API Key identity.
+Normal shutdown cancellation emits no failure. Every successful cycle,
+including a zero-row cycle, commits `scheduler.api_key_purge.completed` with the
+purge transaction; that completion is the recovery signal for custom rules.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a

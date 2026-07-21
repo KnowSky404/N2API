@@ -748,9 +748,11 @@ func TestPurgeRevokedAPIKeysRemovesOnlyExpiredRevokedKeys(t *testing.T) {
 		t.Fatalf("SetAPIKeyDisabled returned error: %v", err)
 	}
 
-	deleted, err := repo.PurgeRevokedAPIKeys(ctx, cutoff)
+	service := admin.NewService(repo, admin.Config{})
+	service.SetNow(func() time.Time { return cutoff.Add(admin.APIKeyPhysicalDeleteRetention) })
+	deleted, err := service.PurgeExpiredAPIKeys(ctx)
 	if err != nil {
-		t.Fatalf("PurgeRevokedAPIKeys returned error: %v", err)
+		t.Fatalf("PurgeExpiredAPIKeys returned error: %v", err)
 	}
 	if deleted != 1 {
 		t.Fatalf("deleted = %d, want 1", deleted)
@@ -768,6 +770,25 @@ func TestPurgeRevokedAPIKeysRemovesOnlyExpiredRevokedKeys(t *testing.T) {
 	}
 	if !ids[recentKey.ID] || !ids[disabledKey.ID] || !ids[activeKey.ID] {
 		t.Fatalf("remaining keys = %+v, want recent, disabled, and active keys", ids)
+	}
+
+	var category, severity, action, outcome, targetType, targetID, targetName, eventCutoff, deletedCount string
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT category, severity, action, outcome, target_type, target_id, target_name,
+			metadata->>'cutoff', metadata->>'deleted_count'
+		FROM system_events
+		WHERE action = $1
+	`, systemevent.ActionSchedulerAPIKeyPurgeCompleted).Scan(
+		&category, &severity, &action, &outcome, &targetType, &targetID, &targetName, &eventCutoff, &deletedCount,
+	); err != nil {
+		t.Fatalf("query API key purge completion event: %v", err)
+	}
+	if category != string(systemevent.CategoryScheduler) || severity != string(systemevent.SeverityInfo) ||
+		action != string(systemevent.ActionSchedulerAPIKeyPurgeCompleted) || outcome != string(systemevent.OutcomeSuccess) ||
+		targetType != "client_api_key_collection" || targetID != "" || targetName != "" ||
+		eventCutoff != cutoff.Format(time.RFC3339) || deletedCount != "1" {
+		t.Fatalf("API key purge completion = %q/%q/%q/%q target=%q/%q/%q cutoff=%q deleted=%q",
+			category, severity, action, outcome, targetType, targetID, targetName, eventCutoff, deletedCount)
 	}
 }
 

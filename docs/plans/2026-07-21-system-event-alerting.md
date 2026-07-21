@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first twelve Task 4 slices completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first thirteen Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -573,6 +573,12 @@ immediate execution, interval behavior, success and failure paths, cancellation
 suppression, exact event fields, and sanitized logs. Existing Store tests must
 continue proving that a successful purge and its completion event commit
 atomically.
+
+Thirteenth source-event status: completed locally on 2026-07-21. The hourly
+runner emits the exact sanitized failure event on purge errors, suppresses
+shutdown cancellation, and keeps successful completion ownership in the Store
+transaction. Focused tests cover immediate and interval execution, exact event
+fields, cancellation, failure-event recording errors, and log sanitization.
 
 After that source event exists, add `api-key-purge-failed-v1` in an independent
 commit. The template starts disabled, fires on the first cleanup failure, uses

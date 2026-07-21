@@ -235,7 +235,7 @@ func runServer() {
 		os.Exit(1)
 	}
 	alertDispatcher.Start()
-	go runAPIKeyCleanup(ctx, adminService, time.Hour)
+	go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour)
 	if cfg.SystemEventRetentionDays > 0 {
 		go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour)
 	}
@@ -335,18 +335,17 @@ func runServer() {
 	}
 }
 
-func runAPIKeyCleanup(ctx context.Context, service *admin.Service, interval time.Duration) {
+type apiKeyCleanupService interface {
+	PurgeExpiredAPIKeys(ctx context.Context) (int64, error)
+}
+
+type apiKeyCleanupEventRecorder interface {
+	Insert(ctx context.Context, event systemevent.Event) error
+}
+
+func runAPIKeyCleanup(ctx context.Context, service apiKeyCleanupService, events apiKeyCleanupEventRecorder, interval time.Duration) {
 	cleanup := func() {
-		deleted, err := service.PurgeExpiredAPIKeys(ctx)
-		if err != nil {
-			if ctx.Err() == nil {
-				slog.Error("api key cleanup failed", "error", err)
-			}
-			return
-		}
-		if deleted > 0 {
-			slog.Info("physically deleted expired API keys", "count", deleted)
-		}
+		runAPIKeyCleanupCycle(ctx, service, events, slog.Default(), time.Now)
 	}
 
 	cleanup()
@@ -360,6 +359,47 @@ func runAPIKeyCleanup(ctx context.Context, service *admin.Service, interval time
 			cleanup()
 		}
 	}
+}
+
+func runAPIKeyCleanupCycle(ctx context.Context, service apiKeyCleanupService, events apiKeyCleanupEventRecorder, logger *slog.Logger, now func() time.Time) {
+	started := now().UTC()
+	deleted, err := service.PurgeExpiredAPIKeys(ctx)
+	if err == nil {
+		if deleted > 0 {
+			logger.Info("physically deleted expired API keys", "count", deleted)
+		}
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+
+	finished := now().UTC()
+	metadata, _ := systemevent.SafeMetadata(map[string]any{
+		"retention_days": int64(admin.APIKeyPhysicalDeleteRetention / (24 * time.Hour)),
+	}, "retention_days")
+	eventCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	eventCtx = systemevent.WithRequestContext(eventCtx, systemevent.RequestContext{
+		CorrelationID: systemevent.NewCorrelationID(),
+		Actor:         systemevent.Actor{Type: systemevent.ActorSystem, Name: "api_key_purge"},
+	})
+	event := systemevent.BuildEvent(eventCtx, systemevent.EventIntent{
+		Category:  systemevent.CategoryScheduler,
+		Severity:  systemevent.SeverityError,
+		Action:    systemevent.ActionSchedulerAPIKeyPurgeFailed,
+		Outcome:   systemevent.OutcomeFailure,
+		Target:    systemevent.Target{Type: "client_api_key_collection"},
+		ErrorCode: "api_key_purge_failed",
+		Message:   "API key purge failed",
+		Metadata:  metadata,
+	}, systemevent.Target{}, finished, finished.Sub(started))
+	if events != nil {
+		if recordErr := events.Insert(eventCtx, event); recordErr != nil {
+			logger.Error("API key purge failure event recording failed", "error_code", "api_key_purge_event_record_failed")
+		}
+	}
+	logger.Error("api key cleanup failed", "error_code", "api_key_purge_failed")
 }
 
 type systemEventRetentionStore interface {

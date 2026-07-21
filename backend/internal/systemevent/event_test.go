@@ -164,3 +164,9 @@ func TestAPIKeyRoutingPoolLifecycleActionsAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIKeyPurgeFailureActionIsKnown(t *testing.T) {
+	if !IsKnownAction(ActionSchedulerAPIKeyPurgeFailed) {
+		t.Fatalf("action %q is not registered", ActionSchedulerAPIKeyPurgeFailed)
+	}
+}

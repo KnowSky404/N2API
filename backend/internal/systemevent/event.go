@@ -125,6 +125,7 @@ const (
 	ActionSchedulerProviderAutoTestCompleted Action = "scheduler.provider_account_auto_test.completed"
 	ActionSchedulerProviderAutoTestFailed    Action = "scheduler.provider_account_auto_test.failed"
 	ActionSchedulerAPIKeyPurgeCompleted      Action = "scheduler.api_key_purge.completed"
+	ActionSchedulerAPIKeyPurgeFailed         Action = "scheduler.api_key_purge.failed"
 	ActionSchedulerEventRetentionCompleted   Action = "scheduler.system_event_retention.completed"
 	ActionProviderAccountCircuitOpened       Action = "provider_account.circuit.opened"
 	ActionProviderAccountRateLimited         Action = "provider_account.rate_limited"
@@ -448,7 +449,7 @@ var knownActions = map[Action]struct{}{
 	ActionProviderAccountBatchRefreshed: {}, ActionProviderAccountBatchModelsReplaced: {},
 	ActionOAuthConnectStarted: {}, ActionOAuthConnectFailed: {}, ActionOAuthCallbackCompleted: {}, ActionOAuthCallbackFailed: {}, ActionOAuthRefreshManualSucceeded: {}, ActionOAuthRefreshManualFailed: {},
 	ActionOAuthRefreshAutomaticSucceeded: {}, ActionOAuthRefreshAutomaticFailed: {}, ActionOAuthRefreshDiagnosticFailed: {}, ActionSchedulerProviderAutoTestCompleted: {}, ActionSchedulerProviderAutoTestFailed: {},
-	ActionSchedulerAPIKeyPurgeCompleted: {}, ActionSchedulerEventRetentionCompleted: {},
+	ActionSchedulerAPIKeyPurgeCompleted: {}, ActionSchedulerAPIKeyPurgeFailed: {}, ActionSchedulerEventRetentionCompleted: {},
 	ActionSchedulerRequestLogRetentionSucceeded: {}, ActionSchedulerRequestLogRetentionFailed: {}, ActionProviderAccountCircuitOpened: {},
 	ActionProviderAccountRateLimited: {}, ActionProviderAccountExpired: {}, ActionProviderAccountRecovered: {},
 	ActionAlertActionCreated: {}, ActionAlertActionUpdated: {}, ActionAlertActionDeleted: {},

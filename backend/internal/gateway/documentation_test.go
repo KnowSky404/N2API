@@ -1062,9 +1062,12 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"`routing-pool-exhausted-v1` template",
 			"lower sequence",
 			"Startup establishes `LISTEN` synchronously",
+			"`scheduler.api_key_purge.failed`",
+			"`client_api_key_collection`",
+			"Normal shutdown cancellation emits no failure",
 		},
 		"../../../docs/plans/2026-07-21-system-event-alerting.md": {
-			"Tasks 1-3 and the first twelve Task 4 slices completed locally on 2026-07-21",
+			"Tasks 1-3 and the first thirteen Task 4 slices completed locally on 2026-07-21",
 			"oldest idle state at capacity",
 			"No default rules, dispatcher, outbound request",
 			"dedicated pgx listener",
