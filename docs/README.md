@@ -30,6 +30,7 @@ path; detailed usage and operations guidance belongs here.
 - [UI design source of truth](../DESIGN.md)
 - [Brand assets and generation records](brand/README.md)
 - [Reliability and operations design](specs/2026-07-21-n2api-reliability-and-operations-design.md)
+- [Bounded metrics contract](specs/2026-07-21-n2api-metrics-contract.md)
 - [Reliability and operations plans](plans/README.md)
 - [Historical implementation specifications](superpowers/specs/)
 - [Historical implementation plans](superpowers/plans/)

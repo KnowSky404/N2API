@@ -1,6 +1,7 @@
 # Metrics And Tracing Plan
 
-Status: planned after stable health/task contracts
+Status: in progress; Task 1 completed locally on 2026-07-21, and Task 2 waits
+for owner selection of the metrics exposure policy
 Public API changes: optional `/metrics`; no telemetry by default
 Data migration: none
 
@@ -12,6 +13,8 @@ Request logs and System Events remain the durable records; metrics/traces must
 not duplicate their high-cardinality identifiers or sensitive content.
 
 ## Task 1: Define A Cardinality Budget
+
+Status: completed locally on 2026-07-21
 
 ### Goal
 
@@ -34,15 +37,30 @@ request ID, session ID, full key/account/pool names, token values, bodies, and
 full errors. Decide whether model/account/pool dimensions are omitted or
 allowlisted with hard bounds.
 
+The accepted contract is
+[`docs/specs/2026-07-21-n2api-metrics-contract.md`](../specs/2026-07-21-n2api-metrics-contract.md).
+It omits model, account, pool, key, request, session, and correlation dimensions;
+maps every runtime enum through a closed allowlist with `other` as the only
+fallback; caps N2API-owned metrics at 1,600 series and the complete scrape at
+2,000; and fixes histogram buckets before an implementation library is chosen.
+
 ### Completion Criteria
 
 Every metric has type, unit, label set, cardinality estimate, and owner use case.
+
+Local evidence: the contract maps the current gateway route patterns, routing
+errors, account types/states, usage sources, task status, and `pgxpool.Stat`
+signals to a worst-case 1,301 emitted N2API-owned series. Future alert metrics
+are reserved but not registered before alerting exists.
 
 ### Commit
 
 `docs(metrics): define bounded observability contract`
 
 ## Task 2: Add Optional Prometheus Metrics
+
+Status: blocked on explicit owner selection between loopback-only exposure and
+an operator-configured bearer token; implementation remains disabled by default.
 
 ### Goal
 
