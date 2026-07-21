@@ -1,18 +1,22 @@
 # Encryption Key Rotation Plan
 
-Status: design-ready; implementation waits for backup restore verification
+Status: in progress; Task 1 completed locally on 2026-07-21
 Public API changes: CLI first; optional admin status later
 Data migration: versioned ciphertext envelope and rotation run state
 
 ## Current Baseline
 
-`secret.EncryptString` derives one AES-256 key by SHA-256 hashing
-`N2API_ENCRYPTION_SECRET`, seals with AES-GCM, and stores raw base64
-`nonce+ciphertext`. The format has no version or key identifier. Provider
+The runtime now derives named AES-256 keys by SHA-256 hashing the configured
+secret material. New writes use an authenticated
+`n2api:v1:<key-id>:<secret-kind>:<payload>` envelope while reads retain legacy
+raw-base64 compatibility. Provider
 access/refresh/ID tokens, API-upstream keys, reusable client key secrets, proxy
-credentials, and future webhook secrets depend on reversible encryption.
+credentials, and future webhook secrets depend on this reversible encryption.
 
 ## Task 1: Introduce A Backward-compatible Ciphertext Envelope
+
+Task status: completed locally on 2026-07-21; mixed-key restore acceptance with
+a real operator backup remains an operational check
 
 ### Goal
 
@@ -42,10 +46,30 @@ explicit rotation window. New writes always use the current key.
 Legacy and new values decrypt, unknown/tampered envelopes fail, and errors never
 contain key material or plaintext.
 
+The local implementation injects one immutable keyring into admin and provider
+credential paths while leaving Request Log and System Event cursor signing on
+the current secret only. The current key ID defaults to `default`; an ordered,
+strictly parsed JSON array supplies at most eight unique previous keys during a
+rotation window. New writes use Go's random-nonce AES-GCM and authenticate the
+version, key ID, and fixed credential kind as additional data. Legacy values
+try current then previous keys, whereas an envelope never falls back from its
+named key or crosses credential kinds. The isolated
+restore drill accepts the same current ID and previous-key array so mixed-key
+backups can be verified.
+
+Local tests cover an immutable legacy fixture, previous-key order, current-key
+writes, metadata tampering, cross-kind substitution, unknown versions and keys,
+duplicate/unsafe config, secret-safe errors, admin/provider injection, and
+fail-closed proxy decryption. No database rows are rewritten by this task.
+Legacy values therefore do not gain kind binding until Task 3 rewrites them,
+and version 1 does not claim same-kind row-identity binding.
+
 ### Risks And Rollback
 
 Cryptographic format bugs can lock credentials. Keep immutable legacy fixtures
-and do not rewrite data in this task.
+and do not rewrite data in this task. Rollback is asymmetric: an older image
+cannot read envelopes written after upgrade, so restore the pre-upgrade backup
+or keep the upgraded reader and prior keyring available.
 
 ### Commit
 

@@ -228,6 +228,7 @@ type Config struct {
 	ProxyURL              string
 	ProbeChatGPTAccountID string
 	Secret                string
+	EncryptionKeyring     *secret.Keyring
 	StateTTL              time.Duration
 	RefreshWindow         time.Duration
 	CodeVerifier          string
@@ -646,6 +647,7 @@ type Service struct {
 	modelProber              accountModelProber
 	accountTestRequestLogger AccountTestRequestLogger
 	cfg                      Config
+	encryptionKeyring        *secret.Keyring
 	refreshMu                sync.Mutex
 	refreshLocks             map[int64]*sync.Mutex
 	httpClient               *HTTPClient
@@ -722,6 +724,7 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		modelProber:              httpClient,
 		accountTestRequestLogger: cfg.AccountTestLogger,
 		cfg:                      cfg,
+		encryptionKeyring:        cfg.EncryptionKeyring,
 		httpClient:               httpClient,
 		refreshLocks:             make(map[int64]*sync.Mutex),
 	}
@@ -1173,7 +1176,29 @@ func (s *Service) Configured() bool {
 		strings.TrimSpace(s.cfg.RedirectURL) != "" &&
 		strings.TrimSpace(s.cfg.AuthURL) != "" &&
 		strings.TrimSpace(s.cfg.TokenURL) != "" &&
-		strings.TrimSpace(s.cfg.Secret) != ""
+		(s.encryptionKeyring != nil || strings.TrimSpace(s.cfg.Secret) != "")
+}
+
+func (s *Service) encryptString(kind secret.SecretKind, value string) (string, error) {
+	if s.encryptionKeyring != nil {
+		return s.encryptionKeyring.EncryptStringFor(kind, value)
+	}
+	keyring, err := secret.NewKeyring(secret.EncryptionKey{ID: secret.DefaultEncryptionKeyID, Secret: s.cfg.Secret}, nil)
+	if err != nil {
+		return "", err
+	}
+	return keyring.EncryptStringFor(kind, value)
+}
+
+func (s *Service) decryptString(kind secret.SecretKind, value string) (string, error) {
+	if s.encryptionKeyring != nil {
+		return s.encryptionKeyring.DecryptStringFor(kind, value)
+	}
+	keyring, err := secret.NewKeyring(secret.EncryptionKey{ID: secret.DefaultEncryptionKeyID, Secret: s.cfg.Secret}, nil)
+	if err != nil {
+		return "", err
+	}
+	return keyring.DecryptStringFor(kind, value)
 }
 
 func (s *Service) Status(ctx context.Context) (Status, error) {
@@ -1228,7 +1253,7 @@ func (s *Service) StartConnect(ctx context.Context, options ConnectOptions) (Con
 		return ConnectResult{}, fmt.Errorf("generate code verifier: %w", err)
 	}
 	codeChallenge := codeChallengeS256(codeVerifier)
-	encryptedCodeVerifier, err := secret.EncryptString(s.cfg.Secret, codeVerifier)
+	encryptedCodeVerifier, err := s.encryptString(secret.SecretKindOAuthCodeVerifier, codeVerifier)
 	if err != nil {
 		return ConnectResult{}, fmt.Errorf("encrypt code verifier: %w", err)
 	}
@@ -1300,7 +1325,7 @@ func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Acc
 	}
 	codeVerifier := strings.TrimSpace(claimed.CodeVerifier)
 	if codeVerifier == "" {
-		codeVerifier, err = secret.DecryptString(s.cfg.Secret, claimed.EncryptedCodeVerifier)
+		codeVerifier, err = s.decryptString(secret.SecretKindOAuthCodeVerifier, claimed.EncryptedCodeVerifier)
 		if err != nil {
 			return Account{}, ErrInvalidState
 		}
@@ -1395,7 +1420,7 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		if apiKey == "" {
 			return Account{}, ErrInvalidInput
 		}
-		encryptedAPIKey, err := secret.EncryptString(s.cfg.Secret, apiKey)
+		encryptedAPIKey, err := s.encryptString(secret.SecretKindProviderAPIKey, apiKey)
 		if err != nil {
 			return Account{}, err
 		}
@@ -1409,7 +1434,7 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		}
 		encryptedProxyURL := ""
 		if proxyURL != "" {
-			encryptedProxyURL, err = secret.EncryptString(s.cfg.Secret, proxyURL)
+			encryptedProxyURL, err = s.encryptString(secret.SecretKindProviderProxyURL, proxyURL)
 			if err != nil {
 				return Account{}, err
 			}
@@ -1484,7 +1509,7 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 		return Account{}, ErrInvalidInput
 	}
 
-	encryptedAPIKey, err := secret.EncryptString(s.cfg.Secret, apiKey)
+	encryptedAPIKey, err := s.encryptString(secret.SecretKindProviderAPIKey, apiKey)
 	if err != nil {
 		return Account{}, err
 	}
@@ -1502,7 +1527,7 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	}
 	encryptedProxyURL := ""
 	if proxyURL != "" {
-		encryptedProxyURL, err = secret.EncryptString(s.cfg.Secret, proxyURL)
+		encryptedProxyURL, err = s.encryptString(secret.SecretKindProviderProxyURL, proxyURL)
 		if err != nil {
 			return Account{}, err
 		}
@@ -1866,12 +1891,15 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 	if strings.TrimSpace(account.AccountType) == AccountTypeAPIUpstream {
 		return Account{}, ErrInvalidInput
 	}
-	refreshToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedRefreshToken)
+	refreshToken, err := s.decryptString(secret.SecretKindOAuthRefreshToken, account.EncryptedRefreshToken)
 	if err != nil {
 		return Account{}, err
 	}
 	refreshCfg := s.cfg
-	refreshCfg.ProxyURL = s.accountProxyURL(account)
+	refreshCfg.ProxyURL, err = s.accountProxyURL(account)
+	if err != nil {
+		return Account{}, err
+	}
 	tokens, err := s.client.RefreshToken(ctx, refreshCfg, refreshToken)
 	if err != nil {
 		now := time.Now()
@@ -2162,7 +2190,11 @@ func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account,
 	}
 	cfg := s.cfg
 	cfg.ProbeChatGPTAccountID = strings.TrimSpace(account.Metadata["chatgpt_account_id"])
-	cfg.ProxyURL = s.accountProxyURL(account)
+	proxyURL, err := s.accountProxyURL(account)
+	if err != nil {
+		return account, nil
+	}
+	cfg.ProxyURL = proxyURL
 	result, err := s.prober.ProbeAccountStatus(ctx, cfg, accessToken)
 	if err != nil {
 		return account, nil
@@ -2222,7 +2254,7 @@ func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int
 		return "", false, false, nil
 	}
 
-	currentAccessToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
+	currentAccessToken, err := s.decryptString(secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
 	if err != nil {
 		return "", true, false, err
 	}
@@ -2237,7 +2269,7 @@ func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int
 func (s *Service) accessTokenForAccount(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, error) {
 	account = normalizeAccountCredentialFields(account)
 	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
-		return secret.DecryptString(s.cfg.Secret, account.EncryptedAccessToken)
+		return s.decryptString(secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
 	}
 
 	if account.ID > 0 {
@@ -2250,7 +2282,7 @@ func (s *Service) accessTokenForAccount(ctx context.Context, account Account, tr
 		}
 		latest = normalizeAccountCredentialFields(latest)
 		if latest.AccessTokenExpiresAt == nil || latest.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
-			return secret.DecryptString(s.cfg.Secret, latest.EncryptedAccessToken)
+			return s.decryptString(secret.SecretKindOAuthAccessToken, latest.EncryptedAccessToken)
 		}
 		account = latest
 	}
@@ -2261,12 +2293,15 @@ func (s *Service) accessTokenForAccount(ctx context.Context, account Account, tr
 
 func (s *Service) refreshAccessTokenLocked(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, bool, error) {
 	account = normalizeAccountCredentialFields(account)
-	refreshToken, err := secret.DecryptString(s.cfg.Secret, account.EncryptedRefreshToken)
+	refreshToken, err := s.decryptString(secret.SecretKindOAuthRefreshToken, account.EncryptedRefreshToken)
 	if err != nil {
 		return "", false, err
 	}
 	refreshCfg := s.cfg
-	refreshCfg.ProxyURL = s.accountProxyURL(account)
+	refreshCfg.ProxyURL, err = s.accountProxyURL(account)
+	if err != nil {
+		return "", false, err
+	}
 	tokens, err := s.client.RefreshToken(ctx, refreshCfg, refreshToken)
 	if err != nil {
 		if recordRefreshFailure && account.ID > 0 {
@@ -2300,7 +2335,7 @@ func (s *Service) refreshAccessTokenLocked(ctx context.Context, account Account,
 	if err != nil {
 		return "", false, err
 	}
-	accessToken, err := secret.DecryptString(s.cfg.Secret, refreshed.EncryptedAccessToken)
+	accessToken, err := s.decryptString(secret.SecretKindOAuthAccessToken, refreshed.EncryptedAccessToken)
 	return accessToken, false, err
 }
 
@@ -3034,7 +3069,7 @@ func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context
 		MaxConcurrentRequests: account.MaxConcurrentRequests,
 	}
 	if strings.TrimSpace(account.Credential.EncryptedProxyURL) != "" {
-		proxyURL, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedProxyURL)
+		proxyURL, err := s.decryptString(secret.SecretKindProviderProxyURL, account.Credential.EncryptedProxyURL)
 		if err != nil {
 			return SelectedAccount{}, err
 		}
@@ -3049,7 +3084,7 @@ func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context
 		selected.AuthorizationToken = token
 		selected.BaseURL = strings.TrimRight(strings.TrimSpace(s.cfg.APIBaseURL), "/")
 	case AccountTypeAPIUpstream:
-		token, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedAPIKey)
+		token, err := s.decryptString(secret.SecretKindProviderAPIKey, account.Credential.EncryptedAPIKey)
 		if err != nil {
 			return SelectedAccount{}, err
 		}
@@ -3093,7 +3128,7 @@ func (s *Service) withProxySummary(account Account) Account {
 	if encryptedProxyURL == "" {
 		return account
 	}
-	proxyURL, err := secret.DecryptString(s.cfg.Secret, encryptedProxyURL)
+	proxyURL, err := s.decryptString(secret.SecretKindProviderProxyURL, encryptedProxyURL)
 	if err != nil {
 		account.ProxyURLSummary = "configured"
 		return account
@@ -3102,16 +3137,16 @@ func (s *Service) withProxySummary(account Account) Account {
 	return account
 }
 
-func (s *Service) accountProxyURL(account Account) string {
+func (s *Service) accountProxyURL(account Account) (string, error) {
 	account = normalizeAccountCredentialFields(account)
 	if strings.TrimSpace(account.Credential.EncryptedProxyURL) == "" {
-		return ""
+		return "", nil
 	}
-	proxyURL, err := secret.DecryptString(s.cfg.Secret, account.Credential.EncryptedProxyURL)
+	proxyURL, err := s.decryptString(secret.SecretKindProviderProxyURL, account.Credential.EncryptedProxyURL)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("decrypt account proxy: %w", err)
 	}
-	return strings.TrimSpace(proxyURL)
+	return strings.TrimSpace(proxyURL), nil
 }
 
 func normalizeProxyURL(value string) (string, error) {
@@ -3386,7 +3421,7 @@ func (s *Service) storeTokenResponseWithMode(ctx context.Context, tokens TokenRe
 		displayName = valueOrDefault(displayName, previous.DisplayName)
 		if refreshToken == "" {
 			var err error
-			refreshToken, err = secret.DecryptString(s.cfg.Secret, previous.EncryptedRefreshToken)
+			refreshToken, err = s.decryptString(secret.SecretKindOAuthRefreshToken, previous.EncryptedRefreshToken)
 			if err != nil {
 				return Account{}, err
 			}
@@ -3403,17 +3438,17 @@ func (s *Service) storeTokenResponseWithMode(ctx context.Context, tokens TokenRe
 		return Account{}, errors.New("oauth token response missing refresh token")
 	}
 
-	encryptedAccessToken, err := secret.EncryptString(s.cfg.Secret, tokens.AccessToken)
+	encryptedAccessToken, err := s.encryptString(secret.SecretKindOAuthAccessToken, tokens.AccessToken)
 	if err != nil {
 		return Account{}, fmt.Errorf("encrypt access token: %w", err)
 	}
-	encryptedRefreshToken, err := secret.EncryptString(s.cfg.Secret, refreshToken)
+	encryptedRefreshToken, err := s.encryptString(secret.SecretKindOAuthRefreshToken, refreshToken)
 	if err != nil {
 		return Account{}, fmt.Errorf("encrypt refresh token: %w", err)
 	}
 	var encryptedIDToken string
 	if strings.TrimSpace(tokens.IDToken) != "" {
-		encryptedIDToken, err = secret.EncryptString(s.cfg.Secret, tokens.IDToken)
+		encryptedIDToken, err = s.encryptString(secret.SecretKindOAuthIDToken, tokens.IDToken)
 		if err != nil {
 			return Account{}, fmt.Errorf("encrypt id token: %w", err)
 		}
@@ -3667,7 +3702,7 @@ func (s *Service) accountFromTokenResponse(tokens TokenResponse, previous *Accou
 		displayName = valueOrDefault(displayName, previous.DisplayName)
 		if refreshToken == "" {
 			var err error
-			refreshToken, err = secret.DecryptString(s.cfg.Secret, previous.EncryptedRefreshToken)
+			refreshToken, err = s.decryptString(secret.SecretKindOAuthRefreshToken, previous.EncryptedRefreshToken)
 			if err != nil {
 				return Account{}, err
 			}
@@ -3684,17 +3719,17 @@ func (s *Service) accountFromTokenResponse(tokens TokenResponse, previous *Accou
 		return Account{}, errors.New("oauth token response missing refresh token")
 	}
 
-	encryptedAccessToken, err := secret.EncryptString(s.cfg.Secret, tokens.AccessToken)
+	encryptedAccessToken, err := s.encryptString(secret.SecretKindOAuthAccessToken, tokens.AccessToken)
 	if err != nil {
 		return Account{}, fmt.Errorf("encrypt access token: %w", err)
 	}
-	encryptedRefreshToken, err := secret.EncryptString(s.cfg.Secret, refreshToken)
+	encryptedRefreshToken, err := s.encryptString(secret.SecretKindOAuthRefreshToken, refreshToken)
 	if err != nil {
 		return Account{}, fmt.Errorf("encrypt refresh token: %w", err)
 	}
 	var encryptedIDToken string
 	if strings.TrimSpace(tokens.IDToken) != "" {
-		encryptedIDToken, err = secret.EncryptString(s.cfg.Secret, tokens.IDToken)
+		encryptedIDToken, err = s.encryptString(secret.SecretKindOAuthIDToken, tokens.IDToken)
 		if err != nil {
 			return Account{}, fmt.Errorf("encrypt id token: %w", err)
 		}

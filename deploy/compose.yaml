@@ -20,6 +20,8 @@ services:
       N2API_ACCEPT_RISKS: ${N2API_ACCEPT_RISKS:-public-http,public-bind,database-plaintext}
       N2API_ADMIN_PASSWORD: ${N2API_ADMIN_PASSWORD:-n2api-local-admin-password}
       N2API_ENCRYPTION_SECRET: ${N2API_ENCRYPTION_SECRET:-n2api-local-encryption-secret-at-least-32-bytes}
+      N2API_ENCRYPTION_KEY_ID: ${N2API_ENCRYPTION_KEY_ID:-default}
+      N2API_ENCRYPTION_PREVIOUS_KEYS: ${N2API_ENCRYPTION_PREVIOUS_KEYS:-[]}
       DATABASE_URL: ${DATABASE_URL:-postgres://n2api:n2api-local-postgres-password@postgres:5432/n2api?sslmode=disable}
     ports:
       - "${N2API_PORT:-3000}:3000"

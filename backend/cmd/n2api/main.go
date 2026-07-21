@@ -179,9 +179,10 @@ func main() {
 
 	adminRepo := store.NewAdminRepository(pool, cfg.EncryptionSecret)
 	adminService := admin.NewService(adminRepo, admin.Config{
-		SessionTTL:       cfg.AdminSessionTTL,
-		EncryptionSecret: cfg.EncryptionSecret,
-		SystemEvents:     systemEventRepo,
+		SessionTTL:        cfg.AdminSessionTTL,
+		EncryptionSecret:  cfg.EncryptionSecret,
+		EncryptionKeyring: cfg.EncryptionKeyring,
+		SystemEvents:      systemEventRepo,
 		DefaultGatewaySettings: admin.GatewaySettings{
 			MaxConcurrentGatewayRequests:           cfg.GatewayMaxConcurrentRequests,
 			MaxConcurrentRequestsPerAccount:        cfg.GatewayMaxConcurrentRequestsPerAccount,
@@ -212,6 +213,7 @@ func main() {
 		TokenURL:              cfg.OpenAIOAuthTokenURL,
 		APIBaseURL:            cfg.OpenAIAPIBaseURL,
 		Secret:                cfg.EncryptionSecret,
+		EncryptionKeyring:     cfg.EncryptionKeyring,
 		AllowHTTPAPIUpstreams: cfg.AllowHTTPAPIUpstreams,
 		AccountTestLogger:     requestLogRepo,
 	})

@@ -354,6 +354,37 @@ func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevok
 	}
 }
 
+func TestAPIKeyEncryptionUsesCurrentKeyAndReadsLegacyPreviousKey(t *testing.T) {
+	const legacyCiphertext = "AAECAwQFBgcICQoLshPzMSnIGUlIyhB+W347vBUF57bAkCtXBN4l54ODVswuO/ASFnqXSM2t"
+	keyring, err := secret.NewKeyring(
+		secret.EncryptionKey{ID: "current-202607", Secret: "current-encryption-secret"},
+		[]secret.EncryptionKey{{ID: "previous-legacy", Secret: "legacy-encryption-secret"}},
+	)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionKeyring: keyring})
+	result, err := service.CreateAPIKey(context.Background(), "rotation fixture", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	if !strings.HasPrefix(repo.keys[result.Key.ID].EncryptedSecret, "n2api:v1:current-202607:client-api-key:") {
+		t.Fatalf("encrypted secret = %q, want current key envelope", repo.keys[result.Key.ID].EncryptedSecret)
+	}
+
+	key := repo.keys[result.Key.ID]
+	key.EncryptedSecret = legacyCiphertext
+	repo.keys[result.Key.ID] = key
+	revealed, err := service.GetAPIKeySecret(context.Background(), result.Key.ID)
+	if err != nil {
+		t.Fatalf("GetAPIKeySecret returned error for legacy previous key: %v", err)
+	}
+	if revealed != "legacy-oauth-refresh-token" {
+		t.Fatalf("GetAPIKeySecret = %q, want legacy-oauth-refresh-token", revealed)
+	}
+}
+
 func TestSetAPIKeyDisabledBlocksAndRestoresAuthentication(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})

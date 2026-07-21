@@ -912,3 +912,44 @@ func TestImageEvidenceDocumentationMatchesWorkflowContract(t *testing.T) {
 		}
 	}
 }
+
+func TestEncryptionEnvelopeDocumentationMatchesRuntimeContract(t *testing.T) {
+	checks := map[string][]string{
+		"../../../.env.example": {
+			"N2API_ENCRYPTION_KEY_ID=default",
+			"N2API_ENCRYPTION_PREVIOUS_KEYS=[]",
+		},
+		"../../../deploy/compose.release.yaml": {
+			"N2API_ENCRYPTION_KEY_ID",
+			"N2API_ENCRYPTION_PREVIOUS_KEYS",
+		},
+		"../../../deploy/compose.restore-test.yaml": {
+			"N2API_RESTORE_ENCRYPTION_KEY_ID",
+			"N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS",
+		},
+		"../../../docs/manual.md": {
+			"n2api:v1:<key-id>:<secret-kind>:<payload>",
+			"New writes always use the current key",
+			"moving an access-token envelope",
+			"older image cannot read that new envelope",
+			"Previous encryption keys do not keep old cursors valid",
+		},
+		"../../../docs/plans/2026-07-21-encryption-key-rotation.md": {
+			"Task status: completed locally on 2026-07-21",
+			"No database rows are rewritten by this task",
+		},
+	}
+
+	for path, wants := range checks {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in encryption-envelope contract", path, want)
+			}
+		}
+	}
+}

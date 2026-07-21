@@ -53,6 +53,7 @@ var (
 type Config struct {
 	SessionTTL             time.Duration
 	EncryptionSecret       string
+	EncryptionKeyring      *secret.Keyring
 	DefaultGatewaySettings GatewaySettings
 	SystemEvents           SystemEventRepository
 }
@@ -414,6 +415,7 @@ type Service struct {
 	repo                    Repository
 	sessionTTL              time.Duration
 	encryptionSecret        string
+	encryptionKeyring       *secret.Keyring
 	defaultGatewaySettings  GatewaySettings
 	officialDocumentFetcher OfficialDocumentFetcher
 	now                     func() time.Time
@@ -430,6 +432,7 @@ func NewService(repo Repository, cfg Config) *Service {
 		repo:                    repo,
 		sessionTTL:              sessionTTL,
 		encryptionSecret:        cfg.EncryptionSecret,
+		encryptionKeyring:       cfg.EncryptionKeyring,
 		defaultGatewaySettings:  cfg.DefaultGatewaySettings,
 		officialDocumentFetcher: NewHTTPOfficialDocumentFetcher(30 * time.Second),
 		now:                     time.Now,
@@ -719,8 +722,8 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string, routingPoolID *
 		return CreatedAPIKey{}, fmt.Errorf("generate api key: %w", err)
 	}
 	encryptedSecret := ""
-	if s.encryptionSecret != "" {
-		encryptedSecret, err = secret.EncryptString(s.encryptionSecret, token)
+	if s.encryptionKeyring != nil || s.encryptionSecret != "" {
+		encryptedSecret, err = s.encryptString(token)
 		if err != nil {
 			return CreatedAPIKey{}, fmt.Errorf("encrypt api key: %w", err)
 		}
@@ -742,11 +745,33 @@ func (s *Service) GetAPIKeySecret(ctx context.Context, id int64) (string, error)
 	if strings.TrimSpace(encryptedSecret) == "" {
 		return "", ErrNotFound
 	}
-	value, err := secret.DecryptString(s.encryptionSecret, encryptedSecret)
+	value, err := s.decryptString(encryptedSecret)
 	if err != nil {
 		return "", fmt.Errorf("decrypt api key: %w", err)
 	}
 	return value, nil
+}
+
+func (s *Service) encryptString(value string) (string, error) {
+	if s.encryptionKeyring != nil {
+		return s.encryptionKeyring.EncryptStringFor(secret.SecretKindClientAPIKey, value)
+	}
+	keyring, err := secret.NewKeyring(secret.EncryptionKey{ID: secret.DefaultEncryptionKeyID, Secret: s.encryptionSecret}, nil)
+	if err != nil {
+		return "", err
+	}
+	return keyring.EncryptStringFor(secret.SecretKindClientAPIKey, value)
+}
+
+func (s *Service) decryptString(value string) (string, error) {
+	if s.encryptionKeyring != nil {
+		return s.encryptionKeyring.DecryptStringFor(secret.SecretKindClientAPIKey, value)
+	}
+	keyring, err := secret.NewKeyring(secret.EncryptionKey{ID: secret.DefaultEncryptionKeyID, Secret: s.encryptionSecret}, nil)
+	if err != nil {
+		return "", err
+	}
+	return keyring.DecryptStringFor(secret.SecretKindClientAPIKey, value)
 }
 
 func (s *Service) ListAPIKeys(ctx context.Context) ([]APIKey, error) {

@@ -20,7 +20,87 @@ const (
 	passwordSaltBytes   = 16
 	passwordKeyBytes    = 32
 	randomTokenBytes    = 32
+
+	ciphertextEnvelopeNamespace = "n2api"
+	ciphertextEnvelopeVersion   = "v1"
+	maxEncryptionKeyIDBytes     = 64
+	maxPreviousEncryptionKeys   = 8
 )
+
+const DefaultEncryptionKeyID = "default"
+
+type SecretKind string
+
+const (
+	SecretKindGeneric           SecretKind = "generic"
+	SecretKindClientAPIKey      SecretKind = "client-api-key"
+	SecretKindOAuthCodeVerifier SecretKind = "oauth-code-verifier"
+	SecretKindProviderAPIKey    SecretKind = "provider-api-key"
+	SecretKindProviderProxyURL  SecretKind = "provider-proxy-url"
+	SecretKindOAuthAccessToken  SecretKind = "oauth-access-token"
+	SecretKindOAuthRefreshToken SecretKind = "oauth-refresh-token"
+	SecretKindOAuthIDToken      SecretKind = "oauth-id-token"
+)
+
+type EncryptionKey struct {
+	ID     string `json:"id"`
+	Secret string `json:"secret"`
+}
+
+type Keyring struct {
+	current    EncryptionKey
+	byID       map[string]EncryptionKey
+	legacyKeys []EncryptionKey
+}
+
+func NewKeyring(current EncryptionKey, previous []EncryptionKey) (*Keyring, error) {
+	if err := validateEncryptionKey(current, "current"); err != nil {
+		return nil, err
+	}
+	if len(previous) > maxPreviousEncryptionKeys {
+		return nil, fmt.Errorf("previous encryption key count must not exceed %d", maxPreviousEncryptionKeys)
+	}
+
+	byID := make(map[string]EncryptionKey, len(previous)+1)
+	byID[current.ID] = current
+	secrets := map[string]struct{}{current.Secret: {}}
+	legacyKeys := make([]EncryptionKey, 1, len(previous)+1)
+	legacyKeys[0] = current
+	for index, key := range previous {
+		if err := validateEncryptionKey(key, "previous"); err != nil {
+			return nil, fmt.Errorf("previous encryption key %d: %w", index, err)
+		}
+		if _, exists := byID[key.ID]; exists {
+			return nil, fmt.Errorf("encryption key IDs must be unique")
+		}
+		if _, exists := secrets[key.Secret]; exists {
+			return nil, fmt.Errorf("encryption key secrets must be unique")
+		}
+		byID[key.ID] = key
+		secrets[key.Secret] = struct{}{}
+		legacyKeys = append(legacyKeys, key)
+	}
+
+	return &Keyring{
+		current:    current,
+		byID:       byID,
+		legacyKeys: legacyKeys,
+	}, nil
+}
+
+func (k *Keyring) CurrentKeyID() string {
+	if k == nil {
+		return ""
+	}
+	return k.current.ID
+}
+
+func (k *Keyring) PreviousKeyCount() int {
+	if k == nil || len(k.legacyKeys) == 0 {
+		return 0
+	}
+	return len(k.legacyKeys) - 1
+}
 
 func HashAPIKey(apiKey string) string {
 	sum := sha256.Sum256([]byte(apiKey))
@@ -98,43 +178,168 @@ func TokenPrefix(token string) string {
 }
 
 func EncryptString(secret, plaintext string) (string, error) {
-	gcm, err := newGCM(secret)
+	keyring, err := NewKeyring(EncryptionKey{ID: DefaultEncryptionKeyID, Secret: secret}, nil)
+	if err != nil {
+		return "", err
+	}
+	return keyring.EncryptString(plaintext)
+}
+
+func (k *Keyring) EncryptString(plaintext string) (string, error) {
+	return k.EncryptStringFor(SecretKindGeneric, plaintext)
+}
+
+func (k *Keyring) EncryptStringFor(kind SecretKind, plaintext string) (string, error) {
+	if k == nil {
+		return "", fmt.Errorf("encryption keyring is not configured")
+	}
+	if !validSecretKind(kind) {
+		return "", fmt.Errorf("encryption secret kind is invalid")
+	}
+	gcm, err := newRandomNonceGCM(k.current.Secret)
 	if err != nil {
 		return "", err
 	}
 
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("generate nonce: %w", err)
-	}
-
-	ciphertext := gcm.Seal(nil, nonce, []byte(plaintext), nil)
-	payload := append(nonce, ciphertext...)
-	return base64.RawStdEncoding.EncodeToString(payload), nil
+	header := ciphertextEnvelopeHeader(k.current.ID, kind)
+	ciphertext := gcm.Seal(nil, nil, []byte(plaintext), []byte(header))
+	return header + ":" + base64.RawStdEncoding.EncodeToString(ciphertext), nil
 }
 
 func DecryptString(secret, encoded string) (string, error) {
-	gcm, err := newGCM(secret)
+	keyring, err := NewKeyring(EncryptionKey{ID: DefaultEncryptionKeyID, Secret: secret}, nil)
 	if err != nil {
 		return "", err
 	}
+	return keyring.DecryptString(encoded)
+}
 
-	payload, err := base64.RawStdEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", fmt.Errorf("decode ciphertext: %w", err)
+func (k *Keyring) DecryptString(encoded string) (string, error) {
+	return k.DecryptStringFor(SecretKindGeneric, encoded)
+}
+
+func (k *Keyring) DecryptStringFor(kind SecretKind, encoded string) (string, error) {
+	if k == nil {
+		return "", fmt.Errorf("encryption keyring is not configured")
 	}
-	if len(payload) <= gcm.NonceSize() {
+	if !validSecretKind(kind) {
+		return "", fmt.Errorf("encryption secret kind is invalid")
+	}
+	if strings.HasPrefix(encoded, ciphertextEnvelopeNamespace+":") {
+		return k.decryptEnvelope(kind, encoded)
+	}
+	return k.decryptLegacy(encoded)
+}
+
+func (k *Keyring) decryptEnvelope(kind SecretKind, encoded string) (string, error) {
+	parts := strings.SplitN(encoded, ":", 5)
+	if len(parts) != 5 || parts[0] != ciphertextEnvelopeNamespace {
+		return "", fmt.Errorf("ciphertext envelope is malformed")
+	}
+	if parts[1] != ciphertextEnvelopeVersion {
+		return "", fmt.Errorf("ciphertext envelope version is unsupported")
+	}
+	if !validEncryptionKeyID(parts[2]) {
+		return "", fmt.Errorf("ciphertext envelope key ID is invalid")
+	}
+	key, ok := k.byID[parts[2]]
+	if !ok {
+		return "", fmt.Errorf("ciphertext envelope key is unavailable")
+	}
+	envelopeKind := SecretKind(parts[3])
+	if !validSecretKind(envelopeKind) {
+		return "", fmt.Errorf("ciphertext envelope secret kind is invalid")
+	}
+	if envelopeKind != kind {
+		return "", fmt.Errorf("ciphertext envelope secret kind does not match")
+	}
+
+	payload, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return "", fmt.Errorf("ciphertext payload encoding is invalid")
+	}
+	gcm, err := newRandomNonceGCM(key.Secret)
+	if err != nil {
+		return "", err
+	}
+	if len(payload) < gcm.Overhead() {
 		return "", fmt.Errorf("ciphertext is too short")
 	}
 
-	nonce := payload[:gcm.NonceSize()]
-	ciphertext := payload[gcm.NonceSize():]
-
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	header := ciphertextEnvelopeHeader(parts[2], envelopeKind)
+	plaintext, err := gcm.Open(nil, nil, payload, []byte(header))
 	if err != nil {
-		return "", fmt.Errorf("decrypt ciphertext: %w", err)
+		return "", fmt.Errorf("decrypt ciphertext: authentication failed")
 	}
 	return string(plaintext), nil
+}
+
+func (k *Keyring) decryptLegacy(encoded string) (string, error) {
+	payload, err := base64.RawStdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", fmt.Errorf("ciphertext payload encoding is invalid")
+	}
+	for _, key := range k.legacyKeys {
+		gcm, err := newGCM(key.Secret)
+		if err != nil {
+			return "", err
+		}
+		if len(payload) <= gcm.NonceSize() {
+			return "", fmt.Errorf("ciphertext is too short")
+		}
+
+		nonce := payload[:gcm.NonceSize()]
+		ciphertext := payload[gcm.NonceSize():]
+		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+		if err == nil {
+			return string(plaintext), nil
+		}
+	}
+	return "", fmt.Errorf("decrypt ciphertext: authentication failed")
+}
+
+func ciphertextEnvelopeHeader(keyID string, kind SecretKind) string {
+	return ciphertextEnvelopeNamespace + ":" + ciphertextEnvelopeVersion + ":" + keyID + ":" + string(kind)
+}
+
+func validateEncryptionKey(key EncryptionKey, position string) error {
+	if !validEncryptionKeyID(key.ID) {
+		return fmt.Errorf("%s encryption key ID is invalid", position)
+	}
+	if key.Secret == "" {
+		return fmt.Errorf("%s encryption key secret is empty", position)
+	}
+	return nil
+}
+
+func validEncryptionKeyID(value string) bool {
+	if len(value) == 0 || len(value) > maxEncryptionKeyIDBytes {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '.' || char == '_' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validSecretKind(kind SecretKind) bool {
+	switch kind {
+	case SecretKindGeneric,
+		SecretKindClientAPIKey,
+		SecretKindOAuthCodeVerifier,
+		SecretKindProviderAPIKey,
+		SecretKindProviderProxyURL,
+		SecretKindOAuthAccessToken,
+		SecretKindOAuthRefreshToken,
+		SecretKindOAuthIDToken:
+		return true
+	default:
+		return false
+	}
 }
 
 func newGCM(secret string) (cipher.AEAD, error) {
@@ -144,6 +349,19 @@ func newGCM(secret string) (cipher.AEAD, error) {
 		return nil, fmt.Errorf("create cipher: %w", err)
 	}
 	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("create gcm: %w", err)
+	}
+	return gcm, nil
+}
+
+func newRandomNonceGCM(secret string) (cipher.AEAD, error) {
+	key := sha256.Sum256([]byte(secret))
+	block, err := aes.NewCipher(key[:])
+	if err != nil {
+		return nil, fmt.Errorf("create cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCMWithRandomNonce(block)
 	if err != nil {
 		return nil, fmt.Errorf("create gcm: %w", err)
 	}

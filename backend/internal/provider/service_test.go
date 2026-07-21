@@ -44,8 +44,8 @@ func TestStatusReportsConfigurationAndConnection(t *testing.T) {
 		Provider:              "openai",
 		Subject:               "acct_1",
 		DisplayName:           "Codex Account",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "access-token"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "refresh-token"),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "access-token"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token"),
 		AccessTokenExpiresAt:  &expiresAt,
 		LastRefreshAt:         nil,
 	}); err != nil {
@@ -58,6 +58,36 @@ func TestStatusReportsConfigurationAndConnection(t *testing.T) {
 	}
 	if !status.Connected || status.DisplayName != "Codex Account" {
 		t.Fatalf("status = %+v, want connected Codex Account", status)
+	}
+}
+
+func TestServiceEncryptionKeyringWritesCurrentAndReadsLegacyPreviousKey(t *testing.T) {
+	const legacyCiphertext = "AAECAwQFBgcICQoLshPzMSnIGUlIyhB+W347vBUF57bAkCtXBN4l54ODVswuO/ASFnqXSM2t"
+	keyring, err := secret.NewKeyring(
+		secret.EncryptionKey{ID: "current-202607", Secret: "current-encryption-secret"},
+		[]secret.EncryptionKey{{ID: "previous-legacy", Secret: "legacy-encryption-secret"}},
+	)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{EncryptionKeyring: keyring})
+
+	encrypted, err := service.encryptString(secret.SecretKindOAuthAccessToken, "current-provider-token")
+	if err != nil {
+		t.Fatalf("encryptString returned error: %v", err)
+	}
+	if !strings.HasPrefix(encrypted, "n2api:v1:current-202607:oauth-access-token:") {
+		t.Fatalf("encryptString = %q, want current key envelope", encrypted)
+	}
+	if _, err := service.decryptString(secret.SecretKindOAuthRefreshToken, encrypted); err == nil {
+		t.Fatal("decryptString accepted an access-token envelope as a refresh token")
+	}
+	decrypted, err := service.decryptString(secret.SecretKindOAuthRefreshToken, legacyCiphertext)
+	if err != nil {
+		t.Fatalf("decryptString returned error for legacy previous key: %v", err)
+	}
+	if decrypted != "legacy-oauth-refresh-token" {
+		t.Fatalf("decryptString = %q, want legacy-oauth-refresh-token", decrypted)
 	}
 }
 
@@ -238,8 +268,8 @@ func TestCompleteCallbackPreservesExistingFingerprintOnReconnect(t *testing.T) {
 		Subject:               "acct_same",
 		Name:                  "Existing",
 		DisplayName:           "same@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
 		Enabled:               true,
 		Priority:              12,
 		FingerprintProfileID:  &existingProfileID,
@@ -287,8 +317,8 @@ func TestCompleteCallbackReauthorizationUpdatesFingerprintProfile(t *testing.T) 
 		Subject:               "acct_old",
 		Name:                  "Old Account",
 		DisplayName:           "old@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
 		Enabled:               true,
 		Priority:              30,
 		Status:                AccountStatusActive,
@@ -409,7 +439,7 @@ func TestCompleteCallbackPassesPKCEVerifierAndStoresTokenMetadata(t *testing.T) 
 	if account.Metadata["email"] != "owner@example.com" || account.Metadata["account_id"] != "acct_chatgpt" || account.Metadata["plan_type"] != "plus" || account.Metadata["client_id"] != "codex-client" {
 		t.Fatalf("metadata = %+v", account.Metadata)
 	}
-	idToken, err := secret.DecryptString("encryption-secret", account.EncryptedIDToken)
+	idToken, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthIDToken, account.EncryptedIDToken)
 	if err != nil {
 		t.Fatalf("decrypt id token returned error: %v", err)
 	}
@@ -471,8 +501,8 @@ func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIden
 		Subject:               "acct_old",
 		Name:                  "Old Account",
 		DisplayName:           "old@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
 		Enabled:               true,
 		Priority:              30,
 		Status:                AccountStatusActive,
@@ -514,7 +544,7 @@ func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIden
 	if account.Name != "Renamed Account" || account.Metadata["chatgpt_account_id"] != "acct_new_identity" {
 		t.Fatalf("account after reauth = %+v", account)
 	}
-	token, err := secret.DecryptString("encryption-secret", account.EncryptedAccessToken)
+	token, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
 	if err != nil {
 		t.Fatalf("DecryptString returned error: %v", err)
 	}
@@ -530,8 +560,8 @@ func TestCompleteCallbackUpdatesExistingAccountByIdentityWhenNoTarget(t *testing
 		Subject:               "acct_same",
 		Name:                  "Existing",
 		DisplayName:           "same@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "old-refresh"),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
 		Enabled:               true,
 		Priority:              12,
 		Status:                AccountStatusActive,
@@ -697,8 +727,8 @@ func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
 	if _, err := repo.SaveAccount(context.Background(), Account{
 		Provider:              "openai",
 		Subject:               "acct_1",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "access-token"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "refresh-token"),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "access-token"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token"),
 		AccessTokenExpiresAt:  &expiresAt,
 	}); err != nil {
 		t.Fatalf("SaveAccount returned error: %v", err)
@@ -890,8 +920,8 @@ func TestAccessTokenRefreshesExpiredToken(t *testing.T) {
 	if _, err := repo.SaveAccount(context.Background(), Account{
 		Provider:              "openai",
 		Subject:               "acct_1",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", "refresh-token"),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token"),
 		AccessTokenExpiresAt:  &expired,
 	}); err != nil {
 		t.Fatalf("SaveAccount returned error: %v", err)
@@ -946,7 +976,7 @@ func TestAccessTokenForAccountRefreshPreservesExistingIdentityAndRefreshToken(t 
 	if account.ID != 7 || account.Subject != "acct_original" || account.Enabled || account.Priority != 3 {
 		t.Fatalf("account = %+v, want original id/subject/enabled/priority preserved", account)
 	}
-	refreshToken, err := secret.DecryptString("encryption-secret", account.EncryptedRefreshToken)
+	refreshToken, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, account.EncryptedRefreshToken)
 	if err != nil {
 		t.Fatalf("DecryptString returned error: %v", err)
 	}
@@ -959,7 +989,7 @@ func TestAccessTokenForAccountRefreshPassesConfiguredProxyURL(t *testing.T) {
 	repo := newMemoryRepo()
 	expired := time.Now().Add(-time.Minute)
 	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
-	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", "http://proxy.example.test:8080")
+	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderProxyURL, "http://proxy.example.test:8080")
 	repo.accounts = []Account{account}
 	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "new-access", ExpiresIn: 3600, Subject: "acct_7"}}
 	service := newConfiguredService(repo, client)
@@ -969,6 +999,23 @@ func TestAccessTokenForAccountRefreshPassesConfiguredProxyURL(t *testing.T) {
 	}
 	if client.gotConfig.ProxyURL != "http://proxy.example.test:8080" {
 		t.Fatalf("refresh proxy URL = %q, want account proxy URL", client.gotConfig.ProxyURL)
+	}
+}
+
+func TestAccessTokenForAccountRefreshRejectsUnreadableProxyWithoutBypass(t *testing.T) {
+	repo := newMemoryRepo()
+	expired := time.Now().Add(-time.Minute)
+	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
+	account.Credential.EncryptedProxyURL = "n2api:v1:missing:provider-proxy-url:AAAA"
+	repo.accounts = []Account{account}
+	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "new-access", ExpiresIn: 3600}}
+	service := newConfiguredService(repo, client)
+
+	if _, err := service.AccessTokenForAccount(context.Background(), account); err == nil {
+		t.Fatal("AccessTokenForAccount returned nil error for unreadable proxy")
+	}
+	if client.calls != 0 {
+		t.Fatalf("refresh calls = %d, want 0", client.calls)
 	}
 }
 
@@ -1066,7 +1113,7 @@ func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.
 		Subject:     "api-upstream",
 		Credential: AccountCredential{
 			CredentialType:  CredentialTypeAPIKey,
-			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-upstream"),
+			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "sk-upstream"),
 			BaseURL:         "https://upstream.example.test",
 		},
 		Enabled:  true,
@@ -1107,7 +1154,7 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithInvalidBaseURL(t *testing.T) {
 			Name:        "Broken upstream",
 			Credential: AccountCredential{
 				CredentialType:  CredentialTypeAPIKey,
-				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-broken"),
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "sk-broken"),
 				BaseURL:         "://broken",
 			},
 			Enabled:  true,
@@ -1122,7 +1169,7 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithInvalidBaseURL(t *testing.T) {
 			Name:        "Fallback upstream",
 			Credential: AccountCredential{
 				CredentialType:  CredentialTypeAPIKey,
-				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-fallback"),
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "sk-fallback"),
 				BaseURL:         "https://fallback.example.test/v1",
 			},
 			Enabled:  true,
@@ -1161,7 +1208,7 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithHTTPBaseURLUnlessAllowed(t *te
 			Name:        "Plaintext upstream",
 			Credential: AccountCredential{
 				CredentialType:  CredentialTypeAPIKey,
-				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-http"),
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "sk-http"),
 				BaseURL:         "http://upstream.example.test/v1",
 			},
 			Enabled:  true,
@@ -1176,7 +1223,7 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithHTTPBaseURLUnlessAllowed(t *te
 			Name:        "HTTPS upstream",
 			Credential: AccountCredential{
 				CredentialType:  CredentialTypeAPIKey,
-				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-https"),
+				EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "sk-https"),
 				BaseURL:         "https://upstream.example.test/v1",
 			},
 			Enabled:  true,
@@ -1302,7 +1349,7 @@ func TestRefreshAccountForcesOAuthTokenRefreshAndClearsFailureState(t *testing.T
 	repo.accounts = []Account{
 		testAccount(t, 7, true, 3, "old-access"),
 	}
-	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", "refresh-token")
+	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
 	repo.accounts[0].AccessTokenExpiresAt = &expiresAt
 	repo.accounts[0].Status = AccountStatusCircuitOpen
 	repo.accounts[0].StatusReason = "previous failure"
@@ -1321,7 +1368,7 @@ func TestRefreshAccountForcesOAuthTokenRefreshAndClearsFailureState(t *testing.T
 	if err != nil {
 		t.Fatalf("RefreshAccount returned error: %v", err)
 	}
-	token, err := secret.DecryptString("encryption-secret", account.EncryptedAccessToken)
+	token, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
 	if err != nil {
 		t.Fatalf("DecryptString returned error: %v", err)
 	}
@@ -1355,7 +1402,7 @@ func TestRefreshAccountProbesLatestStatusAfterTokenRefresh(t *testing.T) {
 	repo.accounts = []Account{
 		testAccount(t, 7, true, 3, "old-access"),
 	}
-	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", "refresh-token")
+	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
 	repo.accounts[0].AccessTokenExpiresAt = &expiresAt
 	service := newConfiguredService(repo, fakeOAuthClient{
 		refresh: TokenResponse{
@@ -1390,7 +1437,7 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	account := testAccount(t, 7, true, 3, "unused-oauth-token")
 	account.AccountType = AccountTypeAPIUpstream
 	account.Credential.CredentialType = CredentialTypeAPIKey
-	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "upstream-secret")
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "upstream-secret")
 	account.Credential.BaseURL = "https://upstream.example.test"
 	account.Status = AccountStatusCircuitOpen
 	account.StatusReason = "previous failure"
@@ -1524,7 +1571,7 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	account := testAccount(t, 7, true, 3, "unused-oauth-token")
 	account.AccountType = AccountTypeAPIUpstream
 	account.Credential.CredentialType = CredentialTypeAPIKey
-	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "upstream-secret")
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "upstream-secret")
 	account.Credential.BaseURL = "https://upstream.example.test"
 	repo.accounts = []Account{account}
 	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusTooManyRequests, retryAfter: "120", message: "quota window"}}
@@ -1556,12 +1603,12 @@ func TestTestAccountsProbesEveryProviderAccount(t *testing.T) {
 	first := testAccount(t, 7, true, 3, "unused-oauth-token")
 	first.AccountType = AccountTypeAPIUpstream
 	first.Credential.CredentialType = CredentialTypeAPIKey
-	first.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "first-secret")
+	first.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "first-secret")
 	first.Credential.BaseURL = "https://first.example.test"
 	second := testAccount(t, 8, true, 4, "unused-oauth-token")
 	second.AccountType = AccountTypeAPIUpstream
 	second.Credential.CredentialType = CredentialTypeAPIKey
-	second.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "second-secret")
+	second.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "second-secret")
 	second.Credential.BaseURL = "https://second.example.test"
 	second.Status = AccountStatusCircuitOpen
 	second.StatusReason = "previous failure"
@@ -1595,8 +1642,8 @@ func TestTestAccountPassesConfiguredProxyURLToProbe(t *testing.T) {
 	account := testAccount(t, 7, true, 3, "unused-oauth-token")
 	account.AccountType = AccountTypeAPIUpstream
 	account.Credential.CredentialType = CredentialTypeAPIKey
-	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "api-secret")
-	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", "http://proxy.example.test:8080")
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "api-secret")
+	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderProxyURL, "http://proxy.example.test:8080")
 	account.Credential.BaseURL = "https://upstream.example.test"
 	repo.accounts = []Account{account}
 	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
@@ -1615,8 +1662,8 @@ func TestTestAccountModelUsesExactAPIUpstreamAndPersistsFailureWithoutChangingHe
 	account := testAccount(t, 7, true, 3, "unused-oauth-token")
 	account.AccountType = AccountTypeAPIUpstream
 	account.Credential.CredentialType = CredentialTypeAPIKey
-	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", "upstream-secret")
-	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", "http://proxy.example.test:8080")
+	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "upstream-secret")
+	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderProxyURL, "http://proxy.example.test:8080")
 	account.Credential.BaseURL = "https://upstream.example.test/v1"
 	account.Status = AccountStatusCircuitOpen
 	account.StatusReason = "existing health state"
@@ -1766,7 +1813,7 @@ func TestTestAccountModelSuccessfulRefreshUpdatesOnlyCredentialState(t *testing.
 	if unchanged.Status != AccountStatusCircuitOpen || unchanged.StatusReason != "existing health state" || unchanged.LastError != "existing health state" || unchanged.FailureCount != 4 || unchanged.CircuitOpenUntil == nil {
 		t.Fatalf("successful diagnostic refresh changed account health: %+v", unchanged)
 	}
-	refreshedToken, err := secret.DecryptString("encryption-secret", unchanged.Credential.EncryptedAccessToken)
+	refreshedToken, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, unchanged.Credential.EncryptedAccessToken)
 	if err != nil || refreshedToken != "refreshed-access" {
 		t.Fatalf("refreshed credential token = %q error=%v", refreshedToken, err)
 	}
@@ -1989,7 +2036,7 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 		Name:        "Upstream",
 		Credential: AccountCredential{
 			CredentialType:  CredentialTypeAPIKey,
-			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "old-secret"),
+			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "old-secret"),
 			BaseURL:         "https://old.example.test",
 		},
 		Enabled:          true,
@@ -2019,7 +2066,7 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 	if account.Credential.EncryptedAPIKey == "" || account.Credential.EncryptedAPIKey == "new-secret" || account.Credential.EncryptedAPIKey == oldEncryptedAPIKey {
 		t.Fatalf("encrypted API key = %q, want new encrypted non-plaintext value", account.Credential.EncryptedAPIKey)
 	}
-	decrypted, err := secret.DecryptString("encryption-secret", account.Credential.EncryptedAPIKey)
+	decrypted, err := decryptForTest(t, "encryption-secret", secret.SecretKindProviderAPIKey, account.Credential.EncryptedAPIKey)
 	if err != nil {
 		t.Fatalf("DecryptString returned error: %v", err)
 	}
@@ -2283,7 +2330,7 @@ func TestSelectAccountAppliesFingerprintProfileForOAuthAndAPIUpstream(t *testing
 				FingerprintProfileID: &profileID,
 				Credential: AccountCredential{
 					BaseURL:         "https://upstream.example.test/v1",
-					EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "api-token"),
+					EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "api-token"),
 				},
 			},
 			wantToken:   "api-token",
@@ -3393,7 +3440,7 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 	if account.Credential.EncryptedAPIKey == "" || account.Credential.EncryptedAPIKey == "upstream-secret" {
 		t.Fatalf("encrypted API key = %q, want encrypted non-plaintext value", account.Credential.EncryptedAPIKey)
 	}
-	decrypted, err := secret.DecryptString("encryption-secret", account.Credential.EncryptedAPIKey)
+	decrypted, err := decryptForTest(t, "encryption-secret", secret.SecretKindProviderAPIKey, account.Credential.EncryptedAPIKey)
 	if err != nil {
 		t.Fatalf("DecryptString returned error: %v", err)
 	}
@@ -3700,7 +3747,7 @@ func TestSyncUpstreamAccountModelsDoesNotDoubleV1BaseURL(t *testing.T) {
 		Status:      AccountStatusActive,
 		Credential: AccountCredential{
 			CredentialType:  CredentialTypeAPIKey,
-			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", "sk-upstream-key"),
+			EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "sk-upstream-key"),
 			BaseURL:         ts.URL + "/v1",
 		},
 	})
@@ -4949,13 +4996,26 @@ func newConfiguredService(repo Repository, client OAuthClient) *Service {
 	})
 }
 
-func mustEncrypt(t *testing.T, encryptionSecret, value string) string {
+func mustEncrypt(t *testing.T, encryptionSecret string, kind secret.SecretKind, value string) string {
 	t.Helper()
-	encrypted, err := secret.EncryptString(encryptionSecret, value)
+	keyring, err := secret.NewKeyring(secret.EncryptionKey{ID: secret.DefaultEncryptionKeyID, Secret: encryptionSecret}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	encrypted, err := keyring.EncryptStringFor(kind, value)
 	if err != nil {
 		t.Fatalf("EncryptString returned error: %v", err)
 	}
 	return encrypted
+}
+
+func decryptForTest(t *testing.T, encryptionSecret string, kind secret.SecretKind, value string) (string, error) {
+	t.Helper()
+	keyring, err := secret.NewKeyring(secret.EncryptionKey{ID: secret.DefaultEncryptionKeyID, Secret: encryptionSecret}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	return keyring.DecryptStringFor(kind, value)
 }
 
 func boolPtr(value bool) *bool {
@@ -5014,8 +5074,8 @@ func testExpiredAccount(t *testing.T, id int64, enabled bool, priority int, acce
 		Provider:              "openai",
 		Subject:               "acct_" + string(rune('0'+id)),
 		DisplayName:           "Account",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", accessToken),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", refreshToken),
+		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, accessToken),
+		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, refreshToken),
 		AccessTokenExpiresAt:  &expiresAt,
 		Enabled:               enabled,
 		Priority:              priority,

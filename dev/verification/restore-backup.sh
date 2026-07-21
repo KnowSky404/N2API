@@ -4,7 +4,7 @@ set -Eeuo pipefail
 umask 077
 
 usage() {
-  echo "usage: N2API_RESTORE_IMAGE=... N2API_RESTORE_ADMIN_USERNAME=... N2API_RESTORE_ADMIN_PASSWORD=... N2API_RESTORE_ENCRYPTION_SECRET=... $0 /absolute/path/to/backup.dump" >&2
+  echo "usage: N2API_RESTORE_IMAGE=... N2API_RESTORE_ADMIN_USERNAME=... N2API_RESTORE_ADMIN_PASSWORD=... N2API_RESTORE_ENCRYPTION_SECRET=... [N2API_RESTORE_ENCRYPTION_KEY_ID=...] [N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS=...] $0 /absolute/path/to/backup.dump" >&2
 }
 
 if [[ $# -ne 1 ]]; then
@@ -45,6 +45,8 @@ cleanup_armed=0
 
 export N2API_RESTORE_DUMP_PATH="${dump_path}"
 export N2API_RESTORE_API_KEY_ID=""
+export N2API_RESTORE_ENCRYPTION_KEY_ID="${N2API_RESTORE_ENCRYPTION_KEY_ID:-default}"
+export N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS="${N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS:-[]}"
 
 compose() {
   docker compose --project-name "${project}" --file "${compose_file}" "$@"

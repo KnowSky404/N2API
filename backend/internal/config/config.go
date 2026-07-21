@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"net/url"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KnowSky404/N2API/backend/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,6 +24,8 @@ type Config struct {
 	AdminUsername                          string
 	AdminPassword                          string
 	EncryptionSecret                       string
+	EncryptionKeyID                        string
+	EncryptionKeyring                      *secret.Keyring
 	OpenAIOAuthClientID                    string
 	OpenAIOAuthSecret                      string
 	OpenAIOAuthRedirectURL                 string
@@ -81,6 +86,10 @@ func Load(lookup func(string) string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	previousEncryptionKeys, err := parsePreviousEncryptionKeys(lookup("N2API_ENCRYPTION_PREVIOUS_KEYS"))
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Host:          valueOrDefault(lookup("N2API_HOST"), "0.0.0.0"),
 		PublicURL:     valueOrDefault(lookup("N2API_PUBLIC_URL"), "http://localhost:3000"),
@@ -89,6 +98,7 @@ func Load(lookup func(string) string) (Config, error) {
 
 		DatabaseURL:            lookup("DATABASE_URL"),
 		EncryptionSecret:       lookup("N2API_ENCRYPTION_SECRET"),
+		EncryptionKeyID:        valueOrDefault(lookup("N2API_ENCRYPTION_KEY_ID"), secret.DefaultEncryptionKeyID),
 		OpenAIOAuthClientID:    valueOrDefault(lookup("OPENAI_OAUTH_CLIENT_ID"), defaultOpenAIOAuthClientID),
 		OpenAIOAuthSecret:      lookup("OPENAI_OAUTH_CLIENT_SECRET"),
 		OpenAIOAuthRedirectURL: valueOrDefault(lookup("OPENAI_OAUTH_REDIRECT_URL"), defaultOpenAIOAuthRedirect),
@@ -263,6 +273,17 @@ func Load(lookup func(string) string) (Config, error) {
 	if err := validateStartupSecurity(&cfg, acceptedRisks); err != nil {
 		return Config{}, err
 	}
+	if err := validatePreviousEncryptionKeys(cfg.AdminPassword, cfg.EncryptionSecret, previousEncryptionKeys); err != nil {
+		return Config{}, err
+	}
+	keyring, err := secret.NewKeyring(
+		secret.EncryptionKey{ID: cfg.EncryptionKeyID, Secret: cfg.EncryptionSecret},
+		previousEncryptionKeys,
+	)
+	if err != nil {
+		return Config{}, fmt.Errorf("N2API_ENCRYPTION_KEY_ID or N2API_ENCRYPTION_PREVIOUS_KEYS is invalid: %w", err)
+	}
+	cfg.EncryptionKeyring = keyring
 
 	return cfg, nil
 }
@@ -459,6 +480,41 @@ func validateSecrets(adminPassword, encryptionSecret string) error {
 	}
 	if adminPassword == encryptionSecret {
 		return errors.New("N2API_ADMIN_PASSWORD and N2API_ENCRYPTION_SECRET must be different")
+	}
+	return nil
+}
+
+func parsePreviousEncryptionKeys(value string) ([]secret.EncryptionKey, error) {
+	if strings.TrimSpace(value) == "" {
+		return []secret.EncryptionKey{}, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	var keys []secret.EncryptionKey
+	if err := decoder.Decode(&keys); err != nil || keys == nil {
+		return nil, errors.New("N2API_ENCRYPTION_PREVIOUS_KEYS must be a JSON array of named keys")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("N2API_ENCRYPTION_PREVIOUS_KEYS must contain exactly one JSON value")
+	}
+	return keys, nil
+}
+
+func validatePreviousEncryptionKeys(adminPassword, currentSecret string, keys []secret.EncryptionKey) error {
+	for index, key := range keys {
+		if len(key.Secret) < minimumEncryptionSecretBytes || isKnownPlaceholder(key.Secret) {
+			return fmt.Errorf(
+				"N2API_ENCRYPTION_PREVIOUS_KEYS item %d secret must be at least %d bytes and must not be a known placeholder",
+				index,
+				minimumEncryptionSecretBytes,
+			)
+		}
+		if key.Secret == adminPassword {
+			return fmt.Errorf("N2API_ENCRYPTION_PREVIOUS_KEYS item %d secret must differ from N2API_ADMIN_PASSWORD", index)
+		}
+		if key.Secret == currentSecret {
+			return fmt.Errorf("N2API_ENCRYPTION_PREVIOUS_KEYS item %d secret must differ from N2API_ENCRYPTION_SECRET", index)
+		}
 	}
 	return nil
 }

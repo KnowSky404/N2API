@@ -132,6 +132,9 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	if encrypted == "oauth-refresh-token" {
 		t.Fatal("EncryptString returned plaintext")
 	}
+	if !strings.HasPrefix(encrypted, "n2api:v1:default:generic:") {
+		t.Fatalf("EncryptString = %q, want versioned default-key envelope", encrypted)
+	}
 
 	decrypted, err := DecryptString("long-encryption-secret", encrypted)
 	if err != nil {
@@ -150,6 +153,265 @@ func TestDecryptRejectsWrongSecret(t *testing.T) {
 
 	if _, err := DecryptString("different-secret", encrypted); err == nil {
 		t.Fatal("DecryptString returned nil error for wrong secret")
+	}
+}
+
+func TestDecryptReadsImmutableLegacyFixture(t *testing.T) {
+	const legacyCiphertext = "AAECAwQFBgcICQoLshPzMSnIGUlIyhB+W347vBUF57bAkCtXBN4l54ODVswuO/ASFnqXSM2t"
+
+	plaintext, err := DecryptString("legacy-encryption-secret", legacyCiphertext)
+	if err != nil {
+		t.Fatalf("DecryptString returned error for legacy fixture: %v", err)
+	}
+	if plaintext != "legacy-oauth-refresh-token" {
+		t.Fatalf("DecryptString = %q, want legacy-oauth-refresh-token", plaintext)
+	}
+}
+
+func TestKeyringReadsLegacyValuesInConfiguredOrder(t *testing.T) {
+	const legacyCiphertext = "AAECAwQFBgcICQoLshPzMSnIGUlIyhB+W347vBUF57bAkCtXBN4l54ODVswuO/ASFnqXSM2t"
+	keyring, err := NewKeyring(
+		EncryptionKey{ID: "current", Secret: "current-encryption-secret"},
+		[]EncryptionKey{
+			{ID: "previous-wrong", Secret: "wrong-previous-encryption-secret"},
+			{ID: "previous-match", Secret: "legacy-encryption-secret"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+
+	plaintext, err := keyring.DecryptString(legacyCiphertext)
+	if err != nil {
+		t.Fatalf("DecryptString returned error for previous key: %v", err)
+	}
+	if plaintext != "legacy-oauth-refresh-token" {
+		t.Fatalf("DecryptString = %q, want legacy-oauth-refresh-token", plaintext)
+	}
+}
+
+func TestKeyringWritesCurrentKeyEnvelope(t *testing.T) {
+	keyring, err := NewKeyring(
+		EncryptionKey{ID: "current-202607", Secret: "current-encryption-secret"},
+		[]EncryptionKey{{ID: "previous-202606", Secret: "previous-encryption-secret"}},
+	)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+
+	encrypted, err := keyring.EncryptString("provider-api-key")
+	if err != nil {
+		t.Fatalf("EncryptString returned error: %v", err)
+	}
+	if !strings.HasPrefix(encrypted, "n2api:v1:current-202607:generic:") {
+		t.Fatalf("EncryptString = %q, want current key ID", encrypted)
+	}
+	decrypted, err := keyring.DecryptString(encrypted)
+	if err != nil {
+		t.Fatalf("DecryptString returned error: %v", err)
+	}
+	if decrypted != "provider-api-key" {
+		t.Fatalf("DecryptString = %q, want provider-api-key", decrypted)
+	}
+}
+
+func TestKeyringEnvelopeSupportsEdgeValuesAndRandomNonces(t *testing.T) {
+	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "current-encryption-secret"}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	for name, value := range map[string]string{
+		"empty":   "",
+		"unicode": "\u79d8\u5bc6-token-\u2713",
+		"long":    strings.Repeat("x", 16*1024),
+	} {
+		t.Run(name, func(t *testing.T) {
+			encrypted, err := keyring.EncryptString(value)
+			if err != nil {
+				t.Fatalf("EncryptString returned error: %v", err)
+			}
+			decrypted, err := keyring.DecryptString(encrypted)
+			if err != nil {
+				t.Fatalf("DecryptString returned error: %v", err)
+			}
+			if decrypted != value {
+				t.Fatalf("DecryptString length = %d, want %d", len(decrypted), len(value))
+			}
+		})
+	}
+
+	first, err := keyring.EncryptString("same-value")
+	if err != nil {
+		t.Fatalf("first EncryptString returned error: %v", err)
+	}
+	second, err := keyring.EncryptString("same-value")
+	if err != nil {
+		t.Fatalf("second EncryptString returned error: %v", err)
+	}
+	if first == second {
+		t.Fatal("EncryptString reused a nonce for repeated plaintext")
+	}
+}
+
+func TestKeyringRejectsEnvelopeMetadataTampering(t *testing.T) {
+	keyring, err := NewKeyring(
+		EncryptionKey{ID: "current", Secret: "current-encryption-secret"},
+		[]EncryptionKey{{ID: "previous", Secret: "previous-encryption-secret"}},
+	)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	encrypted, err := keyring.EncryptString("oauth-access-token")
+	if err != nil {
+		t.Fatalf("EncryptString returned error: %v", err)
+	}
+
+	tampered := strings.Replace(encrypted, ":current:", ":previous:", 1)
+	if _, err := keyring.DecryptString(tampered); err == nil {
+		t.Fatal("DecryptString returned nil error for tampered key ID")
+	}
+}
+
+func TestKeyringRejectsCrossKindEnvelopeSubstitution(t *testing.T) {
+	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "current-encryption-secret"}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	encrypted, err := keyring.EncryptStringFor(SecretKindOAuthAccessToken, "oauth-access-token")
+	if err != nil {
+		t.Fatalf("EncryptStringFor returned error: %v", err)
+	}
+	if _, err := keyring.DecryptStringFor(SecretKindOAuthRefreshToken, encrypted); err == nil {
+		t.Fatal("DecryptStringFor accepted an access-token envelope as a refresh token")
+	}
+
+	tampered := strings.Replace(encrypted, ":oauth-access-token:", ":oauth-refresh-token:", 1)
+	if _, err := keyring.DecryptStringFor(SecretKindOAuthRefreshToken, tampered); err == nil {
+		t.Fatal("DecryptStringFor accepted a tampered secret kind")
+	}
+}
+
+func TestKeyringRejectsUnknownEnvelopeVersionAndKey(t *testing.T) {
+	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "current-encryption-secret"}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	encrypted, err := keyring.EncryptString("oauth-access-token")
+	if err != nil {
+		t.Fatalf("EncryptString returned error: %v", err)
+	}
+
+	for name, tampered := range map[string]string{
+		"version": strings.Replace(encrypted, ":v1:", ":v2:", 1),
+		"key":     strings.Replace(encrypted, ":current:", ":missing:", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := keyring.DecryptString(tampered); err == nil {
+				t.Fatal("DecryptString returned nil error")
+			}
+		})
+	}
+}
+
+func TestKeyringRejectsTamperedAndMalformedEnvelopePayloadsWithoutLegacyFallback(t *testing.T) {
+	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "legacy-encryption-secret"}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	encrypted, err := keyring.EncryptString("oauth-access-token")
+	if err != nil {
+		t.Fatalf("EncryptString returned error: %v", err)
+	}
+	separator := strings.LastIndexByte(encrypted, ':')
+	payload, err := base64.RawStdEncoding.DecodeString(encrypted[separator+1:])
+	if err != nil {
+		t.Fatalf("DecodeString returned error: %v", err)
+	}
+	for name, index := range map[string]int{
+		"nonce":      0,
+		"ciphertext": len(payload) / 2,
+		"tag":        len(payload) - 1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tamperedPayload := append([]byte(nil), payload...)
+			tamperedPayload[index] ^= 0xff
+			tampered := encrypted[:separator+1] + base64.RawStdEncoding.EncodeToString(tamperedPayload)
+			if _, err := keyring.DecryptString(tampered); err == nil {
+				t.Fatal("DecryptString returned nil error for tampered payload")
+			}
+		})
+	}
+
+	const legacyCiphertext = "AAECAwQFBgcICQoLshPzMSnIGUlIyhB+W347vBUF57bAkCtXBN4l54ODVswuO/ASFnqXSM2t"
+	for name, candidate := range map[string]string{
+		"invalid base64":  "n2api:v1:current:generic:***",
+		"truncated":       "n2api:v1:current:generic:AA",
+		"malformed":       "n2api:v1:current",
+		"forged envelope": "n2api:v1:current:generic:" + legacyCiphertext,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := keyring.DecryptString(candidate); err == nil {
+				t.Fatal("DecryptString returned nil error")
+			}
+		})
+	}
+}
+
+func TestNewKeyringRejectsInvalidAndDuplicateKeyIDs(t *testing.T) {
+	for name, tt := range map[string]struct {
+		current  EncryptionKey
+		previous []EncryptionKey
+	}{
+		"invalid current": {
+			current: EncryptionKey{ID: "bad:id", Secret: "current-secret"},
+		},
+		"duplicate": {
+			current:  EncryptionKey{ID: "same", Secret: "current-secret"},
+			previous: []EncryptionKey{{ID: "same", Secret: "previous-secret"}},
+		},
+		"duplicate secret": {
+			current:  EncryptionKey{ID: "current", Secret: "same-secret"},
+			previous: []EncryptionKey{{ID: "previous", Secret: "same-secret"}},
+		},
+		"empty previous secret": {
+			current:  EncryptionKey{ID: "current", Secret: "current-secret"},
+			previous: []EncryptionKey{{ID: "previous", Secret: ""}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewKeyring(tt.current, tt.previous); err == nil {
+				t.Fatal("NewKeyring returned nil error")
+			}
+		})
+	}
+}
+
+func TestEncryptionErrorsDoNotLeakSensitiveValues(t *testing.T) {
+	const keyMaterial = "sensitive-encryption-key-material"
+	const plaintext = "sensitive-provider-token"
+	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: keyMaterial}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	encrypted, err := keyring.EncryptString(plaintext)
+	if err != nil {
+		t.Fatalf("EncryptString returned error: %v", err)
+	}
+	separator := strings.LastIndexByte(encrypted, ':')
+	payload, err := base64.RawStdEncoding.DecodeString(encrypted[separator+1:])
+	if err != nil {
+		t.Fatalf("DecodeString returned error: %v", err)
+	}
+	payload[len(payload)-1] ^= 0xff
+	tampered := encrypted[:separator+1] + base64.RawStdEncoding.EncodeToString(payload)
+	_, err = keyring.DecryptString(tampered)
+	if err == nil {
+		t.Fatal("DecryptString returned nil error")
+	}
+	for _, forbidden := range []string{keyMaterial, plaintext, encrypted, tampered} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("DecryptString error leaked sensitive value: %q", err)
+		}
 	}
 }
 

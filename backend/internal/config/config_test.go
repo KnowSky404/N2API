@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/KnowSky404/N2API/backend/internal/secret"
 )
 
 func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
@@ -40,6 +42,82 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	}
 	if cfg.AdminSessionTTL != 168*time.Hour {
 		t.Fatalf("AdminSessionTTL = %s, want 168h", cfg.AdminSessionTTL)
+	}
+	if cfg.EncryptionKeyID != secret.DefaultEncryptionKeyID {
+		t.Fatalf("EncryptionKeyID = %q, want %q", cfg.EncryptionKeyID, secret.DefaultEncryptionKeyID)
+	}
+	if cfg.EncryptionKeyring == nil || cfg.EncryptionKeyring.PreviousKeyCount() != 0 {
+		t.Fatal("default encryption keyring was not initialized without previous keys")
+	}
+}
+
+func TestLoadParsesNamedEncryptionKeys(t *testing.T) {
+	const currentSecret = "current-encryption-secret-at-least-32-bytes"
+	const previousSecret = "previous-encryption-secret-at-least-32-bytes"
+	previousKeyring, err := secret.NewKeyring(secret.EncryptionKey{ID: "previous-202606", Secret: previousSecret}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	previousCiphertext, err := previousKeyring.EncryptString("previous-provider-token")
+	if err != nil {
+		t.Fatalf("EncryptString returned error: %v", err)
+	}
+
+	cfg, err := Load(strictConfigLookup(map[string]string{
+		"N2API_ENCRYPTION_SECRET":        currentSecret,
+		"N2API_ENCRYPTION_KEY_ID":        "current-202607",
+		"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous-202606","secret":"` + previousSecret + `"}]`,
+	}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.EncryptionKeyID != "current-202607" || cfg.EncryptionKeyring.CurrentKeyID() != "current-202607" {
+		t.Fatalf("current key IDs = config:%q keyring:%q", cfg.EncryptionKeyID, cfg.EncryptionKeyring.CurrentKeyID())
+	}
+	if cfg.EncryptionKeyring.PreviousKeyCount() != 1 {
+		t.Fatalf("PreviousKeyCount = %d, want 1", cfg.EncryptionKeyring.PreviousKeyCount())
+	}
+	decrypted, err := cfg.EncryptionKeyring.DecryptString(previousCiphertext)
+	if err != nil {
+		t.Fatalf("DecryptString returned error for previous envelope: %v", err)
+	}
+	if decrypted != "previous-provider-token" {
+		t.Fatalf("DecryptString = %q, want previous-provider-token", decrypted)
+	}
+	currentCiphertext, err := cfg.EncryptionKeyring.EncryptString("current-provider-token")
+	if err != nil {
+		t.Fatalf("EncryptString returned error: %v", err)
+	}
+	if !strings.HasPrefix(currentCiphertext, "n2api:v1:current-202607:generic:") {
+		t.Fatalf("EncryptString = %q, want current key envelope", currentCiphertext)
+	}
+}
+
+func TestLoadRejectsInvalidEncryptionKeyConfigurationWithoutLeaks(t *testing.T) {
+	const previousSecret = "previous-encryption-secret-at-least-32-bytes"
+	const secondSecret = "second-previous-secret-at-least-32-bytes"
+	tests := []struct {
+		name      string
+		overrides map[string]string
+		forbidden string
+	}{
+		{name: "invalid current ID", overrides: map[string]string{"N2API_ENCRYPTION_KEY_ID": "invalid:key"}},
+		{name: "invalid JSON", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{`}},
+		{name: "null JSON", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `null`}},
+		{name: "trailing JSON", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[] []`}},
+		{name: "unknown field", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous","secret":"` + previousSecret + `","extra":true}]`}},
+		{name: "short previous secret", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous","secret":"short"}]`}, forbidden: "short"},
+		{name: "placeholder previous secret", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous","secret":"change-me-to-a-long-random-secret"}]`}, forbidden: "change-me-to-a-long-random-secret"},
+		{name: "same as current", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous","secret":"strong-encryption-secret-at-least-32-bytes"}]`}, forbidden: "strong-encryption-secret-at-least-32-bytes"},
+		{name: "same as admin", overrides: map[string]string{"N2API_ADMIN_PASSWORD": previousSecret, "N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous","secret":"` + previousSecret + `"}]`}, forbidden: previousSecret},
+		{name: "duplicate ID", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous","secret":"` + previousSecret + `"},{"id":"previous","secret":"` + secondSecret + `"}]`}},
+		{name: "duplicate secret", overrides: map[string]string{"N2API_ENCRYPTION_PREVIOUS_KEYS": `[{"id":"previous-one","secret":"` + previousSecret + `"},{"id":"previous-two","secret":"` + previousSecret + `"}]`}, forbidden: previousSecret},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(strictConfigLookup(tt.overrides))
+			assertSafeConfigError(t, err, "N2API_ENCRYPTION", tt.forbidden)
+		})
 	}
 }
 

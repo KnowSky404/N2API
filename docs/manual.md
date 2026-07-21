@@ -385,6 +385,50 @@ Replace every `change-me` value before starting the stack. At minimum, set:
   the bundled PostgreSQL service does not enable TLS. For an external
   TLS-required PostgreSQL service, omit `database-plaintext`.
 
+### Encrypted Secret Envelope
+
+New encrypted provider credentials and reusable client-key secrets use the
+self-describing format `n2api:v1:<key-id>:<secret-kind>:<payload>`. The version,
+non-secret key ID, and fixed credential kind are authenticated with the
+ciphertext. Existing unversioned values remain readable and are not rewritten
+during an ordinary upgrade.
+
+`N2API_ENCRYPTION_KEY_ID` identifies the current `N2API_ENCRYPTION_SECRET` and
+defaults to `default` so existing deployments can upgrade without a new required
+setting. IDs contain only ASCII letters, digits, `.`, `_`, or `-` and are at most
+64 characters. Keep `N2API_ENCRYPTION_PREVIOUS_KEYS=[]` outside an explicit
+rotation window. During a rotation window it is an ordered JSON array:
+
+```dotenv
+N2API_ENCRYPTION_KEY_ID=current-202607
+N2API_ENCRYPTION_PREVIOUS_KEYS='[{"id":"default","secret":"<previous-secret>"}]'
+```
+
+The current and previous secrets must each be at least 32 bytes, must be unique,
+and must differ from the administrator password. At most eight previous keys are
+accepted. New writes always use the current key. A versioned envelope uses only
+its named key and must match the credential kind expected by its consuming
+field; moving an access-token envelope into a refresh-token, proxy, or API-key
+field is rejected. Only legacy raw-base64 ciphertext tries current and then
+previous keys in configured order. Invalid versions, missing keys, kind
+mismatches, or authentication failures stop the credential operation without
+exposing key material, plaintext, or ciphertext. An unreadable encrypted proxy
+also stops the affected outbound operation instead of silently bypassing the
+proxy.
+
+Legacy raw-base64 values predate credential-kind binding, so they retain only
+the original GCM integrity guarantee until Task 3 re-encrypts them. Version 1
+binds the credential kind but not a database row identity; same-kind row
+substitution remains outside this task's protection boundary.
+
+Changing `N2API_ENCRYPTION_SECRET` invalidates existing Request Log and System
+Event cursors because those cursor signatures intentionally use only the current
+secret. Previous encryption keys do not keep old cursors valid. This task does
+not bulk-rewrite stored values. Once the upgraded application creates or refreshes
+a credential, an older image cannot read that new envelope; rollback then requires
+the upgraded image with the prior keyring or a database backup taken before new
+envelope writes.
+
 The release Compose file requires `.env` and an explicit `N2API_IMAGE`; it has
 no `latest` fallback. Use the immutable CalVer matching the checked-out release
 or a complete digest reference. Missing required variables are rejected at
@@ -491,20 +535,27 @@ database dump still belongs in encrypted off-host storage and must never be
 committed.
 
 Use the exact N2API image tag or digest that should serve the restored data.
-Provide the administrator credentials and encryption secret from the backup's
-deployment through the environment; the script does not print them. It creates
-its own random Compose project, fixed temporary database, internal network, and
-volume. It never accepts a database URL or Compose project name.
+Provide the administrator credentials and complete encryption keyring from the
+backup's deployment through the environment; the script does not print them.
+It creates its own random Compose project, fixed temporary database, internal
+network, and volume. It never accepts a database URL or Compose project name.
 
 ```bash
 read -rsp 'Restore admin password: ' N2API_RESTORE_ADMIN_PASSWORD; echo
 read -rsp 'Restore encryption secret: ' N2API_RESTORE_ENCRYPTION_SECRET; echo
-export N2API_RESTORE_ADMIN_PASSWORD N2API_RESTORE_ENCRYPTION_SECRET
+read -rsp 'Restore previous-key JSON (or []): ' N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS; echo
+export N2API_RESTORE_ADMIN_PASSWORD N2API_RESTORE_ENCRYPTION_SECRET N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS
 export N2API_RESTORE_ADMIN_USERNAME='admin'
 export N2API_RESTORE_IMAGE='ghcr.io/knowsky404/n2api:YYYYMMDDNN'
+export N2API_RESTORE_ENCRYPTION_KEY_ID='default'
 dev/verification/restore-backup.sh backups/n2api-YYYYMMDD-HHMMSS.dump
-unset N2API_RESTORE_ADMIN_PASSWORD N2API_RESTORE_ENCRYPTION_SECRET
+unset N2API_RESTORE_ADMIN_PASSWORD N2API_RESTORE_ENCRYPTION_SECRET N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS
+unset N2API_RESTORE_ENCRYPTION_KEY_ID
 ```
+
+Use the exact key ID and previous-key array that were active when the backup was
+taken. For backups outside a rotation window, enter `[]` and keep the default key
+ID unless the deployment had explicitly changed it.
 
 The drill lists and restores the custom archive in one transaction, starts the
 selected image so pending migrations run, waits for readiness, checks schema
