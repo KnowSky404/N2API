@@ -36,10 +36,13 @@ type HealthChecker interface {
 }
 
 type AdminService interface {
-	Login(ctx context.Context, username, password string) (admin.Session, error)
+	Login(ctx context.Context, username, password string, metadata admin.SessionMetadata) (admin.Session, error)
 	Logout(ctx context.Context, token string) error
 	ChangePassword(ctx context.Context, adminID int64, currentPassword, newPassword string) error
 	ValidateSession(ctx context.Context, token string) (admin.Admin, error)
+	ListSessions(ctx context.Context, adminID int64, currentToken string) ([]admin.AdminSession, error)
+	RevokeSessionByID(ctx context.Context, adminID, sessionID int64, currentToken string) (bool, error)
+	RevokeOtherSessions(ctx context.Context, adminID int64, currentToken string) (int64, error)
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
 	CreateAPIKey(ctx context.Context, name string, routingPoolID *int64) (admin.CreatedAPIKey, error)
 	GetAPIKeySecret(ctx context.Context, id int64) (string, error)
@@ -288,7 +291,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 		defer loginThrottle.CancelAttempt(attempt)
 
-		session, err := admins.Login(r.Context(), req.Username, req.Password)
+		session, err := admins.Login(r.Context(), req.Username, req.Password, admin.SessionMetadata{
+			CreatedIP: clientIP,
+			UserAgent: r.UserAgent(),
+		})
 		if err != nil {
 			if errors.Is(err, admin.ErrUnauthorized) {
 				decision = loginThrottle.RecordFailure(attempt)
@@ -365,6 +371,48 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, map[string]string{"username": currentAdmin.Username})
 	}))
 
+	mux.HandleFunc("GET /api/admin/sessions", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
+		token, _ := readSessionCookie(r)
+		sessions, err := admins.ListSessions(r.Context(), currentAdmin.ID, token)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string][]admin.AdminSession{"sessions": sessions})
+	}))
+
+	mux.HandleFunc("DELETE /api/admin/sessions/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
+		sessionID, err := parsePositivePathID(r, "id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		token, _ := readSessionCookie(r)
+		revokedCurrent, err := admins.RevokeSessionByID(r.Context(), currentAdmin.ID, sessionID, token)
+		if err != nil {
+			if errors.Is(err, admin.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "not_found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		if revokedCurrent {
+			clearSessionCookie(w, secureCookie)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	mux.HandleFunc("POST /api/admin/sessions/revoke-others", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
+		token, _ := readSessionCookie(r)
+		revoked, err := admins.RevokeOtherSessions(r.Context(), currentAdmin.ID, token)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int64{"revoked": revoked})
+	}))
+
 	mux.HandleFunc("POST /api/admin/change-password", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
 		var body struct {
 			CurrentPassword string `json:"currentPassword"`
@@ -380,7 +428,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				return
 			}
 			if errors.Is(err, admin.ErrUnauthorized) {
-				writeError(w, http.StatusUnauthorized, "unauthorized")
+				writeError(w, http.StatusBadRequest, "invalid_current_password")
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "internal_error")

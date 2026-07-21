@@ -74,6 +74,17 @@ one-minute window while throttling is enabled. The event uses a fixed
 administrator target; usernames, passwords, and request bodies are never stored
 in those events.
 
+Administrator sessions expire after seven days by default. Set
+`N2API_ADMIN_SESSION_TTL_HOURS` from 1 to 8760 to change the absolute lifetime
+of newly created sessions. Changing the value does not extend or shorten
+sessions that already exist, and activity never extends a session's expiry.
+Open **Active sessions** from the administrator menu to inspect active login
+sessions, revoke one session, or revoke every session except the current one.
+Revoking the current row signs out that browser immediately. Session rows show
+only bounded client metadata: the creation IP is reduced to an IPv4 `/24` or
+IPv6 `/64` network and the User-Agent is cleaned and truncated. Authentication
+tokens and token hashes are never returned by the session API.
+
 ## Browser Request Security
 
 N2API rejects unsafe browser requests that carry the administrator session

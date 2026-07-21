@@ -72,7 +72,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readText('src/routes/+layout.svelte');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Pricing', 'Ops', 'Fingerprints', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Pricing', 'Ops', 'Fingerprints', 'Active sessions', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -89,6 +89,43 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   assert.match(layout, /right-4 top-14[^"]*lg:bottom-14/);
   assert.match(layout, /role="menu"/);
   assert.doesNotMatch(layout, /setTimeout\(\(\) => closePasswordModal/);
+});
+
+test('account menu exposes responsive active session controls with explicit destructive confirmation', () => {
+  assert.match(layoutPage, /adminSessions/);
+  assert.match(layoutPage, /loadAdminSessions/);
+  assert.match(layoutPage, /revokeAdminSession/);
+  assert.match(layoutPage, /revokeOtherAdminSessions/);
+  assert.equal((layoutPage.match(/onclick=\{openSessionsModal\}/g) ?? []).length, 2, 'desktop/mobile account surfaces should open the same session dialog');
+  assert.match(layoutPage, /aria-labelledby="active-sessions-title"/);
+  assert.match(layoutPage, /ui-modal-panel ui-modal-panel--lg/);
+  assert.match(layoutPage, /<table class="ui-table ui-table--stacked">/);
+  for (const label of ['Client', 'Created IP', 'Last active', 'Expires', 'Actions']) {
+    assert.match(layoutPage, new RegExp(`data-label="${label}"`));
+  }
+  assert.match(layoutPage, /adminSession\.current[\s\S]*?Current/);
+  assert.match(layoutPage, /adminSession\.current \? 'Sign out' : 'Revoke'/);
+  assert.match(layoutPage, /sessionDate\(adminSession\.lastUsedAt, 'Not recorded'\)/);
+  assert.doesNotMatch(layoutPage, /adminSession\.lastUsedAt \|\| adminSession\.createdAt/);
+  assert.match(layoutPage, /role="alertdialog"/);
+  assert.match(layoutPage, /Sign out this session\?/);
+  assert.match(layoutPage, /Revoke this session\?/);
+  assert.match(layoutPage, /Revoke other sessions/);
+  assert.match(layoutPage, /otherSessionCount/);
+  assert.match(layoutPage, /sessionsMutationBusy/);
+  assert.match(layoutPage, /if \(session\.authenticated\) return;[\s\S]*?passwordModalOpen = false;[\s\S]*?sessionsModalOpen = false;/);
+  assert.doesNotMatch(layoutPage, /\bconfirm\(/);
+
+  assert.match(adminState, /export const adminSessions = \$state/);
+  assert.match(adminState, /export async function loadAdminSessions/);
+  assert.match(adminState, /\/api\/admin\/sessions/);
+  assert.match(adminState, /export async function revokeAdminSession/);
+  assert.match(adminState, /method: 'DELETE'/);
+  assert.match(adminState, /target\.current[\s\S]*?clearAuthenticatedAdminState\(\)/);
+  assert.match(adminState, /export async function revokeOtherAdminSessions/);
+  assert.match(adminState, /\/api\/admin\/sessions\/revoke-others/);
+  assert.match(adminState, /adminSessions\.items = adminSessions\.items\.filter\(\(item\) => item\.current\)/);
+  assert.match(adminState, /response\.status === 401 && path !== '\/api\/admin\/login'/);
 });
 
 test('shared page content expands on wide and HiDPI displays without changing the 1080p cap', () => {

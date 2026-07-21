@@ -38,6 +38,46 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	if !cfg.AdminLoginThrottleEnabled || cfg.AdminLoginThrottleFailures != 5 || cfg.AdminLoginThrottleMaxEntries != 4096 {
 		t.Fatalf("login throttle defaults = enabled:%t failures:%d entries:%d", cfg.AdminLoginThrottleEnabled, cfg.AdminLoginThrottleFailures, cfg.AdminLoginThrottleMaxEntries)
 	}
+	if cfg.AdminSessionTTL != 168*time.Hour {
+		t.Fatalf("AdminSessionTTL = %s, want 168h", cfg.AdminSessionTTL)
+	}
+}
+
+func TestLoadAdminSessionTTL(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "encryption-secret", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	for _, tt := range []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{name: "minimum", value: "1", want: time.Hour},
+		{name: "custom", value: "24", want: 24 * time.Hour},
+		{name: "maximum", value: "8760", want: 8760 * time.Hour},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			values := maps.Clone(base)
+			values["N2API_ADMIN_SESSION_TTL_HOURS"] = tt.value
+			cfg, err := Load(mapLookup(values))
+			if err != nil {
+				t.Fatalf("Load returned error: %v", err)
+			}
+			if cfg.AdminSessionTTL != tt.want {
+				t.Fatalf("AdminSessionTTL = %s, want %s", cfg.AdminSessionTTL, tt.want)
+			}
+		})
+	}
+
+	for _, value := range []string{"0", "-1", "8761", "one-day", "999999999999999999999999"} {
+		t.Run("invalid_"+value, func(t *testing.T) {
+			values := maps.Clone(base)
+			values["N2API_ADMIN_SESSION_TTL_HOURS"] = value
+			if _, err := Load(mapLookup(values)); err == nil {
+				t.Fatal("Load returned nil error")
+			}
+		})
+	}
 }
 
 func TestLoadAdminLoginThrottleConfig(t *testing.T) {

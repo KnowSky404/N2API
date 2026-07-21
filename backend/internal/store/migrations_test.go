@@ -58,6 +58,27 @@ func TestAdminSessionsMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestAdminSessionMetadataMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00038_admin_session_metadata.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ",
+		"SET last_used_at = created_at",
+		"ADD COLUMN IF NOT EXISTS created_ip_summary TEXT NOT NULL DEFAULT ''",
+		"ADD COLUMN IF NOT EXISTS user_agent_summary TEXT NOT NULL DEFAULT ''",
+		"octet_length(created_ip_summary) <= 64",
+		"octet_length(user_agent_summary) <= 256",
+		"admin_sessions_active_admin_last_used_idx",
+		"WHERE revoked_at IS NULL",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthStatesMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00003_oauth_states.sql")
 	if err != nil {
@@ -640,10 +661,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 37 {
-		t.Fatalf("migration sources = %d, want 37", len(sources))
+	if len(sources) != 38 {
+		t.Fatalf("migration sources = %d, want 38", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[36].Path != "00037_remove_global_allowed_models.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[37].Path != "00038_admin_session_metadata.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
@@ -21,6 +24,9 @@ const (
 	maxModels                     = 100
 	maxModelNameLen               = 128
 	maxRequestLogQueryLen         = 200
+	maxSessionCreatedIPBytes      = 64
+	maxSessionUserAgentBytes      = 256
+	sessionTouchInterval          = time.Minute
 	APIKeyModelPolicyAll          = "all"
 	APIKeyModelPolicySelected     = "selected"
 	APIKeyPhysicalDeleteRetention = 7 * 24 * time.Hour
@@ -61,6 +67,22 @@ type Session struct {
 	Token     string
 	AdminID   int64
 	ExpiresAt time.Time
+}
+
+type SessionMetadata struct {
+	CreatedIP string
+	UserAgent string
+}
+
+type AdminSession struct {
+	ID         int64     `json:"id"`
+	Current    bool      `json:"current"`
+	CreatedAt  time.Time `json:"createdAt"`
+	LastUsedAt time.Time `json:"lastUsedAt"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	CreatedIP  string    `json:"createdIp"`
+	UserAgent  string    `json:"userAgent"`
+	TokenHash  string    `json:"-"`
 }
 
 type APIKey struct {
@@ -297,9 +319,12 @@ type Repository interface {
 	CreateAdmin(ctx context.Context, username, passwordHash string) (Admin, error)
 	UpdateAdminUsername(ctx context.Context, id int64, username string) (Admin, error)
 	UpdateAdminPassword(ctx context.Context, id int64, passwordHash string) error
-	CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error
+	CreateSession(ctx context.Context, adminID int64, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) error
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
-	RevokeSession(ctx context.Context, tokenHash string) error
+	RevokeSession(ctx context.Context, tokenHash string, revokedAt time.Time) error
+	ListAdminSessions(ctx context.Context, adminID int64, currentHash string, now time.Time) ([]AdminSession, error)
+	RevokeAdminSession(ctx context.Context, adminID, sessionID int64, revokedAt time.Time) (AdminSession, error)
+	RevokeOtherAdminSessions(ctx context.Context, adminID int64, currentHash string, revokedAt time.Time) (int64, error)
 	CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string, routingPoolID *int64) (APIKey, error)
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
 	PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error)
@@ -435,7 +460,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, username, password string)
 	return err
 }
 
-func (s *Service) Login(ctx context.Context, username, password string) (Session, error) {
+func (s *Service) Login(ctx context.Context, username, password string, metadata SessionMetadata) (Session, error) {
 	username = strings.TrimSpace(username)
 	password = strings.TrimSpace(password)
 	if username == "" || password == "" {
@@ -460,9 +485,11 @@ func (s *Service) Login(ctx context.Context, username, password string) (Session
 	if err != nil {
 		return Session{}, fmt.Errorf("generate admin session token: %w", err)
 	}
-	expiresAt := time.Now().Add(s.sessionTTL)
+	now := s.now().UTC()
+	expiresAt := now.Add(s.sessionTTL)
+	metadata = normalizeSessionMetadata(metadata)
 	ctx = withSecurityIntent(ctx, systemevent.ActionAuthLoginSucceeded, "admin", auditID(admin.ID), admin.Username)
-	if err := s.repo.CreateSession(ctx, admin.ID, secret.HashAPIKey(token), expiresAt); err != nil {
+	if err := s.repo.CreateSession(ctx, admin.ID, secret.HashAPIKey(token), metadata, now, expiresAt); err != nil {
 		return Session{}, err
 	}
 
@@ -475,7 +502,7 @@ func (s *Service) ValidateSession(ctx context.Context, token string) (Admin, err
 		return Admin{}, ErrUnauthorized
 	}
 
-	admin, err := s.repo.FindAdminBySessionHash(ctx, secret.HashAPIKey(token), time.Now())
+	admin, err := s.repo.FindAdminBySessionHash(ctx, secret.HashAPIKey(token), s.now().UTC())
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return Admin{}, ErrUnauthorized
@@ -518,7 +545,8 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
 	}
-	current, err := s.repo.FindAdminBySessionHash(ctx, secret.HashAPIKey(token), time.Now())
+	now := s.now().UTC()
+	current, err := s.repo.FindAdminBySessionHash(ctx, secret.HashAPIKey(token), now)
 	if errors.Is(err, ErrNotFound) {
 		return nil
 	}
@@ -527,13 +555,97 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	}
 	ctx = withAuthenticatedActor(ctx, current)
 	ctx = withSecurityIntent(ctx, systemevent.ActionAuthLogoutSucceeded, "admin_session", "", "")
-	if err := s.repo.RevokeSession(ctx, secret.HashAPIKey(token)); err != nil {
+	if err := s.repo.RevokeSession(ctx, secret.HashAPIKey(token), now); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
 		return err
 	}
 	return nil
+}
+
+func (s *Service) ListSessions(ctx context.Context, adminID int64, currentToken string) ([]AdminSession, error) {
+	currentToken = strings.TrimSpace(currentToken)
+	if adminID <= 0 || currentToken == "" {
+		return nil, ErrUnauthorized
+	}
+	return s.repo.ListAdminSessions(ctx, adminID, secret.HashAPIKey(currentToken), s.now().UTC())
+}
+
+func (s *Service) RevokeSessionByID(ctx context.Context, adminID, sessionID int64, currentToken string) (bool, error) {
+	currentToken = strings.TrimSpace(currentToken)
+	if adminID <= 0 || sessionID <= 0 || currentToken == "" {
+		return false, ErrInvalidInput
+	}
+	currentHash := secret.HashAPIKey(currentToken)
+	ctx = withSecurityIntent(ctx, systemevent.ActionAuthSessionRevoked, "admin_session", auditID(sessionID), "")
+	revoked, err := s.repo.RevokeAdminSession(ctx, adminID, sessionID, s.now().UTC())
+	if err != nil {
+		return false, err
+	}
+	return revoked.TokenHash == currentHash, nil
+}
+
+func (s *Service) RevokeOtherSessions(ctx context.Context, adminID int64, currentToken string) (int64, error) {
+	currentToken = strings.TrimSpace(currentToken)
+	if adminID <= 0 || currentToken == "" {
+		return 0, ErrInvalidInput
+	}
+	ctx = withSecurityIntent(ctx, systemevent.ActionAuthSessionsRevokedOthers, "admin_session", "", "")
+	return s.repo.RevokeOtherAdminSessions(ctx, adminID, secret.HashAPIKey(currentToken), s.now().UTC())
+}
+
+func normalizeSessionMetadata(metadata SessionMetadata) SessionMetadata {
+	metadata.CreatedIP = summarizeSessionIP(metadata.CreatedIP)
+	metadata.UserAgent = normalizeSessionUserAgent(metadata.UserAgent)
+	return metadata
+}
+
+func summarizeSessionIP(value string) string {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil {
+		return ""
+	}
+	address = address.Unmap()
+	bits := 64
+	if address.Is4() {
+		bits = 24
+	}
+	summary := netip.PrefixFrom(address, bits).Masked().String()
+	if len(summary) > maxSessionCreatedIPBytes {
+		return ""
+	}
+	return summary
+}
+
+func normalizeSessionUserAgent(value string) string {
+	value = strings.ToValidUTF8(value, "")
+	var normalized strings.Builder
+	normalized.Grow(min(len(value), maxSessionUserAgentBytes))
+	spacePending := false
+	for _, char := range value {
+		if unicode.IsControl(char) || unicode.IsSpace(char) {
+			spacePending = normalized.Len() > 0
+			continue
+		}
+		if spacePending {
+			normalized.WriteByte(' ')
+			spacePending = false
+		}
+		normalized.WriteRune(char)
+	}
+	return strings.TrimSpace(truncateUTF8Bytes(normalized.String(), maxSessionUserAgentBytes))
+}
+
+func truncateUTF8Bytes(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	end := limit
+	for end > 0 && !utf8.ValidString(value[:end]) {
+		end--
+	}
+	return value[:end]
 }
 
 func (s *Service) CreateAPIKey(ctx context.Context, name string, routingPoolID *int64) (CreatedAPIKey, error) {

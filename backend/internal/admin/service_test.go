@@ -109,10 +109,10 @@ func TestBootstrapRenamesExistingAdminAndPreservesPasswordHash(t *testing.T) {
 	if repo.admin.PasswordHash != firstHash {
 		t.Fatal("BootstrapAdmin changed existing password hash")
 	}
-	if _, err := service.Login(context.Background(), "admin", "first-password"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := service.Login(context.Background(), "admin", "first-password", SessionMetadata{}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("old username login error = %v, want ErrUnauthorized", err)
 	}
-	if _, err := service.Login(context.Background(), "owner", "first-password"); err != nil {
+	if _, err := service.Login(context.Background(), "owner", "first-password", SessionMetadata{}); err != nil {
 		t.Fatalf("new username login returned error: %v", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestLoginCreatesSessionAndValidateSessionReturnsAdmin(t *testing.T) {
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	requireBootstrap(t, service, "admin", "secret")
 
-	session, err := service.Login(context.Background(), "admin", "secret")
+	session, err := service.Login(context.Background(), "admin", "secret", SessionMetadata{})
 	if err != nil {
 		t.Fatalf("Login returned error: %v", err)
 	}
@@ -153,10 +153,10 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	requireBootstrap(t, service, "admin", "secret")
 
-	if _, err := service.Login(context.Background(), "admin", "wrong"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := service.Login(context.Background(), "admin", "wrong", SessionMetadata{}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Login wrong password error = %v, want ErrUnauthorized", err)
 	}
-	if _, err := service.Login(context.Background(), "missing", "secret"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := service.Login(context.Background(), "missing", "secret", SessionMetadata{}); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Login missing username error = %v, want ErrUnauthorized", err)
 	}
 }
@@ -174,7 +174,7 @@ func TestLogoutRevokesSession(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	requireBootstrap(t, service, "admin", "secret")
-	session, err := service.Login(context.Background(), "admin", "secret")
+	session, err := service.Login(context.Background(), "admin", "secret", SessionMetadata{})
 	if err != nil {
 		t.Fatalf("Login returned error: %v", err)
 	}
@@ -191,6 +191,124 @@ func TestLogoutRevokesSession(t *testing.T) {
 	if err := service.Logout(context.Background(), "unknown-token"); err != nil {
 		t.Fatalf("Logout unknown token returned error: %v", err)
 	}
+}
+
+func TestLoginNormalizesSessionMetadataAndUsesServiceClock(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	now := time.Date(2026, time.July, 21, 12, 30, 0, 0, time.FixedZone("CEST", 2*60*60))
+	service.now = func() time.Time { return now }
+	requireBootstrap(t, service, "admin", "secret")
+
+	longUA := "Client\x00\n Agent\t" + strings.Repeat("界", 100)
+	session, err := service.Login(context.Background(), "admin", "secret", SessionMetadata{
+		CreatedIP: "192.0.2.129",
+		UserAgent: longUA,
+	})
+	if err != nil {
+		t.Fatalf("Login returned error: %v", err)
+	}
+	if got, want := session.ExpiresAt, now.UTC().Add(time.Hour); !got.Equal(want) || got.Location() != time.UTC {
+		t.Fatalf("ExpiresAt = %v, want UTC %v", got, want)
+	}
+	stored := repo.sessions[secret.HashAPIKey(session.Token)]
+	if stored.createdAt != now.UTC() || stored.lastUsedAt != now.UTC() {
+		t.Fatalf("stored times = %v/%v, want %v", stored.createdAt, stored.lastUsedAt, now.UTC())
+	}
+	if stored.metadata.CreatedIP != "192.0.2.0/24" {
+		t.Fatalf("CreatedIP = %q, want 192.0.2.0/24", stored.metadata.CreatedIP)
+	}
+	if strings.ContainsAny(stored.metadata.UserAgent, "\x00\n\t") || strings.Contains(stored.metadata.UserAgent, "  ") {
+		t.Fatalf("UserAgent was not normalized: %q", stored.metadata.UserAgent)
+	}
+	if len(stored.metadata.UserAgent) > maxSessionUserAgentBytes || !json.Valid([]byte(`{"value":"`+stored.metadata.UserAgent+`"}`)) {
+		t.Fatalf("UserAgent is not valid bounded UTF-8: %q", stored.metadata.UserAgent)
+	}
+}
+
+func TestNormalizeSessionMetadataMasksIPsAndRejectsInvalidIP(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "198.51.100.201", want: "198.51.100.0/24"},
+		{input: "2001:db8:1234:5678::9", want: "2001:db8:1234:5678::/64"},
+		{input: "::ffff:203.0.113.17", want: "203.0.113.0/24"},
+		{input: "not-an-ip", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			if got := normalizeSessionMetadata(SessionMetadata{CreatedIP: test.input}).CreatedIP; got != test.want {
+				t.Fatalf("CreatedIP = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSessionManagementMarksCurrentAndRevokesByOwner(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	now := time.Date(2026, time.July, 21, 10, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	requireBootstrap(t, service, "admin", "secret")
+
+	first, err := service.Login(context.Background(), "admin", "secret", SessionMetadata{CreatedIP: "192.0.2.4", UserAgent: "first"})
+	if err != nil {
+		t.Fatalf("first Login returned error: %v", err)
+	}
+	now = now.Add(10 * time.Minute)
+	second, err := service.Login(context.Background(), "admin", "secret", SessionMetadata{CreatedIP: "2001:db8::1", UserAgent: "second"})
+	if err != nil {
+		t.Fatalf("second Login returned error: %v", err)
+	}
+
+	sessions, err := service.ListSessions(context.Background(), second.AdminID, second.Token)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(sessions) != 2 || !sessions[0].Current || sessions[0].UserAgent != "second" || sessions[1].Current {
+		t.Fatalf("sessions = %+v, want current session first", sessions)
+	}
+	payload, err := json.Marshal(sessions[0])
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	if strings.Contains(string(payload), sessions[0].TokenHash) || strings.Contains(string(payload), "tokenHash") {
+		t.Fatalf("session payload exposes token hash: %s", payload)
+	}
+
+	revokedCurrent, err := service.RevokeSessionByID(context.Background(), second.AdminID, sessions[1].ID, second.Token)
+	if err != nil {
+		t.Fatalf("RevokeSessionByID(other) returned error: %v", err)
+	}
+	if revokedCurrent {
+		t.Fatal("RevokeSessionByID(other) marked the current session revoked")
+	}
+	if _, err := service.RevokeSessionByID(context.Background(), second.AdminID, sessions[1].ID, second.Token); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("revoke already-revoked error = %v, want ErrNotFound", err)
+	}
+	if _, err := service.RevokeSessionByID(context.Background(), second.AdminID+1, sessions[0].ID, second.Token); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-owner revoke error = %v, want ErrNotFound", err)
+	}
+
+	third, err := service.Login(context.Background(), "admin", "secret", SessionMetadata{UserAgent: "third"})
+	if err != nil {
+		t.Fatalf("third Login returned error: %v", err)
+	}
+	count, err := service.RevokeOtherSessions(context.Background(), third.AdminID, third.Token)
+	if err != nil {
+		t.Fatalf("RevokeOtherSessions returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("RevokeOtherSessions count = %d, want 1", count)
+	}
+	if _, err := service.ValidateSession(context.Background(), second.Token); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("second session validation error = %v, want ErrUnauthorized", err)
+	}
+	if _, err := service.ValidateSession(context.Background(), third.Token); err != nil {
+		t.Fatalf("current session validation returned error: %v", err)
+	}
+	_ = first
 }
 
 func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevoked(t *testing.T) {
@@ -1555,6 +1673,7 @@ func requireBootstrap(t *testing.T, service *Service, username, password string)
 type memoryRepo struct {
 	admin                     Admin
 	nextAdminID               int64
+	nextSessionID             int64
 	sessions                  map[string]memorySession
 	keys                      map[int64]memoryAPIKey
 	nextAPIKeyID              int64
@@ -1584,9 +1703,14 @@ type memoryRepo struct {
 }
 
 type memorySession struct {
-	adminID   int64
-	expiresAt time.Time
-	revokedAt *time.Time
+	id         int64
+	adminID    int64
+	tokenHash  string
+	metadata   SessionMetadata
+	createdAt  time.Time
+	lastUsedAt time.Time
+	expiresAt  time.Time
+	revokedAt  *time.Time
 }
 
 type memoryAPIKey struct {
@@ -1597,12 +1721,13 @@ type memoryAPIKey struct {
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		nextAdminID:  1,
-		sessions:     map[string]memorySession{},
-		keys:         map[int64]memoryAPIKey{},
-		budgetUsage:  map[int64]APIKeyBudgetUsage{},
-		routingPools: map[int64]RoutingPool{},
-		nextAPIKeyID: 1,
+		nextAdminID:   1,
+		nextSessionID: 1,
+		sessions:      map[string]memorySession{},
+		keys:          map[int64]memoryAPIKey{},
+		budgetUsage:   map[int64]APIKeyBudgetUsage{},
+		routingPools:  map[int64]RoutingPool{},
+		nextAPIKeyID:  1,
 	}
 }
 
@@ -1642,8 +1767,12 @@ func (r *memoryRepo) UpdateAdminPassword(_ context.Context, id int64, passwordHa
 	return nil
 }
 
-func (r *memoryRepo) CreateSession(_ context.Context, adminID int64, tokenHash string, expiresAt time.Time) error {
-	r.sessions[tokenHash] = memorySession{adminID: adminID, expiresAt: expiresAt}
+func (r *memoryRepo) CreateSession(_ context.Context, adminID int64, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) error {
+	r.sessions[tokenHash] = memorySession{
+		id: r.nextSessionID, adminID: adminID, tokenHash: tokenHash, metadata: metadata,
+		createdAt: createdAt, lastUsedAt: createdAt, expiresAt: expiresAt,
+	}
+	r.nextSessionID++
 	return nil
 }
 
@@ -1652,18 +1781,73 @@ func (r *memoryRepo) FindAdminBySessionHash(_ context.Context, tokenHash string,
 	if !ok || session.revokedAt != nil || !session.expiresAt.After(now) || r.admin.ID != session.adminID {
 		return Admin{}, ErrNotFound
 	}
+	if !session.lastUsedAt.After(now.Add(-sessionTouchInterval)) {
+		session.lastUsedAt = now
+		r.sessions[tokenHash] = session
+	}
 	return r.admin, nil
 }
 
-func (r *memoryRepo) RevokeSession(_ context.Context, tokenHash string) error {
+func (r *memoryRepo) RevokeSession(_ context.Context, tokenHash string, revokedAt time.Time) error {
 	session, ok := r.sessions[tokenHash]
-	if !ok {
+	if !ok || session.revokedAt != nil {
 		return ErrNotFound
 	}
-	now := time.Now()
-	session.revokedAt = &now
+	session.revokedAt = &revokedAt
 	r.sessions[tokenHash] = session
 	return nil
+}
+
+func (r *memoryRepo) ListAdminSessions(_ context.Context, adminID int64, currentHash string, now time.Time) ([]AdminSession, error) {
+	sessions := make([]AdminSession, 0, len(r.sessions))
+	for _, session := range r.sessions {
+		if session.adminID != adminID || session.revokedAt != nil || !session.expiresAt.After(now) {
+			continue
+		}
+		sessions = append(sessions, AdminSession{
+			ID: session.id, Current: session.tokenHash == currentHash, CreatedAt: session.createdAt,
+			LastUsedAt: session.lastUsedAt, ExpiresAt: session.expiresAt,
+			CreatedIP: session.metadata.CreatedIP, UserAgent: session.metadata.UserAgent, TokenHash: session.tokenHash,
+		})
+	}
+	slices.SortFunc(sessions, func(a, b AdminSession) int {
+		if a.Current != b.Current {
+			if a.Current {
+				return -1
+			}
+			return 1
+		}
+		if compared := b.LastUsedAt.Compare(a.LastUsedAt); compared != 0 {
+			return compared
+		}
+		return int(b.ID - a.ID)
+	})
+	return sessions, nil
+}
+
+func (r *memoryRepo) RevokeAdminSession(_ context.Context, adminID, sessionID int64, revokedAt time.Time) (AdminSession, error) {
+	for tokenHash, session := range r.sessions {
+		if session.id != sessionID || session.adminID != adminID || session.revokedAt != nil || !session.expiresAt.After(revokedAt) {
+			continue
+		}
+		session.revokedAt = &revokedAt
+		r.sessions[tokenHash] = session
+		return AdminSession{ID: session.id, TokenHash: tokenHash}, nil
+	}
+	return AdminSession{}, ErrNotFound
+}
+
+func (r *memoryRepo) RevokeOtherAdminSessions(_ context.Context, adminID int64, currentHash string, revokedAt time.Time) (int64, error) {
+	var count int64
+	for tokenHash, session := range r.sessions {
+		if session.adminID != adminID || session.tokenHash == currentHash || session.revokedAt != nil || !session.expiresAt.After(revokedAt) {
+			continue
+		}
+		session.revokedAt = &revokedAt
+		r.sessions[tokenHash] = session
+		count++
+	}
+	return count, nil
 }
 
 func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix, encryptedSecret string, routingPoolID *int64) (APIKey, error) {

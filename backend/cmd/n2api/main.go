@@ -177,7 +177,7 @@ func main() {
 
 	adminRepo := store.NewAdminRepository(pool)
 	adminService := admin.NewService(adminRepo, admin.Config{
-		SessionTTL:       7 * 24 * time.Hour,
+		SessionTTL:       cfg.AdminSessionTTL,
 		EncryptionSecret: cfg.EncryptionSecret,
 		SystemEvents:     systemEventRepo,
 		DefaultGatewaySettings: admin.GatewaySettings{

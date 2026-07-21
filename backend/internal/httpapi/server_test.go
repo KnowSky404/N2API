@@ -46,6 +46,17 @@ type fakeAdminService struct {
 	loginRelease         <-chan struct{}
 	loginErr             error
 	loginPanic           any
+	loginMetadata        admin.SessionMetadata
+	sessions             []admin.AdminSession
+	sessionsErr          error
+	revokedSessionID     int64
+	revokeSessionToken   string
+	revokeSessionCurrent bool
+	revokeSessionErr     error
+	revokeOthersToken    string
+	revokeOthersCount    int64
+	revokeOthersErr      error
+	changePasswordErr    error
 	keys                 []admin.APIKey
 	deletedKeyID         int64
 	deleteKeyErr         error
@@ -221,9 +232,10 @@ func newFakeAdminService() *fakeAdminService {
 	}
 }
 
-func (s *fakeAdminService) Login(_ context.Context, username, password string) (admin.Session, error) {
+func (s *fakeAdminService) Login(_ context.Context, username, password string, metadata admin.SessionMetadata) (admin.Session, error) {
 	s.loginMu.Lock()
 	s.loginCalls++
+	s.loginMetadata = metadata
 	started := s.loginStarted
 	release := s.loginRelease
 	loginErr := s.loginErr
@@ -247,6 +259,21 @@ func (s *fakeAdminService) Login(_ context.Context, username, password string) (
 	return admin.Session{Token: "valid-session", AdminID: 1, ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
 
+func (s *fakeAdminService) ListSessions(_ context.Context, _ int64, _ string) ([]admin.AdminSession, error) {
+	return append([]admin.AdminSession(nil), s.sessions...), s.sessionsErr
+}
+
+func (s *fakeAdminService) RevokeSessionByID(_ context.Context, _ int64, sessionID int64, currentToken string) (bool, error) {
+	s.revokedSessionID = sessionID
+	s.revokeSessionToken = currentToken
+	return s.revokeSessionCurrent, s.revokeSessionErr
+}
+
+func (s *fakeAdminService) RevokeOtherSessions(_ context.Context, _ int64, currentToken string) (int64, error) {
+	s.revokeOthersToken = currentToken
+	return s.revokeOthersCount, s.revokeOthersErr
+}
+
 func (s *fakeAdminService) loginCallCount() int {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
@@ -262,6 +289,9 @@ func (s *fakeAdminService) Logout(_ context.Context, token string) error {
 }
 
 func (s *fakeAdminService) ChangePassword(_ context.Context, _ int64, currentPassword, newPassword string) error {
+	if s.changePasswordErr != nil {
+		return s.changePasswordErr
+	}
 	if currentPassword == "" || newPassword == "" {
 		return admin.ErrInvalidInput
 	}
@@ -1139,8 +1169,11 @@ func TestAdminLoginSetsSessionCookie(t *testing.T) {
 	server := NewServer(config.Config{PublicURL: "http://localhost:3000"}, staticHealth{}, admins, nil)
 	recorder := httptest.NewRecorder()
 	body := strings.NewReader(`{"username":"admin","password":"secret"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", body)
+	req.RemoteAddr = "203.0.113.42:4321"
+	req.Header.Set("User-Agent", "N2API browser test")
 
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/admin/login", body))
+	server.ServeHTTP(recorder, req)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", recorder.Code)
@@ -1151,6 +1184,9 @@ func TestAdminLoginSetsSessionCookie(t *testing.T) {
 	}
 	if cookie := cookies[0]; cookie.Name != "n2api_admin_session" || !cookie.HttpOnly {
 		t.Fatalf("session cookie = %+v", cookie)
+	}
+	if admins.loginMetadata.CreatedIP != "203.0.113.42" || admins.loginMetadata.UserAgent != "N2API browser test" {
+		t.Fatalf("login metadata = %+v", admins.loginMetadata)
 	}
 }
 
@@ -1395,6 +1431,27 @@ func TestAdminMeRequiresSession(t *testing.T) {
 	}
 }
 
+func TestAdminChangePasswordWrongCurrentPasswordKeepsSessionAuthenticated(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.changePasswordErr = admin.ErrUnauthorized
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/change-password", strings.NewReader(`{"currentPassword":"wrong","newPassword":"new-secret"}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Body.String() != "{\"error\":\"invalid_current_password\"}\n" {
+		t.Fatalf("body = %q, want invalid_current_password", recorder.Body.String())
+	}
+	if recorder.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("wrong current password cleared valid session: %q", recorder.Header().Get("Set-Cookie"))
+	}
+}
+
 func TestAdminMeReturnsUsernameWithoutPasswordHash(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/me", nil)
@@ -1458,6 +1515,124 @@ func TestAdminLogoutWithoutSessionClearsCookieWithoutRevoking(t *testing.T) {
 	}
 	if cookie := cookies[0]; cookie.Name != "n2api_admin_session" || cookie.Value != "" || cookie.MaxAge >= 0 {
 		t.Fatalf("cleared cookie = %+v", cookie)
+	}
+}
+
+func TestAdminSessionsListReturnsCurrentSessionsWithoutSecrets(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.sessions = []admin.AdminSession{{
+		ID: 7, Current: true, CreatedAt: time.Unix(1000, 0).UTC(), LastUsedAt: time.Unix(1100, 0).UTC(),
+		ExpiresAt: time.Unix(2000, 0).UTC(), CreatedIP: "203.0.113.0/24", UserAgent: "Test browser",
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/sessions", nil)
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		Sessions []admin.AdminSession `json:"sessions"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Sessions) != 1 || !body.Sessions[0].Current || body.Sessions[0].CreatedIP != "203.0.113.0/24" {
+		t.Fatalf("sessions = %+v", body.Sessions)
+	}
+	if strings.Contains(recorder.Body.String(), "valid-session") || strings.Contains(strings.ToLower(recorder.Body.String()), "tokenhash") {
+		t.Fatalf("session response leaks credential material: %s", recorder.Body.String())
+	}
+}
+
+func TestAdminSessionRevocationHandlesCurrentOtherAndNotFound(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		revokedCurrent bool
+		err            error
+		wantStatus     int
+		wantClear      bool
+	}{
+		{name: "other session", wantStatus: http.StatusNoContent},
+		{name: "current session", revokedCurrent: true, wantStatus: http.StatusNoContent, wantClear: true},
+		{name: "missing or wrong owner", err: admin.ErrNotFound, wantStatus: http.StatusNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			admins := newFakeAdminService()
+			admins.revokeSessionCurrent = tt.revokedCurrent
+			admins.revokeSessionErr = tt.err
+			server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+			req := httptest.NewRequest(http.MethodDelete, "/api/admin/sessions/42", nil)
+			req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), tt.wantStatus)
+			}
+			if admins.revokedSessionID != 42 || admins.revokeSessionToken != "valid-session" {
+				t.Fatalf("revoke args = %d/%q", admins.revokedSessionID, admins.revokeSessionToken)
+			}
+			if got := recorder.Header().Get("Set-Cookie"); (got != "") != tt.wantClear {
+				t.Fatalf("Set-Cookie = %q, want clear %t", got, tt.wantClear)
+			}
+		})
+	}
+}
+
+func TestAdminSessionRevocationRejectsInvalidID(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/sessions/invalid", nil)
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest || admins.revokedSessionID != 0 {
+		t.Fatalf("status/revoked ID = %d/%d, want 400/0", recorder.Code, admins.revokedSessionID)
+	}
+}
+
+func TestAdminSessionRevocationRejectsCrossOriginBeforeService(t *testing.T) {
+	admins := newFakeAdminService()
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodDelete, "http://n2api.example/api/admin/sessions/42", nil)
+	req.Header.Set("Origin", "https://attacker.example")
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusForbidden || admins.revokedSessionID != 0 {
+		t.Fatalf("status/revoked ID = %d/%d, want 403/0", recorder.Code, admins.revokedSessionID)
+	}
+}
+
+func TestAdminRevokeOtherSessionsPreservesCurrentToken(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.revokeOthersCount = 3
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/sessions/revoke-others", nil)
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK || admins.revokeOthersToken != "valid-session" {
+		t.Fatalf("status/token = %d/%q", recorder.Code, admins.revokeOthersToken)
+	}
+	if recorder.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("revoke others cleared current cookie: %q", recorder.Header().Get("Set-Cookie"))
+	}
+	var body map[string]int64
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil || body["revoked"] != 3 {
+		t.Fatalf("body/error = %s/%v", recorder.Body.String(), err)
 	}
 }
 

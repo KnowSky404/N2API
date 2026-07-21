@@ -3,12 +3,17 @@
   import { page } from '$app/state';
   import '../app.css';
   import {
+    adminSessions,
     health,
+    formatDate,
     getProviderStateLabel,
     initializeAdminState,
     changePassword,
     changePasswordForm,
+    loadAdminSessions,
     logout,
+    revokeAdminSession,
+    revokeOtherAdminSessions,
     session
   } from '$lib/admin-state.svelte.js';
   import {
@@ -28,7 +33,9 @@
     ChevronDown,
     Lock,
     LogOut,
+    LoaderCircle,
     Menu,
+    MonitorSmartphone,
     X
   } from 'lucide-svelte';
 
@@ -59,8 +66,19 @@
   let sidebarCollapsed = $state(false);
   let userDropdownOpen = $state(false);
   let passwordModalOpen = $state(false);
+  let sessionsModalOpen = $state(false);
+  let revokeOthersConfirm = $state(false);
+  let revokeSessionConfirm = $state(/** @type {{ session: import('$lib/admin-state.svelte.js').AdminSession, top: number, left: number, width: number } | null} */ (null));
+  let sessionNotice = $state(/** @type {string | null} */ (null));
   let mobileSidebarOpen = $state(false);
   let passwordInputEl = $state(/** @type {HTMLInputElement | null} */ (null));
+  let sessionsCloseButtonEl = $state(/** @type {HTMLButtonElement | null} */ (null));
+  let sessionsTriggerEl = $state(/** @type {HTMLButtonElement | null} */ (null));
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let sessionNoticeTimer = null;
+
+  const otherSessionCount = $derived(adminSessions.items.filter((item) => !item.current).length);
+  const sessionsMutationBusy = $derived(adminSessions.revokingId !== null || adminSessions.revokingOthers);
 
   function toggleSidebar() {
     sidebarCollapsed = !sidebarCollapsed;
@@ -72,6 +90,84 @@
 
   function closeUserDropdown() {
     userDropdownOpen = false;
+  }
+
+  /** @param {MouseEvent} event */
+  function openSessionsModal(event) {
+    sessionsTriggerEl = /** @type {HTMLButtonElement} */ (event.currentTarget);
+    userDropdownOpen = false;
+    mobileSidebarOpen = false;
+    revokeOthersConfirm = false;
+    revokeSessionConfirm = null;
+    adminSessions.error = '';
+    sessionsModalOpen = true;
+    void loadAdminSessions();
+  }
+
+  function closeSessionsModal() {
+    if (sessionsMutationBusy || revokeOthersConfirm || revokeSessionConfirm) return;
+    sessionsModalOpen = false;
+    adminSessions.error = '';
+    queueMicrotask(() => sessionsTriggerEl?.focus());
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').AdminSession} target
+   * @param {MouseEvent} event
+   */
+  function openSessionRevokeConfirm(target, event) {
+    const rect = /** @type {HTMLElement} */ (event.currentTarget).getBoundingClientRect();
+    const width = Math.min(288, window.innerWidth - 16);
+    let left = rect.left + rect.width - width;
+    if (left < 8) left = 8;
+    if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
+    const estimatedHeight = target.current ? 196 : 176;
+    let top = rect.bottom + 8;
+    if (top + estimatedHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - estimatedHeight - 8);
+    }
+    revokeOthersConfirm = false;
+    revokeSessionConfirm = { session: target, top, left, width };
+  }
+
+  function closeSessionRevokeConfirm() {
+    if (sessionsMutationBusy) return;
+    revokeSessionConfirm = null;
+  }
+
+  /** @param {string} message */
+  function showSessionNotice(message) {
+    sessionNotice = message;
+    if (sessionNoticeTimer) clearTimeout(sessionNoticeTimer);
+    sessionNoticeTimer = setTimeout(() => {
+      sessionNotice = null;
+      sessionNoticeTimer = null;
+    }, 4000);
+  }
+
+  async function confirmSessionRevoke() {
+    const target = revokeSessionConfirm?.session;
+    if (!target) return;
+    const revoked = await revokeAdminSession(target.id);
+    if (!revoked) return;
+    revokeSessionConfirm = null;
+    if (target.current) {
+      sessionsModalOpen = false;
+      return;
+    }
+    showSessionNotice('Session revoked.');
+  }
+
+  async function confirmRevokeOtherSessions() {
+    const revoked = await revokeOtherAdminSessions();
+    if (revoked === null) return;
+    revokeOthersConfirm = false;
+    showSessionNotice(revoked === 1 ? '1 other session revoked.' : `${revoked} other sessions revoked.`);
+  }
+
+  /** @param {string | null | undefined} value @param {string} fallback */
+  function sessionDate(value, fallback) {
+    return value ? formatDate(value) : fallback;
   }
 
   function openPasswordModal() {
@@ -100,6 +196,22 @@
   /** @param {KeyboardEvent} e */
   function handleGlobalKeydown(e) {
     if (e.key !== 'Escape') return;
+    if (revokeSessionConfirm && !sessionsMutationBusy) {
+      revokeSessionConfirm = null;
+      return;
+    }
+    if (revokeOthersConfirm && !sessionsMutationBusy) {
+      revokeOthersConfirm = false;
+      return;
+    }
+    if (sessionsModalOpen) {
+      closeSessionsModal();
+      return;
+    }
+    if (passwordModalOpen) {
+      closePasswordModal();
+      return;
+    }
     if (userDropdownOpen) {
       closeUserDropdown();
       return;
@@ -117,8 +229,27 @@
     }
   });
 
+  $effect(() => {
+    if (sessionsModalOpen && sessionsCloseButtonEl) {
+      sessionsCloseButtonEl.focus();
+    }
+  });
+
+  $effect(() => {
+    if (session.authenticated) return;
+    userDropdownOpen = false;
+    passwordModalOpen = false;
+    sessionsModalOpen = false;
+    revokeOthersConfirm = false;
+    revokeSessionConfirm = null;
+    mobileSidebarOpen = false;
+  });
+
   onMount(() => {
     initializeAdminState();
+    return () => {
+      if (sessionNoticeTimer) clearTimeout(sessionNoticeTimer);
+    };
   });
 </script>
 
@@ -336,6 +467,13 @@
               </div>
               <button
                 class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
+                onclick={openSessionsModal}
+              >
+                <MonitorSmartphone class="h-4 w-4 text-[#8e8e8e]" />
+                Active sessions
+              </button>
+              <button
+                class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
                 onclick={openPasswordModal}
               >
                 <Lock class="h-4 w-4 text-[#8e8e8e]" />
@@ -363,6 +501,21 @@
   </div>
 </main>
 
+{#if sessionNotice}
+  <div class="fixed right-4 top-4 z-[70] flex w-[min(22rem,calc(100vw-2rem))] items-start gap-3 rounded-lg border border-emerald-200 bg-white p-4 shadow-lg" role="status" aria-live="polite">
+    <p class="min-w-0 flex-1 text-sm font-medium text-[#0d0d0d]">{sessionNotice}</p>
+    <button
+      class="ui-button ui-button--icon inline-flex size-7 shrink-0 items-center justify-center rounded-md text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+      type="button"
+      onclick={() => (sessionNotice = null)}
+      title="Dismiss notification"
+      aria-label="Dismiss session notification"
+    >
+      <X class="size-4" aria-hidden="true" />
+    </button>
+  </div>
+{/if}
+
 <!-- User dropdown: rendered at top level so it works on both desktop and mobile -->
 {#if userDropdownOpen}
   <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
@@ -372,6 +525,14 @@
       <p class="text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
       <p class="text-xs text-[#8e8e8e]">Signed in</p>
     </div>
+    <button
+      class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+      onclick={openSessionsModal}
+      role="menuitem"
+    >
+      <MonitorSmartphone class="h-4 w-4 text-[#6e6e6e]" />
+      Active sessions
+    </button>
     <button
       class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
       onclick={openPasswordModal}
@@ -388,6 +549,147 @@
       <LogOut class="h-4 w-4 text-[#6e6e6e]" />
       Sign out
     </button>
+  </div>
+{/if}
+
+<!-- Active sessions modal -->
+{#if sessionsModalOpen && session.authenticated}
+  <div
+    class="ui-modal-backdrop ui-modal-backdrop--top"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="active-sessions-title"
+    aria-describedby="active-sessions-description"
+    tabindex="-1"
+  >
+    <section class="ui-modal-panel ui-modal-panel--lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
+      <header class="flex items-start justify-between gap-4">
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 id="active-sessions-title" class="text-lg font-semibold text-[#0d0d0d]">Active sessions</h2>
+            {#if adminSessions.loading && adminSessions.items.length > 0}
+              <span class="ui-loading-state text-xs"><LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" /> Refreshing</span>
+            {/if}
+          </div>
+          <p id="active-sessions-description" class="mt-1 text-sm text-[#6e6e6e]">Browsers and devices currently signed in to this admin account.</p>
+        </div>
+        <button
+          class="ui-button ui-button--icon shrink-0"
+          type="button"
+          bind:this={sessionsCloseButtonEl}
+          aria-label="Close active sessions"
+          disabled={sessionsMutationBusy || revokeOthersConfirm || Boolean(revokeSessionConfirm)}
+          onclick={closeSessionsModal}
+        >
+          <X class="size-4" aria-hidden="true" />
+        </button>
+      </header>
+
+      {#if adminSessions.error}
+        <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{adminSessions.error}</p>
+      {/if}
+
+      <div class="ui-table-shell mt-5">
+        <table class="ui-table ui-table--stacked">
+          <thead>
+            <tr>
+              <th>Client</th>
+              <th>Created IP</th>
+              <th>Last active</th>
+              <th>Expires</th>
+              <th class="text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#if adminSessions.loading && adminSessions.items.length === 0}
+              <tr><td class="ui-table-empty ui-table-empty--loading" colspan="5">Loading active sessions...</td></tr>
+            {:else if adminSessions.items.length === 0}
+              <tr><td class="ui-table-empty" colspan="5">No active sessions.</td></tr>
+            {:else}
+              {#each adminSessions.items as adminSession (adminSession.id)}
+                <tr>
+                  <td data-label="Client">
+                    <div class="min-w-0">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span class="break-words font-medium text-[#3c3c3c]">{adminSession.userAgent || 'Unknown client'}</span>
+                        {#if adminSession.current}
+                          <span class="inline-flex rounded-full bg-[#e8f5f0] px-2 py-0.5 text-xs font-medium text-[#0a7a5e]">Current</span>
+                        {/if}
+                      </div>
+                      <p class="mt-0.5 text-xs text-[#8e8e8e]">Created {sessionDate(adminSession.createdAt, 'Unavailable')}</p>
+                    </div>
+                  </td>
+                  <td data-label="Created IP"><span class="break-all font-mono text-xs text-[#3c3c3c]">{adminSession.createdIp || 'Unavailable'}</span></td>
+                  <td data-label="Last active" class="tabular-nums">{sessionDate(adminSession.lastUsedAt, 'Not recorded')}</td>
+                  <td data-label="Expires" class="tabular-nums">{sessionDate(adminSession.expiresAt, 'Unavailable')}</td>
+                  <td data-label="Actions" class="text-right">
+                    <button
+                      class="ui-button ui-button--sm ui-button--danger inline-flex items-center gap-1.5"
+                      type="button"
+                      disabled={sessionsMutationBusy}
+                      onclick={(event) => openSessionRevokeConfirm(adminSession, event)}
+                    >
+                      <LogOut class="size-3.5" aria-hidden="true" />
+                      {adminSession.current ? 'Sign out' : 'Revoke'}
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
+
+      {#if revokeOthersConfirm}
+        <div class="mt-5 border-t border-[#ededed] pt-4">
+          <p class="text-sm font-medium text-[#0d0d0d]">Revoke {otherSessionCount} other {otherSessionCount === 1 ? 'session' : 'sessions'}?</p>
+          <p class="mt-1 text-sm text-[#6e6e6e]">This browser stays signed in. Every other session will need to authenticate again.</p>
+          <div class="ui-modal-actions mt-4">
+            <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={sessionsMutationBusy} onclick={() => (revokeOthersConfirm = false)}>Cancel</button>
+            <button class="ui-button ui-button--sm ui-button--danger-filled inline-flex items-center gap-1.5" type="button" disabled={sessionsMutationBusy} onclick={confirmRevokeOtherSessions}>
+              {#if adminSessions.revokingOthers}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
+              {adminSessions.revokingOthers ? 'Revoking' : 'Revoke others'}
+            </button>
+          </div>
+        </div>
+      {:else}
+        <div class="ui-modal-actions">
+          <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={sessionsMutationBusy} onclick={closeSessionsModal}>Close</button>
+          {#if otherSessionCount > 0}
+            <button class="ui-button ui-button--sm ui-button--danger" type="button" disabled={sessionsMutationBusy} onclick={() => (revokeOthersConfirm = true)}>Revoke other sessions</button>
+          {/if}
+        </div>
+      {/if}
+    </section>
+  </div>
+{/if}
+
+{#if revokeSessionConfirm && sessionsModalOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions -->
+  <div class="fixed inset-0 z-[55]" onclick={closeSessionRevokeConfirm}></div>
+  <div
+    class="fixed z-[60] rounded-lg border border-[#ededed] bg-white p-4 shadow-[0_4px_16px_rgba(13,13,13,0.08)]"
+    style="top: {revokeSessionConfirm.top}px; left: {revokeSessionConfirm.left}px; width: {revokeSessionConfirm.width}px;"
+    role="alertdialog"
+    aria-labelledby="revoke-session-confirm-title"
+  >
+    <p id="revoke-session-confirm-title" class="text-sm font-medium text-[#0d0d0d]">
+      {revokeSessionConfirm.session.current ? 'Sign out this session?' : 'Revoke this session?'}
+    </p>
+    <p class="mt-1 break-words text-sm text-[#6e6e6e]">
+      {revokeSessionConfirm.session.current
+        ? 'This browser will return to the sign-in screen immediately.'
+        : `${revokeSessionConfirm.session.userAgent || 'Unknown client'} will need to sign in again.`}
+    </p>
+    <div class="mt-3 flex flex-wrap justify-end gap-2">
+      <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={sessionsMutationBusy} onclick={closeSessionRevokeConfirm}>Cancel</button>
+      <button class="ui-button ui-button--sm ui-button--danger-filled inline-flex items-center gap-1.5" type="button" disabled={sessionsMutationBusy} onclick={confirmSessionRevoke}>
+        {#if adminSessions.revokingId === revokeSessionConfirm.session.id}<LoaderCircle class="size-3.5 animate-spin" aria-hidden="true" />{/if}
+        {adminSessions.revokingId === revokeSessionConfirm.session.id
+          ? 'Revoking'
+          : revokeSessionConfirm.session.current ? 'Sign out now' : 'Revoke session'}
+      </button>
+    </div>
   </div>
 {/if}
 

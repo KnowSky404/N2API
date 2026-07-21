@@ -27,6 +27,25 @@ func TestAdminRepositoryImplementsInterface(t *testing.T) {
 	var _ admin.Repository = (*AdminRepository)(nil)
 }
 
+func TestSessionValidationUsesConditionalAtomicTouch(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("ReadFile admin.go returned error: %v", err)
+	}
+	contents := string(source)
+	for _, want := range []string{
+		"WITH active_session AS MATERIALIZED",
+		"SET last_used_at = $2",
+		"session.last_used_at <= $2 - INTERVAL '1 minute'",
+		"AND expires_at > $2",
+		"AND revoked_at IS NULL",
+	} {
+		if !strings.Contains(contents, want) {
+			t.Fatalf("session validation source missing %q", want)
+		}
+	}
+}
+
 func TestUsageSummaryGroupSQLAllowsOnlyKnownGroups(t *testing.T) {
 	for _, groupBy := range []string{"client_key", "provider_account", "routing_pool", "routing_pool_chain", "model", "session", "usage_source"} {
 		t.Run(groupBy, func(t *testing.T) {
@@ -630,6 +649,122 @@ func newTestAdminRepository(t *testing.T) *AdminRepository {
 		t.Fatalf("test database cleanup failed: %v", err)
 	}
 	return NewAdminRepository(pool)
+}
+
+func TestAdminRepositoryManagesOwnedActiveSessions(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	owner, err := repo.CreateAdmin(ctx, "session-owner", "hash")
+	if err != nil {
+		t.Fatalf("CreateAdmin returned error: %v", err)
+	}
+	otherOwner, err := repo.CreateAdmin(ctx, "other-owner", "hash")
+	if err != nil {
+		t.Fatalf("CreateAdmin(other) returned error: %v", err)
+	}
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	metadata := admin.SessionMetadata{CreatedIP: "192.0.2.0/24", UserAgent: "test-agent"}
+	if err := repo.CreateSession(ctx, owner.ID, "current-hash", metadata, now.Add(-2*time.Minute), now.Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession(current) returned error: %v", err)
+	}
+	if err := repo.CreateSession(ctx, owner.ID, "other-hash", metadata, now.Add(-time.Minute), now.Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession(other) returned error: %v", err)
+	}
+	if err := repo.CreateSession(ctx, owner.ID, "expired-hash", metadata, now.Add(-2*time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatalf("CreateSession(expired) returned error: %v", err)
+	}
+
+	if _, err := repo.FindAdminBySessionHash(ctx, "current-hash", now); err != nil {
+		t.Fatalf("FindAdminBySessionHash returned error: %v", err)
+	}
+	var touchedAt time.Time
+	if err := repo.pool.QueryRow(ctx, `SELECT last_used_at FROM admin_sessions WHERE token_hash = 'current-hash'`).Scan(&touchedAt); err != nil {
+		t.Fatalf("query touched session: %v", err)
+	}
+	if !touchedAt.Equal(now) {
+		t.Fatalf("last_used_at = %v, want %v", touchedAt, now)
+	}
+	if _, err := repo.FindAdminBySessionHash(ctx, "current-hash", now.Add(30*time.Second)); err != nil {
+		t.Fatalf("second FindAdminBySessionHash returned error: %v", err)
+	}
+	if err := repo.pool.QueryRow(ctx, `SELECT last_used_at FROM admin_sessions WHERE token_hash = 'current-hash'`).Scan(&touchedAt); err != nil {
+		t.Fatalf("query conditionally touched session: %v", err)
+	}
+	if !touchedAt.Equal(now) {
+		t.Fatalf("last_used_at = %v after 30 seconds, want unchanged %v", touchedAt, now)
+	}
+
+	sessions, err := repo.ListAdminSessions(ctx, owner.ID, "current-hash", now)
+	if err != nil {
+		t.Fatalf("ListAdminSessions returned error: %v", err)
+	}
+	if len(sessions) != 2 || !sessions[0].Current || sessions[0].TokenHash != "current-hash" {
+		t.Fatalf("sessions = %+v, want current active session first", sessions)
+	}
+	if _, err := repo.RevokeAdminSession(ctx, otherOwner.ID, sessions[1].ID, now); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("cross-owner revoke error = %v, want ErrNotFound", err)
+	}
+	var expiredID int64
+	if err := repo.pool.QueryRow(ctx, `SELECT id FROM admin_sessions WHERE token_hash = 'expired-hash'`).Scan(&expiredID); err != nil {
+		t.Fatalf("query expired session ID: %v", err)
+	}
+	if _, err := repo.RevokeAdminSession(ctx, owner.ID, expiredID, now); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("expired session revoke error = %v, want ErrNotFound", err)
+	}
+
+	revokeCtx := systemevent.WithRequestContext(ctx, systemevent.RequestContext{
+		CorrelationID: "revoke-owned-session",
+		Actor:         systemevent.Actor{Type: systemevent.ActorAdmin, ID: owner.ID, Name: owner.Username},
+	})
+	revokeCtx = systemevent.WithIntent(revokeCtx, systemevent.EventIntent{
+		Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionAuthSessionRevoked, Outcome: systemevent.OutcomeSuccess,
+	})
+	revoked, err := repo.RevokeAdminSession(revokeCtx, owner.ID, sessions[1].ID, now)
+	if err != nil {
+		t.Fatalf("RevokeAdminSession returned error: %v", err)
+	}
+	if revoked.TokenHash != "other-hash" {
+		t.Fatalf("revoked token hash = %q, want other-hash", revoked.TokenHash)
+	}
+	if _, err := repo.RevokeAdminSession(revokeCtx, owner.ID, sessions[1].ID, now); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("repeat revoke error = %v, want ErrNotFound", err)
+	}
+
+	if err := repo.CreateSession(ctx, owner.ID, "new-other-hash", metadata, now, now.Add(time.Hour)); err != nil {
+		t.Fatalf("CreateSession(new other) returned error: %v", err)
+	}
+	othersCtx := systemevent.WithRequestContext(ctx, systemevent.RequestContext{
+		CorrelationID: "revoke-other-sessions",
+		Actor:         systemevent.Actor{Type: systemevent.ActorAdmin, ID: owner.ID, Name: owner.Username},
+	})
+	othersCtx = systemevent.WithIntent(othersCtx, systemevent.EventIntent{
+		Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionAuthSessionsRevokedOthers, Outcome: systemevent.OutcomeSuccess,
+	})
+	count, err := repo.RevokeOtherAdminSessions(othersCtx, owner.ID, "current-hash", now)
+	if err != nil {
+		t.Fatalf("RevokeOtherAdminSessions returned error: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("RevokeOtherAdminSessions count = %d, want 1", count)
+	}
+	if _, err := repo.FindAdminBySessionHash(ctx, "current-hash", now); err != nil {
+		t.Fatalf("current session was revoked: %v", err)
+	}
+
+	var metadataJSON string
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT metadata::text FROM system_events
+		WHERE action = $1 ORDER BY id DESC LIMIT 1
+	`, systemevent.ActionAuthSessionRevoked).Scan(&metadataJSON); err != nil {
+		t.Fatalf("query revoke audit metadata: %v", err)
+	}
+	for _, forbidden := range []string{"other-hash", metadata.CreatedIP, metadata.UserAgent} {
+		if strings.Contains(metadataJSON, forbidden) {
+			t.Fatalf("audit metadata %s contains sensitive session value %q", metadataJSON, forbidden)
+		}
+	}
 }
 
 func TestAdminRepositoryMutationCommitsSystemEventAtomically(t *testing.T) {

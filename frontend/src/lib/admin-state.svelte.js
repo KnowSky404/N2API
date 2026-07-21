@@ -63,6 +63,17 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} AdminSession
+ * @property {number} id
+ * @property {boolean} current
+ * @property {string} createdAt
+ * @property {string | null} lastUsedAt
+ * @property {string} expiresAt
+ * @property {string} createdIp
+ * @property {string} userAgent
+ */
+
+/**
  * @typedef {object} ProviderAccount
  * @property {number} id
  * @property {string} provider
@@ -387,6 +398,8 @@ export const health = $state({
 export const session = $state({ loading: true, authenticated: false, username: '', error: '' });
 let sessionVersion = $state(0);
 export const loginForm = $state({ username: '', password: '', submitting: false, error: '' });
+/** @type {{ loading: boolean, error: string, items: AdminSession[], revokingId: number | null, revokingOthers: boolean }} */
+export const adminSessions = $state({ loading: false, error: '', items: [], revokingId: null, revokingOthers: false });
 /** @type {{ loading: boolean, connecting: boolean, error: string, data: ProviderStatus | null }} */
 export const provider = $state({
   loading: false,
@@ -960,6 +973,9 @@ async function requestJSON(path, options = {}) {
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
+    if (response.status === 401 && path !== '/api/admin/login') {
+      clearAuthenticatedAdminState();
+    }
     throw new Error(payload.error ?? `Request failed with ${response.status}`);
   }
   if (response.status === 204) return null;
@@ -1092,6 +1108,7 @@ function clearAPIKeys() {
     newKeyRoutingPoolId: 0,
     oneTimeSecret: ''
   });
+  replaceState(selectedAPIKeyIds, {});
 }
 
 function clearGatewaySettings() {
@@ -1178,6 +1195,45 @@ function clearUsage() {
   });
 }
 
+function clearAdminSessions() {
+  replaceState(adminSessions, {
+    loading: false,
+    error: '',
+    items: [],
+    revokingId: null,
+    revokingOthers: false
+  });
+}
+
+/** @param {string} [error] @param {boolean} [incrementVersion] */
+function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
+  if (incrementVersion) sessionVersion += 1;
+  replaceState(session, { loading: false, authenticated: false, username: '', error });
+  clearAdminSessions();
+  clearProvider();
+  clearAPIKeys();
+  clearModelSettings();
+  clearGatewaySettings();
+  clearRequestLogs();
+  clearSystemEvents();
+  clearUsage();
+  replaceState(changePasswordForm, { currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
+  replaceState(opsMonitor, {
+    loading: false,
+    error: '',
+    stats: null,
+    throughput: null,
+    errorTrend: null,
+    latency: null,
+    accountHealth: null,
+    accountTests: null,
+    costBreakdown: null
+  });
+  replaceState(fingerprintProfiles, { loading: false, error: '', items: [], saving: false });
+  replaceState(errorPassthroughRules, { loading: false, error: '', items: [], saving: false });
+  loginForm.password = '';
+}
+
 function clearModelSettings() {
   replaceState(modelSettings, {
     loading: false,
@@ -1198,6 +1254,8 @@ function clearModelSettings() {
     error: '',
     model: '',
     sessionId: '',
+    routingPoolId: '0',
+    excludedAccountIds: '',
     result: null
   });
   replaceState(accountModels, {});
@@ -1211,8 +1269,22 @@ function clearProvider() {
     data: null
   });
   replaceState(providerAccounts, { loading: false, saving: false, error: '', items: [] });
+  replaceState(routingPools, {
+    loading: false,
+    saving: false,
+    error: '',
+    items: [],
+    newPoolName: '',
+    newPoolDescription: '',
+    newPoolFallbackPoolId: '0'
+  });
   replaceState(accountModels, {});
+  replaceState(accountTestResults, {});
+  replaceState(selectedProviderAccountIds, {});
   replaceState(providerConnectForm, { name: '', priority: 100, enabled: true, fingerprintProfileId: '0' });
+  replaceState(providerAccountPauseForm, { durationSeconds: 300 });
+  replaceState(providerAccountBulkSchedulingForm, { priority: '', loadFactor: '', maxConcurrentRequests: '' });
+  replaceState(providerAccountBulkModelsForm, { text: '' });
   replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
   resetAPIUpstreamForm();
 }
@@ -1271,15 +1343,7 @@ export async function loadSession() {
     if (version !== sessionVersion) return;
 
     if (response.status === 401) {
-      sessionVersion += 1;
-      replaceState(session, { loading: false, authenticated: false, username: '', error: '' });
-      clearProvider();
-      clearAPIKeys();
-      clearModelSettings();
-      clearGatewaySettings();
-      clearRequestLogs();
-      clearSystemEvents();
-      clearUsage();
+      clearAuthenticatedAdminState();
       return;
     }
     if (!response.ok) {
@@ -1318,20 +1382,7 @@ export async function loadSession() {
   } catch (error) {
     if (version !== sessionVersion) return;
 
-    sessionVersion += 1;
-    replaceState(session, {
-      loading: false,
-      authenticated: false,
-      username: '',
-      error: error instanceof Error ? error.message : 'Session check failed'
-    });
-    clearProvider();
-    clearAPIKeys();
-    clearModelSettings();
-    clearGatewaySettings();
-    clearRequestLogs();
-    clearSystemEvents();
-    clearUsage();
+    clearAuthenticatedAdminState(error instanceof Error ? error.message : 'Session check failed');
   }
 }
 
@@ -1359,15 +1410,78 @@ export async function login(event) {
 export async function logout() {
   sessionVersion += 1;
   await requestJSON('/api/admin/logout', { method: 'POST' }).catch(() => null);
-  replaceState(session, { loading: false, authenticated: false, username: '', error: '' });
-  clearProvider();
-  clearAPIKeys();
-  clearModelSettings();
-  clearGatewaySettings();
-  clearRequestLogs();
-  clearSystemEvents();
-  clearUsage();
-  loginForm.password = '';
+  clearAuthenticatedAdminState('', false);
+}
+
+export async function loadAdminSessions() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) {
+    clearAdminSessions();
+    return false;
+  }
+
+  adminSessions.loading = true;
+  adminSessions.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/sessions');
+    if (!isCurrentAuthenticated(version)) return false;
+    adminSessions.items = Array.isArray(payload?.sessions) ? payload.sessions : [];
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    adminSessions.error = error instanceof Error ? error.message : 'Failed to load active sessions';
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version)) adminSessions.loading = false;
+  }
+}
+
+/** @param {number} id */
+export async function revokeAdminSession(id) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || adminSessions.revokingId !== null || adminSessions.revokingOthers) return false;
+  const target = adminSessions.items.find((item) => String(item.id) === String(id));
+  if (!target) return false;
+
+  adminSessions.revokingId = target.id;
+  adminSessions.error = '';
+  try {
+    await requestJSON(`/api/admin/sessions/${encodeURIComponent(String(target.id))}`, { method: 'DELETE' });
+    if (!isCurrentAuthenticated(version)) return false;
+    if (target.current) {
+      clearAuthenticatedAdminState();
+      return true;
+    }
+    adminSessions.items = adminSessions.items.filter((item) => String(item.id) !== String(target.id));
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    adminSessions.error = error instanceof Error ? error.message : 'Failed to revoke session';
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version)) adminSessions.revokingId = null;
+  }
+}
+
+export async function revokeOtherAdminSessions() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || adminSessions.revokingId !== null || adminSessions.revokingOthers) return null;
+
+  adminSessions.revokingOthers = true;
+  adminSessions.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/sessions/revoke-others', { method: 'POST' });
+    if (!isCurrentAuthenticated(version)) return null;
+    adminSessions.items = adminSessions.items.filter((item) => item.current);
+    const revoked = Number(payload?.revoked ?? 0);
+    return Number.isFinite(revoked) && revoked >= 0 ? revoked : 0;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return null;
+    adminSessions.error = error instanceof Error ? error.message : 'Failed to revoke other sessions';
+    return null;
+  } finally {
+    if (isCurrentAuthenticated(version)) adminSessions.revokingOthers = false;
+  }
 }
 
 export const changePasswordForm = $state({ currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
@@ -1377,6 +1491,8 @@ export const changePasswordForm = $state({ currentPassword: '', newPassword: '',
  */
 export async function changePassword(event) {
   event.preventDefault();
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return;
   changePasswordForm.error = '';
   changePasswordForm.saved = false;
 
@@ -1398,6 +1514,7 @@ export async function changePassword(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ currentPassword, newPassword }),
     });
+    if (!isCurrentAuthenticated(version)) return;
     if (response && response.ok === 'true') {
       changePasswordForm.saved = true;
       changePasswordForm.currentPassword = '';
@@ -1406,9 +1523,10 @@ export async function changePassword(event) {
       changePasswordForm.error = 'Password change failed.';
     }
   } catch (error) {
+    if (!isCurrentAuthenticated(version)) return;
     changePasswordForm.error = error instanceof Error ? error.message : 'Failed to change password';
   } finally {
-    changePasswordForm.submitting = false;
+    if (isCurrentAuthenticated(version)) changePasswordForm.submitting = false;
   }
 }
 
@@ -3251,6 +3369,9 @@ async function requestSystemEventsPage(params) {
   const response = await fetch(`/api/admin/system-events?${params.toString()}`);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      clearAuthenticatedAdminState();
+    }
     const error = new Error(payload.error ?? `Request failed with ${response.status}`);
     // @ts-expect-error Attach the status so an expired keyset cursor can recover.
     error.status = response.status;

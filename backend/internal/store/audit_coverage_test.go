@@ -12,7 +12,8 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 		"admin.go": {
 			"CreateAdmin": "insertIntentSystemEvent", "UpdateAdminUsername": "insertIntentSystemEvent",
 			"UpdateAdminPassword": "insertIntentSystemEvent", "CreateSession": "insertIntentSystemEvent",
-			"RevokeSession": "insertIntentSystemEvent", "CreateAPIKey": "insertIntentSystemEvent",
+			"RevokeSession": "insertIntentSystemEvent", "RevokeAdminSession": "insertIntentSystemEvent",
+			"RevokeOtherAdminSessions": "insertIntentSystemEvent", "CreateAPIKey": "insertIntentSystemEvent",
 			"RevokeAPIKey": "insertIntentSystemEvent", "DeleteRevokedAPIKey": "insertIntentSystemEvent",
 			"PurgeRevokedAPIKeys": "insertIntentSystemEvent", "UpdateAPIKeyName": "insertIntentSystemEvent",
 			"SetAPIKeyDisabled": "insertIntentSystemEvent", "UpdateAPIKeyModelPolicy": "insertIntentSystemEvent",

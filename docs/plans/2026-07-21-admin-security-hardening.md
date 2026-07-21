@@ -203,6 +203,9 @@ Cross-origin mutations fail before handlers; required pages and streams work.
 
 ## Task 4: Add Session Controls
 
+Status: completed locally on 2026-07-21; password-change session policy remains
+an owner decision
+
 ### Goal
 
 Make TTL configurable and allow the owner to inspect and revoke sessions.
@@ -246,6 +249,17 @@ Required for revoke-current and revoke-other flows.
 ### Completion Criteria
 
 The owner can identify and revoke every active session.
+
+Configuration, migration, repository, service, HTTP, frontend, and real
+PostgreSQL integration tests pass. The local runtime and two-browser revocation
+flows are verified separately after the atomic implementation commit.
+
+### Owner Decision
+
+Pending: whether a password change should atomically revoke every other active
+session or preserve existing sessions. This does not block session listing,
+explicit revocation, or configurable expiry; the current behavior remains
+unchanged until the owner selects a policy.
 
 ### Commit
 

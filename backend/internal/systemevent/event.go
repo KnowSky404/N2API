@@ -49,6 +49,8 @@ const (
 	ActionAuthLoginSucceeded                 Action = "auth.login.succeeded"
 	ActionAuthLoginFailed                    Action = "auth.login.failed"
 	ActionAuthSessionRejected                Action = "auth.session.rejected"
+	ActionAuthSessionRevoked                 Action = "auth.session.revoked"
+	ActionAuthSessionsRevokedOthers          Action = "auth.sessions.revoked_others"
 	ActionAuthLogoutSucceeded                Action = "auth.logout.succeeded"
 	ActionAuthPasswordChanged                Action = "auth.password.changed"
 	ActionAuthPasswordChangeFailed           Action = "auth.password.change_failed"
@@ -400,7 +402,8 @@ func validOutcome(value Outcome) bool {
 func validActorType(value ActorType) bool { return value == ActorAdmin || value == ActorSystem }
 
 var knownActions = map[Action]struct{}{
-	ActionAuthLoginSucceeded: {}, ActionAuthLoginFailed: {}, ActionAuthSessionRejected: {}, ActionAuthLogoutSucceeded: {},
+	ActionAuthLoginSucceeded: {}, ActionAuthLoginFailed: {}, ActionAuthSessionRejected: {}, ActionAuthSessionRevoked: {},
+	ActionAuthSessionsRevokedOthers: {}, ActionAuthLogoutSucceeded: {},
 	ActionAuthPasswordChanged: {}, ActionAuthPasswordChangeFailed: {}, ActionAuthBootstrapCreated: {}, ActionAuthBootstrapUsernameUpdated: {},
 	ActionAPIKeyCreated: {}, ActionAPIKeySecretViewed: {}, ActionAPIKeyRenamed: {}, ActionAPIKeyEnabled: {}, ActionAPIKeyDisabled: {}, ActionAPIKeyStatusUpdateFailed: {},
 	ActionAPIKeyModelPolicyUpdated: {}, ActionAPIKeyLimitsUpdated: {}, ActionAPIKeyBudgetsUpdated: {}, ActionAPIKeyRoutingPoolUpdated: {},

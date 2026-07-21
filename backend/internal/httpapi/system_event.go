@@ -186,6 +186,8 @@ func adminFailureEventForRequest(r *http.Request) (systemevent.Action, systemeve
 	}
 	definitions := map[string]definition{
 		"POST /api/admin/change-password":                             {systemevent.ActionAuthPasswordChangeFailed, systemevent.CategorySecurity, "admin"},
+		"DELETE /api/admin/sessions/{id}":                             {systemevent.ActionAuthSessionRevoked, systemevent.CategorySecurity, "admin_session"},
+		"POST /api/admin/sessions/revoke-others":                      {systemevent.ActionAuthSessionsRevokedOthers, systemevent.CategorySecurity, "admin_session_collection"},
 		"POST /api/admin/keys":                                        {systemevent.ActionAPIKeyCreated, systemevent.CategoryAudit, "client_api_key"},
 		"POST /api/admin/keys/{id}/revoke":                            {systemevent.ActionAPIKeyRevoked, systemevent.CategoryAudit, "client_api_key"},
 		"DELETE /api/admin/keys/{id}":                                 {systemevent.ActionAPIKeyDeleted, systemevent.CategoryAudit, "client_api_key"},

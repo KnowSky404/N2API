@@ -36,6 +36,7 @@ type Config struct {
 	AdminLoginThrottleEnabled              bool
 	AdminLoginThrottleFailures             int
 	AdminLoginThrottleMaxEntries           int
+	AdminSessionTTL                        time.Duration
 }
 
 const (
@@ -49,6 +50,7 @@ const (
 	defaultSystemEventRetentionDays        = 365
 	defaultAdminLoginThrottleFailures      = 5
 	defaultAdminLoginThrottleMaxEntries    = 4096
+	defaultAdminSessionTTLHours            = 168
 )
 
 func Load(lookup func(string) string) (Config, error) {
@@ -99,6 +101,17 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.AdminLoginThrottleMaxEntries = adminLoginThrottleMaxEntries
+	adminSessionTTLHours, err := parsePositiveIntWithDefault(
+		lookup("N2API_ADMIN_SESSION_TTL_HOURS"),
+		"N2API_ADMIN_SESSION_TTL_HOURS",
+		defaultAdminSessionTTLHours,
+		1,
+		8760,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AdminSessionTTL = time.Duration(adminSessionTTLHours) * time.Hour
 	trustedProxyCIDRs, err := parseTrustedProxyCIDRs(lookup("N2API_TRUSTED_PROXY_CIDRS"))
 	if err != nil {
 		return Config{}, err

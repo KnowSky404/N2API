@@ -89,3 +89,11 @@ func TestKnownActionCatalogProducesValidEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionRevocationActionsAreKnown(t *testing.T) {
+	for _, action := range []Action{ActionAuthSessionRevoked, ActionAuthSessionsRevokedOthers} {
+		if !IsKnownAction(action) {
+			t.Fatalf("action %q is not registered", action)
+		}
+	}
+}

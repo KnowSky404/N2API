@@ -221,6 +221,35 @@ func TestAuthenticatedMutationFailureRecordsFixedAuditEvent(t *testing.T) {
 	}
 }
 
+func TestSessionRevocationFailureRecordsSecurityEventWithoutCredentialMetadata(t *testing.T) {
+	recorder := &memorySystemEventRecorder{}
+	admins := newFakeAdminService()
+	admins.revokeSessionErr = admin.ErrNotFound
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService(), recorder)
+	req := httptest.NewRequest(http.MethodDelete, "/api/admin/sessions/42", nil)
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if len(recorder.events) != 1 {
+		t.Fatalf("events = %d, want one failure event", len(recorder.events))
+	}
+	event := recorder.events[0]
+	if event.Action != systemevent.ActionAuthSessionRevoked || event.Outcome != systemevent.OutcomeFailure || event.ErrorCode != "not_found" || event.Target.ID != "42" {
+		t.Fatalf("event = %+v", event)
+	}
+	if len(event.Metadata) != 0 || strings.Contains(event.Message, "valid-session") {
+		t.Fatalf("event contains session credential material: %+v", event)
+	}
+	if err := systemevent.ValidateEvent(event); err != nil {
+		t.Fatalf("ValidateEvent returned error: %v", err)
+	}
+}
+
 func authenticatedSystemEventRequest(target string) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, target, nil)
 	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})

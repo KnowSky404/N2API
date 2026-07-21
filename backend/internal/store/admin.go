@@ -191,16 +191,19 @@ func (r *AdminRepository) UpdateAdminPassword(ctx context.Context, id int64, pas
 	return tx.Commit(ctx)
 }
 
-func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, expiresAt time.Time) error {
+func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, metadata admin.SessionMetadata, createdAt, expiresAt time.Time) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `
-		INSERT INTO admin_sessions (admin_id, token_hash, expires_at)
-		VALUES ($1, $2, $3)
-	`, adminID, tokenHash, expiresAt)
+		INSERT INTO admin_sessions (
+			admin_id, token_hash, expires_at, created_at, last_used_at,
+			created_ip_summary, user_agent_summary
+		)
+		VALUES ($1, $2, $3, $4, $4, $5, $6)
+	`, adminID, tokenHash, expiresAt, createdAt, metadata.CreatedIP, metadata.UserAgent)
 	if err != nil {
 		return err
 	}
@@ -213,12 +216,23 @@ func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, toke
 func (r *AdminRepository) FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (admin.Admin, error) {
 	var found admin.Admin
 	err := r.pool.QueryRow(ctx, `
+		WITH active_session AS MATERIALIZED (
+			SELECT id, admin_id
+			FROM admin_sessions
+			WHERE token_hash = $1
+				AND expires_at > $2
+				AND revoked_at IS NULL
+		), touched AS (
+			UPDATE admin_sessions AS session
+			SET last_used_at = $2
+			FROM active_session
+			WHERE session.id = active_session.id
+				AND session.last_used_at <= $2 - INTERVAL '1 minute'
+			RETURNING session.id
+		)
 		SELECT a.id, a.username, a.password_hash
-		FROM admin_sessions s
-		JOIN admins a ON a.id = s.admin_id
-		WHERE s.token_hash = $1
-			AND s.expires_at > $2
-			AND s.revoked_at IS NULL
+		FROM active_session
+		JOIN admins a ON a.id = active_session.admin_id
 	`, tokenHash, now).Scan(&found.ID, &found.Username, &found.PasswordHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.Admin{}, admin.ErrNotFound
@@ -229,7 +243,7 @@ func (r *AdminRepository) FindAdminBySessionHash(ctx context.Context, tokenHash 
 	return found, nil
 }
 
-func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) error {
+func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string, revokedAt time.Time) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -240,7 +254,7 @@ func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) e
 	err = tx.QueryRow(ctx, `
 		WITH revoked AS (
 			UPDATE admin_sessions
-			SET revoked_at = now()
+			SET revoked_at = $2
 			WHERE token_hash = $1
 				AND revoked_at IS NULL
 			RETURNING admin_id
@@ -248,7 +262,7 @@ func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) e
 		SELECT revoked.admin_id, admins.username
 		FROM revoked
 		JOIN admins ON admins.id = revoked.admin_id
-	`, tokenHash).Scan(&adminID, &username)
+	`, tokenHash, revokedAt).Scan(&adminID, &username)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.ErrNotFound
 	}
@@ -259,6 +273,108 @@ func (r *AdminRepository) RevokeSession(ctx context.Context, tokenHash string) e
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (r *AdminRepository) ListAdminSessions(ctx context.Context, adminID int64, currentHash string, now time.Time) ([]admin.AdminSession, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT
+			id, token_hash = $2, created_at, last_used_at, expires_at,
+			created_ip_summary, user_agent_summary, token_hash
+		FROM admin_sessions
+		WHERE admin_id = $1
+			AND revoked_at IS NULL
+			AND expires_at > $3
+		ORDER BY (token_hash = $2) DESC, last_used_at DESC, id DESC
+	`, adminID, currentHash, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sessions := make([]admin.AdminSession, 0)
+	for rows.Next() {
+		var session admin.AdminSession
+		if err := rows.Scan(
+			&session.ID, &session.Current, &session.CreatedAt, &session.LastUsedAt, &session.ExpiresAt,
+			&session.CreatedIP, &session.UserAgent, &session.TokenHash,
+		); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return sessions, nil
+}
+
+func (r *AdminRepository) RevokeAdminSession(ctx context.Context, adminID, sessionID int64, revokedAt time.Time) (admin.AdminSession, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return admin.AdminSession{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var session admin.AdminSession
+	err = tx.QueryRow(ctx, `
+		UPDATE admin_sessions
+		SET revoked_at = $3
+		WHERE admin_id = $1
+			AND id = $2
+			AND revoked_at IS NULL
+			AND expires_at > $3
+		RETURNING id, created_at, last_used_at, expires_at,
+			created_ip_summary, user_agent_summary, token_hash
+	`, adminID, sessionID, revokedAt).Scan(
+		&session.ID, &session.CreatedAt, &session.LastUsedAt, &session.ExpiresAt,
+		&session.CreatedIP, &session.UserAgent, &session.TokenHash,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.AdminSession{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.AdminSession{}, err
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{
+		Type: "admin_session", ID: strconv.FormatInt(session.ID, 10),
+	}, map[string]any{"admin_id": adminID}); err != nil {
+		return admin.AdminSession{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return admin.AdminSession{}, err
+	}
+	return session, nil
+}
+
+func (r *AdminRepository) RevokeOtherAdminSessions(ctx context.Context, adminID int64, currentHash string, revokedAt time.Time) (int64, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `
+		UPDATE admin_sessions
+		SET revoked_at = $3
+		WHERE admin_id = $1
+			AND token_hash <> $2
+			AND revoked_at IS NULL
+			AND expires_at > $3
+	`, adminID, currentHash, revokedAt)
+	if err != nil {
+		return 0, err
+	}
+	count := result.RowsAffected()
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin_session"}, map[string]any{
+		"admin_id": adminID,
+		"count":    count,
+	}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (r *AdminRepository) CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string, routingPoolID *int64) (admin.APIKey, error) {
