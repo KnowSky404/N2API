@@ -262,6 +262,27 @@ are emitted only after confirmed recovery. Request-derived thresholds require a
 bounded periodic aggregator with persistent crossing state before templates can
 be added without per-request event noise.
 
+The third slice will close the existing Provider account auto-test scheduler
+signal before adding `provider-auto-test-failed-v1`. Successful cycles keep
+`scheduler.provider_account_auto_test.completed`; full and partial failures use
+the new `scheduler.provider_account_auto_test.failed` action. Parent-context
+cancellation during shutdown updates task status without emitting a failed
+event. Both actions retain the stable
+`provider_account_scheduler/auto_test` target and bounded count metadata; raw
+probe errors never enter the System Event. The disabled template matches both
+`error/failure` and `warning/partial` events by leaving severity unrestricted,
+requires two failed cycles in 15 minutes, uses target-scoped deduplication and a
+one-hour cooldown, and recognizes the next successful cycle as recovery.
+
+This slice modifies `backend/internal/systemevent/event.go`,
+`backend/internal/provider/auto_test_runner.go`, and the alert template catalog.
+Focused provider, system-event, matcher, service, store, and HTTP tests must
+prove exact event fields, cancellation suppression, stable target hashing,
+threshold/cooldown/recovery transitions, catalog order, and idempotent install.
+It is additive and requires no migration or public API shape change. Rollback is
+the single feature commit; existing installed rules cannot exist before the
+template ships, and every newly installed rule starts disabled.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.
