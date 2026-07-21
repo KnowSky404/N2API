@@ -13,6 +13,8 @@ import (
 func TestGatewayAccountProviderReportsAccountFailures(t *testing.T) {
 	var _ gateway.AccountFailureReporter = gatewayAccountProvider{}
 	var _ gateway.AccountAuthorizationRefresher = gatewayAccountProvider{}
+	var _ gateway.AccountUsageRecorder = gatewayAccountProvider{}
+	var _ gateway.AccountRecoveryRecorder = gatewayAccountProvider{}
 }
 
 func TestGatewayAccountProviderMapsDisplayNameForRequestLogs(t *testing.T) {

@@ -1972,7 +1972,7 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 		}
 		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 	}
-	if isAccountFailureStatus(result.statusCode) {
+	if !isSuccessfulAccountStatus(result.statusCode) {
 		now := time.Now()
 		message := strings.TrimSpace(result.message)
 		if message == "" {
@@ -1989,8 +1989,10 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	if err := s.recordAccountTestResult(ctx, account, AccountTestStatusPassed, "", time.Now()); err != nil {
 		return Account{}, err
 	}
-	recoveryCtx := withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountRecovered, account.ID, AccountStatusActive))
-	recovered, err := s.repo.UpdateAccount(recoveryCtx, s.cfg.Provider, account.ID, AccountUpdate{ClearStatus: true})
+	if err := s.RecordAccountRecovered(ctx, account.ID); err != nil {
+		return Account{}, err
+	}
+	recovered, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 	if err != nil {
 		return Account{}, err
 	}
@@ -2199,22 +2201,35 @@ func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account,
 	cfg.ProxyURL = proxyURL
 	result, err := s.prober.ProbeAccountStatus(ctx, cfg, accessToken)
 	if err != nil {
-		return account, nil
+		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, err.Error(), time.Now()); markErr != nil {
+			return Account{}, markErr
+		}
+		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 	}
-	if !isAccountFailureStatus(result.statusCode) {
-		return account, nil
+	if !isSuccessfulAccountStatus(result.statusCode) {
+		message := strings.TrimSpace(result.message)
+		if message == "" {
+			message = http.StatusText(result.statusCode)
+		}
+		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, message, time.Now()); markErr != nil {
+			return Account{}, markErr
+		}
+		if err := s.RecordAccountFailure(ctx, account.ID, result.statusCode, result.retryAfter, result.message); err != nil {
+			return Account{}, err
+		}
+		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 	}
-	if err := s.RecordAccountFailure(ctx, account.ID, result.statusCode, result.retryAfter, result.message); err != nil {
+	if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusPassed, "", time.Now()); markErr != nil {
+		return Account{}, markErr
+	}
+	if err := s.RecordAccountRecovered(ctx, account.ID); err != nil {
 		return Account{}, err
 	}
 	return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
 }
 
-func isAccountFailureStatus(statusCode int) bool {
-	return statusCode == http.StatusUnauthorized ||
-		statusCode == http.StatusForbidden ||
-		statusCode == http.StatusTooManyRequests ||
-		statusCode >= http.StatusInternalServerError
+func isSuccessfulAccountStatus(statusCode int) bool {
+	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
 }
 
 func (s *Service) AccessToken(ctx context.Context) (string, error) {
@@ -3036,8 +3051,16 @@ func (s *Service) RecordAccountUsed(ctx context.Context, accountID int64) error 
 	if accountID <= 0 {
 		return ErrInvalidInput
 	}
-	ctx = withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountRecovered, accountID, AccountStatusActive))
 	return s.repo.MarkAccountUsed(ctx, s.cfg.Provider, accountID, time.Now())
+}
+
+func (s *Service) RecordAccountRecovered(ctx context.Context, accountID int64) error {
+	if accountID <= 0 {
+		return ErrInvalidInput
+	}
+	ctx = withProviderEventIntent(ctx, runtimeAccountIntent(systemevent.ActionProviderAccountRecovered, accountID, AccountStatusActive))
+	_, err := s.repo.UpdateAccount(ctx, s.cfg.Provider, accountID, AccountUpdate{ClearStatus: true})
+	return err
 }
 
 func (s *Service) selectedAccount(ctx context.Context, account Account) (SelectedAccount, error) {
@@ -3396,7 +3419,7 @@ func (s *Service) lockAccountRefresh(accountID int64) func() {
 }
 
 func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger) (Account, error) {
-	return s.storeTokenResponseWithMode(ctx, tokens, previous, trigger, false)
+	return s.storeTokenResponseWithMode(ctx, tokens, previous, trigger, previous != nil)
 }
 
 func (s *Service) storeTokenResponseForDiagnostic(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger) (Account, error) {

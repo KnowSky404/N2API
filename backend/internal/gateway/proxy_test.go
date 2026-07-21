@@ -63,6 +63,10 @@ type fakeSelectedAccountProvider struct {
 	exclusions                  [][]int64
 	failures                    []reportedAccountFailure
 	used                        []int64
+	recovered                   []int64
+	recoveryErr                 error
+	recoveryContextErr          error
+	recoveryContextHasDeadline  bool
 	authorizationRefreshes      []authorizationRefreshCall
 	refreshedAuthorizationToken string
 	refreshAuthorizationRetry   bool
@@ -151,6 +155,13 @@ func (p *fakeSelectedAccountProvider) RefreshAccountAuthorization(_ context.Cont
 func (p *fakeSelectedAccountProvider) RecordAccountUsed(_ context.Context, accountID int64) error {
 	p.used = append(p.used, accountID)
 	return nil
+}
+
+func (p *fakeSelectedAccountProvider) RecordAccountRecovered(ctx context.Context, accountID int64) error {
+	p.recovered = append(p.recovered, accountID)
+	p.recoveryContextErr = ctx.Err()
+	_, p.recoveryContextHasDeadline = ctx.Deadline()
+	return p.recoveryErr
 }
 
 type fakeModelProvider struct {
@@ -3410,6 +3421,94 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	if transportCalls != 2 {
 		t.Fatalf("transport calls = %d, want 2", transportCalls)
 	}
+	if !slices.Equal(tokens.used, []int64{1, 2}) || !slices.Equal(tokens.recovered, []int64{2}) {
+		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1 2]/[2]", tokens.used, tokens.recovered)
+	}
+}
+
+func TestProxyConfirmsAccountRecoveryOnlyForSuccessfulUpstreamStatus(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		statusCode    int
+		wantRecovered bool
+	}{
+		{name: "ok", statusCode: http.StatusOK, wantRecovered: true},
+		{name: "no content", statusCode: http.StatusNoContent, wantRecovered: true},
+		{name: "redirect", statusCode: http.StatusFound},
+		{name: "client error", statusCode: http.StatusBadRequest},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AuthorizationToken: "upstream-token"}}}
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: testCase.statusCode,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+					Request:    r,
+				}, nil
+			})}
+			proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+			req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+			req.Header.Set("Authorization", "Bearer n2api_client_secret")
+			recorder := httptest.NewRecorder()
+
+			proxy.ServeHTTP(recorder, req)
+
+			if !slices.Equal(tokens.used, []int64{7}) {
+				t.Fatalf("account attempts = %+v, want [7]", tokens.used)
+			}
+			if testCase.wantRecovered && !slices.Equal(tokens.recovered, []int64{7}) {
+				t.Fatalf("recovered accounts = %+v, want [7]", tokens.recovered)
+			}
+			if !testCase.wantRecovered && len(tokens.recovered) != 0 {
+				t.Fatalf("recovered accounts = %+v, want none for status %d", tokens.recovered, testCase.statusCode)
+			}
+		})
+	}
+}
+
+func TestProxyKeepsSuccessfulUpstreamResponseWhenRecoveryPersistenceFails(t *testing.T) {
+	tokens := &fakeSelectedAccountProvider{
+		accounts:    []SelectedAccount{{AccountID: 7, AuthorizationToken: "upstream-token"}},
+		recoveryErr: errors.New("recovery store unavailable"),
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK || recorder.Body.String() != `{"ok":true}` {
+		t.Fatalf("response = %d %q, want successful upstream response", recorder.Code, recorder.Body.String())
+	}
+	if !slices.Equal(tokens.recovered, []int64{7}) {
+		t.Fatalf("recovered accounts = %+v, want attempted recovery for account 7", tokens.recovered)
+	}
+}
+
+func TestProxyRecordAccountRecoveredDetachesFromRequestCancellation(t *testing.T) {
+	tokens := &fakeSelectedAccountProvider{}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, http.DefaultClient)
+	requestCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	proxy.recordAccountRecovered(requestCtx, 7)
+
+	if !slices.Equal(tokens.recovered, []int64{7}) {
+		t.Fatalf("recovered accounts = %+v, want account 7", tokens.recovered)
+	}
+	if tokens.recoveryContextErr != nil || !tokens.recoveryContextHasDeadline {
+		t.Fatalf("recovery context err/deadline = %v/%t, want detached bounded context", tokens.recoveryContextErr, tokens.recoveryContextHasDeadline)
+	}
 }
 
 func TestProxyExcludesEveryFailedAccountBeforeStreaming(t *testing.T) {
@@ -3494,6 +3593,9 @@ func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing
 	failure := tokens.failures[0]
 	if failure.accountID != 1 || failure.statusCode != http.StatusTooManyRequests || failure.retryAfter != "120" || !strings.Contains(failure.message, "rate limited") {
 		t.Fatalf("failure = %+v", failure)
+	}
+	if !slices.Equal(tokens.used, []int64{1, 2}) || !slices.Equal(tokens.recovered, []int64{2}) {
+		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1 2]/[2]", tokens.used, tokens.recovered)
 	}
 }
 
@@ -3622,6 +3724,9 @@ func TestProxyRefreshesRejectedOAuthTokenAndRetriesSameAccountOnce(t *testing.T)
 	if refresh.accountID != 1 || refresh.rejectedAccessToken != "old-token" || refresh.statusCode != http.StatusUnauthorized {
 		t.Fatalf("authorization refresh = %+v", refresh)
 	}
+	if !slices.Equal(tokens.used, []int64{1}) || !slices.Equal(tokens.recovered, []int64{1}) {
+		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1]/[1]", tokens.used, tokens.recovered)
+	}
 }
 
 func TestProxyFallsBackAfterRefreshedOAuthTokenIsStillUnauthorized(t *testing.T) {
@@ -3669,6 +3774,9 @@ func TestProxyFallsBackAfterRefreshedOAuthTokenIsStillUnauthorized(t *testing.T)
 	}
 	if len(tokens.exclusions) != 2 || !slices.Equal(tokens.exclusions[1], []int64{1}) {
 		t.Fatalf("selection exclusions = %+v, want failed OAuth account excluded", tokens.exclusions)
+	}
+	if !slices.Equal(tokens.used, []int64{1, 2}) || !slices.Equal(tokens.recovered, []int64{2}) {
+		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1 2]/[2]", tokens.used, tokens.recovered)
 	}
 }
 
@@ -3784,6 +3892,9 @@ func TestProxyRecordsCircuitOpenOnUpstreamServerErrorAndReturnsFinalError(t *tes
 	if tokens.failures[0].accountID != 1 || tokens.failures[0].statusCode != http.StatusBadGateway {
 		t.Fatalf("failure = %+v", tokens.failures[0])
 	}
+	if len(tokens.recovered) != 0 {
+		t.Fatalf("recovered accounts = %+v, want none after upstream 5xx", tokens.recovered)
+	}
 }
 
 func TestProxyDoesNotRetrySameAccountBeforeStreaming(t *testing.T) {
@@ -3814,6 +3925,9 @@ func TestProxyDoesNotRetrySameAccountBeforeStreaming(t *testing.T) {
 	}
 	if transportCalls != 1 {
 		t.Fatalf("transport calls = %d, want 1", transportCalls)
+	}
+	if !slices.Equal(tokens.used, []int64{1}) || len(tokens.recovered) != 0 {
+		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1]/none", tokens.used, tokens.recovered)
 	}
 }
 
@@ -4075,5 +4189,8 @@ func TestProxyPassesThroughMatchingRetryableUpstreamError(t *testing.T) {
 	}
 	if rules.calls != 1 {
 		t.Fatalf("rule lookups = %d, want one lookup", rules.calls)
+	}
+	if !slices.Equal(tokens.used, []int64{1}) || len(tokens.recovered) != 0 {
+		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1]/none", tokens.used, tokens.recovered)
 	}
 }

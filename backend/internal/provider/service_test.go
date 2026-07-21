@@ -1430,6 +1430,44 @@ func TestRefreshAccountProbesLatestStatusAfterTokenRefresh(t *testing.T) {
 	if account.RateLimitedUntil == nil || !account.RateLimitedUntil.After(time.Now().Add(100*time.Second)) {
 		t.Fatalf("RateLimitedUntil = %v, want retry-after window", account.RateLimitedUntil)
 	}
+	if account.LastTestStatus != AccountTestStatusFailed || account.LastTestError != "usage limit reached" {
+		t.Fatalf("test status/error = %q/%q, want failed probe result", account.LastTestStatus, account.LastTestError)
+	}
+}
+
+func TestRefreshAccountPreservesHealthWhenProbeCannotConfirmRecovery(t *testing.T) {
+	repo := newMemoryRepo()
+	expiresAt := time.Now().Add(time.Hour)
+	account := testAccount(t, 7, true, 3, "old-access")
+	account.EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
+	account.AccessTokenExpiresAt = &expiresAt
+	account.Status = AccountStatusCircuitOpen
+	account.StatusReason = "existing circuit"
+	account.LastError = "existing circuit"
+	account.FailureCount = 3
+	until := time.Now().Add(time.Hour)
+	account.CircuitOpenUntil = &until
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{
+		refresh:  TokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600},
+		probeErr: errors.New("probe network unavailable"),
+	})
+
+	refreshed, err := service.RefreshAccount(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("RefreshAccount returned error: %v", err)
+	}
+	if refreshed.Status != AccountStatusCircuitOpen || refreshed.StatusReason != "existing circuit" || refreshed.LastError != "existing circuit" ||
+		refreshed.FailureCount != 3 || refreshed.CircuitOpenUntil == nil {
+		t.Fatalf("account health = %+v, want preserved until confirmed probe recovery", refreshed)
+	}
+	if refreshed.LastTestStatus != AccountTestStatusFailed || refreshed.LastTestError != "probe network unavailable" {
+		t.Fatalf("test status/error = %q/%q, want failed network probe result", refreshed.LastTestStatus, refreshed.LastTestError)
+	}
+	token, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, refreshed.EncryptedAccessToken)
+	if err != nil || token != "new-access" {
+		t.Fatalf("refreshed token = %q, err=%v", token, err)
+	}
 }
 
 func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
@@ -1595,6 +1633,37 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	}
 	if len(requestLogger.entries) != 1 || requestLogger.entries[0].StatusCode != http.StatusTooManyRequests || requestLogger.entries[0].Error != "rate_limited" {
 		t.Fatalf("failed request log = %+v, want HTTP 429 rate_limited", requestLogger.entries)
+	}
+}
+
+func TestTestAccountRequiresTwoHundredStatusForRecovery(t *testing.T) {
+	for _, statusCode := range []int{http.StatusFound, http.StatusBadRequest} {
+		t.Run(http.StatusText(statusCode), func(t *testing.T) {
+			repo := newMemoryRepo()
+			account := testAccount(t, 7, true, 3, "access-token")
+			account.Status = AccountStatusCircuitOpen
+			account.StatusReason = "existing circuit"
+			account.LastError = "existing circuit"
+			account.FailureCount = 2
+			until := time.Now().Add(time.Hour)
+			account.CircuitOpenUntil = &until
+			repo.accounts = []Account{account}
+			client := &captureProbeOAuthClient{probe: probeResult{statusCode: statusCode, message: "non-success probe"}}
+			service := newConfiguredService(repo, client)
+
+			tested, err := service.TestAccount(context.Background(), account.ID)
+			if err != nil {
+				t.Fatalf("TestAccount returned error: %v", err)
+			}
+			if tested.Status != AccountStatusCircuitOpen || tested.LastTestStatus != AccountTestStatusFailed || tested.LastTestError != "non-success probe" {
+				t.Fatalf("tested account = %+v, want failed probe without recovery", tested)
+			}
+			for _, intent := range repo.intents {
+				if intent.Action == systemevent.ActionProviderAccountRecovered {
+					t.Fatalf("unexpected recovery intent for status %d: %+v", statusCode, intent)
+				}
+			}
+		})
 	}
 }
 
@@ -3863,11 +3932,19 @@ func TestSelectAccountForModelReturnsMarkAccountErrorFailure(t *testing.T) {
 	}
 }
 
-func TestRecordAccountUsedMarksAccountUsed(t *testing.T) {
+func TestRecordAccountUsedOnlyMarksAttemptWithoutClearingHealth(t *testing.T) {
 	repo := newMemoryRepo()
-	repo.accounts = []Account{
-		testAccount(t, 1, true, 1, "access-token"),
-	}
+	account := testAccount(t, 1, true, 1, "access-token")
+	now := time.Now()
+	until := now.Add(time.Hour)
+	account.Status = AccountStatusCircuitOpen
+	account.StatusReason = "upstream unavailable"
+	account.LastError = "upstream unavailable"
+	account.LastErrorAt = &now
+	account.FailureCount = 3
+	account.CircuitOpenUntil = &until
+	account.LastRefreshError = "refresh diagnostic"
+	repo.accounts = []Account{account}
 	service := newConfiguredService(repo, fakeOAuthClient{})
 
 	if err := service.RecordAccountUsed(context.Background(), 1); err != nil {
@@ -3875,6 +3952,45 @@ func TestRecordAccountUsedMarksAccountUsed(t *testing.T) {
 	}
 	if repo.accounts[0].LastUsedAt == nil {
 		t.Fatal("account was not marked used")
+	}
+	if repo.accounts[0].Status != AccountStatusCircuitOpen || repo.accounts[0].StatusReason != "upstream unavailable" ||
+		repo.accounts[0].LastError != "upstream unavailable" || repo.accounts[0].LastErrorAt == nil ||
+		repo.accounts[0].FailureCount != 3 || repo.accounts[0].CircuitOpenUntil == nil ||
+		repo.accounts[0].LastRefreshError != "refresh diagnostic" {
+		t.Fatalf("account health changed on attempt: %+v", repo.accounts[0])
+	}
+	if len(repo.intents) != 0 {
+		t.Fatalf("attempt intents = %+v, want none", repo.intents)
+	}
+}
+
+func TestRecordAccountRecoveredClearsHealthWithRecoveryIntent(t *testing.T) {
+	repo := newMemoryRepo()
+	account := testAccount(t, 1, true, 1, "access-token")
+	now := time.Now()
+	until := now.Add(time.Hour)
+	account.Status = AccountStatusRateLimited
+	account.StatusReason = "rate limited"
+	account.LastError = "rate limited"
+	account.LastErrorAt = &now
+	account.FailureCount = 2
+	account.RateLimitedUntil = &until
+	account.LastRefreshError = "preserved refresh diagnostic"
+	repo.accounts = []Account{account}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	if err := service.RecordAccountRecovered(context.Background(), 1); err != nil {
+		t.Fatalf("RecordAccountRecovered returned error: %v", err)
+	}
+	if repo.accounts[0].Status != AccountStatusActive || repo.accounts[0].StatusReason != "" || repo.accounts[0].LastError != "" ||
+		repo.accounts[0].LastErrorAt != nil || repo.accounts[0].FailureCount != 0 || repo.accounts[0].RateLimitedUntil != nil {
+		t.Fatalf("recovered account = %+v, want active health", repo.accounts[0])
+	}
+	if repo.accounts[0].LastRefreshError != "preserved refresh diagnostic" {
+		t.Fatalf("LastRefreshError = %q, want preserved diagnostic", repo.accounts[0].LastRefreshError)
+	}
+	if len(repo.intents) != 1 || repo.intents[0].Action != systemevent.ActionProviderAccountRecovered || repo.intents[0].Category != systemevent.CategoryRuntime {
+		t.Fatalf("recovery intents = %+v", repo.intents)
 	}
 }
 
@@ -4347,8 +4463,6 @@ func (r *memoryRepo) MarkAccountUsed(ctx context.Context, providerName string, i
 	for i := range r.accounts {
 		if r.accounts[i].Provider == providerName && r.accounts[i].ID == id {
 			r.accounts[i].LastUsedAt = &usedAt
-			r.accounts[i].LastError = ""
-			r.accounts[i].LastErrorAt = nil
 			return nil
 		}
 	}
@@ -4876,6 +4990,7 @@ type fakeOAuthClient struct {
 	refresh     TokenResponse
 	probe       probeResult
 	refreshErr  error
+	probeErr    error
 }
 
 func (c fakeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
@@ -4984,6 +5099,9 @@ func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshTo
 }
 
 func (c fakeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
+	if c.probeErr != nil {
+		return probeResult{}, c.probeErr
+	}
 	if c.probe.statusCode == 0 {
 		return probeResult{statusCode: http.StatusOK}, nil
 	}

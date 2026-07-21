@@ -905,15 +905,15 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 		return provider.Account{}, err
 	}
 	defer tx.Rollback(ctx)
-	var previousStatus, previousLastError string
+	var previousStatus, previousStatusReason, previousLastError string
 	var previousFailureCount int
-	var previousCircuitOpenUntil, previousRateLimitedUntil *time.Time
+	var previousLastErrorAt, previousCircuitOpenUntil, previousRateLimitedUntil *time.Time
 	err = tx.QueryRow(ctx, `
-		SELECT status, last_error, failure_count, circuit_open_until, rate_limited_until
+		SELECT status, status_reason, last_error, last_error_at, failure_count, circuit_open_until, rate_limited_until
 		FROM provider_accounts
 		WHERE provider = $1 AND id = $2
 		FOR UPDATE
-	`, providerName, id).Scan(&previousStatus, &previousLastError, &previousFailureCount, &previousCircuitOpenUntil, &previousRateLimitedUntil)
+	`, providerName, id).Scan(&previousStatus, &previousStatusReason, &previousLastError, &previousLastErrorAt, &previousFailureCount, &previousCircuitOpenUntil, &previousRateLimitedUntil)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return provider.Account{}, provider.ErrNotConnected
 	}
@@ -970,7 +970,7 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 	}
 	emitEvent := true
 	if intent, ok := systemevent.IntentFromContext(ctx); ok && intent.Category == systemevent.CategoryRuntime && update.ClearStatus {
-		emitEvent = previousStatus != provider.AccountStatusActive || previousLastError != "" || previousFailureCount != 0 || previousCircuitOpenUntil != nil || previousRateLimitedUntil != nil
+		emitEvent = previousStatus != provider.AccountStatusActive || previousStatusReason != "" || previousLastError != "" || previousLastErrorAt != nil || previousFailureCount != 0 || previousCircuitOpenUntil != nil || previousRateLimitedUntil != nil
 	}
 	if emitEvent {
 		if err := insertProviderIntent(ctx, tx, target, started); err != nil {
@@ -1062,41 +1062,11 @@ func (r *ProviderRepository) DeleteAccounts(ctx context.Context, providerName st
 }
 
 func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {
-	started := time.Now()
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	var targetName, previousStatus, previousLastError string
-	var previousFailureCount int
-	var previousCircuitOpenUntil, previousRateLimitedUntil *time.Time
-	err = tx.QueryRow(ctx, `
-		SELECT COALESCE(NULLIF(name, ''), display_name), status, last_error, failure_count,
-			circuit_open_until, rate_limited_until
-		FROM provider_accounts
-		WHERE provider = $1 AND id = $2
-		FOR UPDATE
-	`, providerName, id).Scan(&targetName, &previousStatus, &previousLastError, &previousFailureCount, &previousCircuitOpenUntil, &previousRateLimitedUntil)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return provider.ErrNotConnected
-	}
-	if err != nil {
-		return err
-	}
-
 	var updatedID int64
-	err = tx.QueryRow(ctx, `
+	err := r.pool.QueryRow(ctx, `
 		UPDATE provider_accounts
 		SET
 			last_used_at = $3,
-			last_error = '',
-			last_error_at = NULL,
-			status = 'active',
-			status_reason = '',
-			failure_count = 0,
-			circuit_open_until = NULL,
-			rate_limited_until = NULL,
 			updated_at = now()
 		WHERE provider = $1
 			AND id = $2
@@ -1108,24 +1078,7 @@ func (r *ProviderRepository) MarkAccountUsed(ctx context.Context, providerName s
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `
-		UPDATE provider_account_credentials
-		SET
-			last_refresh_error = '',
-			last_refresh_error_at = NULL,
-			updated_at = now()
-		WHERE account_id = $1
-	`, id)
-	if err != nil {
-		return err
-	}
-	stateChanged := previousStatus != provider.AccountStatusActive || previousLastError != "" || previousFailureCount != 0 || previousCircuitOpenUntil != nil || previousRateLimitedUntil != nil
-	if stateChanged {
-		if err := insertProviderIntent(ctx, tx, providerAccountEventTarget(id, targetName), started); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (r *ProviderRepository) MarkAccountError(ctx context.Context, providerName string, id int64, message string, at time.Time) error {

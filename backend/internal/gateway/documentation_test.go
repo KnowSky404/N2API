@@ -539,11 +539,29 @@ func TestGatewayDocumentationMentionsProviderAccountTestProbe(t *testing.T) {
 		for _, want := range []string{
 			"Test account",
 			"probes one provider account",
-			"records upstream failure status",
+			"Only a 2xx response confirms recovery",
+			"network errors and every non-2xx response record a failed test",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in provider account test probe documentation", path, want)
 			}
+		}
+	}
+}
+
+func TestGatewayDocumentationMentionsConfirmedProviderAccountRecovery(t *testing.T) {
+	content, err := os.ReadFile("../../../docs/manual.md")
+	if err != nil {
+		t.Fatalf("ReadFile manual returned error: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"Gateway account selection records only an attempt timestamp",
+		"final upstream response is 2xx",
+		"only the account that produced the final 2xx response recovers",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("manual missing %q in confirmed provider account recovery documentation", want)
 		}
 	}
 }

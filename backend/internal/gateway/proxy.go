@@ -27,6 +27,7 @@ const maxReplayableRequestBody = 1 << 20
 const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 const requestLogWriteTimeout = 5 * time.Second
+const accountRecoveryWriteTimeout = 2 * time.Second
 
 type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (admin.APIKey, error)
@@ -80,6 +81,10 @@ type AccountAuthorizationRefresher interface {
 
 type AccountUsageRecorder interface {
 	RecordAccountUsed(ctx context.Context, accountID int64) error
+}
+
+type AccountRecoveryRecorder interface {
+	RecordAccountRecovered(ctx context.Context, accountID int64) error
 }
 
 type AccountConcurrencySnapshotProvider interface {
@@ -533,6 +538,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			errorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
 		}
+		if upstreamResp.StatusCode >= http.StatusOK && upstreamResp.StatusCode < http.StatusMultipleChoices {
+			p.recordAccountRecovered(r.Context(), selected.AccountID)
+		}
 		defer releaseAccount()
 		defer upstreamResp.Body.Close()
 
@@ -749,6 +757,19 @@ func (p *Proxy) recordAccountUsed(ctx context.Context, accountID int64) error {
 		return recorder.RecordAccountUsed(ctx, accountID)
 	}
 	return nil
+}
+
+func (p *Proxy) recordAccountRecovered(ctx context.Context, accountID int64) {
+	if accountID <= 0 {
+		return
+	}
+	recorder, ok := p.accounts.(AccountRecoveryRecorder)
+	if !ok {
+		return
+	}
+	recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountRecoveryWriteTimeout)
+	defer cancel()
+	_ = recorder.RecordAccountRecovered(recoveryCtx, accountID)
 }
 
 type gatewayConcurrencyLimiter struct {

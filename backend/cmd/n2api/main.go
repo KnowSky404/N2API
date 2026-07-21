@@ -99,6 +99,10 @@ func (p gatewayAccountProvider) RecordAccountUsed(ctx context.Context, accountID
 	return p.service.RecordAccountUsed(ctx, accountID)
 }
 
+func (p gatewayAccountProvider) RecordAccountRecovered(ctx context.Context, accountID int64) error {
+	return p.service.RecordAccountRecovered(ctx, accountID)
+}
+
 type gatewayModelProvider struct {
 	admins    *admin.Service
 	providers *provider.Service

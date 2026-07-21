@@ -41,7 +41,7 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 		"provider.go": {
 			"SaveAccount": "insertProviderIntent", "UpdateOAuthCredential": "insertProviderIntent",
 			"UpdateAccount": "insertProviderIntent", "DeleteAccount": "insertProviderIntent",
-			"DeleteAccounts": "insertProviderIntent", "MarkAccountUsed": "insertProviderIntent",
+			"DeleteAccounts":       "insertProviderIntent",
 			"RecordRefreshFailure": "insertProviderIntent", "RecordOAuthRefreshFailureEvent": "insertProviderIntent",
 			"RecordAccountStatus": "insertProviderIntent", "RecordAccountTestResult": "insertProviderIntent",
 			"RecordAccountModelTestResult": "insertProviderIntent", "SyncAccountModels": "insertProviderIntent",

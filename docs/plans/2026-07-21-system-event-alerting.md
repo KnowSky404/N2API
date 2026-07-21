@@ -315,6 +315,12 @@ does not expose a distinct successful end-of-stream result. Concurrent success
 and failure writes remain last-writer-wins for V1; timestamp-ordered health
 transitions are deferred unless real concurrency evidence requires them.
 
+Fourth-slice status: completed locally on 2026-07-21. Focused gateway,
+Provider, and isolated PostgreSQL Store tests cover the confirmed-recovery
+boundary, best-effort detached persistence, credential-only refresh behavior,
+and recovery-event deduplication. Account-expiry and circuit templates remain
+the next independent slices.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.

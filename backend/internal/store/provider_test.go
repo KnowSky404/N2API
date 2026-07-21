@@ -708,26 +708,179 @@ func TestProviderRepositoryRecordAccountTestResult(t *testing.T) {
 	}
 }
 
-func TestMarkAccountUsedClearsTemporaryFailureStateColumns(t *testing.T) {
-	source, err := os.ReadFile("provider.go")
-	if err != nil {
-		t.Fatalf("ReadFile provider.go returned error: %v", err)
+func TestMarkAccountUsedOnlyUpdatesAttemptTimestamp(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "attempt-account",
+		DisplayName: "Attempt account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	until := now.Add(time.Hour)
+	if _, err := repo.pool.Exec(context.Background(), `
+		UPDATE provider_accounts
+		SET status = $2, status_reason = 'existing failure', last_error = 'existing failure',
+			last_error_at = $3, failure_count = 3, circuit_open_until = $4
+		WHERE id = $1
+	`, account.ID, provider.AccountStatusCircuitOpen, now, until); err != nil {
+		t.Fatal(err)
 	}
-	sql := strings.ToUpper(string(source))
-	for _, required := range []string{
-		"LAST_ERROR = ''",
-		"LAST_ERROR_AT = NULL",
-		"STATUS = 'ACTIVE'",
-		"STATUS_REASON = ''",
-		"FAILURE_COUNT = 0",
-		"CIRCUIT_OPEN_UNTIL = NULL",
-		"RATE_LIMITED_UNTIL = NULL",
-		"LAST_REFRESH_ERROR = ''",
-		"LAST_REFRESH_ERROR_AT = NULL",
-	} {
-		if !strings.Contains(sql, required) {
-			t.Fatalf("MarkAccountUsed must clear temporary failure state, missing %q", required)
+	if _, err := repo.pool.Exec(context.Background(), `
+		UPDATE provider_account_credentials
+		SET last_refresh_error = 'refresh diagnostic', last_refresh_error_at = $2
+		WHERE account_id = $1
+	`, account.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	recoveryCtx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryRuntime, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionProviderAccountRecovered, Outcome: systemevent.OutcomeSuccess,
+	})
+	usedAt := now.Add(time.Minute)
+	if err := repo.MarkAccountUsed(recoveryCtx, "openai", account.ID, usedAt); err != nil {
+		t.Fatalf("MarkAccountUsed returned error: %v", err)
+	}
+	found, err := repo.FindAccountByID(context.Background(), "openai", account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.LastUsedAt == nil || !found.LastUsedAt.Equal(usedAt) {
+		t.Fatalf("LastUsedAt = %v, want %v", found.LastUsedAt, usedAt)
+	}
+	if found.Status != provider.AccountStatusCircuitOpen || found.StatusReason != "existing failure" || found.LastError != "existing failure" ||
+		found.LastErrorAt == nil || found.FailureCount != 3 || found.CircuitOpenUntil == nil ||
+		found.LastRefreshError != "refresh diagnostic" || found.LastRefreshErrorAt == nil {
+		t.Fatalf("account health changed on attempt: %+v", found)
+	}
+	var recoveryEvents int
+	if err := repo.pool.QueryRow(context.Background(), `SELECT count(*) FROM system_events WHERE action = $1`, systemevent.ActionProviderAccountRecovered).Scan(&recoveryEvents); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryEvents != 0 {
+		t.Fatalf("recovery events = %d, want none for attempt", recoveryEvents)
+	}
+}
+
+func TestUpdateOAuthCredentialPreservesAccountHealth(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "credential-refresh-account",
+		DisplayName: "Credential refresh account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-old-access", EncryptedRefreshToken: "encrypted-old-refresh",
+	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	until := now.Add(time.Hour)
+	if _, err := repo.pool.Exec(context.Background(), `
+		UPDATE provider_accounts
+		SET status = $2, status_reason = 'existing failure', last_error = 'existing failure',
+			last_error_at = $3, failure_count = 3, circuit_open_until = $4
+		WHERE id = $1
+	`, account.ID, provider.AccountStatusCircuitOpen, now, until); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.pool.Exec(context.Background(), `
+		UPDATE provider_account_credentials
+		SET last_refresh_error = 'old refresh failure', last_refresh_error_at = $2
+		WHERE account_id = $1
+	`, account.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := now.Add(2 * time.Hour)
+	refreshAt := now.Add(time.Minute)
+	refreshCtx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionOAuthRefreshManualSucceeded, Outcome: systemevent.OutcomeSuccess,
+	})
+	if err := repo.UpdateOAuthCredential(refreshCtx, "openai", account.ID, provider.AccountCredential{
+		EncryptedAccessToken: "encrypted-new-access", EncryptedRefreshToken: "encrypted-new-refresh",
+		AccessTokenExpiresAt: &expiresAt, LastRefreshAt: &refreshAt,
+	}); err != nil {
+		t.Fatalf("UpdateOAuthCredential returned error: %v", err)
+	}
+	found, err := repo.FindAccountByID(context.Background(), "openai", account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.EncryptedAccessToken != "encrypted-new-access" || found.EncryptedRefreshToken != "encrypted-new-refresh" ||
+		found.AccessTokenExpiresAt == nil || !found.AccessTokenExpiresAt.Equal(expiresAt) || found.LastRefreshAt == nil || !found.LastRefreshAt.Equal(refreshAt) {
+		t.Fatalf("updated credential fields = %+v", found.Credential)
+	}
+	if found.Status != provider.AccountStatusCircuitOpen || found.StatusReason != "existing failure" || found.LastError != "existing failure" ||
+		found.LastErrorAt == nil || found.FailureCount != 3 || found.CircuitOpenUntil == nil {
+		t.Fatalf("account health changed with credential update: %+v", found)
+	}
+	if found.LastRefreshError != "" || found.LastRefreshErrorAt != nil {
+		t.Fatalf("refresh diagnostics = %q/%v, want cleared after successful credential refresh", found.LastRefreshError, found.LastRefreshErrorAt)
+	}
+}
+
+func TestConfirmedAccountRecoveryEmitsOnlyOnFirstStateTransition(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "recovery-account",
+		DisplayName: "Recovery account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+	})
+	now := time.Now().UTC()
+	until := now.Add(time.Hour)
+	if err := repo.RecordAccountStatus(context.Background(), "openai", account.ID, provider.AccountStatusRateLimited, "limited", now, &until, nil); err != nil {
+		t.Fatal(err)
+	}
+	recoveryCtx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryRuntime, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionProviderAccountRecovered, Outcome: systemevent.OutcomeSuccess,
+	})
+	for range 2 {
+		if _, err := repo.UpdateAccount(recoveryCtx, "openai", account.ID, provider.AccountUpdate{ClearStatus: true}); err != nil {
+			t.Fatalf("UpdateAccount recovery returned error: %v", err)
 		}
+	}
+	var recoveryEvents int
+	if err := repo.pool.QueryRow(context.Background(), `SELECT count(*) FROM system_events WHERE action = $1`, systemevent.ActionProviderAccountRecovered).Scan(&recoveryEvents); err != nil {
+		t.Fatal(err)
+	}
+	if recoveryEvents != 1 {
+		t.Fatalf("recovery events = %d, want one state transition", recoveryEvents)
+	}
+}
+
+func TestConfirmedAccountRecoveryEmitsForEveryClearedHealthField(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		setup string
+	}{
+		{name: "status reason", setup: "UPDATE provider_accounts SET status_reason = 'residual reason' WHERE id = $1"},
+		{name: "last error timestamp", setup: "UPDATE provider_accounts SET last_error_at = now() WHERE id = $1"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo, cleanup := newProviderRepositoryForTest(t)
+			defer cleanup()
+			account := saveProviderTestAccount(t, repo, provider.Account{
+				Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "residual-" + testCase.name,
+				DisplayName: "Residual health account", Enabled: true, Status: provider.AccountStatusActive,
+				EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+			})
+			if _, err := repo.pool.Exec(context.Background(), testCase.setup, account.ID); err != nil {
+				t.Fatal(err)
+			}
+			recoveryCtx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+				Category: systemevent.CategoryRuntime, Severity: systemevent.SeverityInfo,
+				Action: systemevent.ActionProviderAccountRecovered, Outcome: systemevent.OutcomeSuccess,
+			})
+			if _, err := repo.UpdateAccount(recoveryCtx, "openai", account.ID, provider.AccountUpdate{ClearStatus: true}); err != nil {
+				t.Fatalf("UpdateAccount recovery returned error: %v", err)
+			}
+			var recoveryEvents int
+			if err := repo.pool.QueryRow(context.Background(), `SELECT count(*) FROM system_events WHERE action = $1`, systemevent.ActionProviderAccountRecovered).Scan(&recoveryEvents); err != nil {
+				t.Fatal(err)
+			}
+			if recoveryEvents != 1 {
+				t.Fatalf("recovery events = %d, want one for cleared %s", recoveryEvents, testCase.name)
+			}
+		})
 	}
 }
 
