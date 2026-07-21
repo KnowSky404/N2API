@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first fifteen Task 4 slices completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first sixteen Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -626,6 +626,10 @@ uses target-scoped deduplication and a 24-hour cooldown, and recognizes
 notifications enabled. Catalog, matcher, service, Store, HTTP, manual, and
 documentation tests must cover exact fields, cooldown, recovery, stable order,
 and idempotent installation.
+
+Sixteenth-slice status: completed locally on 2026-07-21. The template is
+additive, explicitly installed by an owner, and disabled until that owner
+reviews and enables it.
 
 ### Completion Criteria
 

@@ -12,6 +12,7 @@ const (
 	APIKeyBudget100PercentTemplateKey     = "api-key-budget-100-percent-v1"
 	RoutingPoolExhaustedTemplateKey       = "routing-pool-exhausted-v1"
 	APIKeyPurgeFailedTemplateKey          = "api-key-purge-failed-v1"
+	SystemEventRetentionFailedTemplateKey = "system-event-retention-failed-v1"
 )
 
 var ruleTemplateCatalog = []RuleTemplate{
@@ -127,6 +128,18 @@ var ruleTemplateCatalog = []RuleTemplate{
 		Severity:           systemevent.SeverityError,
 		EventAction:        systemevent.ActionSchedulerAPIKeyPurgeFailed,
 		RecoveryAction:     systemevent.ActionSchedulerAPIKeyPurgeCompleted,
+		AggregationCount:   1,
+		CooldownSeconds:    86400,
+		DeduplicationScope: DeduplicationScopeTarget,
+		NotifyRecovery:     true,
+	},
+	{
+		Key:                SystemEventRetentionFailedTemplateKey,
+		Name:               "System event retention failures",
+		Enabled:            false,
+		Category:           systemevent.CategoryScheduler,
+		EventAction:        systemevent.ActionSchedulerEventRetentionFailed,
+		RecoveryAction:     systemevent.ActionSchedulerEventRetentionCompleted,
 		AggregationCount:   1,
 		CooldownSeconds:    86400,
 		DeduplicationScope: DeduplicationScopeTarget,

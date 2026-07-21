@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 9 {
-		t.Fatalf("RuleTemplates count = %d, want 9", len(templates))
+	if len(templates) != 10 {
+		t.Fatalf("RuleTemplates count = %d, want 10", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey || templates[7].Key != RoutingPoolExhaustedTemplateKey || templates[8].Key != APIKeyPurgeFailedTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey || templates[7].Key != RoutingPoolExhaustedTemplateKey || templates[8].Key != APIKeyPurgeFailedTemplateKey || templates[9].Key != SystemEventRetentionFailedTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -653,6 +653,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		apiKeyPurgeFailedTemplate.DeduplicationScope != DeduplicationScopeTarget || !apiKeyPurgeFailedTemplate.NotifyRecovery {
 		t.Fatalf("API key purge failure template = %+v", apiKeyPurgeFailedTemplate)
 	}
+	systemEventRetentionFailedTemplate := templates[9]
+	if systemEventRetentionFailedTemplate.Name != "System event retention failures" || systemEventRetentionFailedTemplate.Enabled ||
+		systemEventRetentionFailedTemplate.Category != systemevent.CategoryScheduler || systemEventRetentionFailedTemplate.Severity != "" ||
+		systemEventRetentionFailedTemplate.EventAction != systemevent.ActionSchedulerEventRetentionFailed || systemEventRetentionFailedTemplate.RecoveryAction != systemevent.ActionSchedulerEventRetentionCompleted ||
+		systemEventRetentionFailedTemplate.AggregationCount != 1 || systemEventRetentionFailedTemplate.AggregationWindowSeconds != 0 || systemEventRetentionFailedTemplate.CooldownSeconds != 86400 ||
+		systemEventRetentionFailedTemplate.DeduplicationScope != DeduplicationScopeTarget || !systemEventRetentionFailedTemplate.NotifyRecovery {
+		t.Fatalf("System Event retention failure template = %+v", systemEventRetentionFailedTemplate)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -722,6 +730,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	apiKeyPurgeAgain, created, err := service.InstallRuleTemplate(context.Background(), APIKeyPurgeFailedTemplateKey, 61)
 	if err != nil || created || apiKeyPurgeAgain.ID != apiKeyPurgeRule.ID || apiKeyPurgeAgain.ActionID != 59 {
 		t.Fatalf("API key purge failure reinstall = %+v, %v, %v", apiKeyPurgeAgain, created, err)
+	}
+	systemEventRetentionRule, created, err := service.InstallRuleTemplate(context.Background(), SystemEventRetentionFailedTemplateKey, 67)
+	if err != nil || !created || systemEventRetentionRule.TemplateKey != SystemEventRetentionFailedTemplateKey || systemEventRetentionRule.ActionID != 67 || systemEventRetentionRule.Enabled {
+		t.Fatalf("System Event retention failure InstallRuleTemplate = %+v, %v, %v", systemEventRetentionRule, created, err)
+	}
+	systemEventRetentionAgain, created, err := service.InstallRuleTemplate(context.Background(), SystemEventRetentionFailedTemplateKey, 71)
+	if err != nil || created || systemEventRetentionAgain.ID != systemEventRetentionRule.ID || systemEventRetentionAgain.ActionID != 67 {
+		t.Fatalf("System Event retention failure reinstall = %+v, %v, %v", systemEventRetentionAgain, created, err)
 	}
 	for _, input := range []struct {
 		key      string

@@ -783,6 +783,22 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if err != nil || created || apiKeyPurgeAgain.ID != apiKeyPurgeRule.ID || apiKeyPurgeAgain.ActionID != firstAction.ID {
 		t.Fatalf("ninth template reinstall = %+v, created=%t, err=%v", apiKeyPurgeAgain, created, err)
 	}
+	systemEventRetentionTemplate := apiKeyPurgeTemplate
+	systemEventRetentionTemplate.TemplateKey = alerting.SystemEventRetentionFailedTemplateKey
+	systemEventRetentionTemplate.Name = "System event retention failures"
+	systemEventRetentionTemplate.ActionID = secondAction.ID
+	systemEventRetentionTemplate.Severity = ""
+	systemEventRetentionTemplate.EventAction = systemevent.ActionSchedulerEventRetentionFailed
+	systemEventRetentionTemplate.RecoveryAction = systemevent.ActionSchedulerEventRetentionCompleted
+	systemEventRetentionRule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: systemEventRetentionTemplate})
+	if err != nil || !created || systemEventRetentionRule.ID == edited.ID || systemEventRetentionRule.ID == retentionRule.ID || systemEventRetentionRule.ID == autoTestRule.ID || systemEventRetentionRule.ID == expiredRule.ID || systemEventRetentionRule.ID == circuitRule.ID || systemEventRetentionRule.ID == budget80Rule.ID || systemEventRetentionRule.ID == budget100Rule.ID || systemEventRetentionRule.ID == routingRule.ID || systemEventRetentionRule.ID == apiKeyPurgeRule.ID || systemEventRetentionRule.TemplateKey != systemEventRetentionTemplate.TemplateKey || systemEventRetentionRule.ActionID != secondAction.ID || systemEventRetentionRule.Enabled {
+		t.Fatalf("tenth template install = %+v, created=%t, err=%v", systemEventRetentionRule, created, err)
+	}
+	systemEventRetentionTemplate.ActionID = firstAction.ID
+	systemEventRetentionAgain, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: systemEventRetentionTemplate})
+	if err != nil || created || systemEventRetentionAgain.ID != systemEventRetentionRule.ID || systemEventRetentionAgain.ActionID != secondAction.ID {
+		t.Fatalf("tenth template reinstall = %+v, created=%t, err=%v", systemEventRetentionAgain, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `

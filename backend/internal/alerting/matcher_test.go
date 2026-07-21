@@ -397,6 +397,55 @@ func TestAPIKeyPurgeFailedTemplateNotifiesForCollectionAndRecoversExactly(t *tes
 	}
 }
 
+func TestSystemEventRetentionFailedTemplateMatchesFullAndPartialFailuresAndRecoversExactly(t *testing.T) {
+	template, ok := ruleTemplate(SystemEventRetentionFailedTemplateKey)
+	if !ok {
+		t.Fatal("System Event retention failure template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 19
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	for _, severity := range []systemevent.Severity{systemevent.SeverityError, systemevent.SeverityWarning} {
+		t.Run(string(severity), func(t *testing.T) {
+			failure := triggerEvent()
+			failure.Category = systemevent.CategoryScheduler
+			failure.Severity = severity
+			failure.Action = systemevent.ActionSchedulerEventRetentionFailed
+			failure.Outcome = systemevent.OutcomeFailure
+			if severity == systemevent.SeverityWarning {
+				failure.Outcome = systemevent.OutcomePartial
+			}
+			failure.Target = systemevent.Target{Type: "system_events", ID: "retention"}
+			state := RuleState{RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle}
+			state, decision, err := Evaluate(rule, state, failure, now)
+			if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+				t.Fatalf("retention failure evaluation state=%+v decision=%q err=%v", state, decision, err)
+			}
+			state, decision, err = Evaluate(rule, state, failure, now.Add(12*time.Hour))
+			if err != nil || decision != DecisionSuppress || state.Phase != StatePhaseFiring {
+				t.Fatalf("retention failure cooldown state=%+v decision=%q err=%v", state, decision, err)
+			}
+
+			wrongRecovery := failure
+			wrongRecovery.Severity = systemevent.SeverityInfo
+			wrongRecovery.Action = systemevent.ActionSchedulerAPIKeyPurgeCompleted
+			wrongRecovery.Outcome = systemevent.OutcomeSuccess
+			state, decision, err = Evaluate(rule, state, wrongRecovery, now.Add(13*time.Hour))
+			if err != nil || decision != DecisionNone || state.Phase != StatePhaseFiring {
+				t.Fatalf("unrelated recovery affected retention failure state=%+v decision=%q err=%v", state, decision, err)
+			}
+
+			recovery := wrongRecovery
+			recovery.Action = systemevent.ActionSchedulerEventRetentionCompleted
+			state, decision, err = Evaluate(rule, state, recovery, now.Add(14*time.Hour))
+			if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+				t.Fatalf("retention recovery state=%+v decision=%q err=%v", state, decision, err)
+			}
+		})
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

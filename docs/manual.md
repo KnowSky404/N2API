@@ -626,8 +626,16 @@ is warning/partial and reports the already-deleted row count. The event contains
 only the UTC cutoff, configured retention days, and deleted count, never SQL,
 database errors, or deleted-event attributes. Normal shutdown cancellation
 emits no failure. The next `scheduler.system_event_retention.completed` cycle is
-the recovery signal for custom rules. No System Event retention failure template
-is installed or enabled automatically.
+the recovery signal for custom rules. No System Event retention failure rule is
+installed or enabled automatically.
+
+The `system-event-retention-failed-v1` template matches both full and partial
+scheduled retention failures, fires on the first failed cycle, uses
+target-scoped deduplication and a 24-hour cooldown, and can notify when the next
+retention cycle completes successfully. It starts disabled and must be installed
+explicitly against an existing delivery action. Because retention and its
+failure events use the same PostgreSQL store, an event-storage failure can
+prevent either the trigger or recovery notification.
 
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
