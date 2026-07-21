@@ -253,6 +253,54 @@ func TestAPIKeyBudget80PercentTemplateNotifiesPerStreamAndRecovers(t *testing.T)
 	}
 }
 
+func TestAPIKeyBudget100PercentTemplateNotifiesPerStreamAndRecovers(t *testing.T) {
+	template, ok := ruleTemplate(APIKeyBudget100PercentTemplateKey)
+	if !ok {
+		t.Fatal("API key 100 percent budget template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 16
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	failure := triggerEvent()
+	failure.Category = systemevent.CategoryRuntime
+	failure.Severity = systemevent.SeverityError
+	failure.Action = systemevent.ActionAPIKeyBudgetThreshold100Crossed
+	failure.Outcome = systemevent.OutcomeFailure
+	failure.Target = systemevent.Target{Type: "client_api_key_budget", ID: "42:cost:30d", Name: "Codex laptop"}
+	state := RuleState{RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle}
+	state, decision, err := Evaluate(rule, state, failure, now)
+	if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+		t.Fatalf("100 percent evaluation state=%+v decision=%q err=%v", state, decision, err)
+	}
+	state, decision, err = Evaluate(rule, state, failure, now.Add(30*time.Minute))
+	if err != nil || decision != DecisionSuppress || state.Phase != StatePhaseFiring {
+		t.Fatalf("100 percent cooldown state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	otherStream := failure
+	otherStream.Target.ID = "42:token:30d"
+	if rule.DeduplicationKeyHash(failure) == rule.DeduplicationKeyHash(otherStream) {
+		t.Fatal("target-scoped template reused the same deduplication key for different exhausted budget streams")
+	}
+
+	wrongRecovery := failure
+	wrongRecovery.Severity = systemevent.SeverityInfo
+	wrongRecovery.Action = systemevent.ActionAPIKeyBudgetThreshold80Recovered
+	wrongRecovery.Outcome = systemevent.OutcomeSuccess
+	state, decision, err = Evaluate(rule, state, wrongRecovery, now.Add(40*time.Minute))
+	if err != nil || decision != DecisionNone || state.Phase != StatePhaseFiring {
+		t.Fatalf("80 percent recovery affected 100 percent state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	recovery := wrongRecovery
+	recovery.Action = systemevent.ActionAPIKeyBudgetThreshold100Recovered
+	state, decision, err = Evaluate(rule, state, recovery, now.Add(45*time.Minute))
+	if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+		t.Fatalf("100 percent recovery state=%+v decision=%q err=%v", state, decision, err)
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

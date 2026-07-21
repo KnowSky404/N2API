@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 6 {
-		t.Fatalf("RuleTemplates count = %d, want 6", len(templates))
+	if len(templates) != 7 {
+		t.Fatalf("RuleTemplates count = %d, want 7", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -629,6 +629,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		budget80Template.DeduplicationScope != DeduplicationScopeTarget || !budget80Template.NotifyRecovery {
 		t.Fatalf("80 percent budget template = %+v", budget80Template)
 	}
+	budget100Template := templates[6]
+	if budget100Template.Name != "API key budget exhausted" || budget100Template.Enabled ||
+		budget100Template.Category != systemevent.CategoryRuntime || budget100Template.Severity != systemevent.SeverityError ||
+		budget100Template.EventAction != systemevent.ActionAPIKeyBudgetThreshold100Crossed || budget100Template.RecoveryAction != systemevent.ActionAPIKeyBudgetThreshold100Recovered ||
+		budget100Template.AggregationCount != 1 || budget100Template.AggregationWindowSeconds != 0 || budget100Template.CooldownSeconds != 3600 ||
+		budget100Template.DeduplicationScope != DeduplicationScopeTarget || !budget100Template.NotifyRecovery {
+		t.Fatalf("100 percent budget template = %+v", budget100Template)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -674,6 +682,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	budget80Again, created, err := service.InstallRuleTemplate(context.Background(), APIKeyBudget80PercentTemplateKey, 37)
 	if err != nil || created || budget80Again.ID != budget80Rule.ID || budget80Again.ActionID != 31 {
 		t.Fatalf("80 percent budget reinstall = %+v, %v, %v", budget80Again, created, err)
+	}
+	budget100Rule, created, err := service.InstallRuleTemplate(context.Background(), APIKeyBudget100PercentTemplateKey, 41)
+	if err != nil || !created || budget100Rule.TemplateKey != APIKeyBudget100PercentTemplateKey || budget100Rule.ActionID != 41 || budget100Rule.Enabled {
+		t.Fatalf("100 percent budget InstallRuleTemplate = %+v, %v, %v", budget100Rule, created, err)
+	}
+	budget100Again, created, err := service.InstallRuleTemplate(context.Background(), APIKeyBudget100PercentTemplateKey, 43)
+	if err != nil || created || budget100Again.ID != budget100Rule.ID || budget100Again.ActionID != 41 {
+		t.Fatalf("100 percent budget reinstall = %+v, %v, %v", budget100Again, created, err)
 	}
 	for _, input := range []struct {
 		key      string

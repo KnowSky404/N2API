@@ -9,6 +9,7 @@ const (
 	ProviderAccountExpiredTemplateKey     = "provider-account-expired-v1"
 	ProviderAccountCircuitOpenTemplateKey = "provider-account-circuit-open-v1"
 	APIKeyBudget80PercentTemplateKey      = "api-key-budget-80-percent-v1"
+	APIKeyBudget100PercentTemplateKey     = "api-key-budget-100-percent-v1"
 )
 
 var ruleTemplateCatalog = []RuleTemplate{
@@ -87,6 +88,19 @@ var ruleTemplateCatalog = []RuleTemplate{
 		RecoveryAction:     systemevent.ActionAPIKeyBudgetThreshold80Recovered,
 		AggregationCount:   1,
 		CooldownSeconds:    86400,
+		DeduplicationScope: DeduplicationScopeTarget,
+		NotifyRecovery:     true,
+	},
+	{
+		Key:                APIKeyBudget100PercentTemplateKey,
+		Name:               "API key budget exhausted",
+		Enabled:            false,
+		Category:           systemevent.CategoryRuntime,
+		Severity:           systemevent.SeverityError,
+		EventAction:        systemevent.ActionAPIKeyBudgetThreshold100Crossed,
+		RecoveryAction:     systemevent.ActionAPIKeyBudgetThreshold100Recovered,
+		AggregationCount:   1,
+		CooldownSeconds:    3600,
 		DeduplicationScope: DeduplicationScopeTarget,
 		NotifyRecovery:     true,
 	},

@@ -570,6 +570,10 @@ The `api-key-budget-80-percent-v1` template matches the first 80-percent
 crossing for each API Key budget stream, uses target-scoped deduplication and a
 24-hour cooldown, and can notify when that same stream falls below 80 percent.
 It starts disabled and must be installed against an existing delivery action.
+The `api-key-budget-100-percent-v1` template independently matches exhaustion
+for each stream, uses a one-hour cooldown, and recovers only on that stream's
+100-percent recovery action. An 80-percent recovery cannot close its firing
+state. This template also starts disabled and requires explicit installation.
 
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
