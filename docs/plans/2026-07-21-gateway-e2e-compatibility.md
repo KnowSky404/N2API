@@ -102,6 +102,7 @@ Implemented scenarios selected by the exact `X-N2API-E2E-Scenario` header:
 - `status-401`, `status-403`, `status-429`, `status-500`, `status-503`
 - `missing-content-type`, `wrong-content-type`
 - `missing-usage`, `malformed-usage`
+- `missing-completion`, `status-503-once`
 - `timeout-before-headers`, `disconnect-before-headers`,
   `disconnect-after-first-event`
 
@@ -202,6 +203,10 @@ One CI command proves the complete happy path and persisted attribution.
 
 ## Task 4: Expand Protocol And Client Contracts
 
+Status: completed locally on 2026-07-21; pending the next authorized push and
+GitHub Actions run. Protected real-account acceptance remains deferred until
+Task 5 verifies sanitized failure artifacts.
+
 ### Goal
 
 Cover the recommended error/stream matrix and official SDK behavior.
@@ -227,10 +232,20 @@ single-flight refresh, limits, sticky routing, and fallback. Pin SDK versions
 and keep their lockfiles inside their test directories. Add a protected manual
 workflow for real OAuth and Codex CLI only after secret redaction is reviewed.
 
+The automated SDK baseline is pinned to OpenAI JavaScript `6.48.0` on Bun
+`1.3.14` and OpenAI Python `2.46.0` on Python `3.12.13`. Real OAuth and Codex
+CLI remain a clearly manual contract until Task 5 proves that failure artifacts
+are safe for protected-account runs.
+
 ### Tests And Verification
 
 Run raw HTTP and both SDK suites. Trigger the manual workflow with a dedicated
 test account and verify cleanup.
+
+Completed locally with a clean PostgreSQL-backed Compose run covering the raw
+HTTP matrix and isolated Compose runs for the pinned JavaScript and Python SDK
+contracts. Real OAuth and Codex CLI are not automated yet because their
+protected workflow depends on Task 5's artifact-redaction gate.
 
 ### Compatibility And Security
 

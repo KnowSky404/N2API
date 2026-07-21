@@ -40,6 +40,10 @@ type e2eResources struct {
 	poolName         string
 	clientKeyID      int64
 	clientSecret     string
+	fingerprintIDs   []int64
+	accountIDs       []int64
+	poolIDs          []int64
+	clientKeyIDs     []int64
 	pricingBefore    usagePricing
 	pricingUpdatedAt time.Time
 	pricingUpdated   bool
@@ -264,15 +268,18 @@ func registerCleanup(t *testing.T, client *http.Client, env e2eEnvironment, reso
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 		defer cancel()
-		if resources.clientKeyID > 0 {
-			_, _ = performJSON(ctx, client, http.MethodPost, env.baseURL+"/api/admin/keys/"+int64String(resources.clientKeyID)+"/revoke", nil, nil, nil)
-			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/keys/"+int64String(resources.clientKeyID), nil, nil, nil)
+		for _, id := range uniquePositiveIDs(resources.clientKeyID, resources.clientKeyIDs) {
+			_, _ = performJSON(ctx, client, http.MethodPost, env.baseURL+"/api/admin/keys/"+int64String(id)+"/revoke", nil, nil, nil)
+			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/keys/"+int64String(id), nil, nil, nil)
 		}
-		if resources.poolID > 0 {
-			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/routing-pools/"+int64String(resources.poolID), nil, nil, nil)
+		for _, id := range uniquePositiveIDs(resources.poolID, resources.poolIDs) {
+			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/routing-pools/"+int64String(id), nil, nil, nil)
 		}
-		if resources.accountID > 0 {
-			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/provider-accounts/"+int64String(resources.accountID), nil, nil, nil)
+		for _, id := range uniquePositiveIDs(resources.accountID, resources.accountIDs) {
+			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/provider-accounts/"+int64String(id), nil, nil, nil)
+		}
+		for _, id := range uniquePositiveIDs(0, resources.fingerprintIDs) {
+			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/fingerprint-profiles/"+int64String(id), nil, nil, nil)
 		}
 		if resources.pricingUpdated {
 			_, _ = performJSON(ctx, client, http.MethodPut, env.baseURL+"/api/admin/usage-pricing", nil, resources.pricingBefore, nil)
@@ -280,6 +287,26 @@ func registerCleanup(t *testing.T, client *http.Client, env e2eEnvironment, reso
 		_, _ = performJSON(ctx, client, http.MethodPost, env.baseURL+"/api/admin/logout", nil, nil, nil)
 		resources.clientSecret = ""
 	})
+}
+
+func uniquePositiveIDs(single int64, values []int64) []int64 {
+	seen := make(map[int64]struct{}, len(values)+1)
+	result := make([]int64, 0, len(values)+1)
+	appendID := func(id int64) {
+		if id <= 0 {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	appendID(single)
+	for _, id := range values {
+		appendID(id)
+	}
+	return result
 }
 
 func int64String(value int64) string {
@@ -299,14 +326,19 @@ func int64String(value int64) string {
 
 func waitForRequestLogs(t *testing.T, pool *pgxpool.Pool, clientKeyID int64, sessionIDs []string) []requestLog {
 	t.Helper()
+	return waitForRequestLogCount(t, pool, clientKeyID, sessionIDs, len(sessionIDs))
+}
+
+func waitForRequestLogCount(t *testing.T, pool *pgxpool.Pool, clientKeyID int64, sessionIDs []string, expected int) []requestLog {
+	t.Helper()
 	deadline := time.Now().Add(requestLogTimeout)
 	for {
 		logs, ok := queryRequestLogs(pool, clientKeyID, sessionIDs)
-		if ok && len(logs) == 2 {
+		if ok && len(logs) == expected {
 			return logs
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("stage=request_logs field=row_count actual=%d expected=2", len(logs))
+			t.Fatalf("stage=request_logs field=row_count actual=%d expected=%d", len(logs), expected)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -315,6 +347,9 @@ func waitForRequestLogs(t *testing.T, pool *pgxpool.Pool, clientKeyID int64, ses
 func queryRequestLogs(pool *pgxpool.Pool, clientKeyID int64, sessionIDs []string) ([]requestLog, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
+	if sessionIDs == nil {
+		sessionIDs = []string{}
+	}
 	rows, err := pool.Query(ctx, `
 		SELECT route,
 			method,
@@ -353,7 +388,7 @@ func queryRequestLogs(pool *pgxpool.Pool, clientKeyID int64, sessionIDs []string
 			error
 		FROM request_logs
 		WHERE client_key_id = $1
-			AND session_id = ANY($2::text[])
+			AND (cardinality($2::text[]) = 0 OR session_id = ANY($2::text[]))
 		ORDER BY id
 	`, clientKeyID, sessionIDs)
 	if err != nil {

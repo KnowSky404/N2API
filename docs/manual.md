@@ -318,6 +318,46 @@ For sticky session routing, clients can send `session_id` in the POST body. If a
 
 Sticky session bindings are persisted by provider, model, and `session_id`. A healthy bound account is reused while it remains schedulable; if fallback excludes it before streaming starts, the successful fallback account can rebind that session.
 
+## Gateway Compatibility Matrix
+
+The secret-free E2E stack validates the public gateway through raw HTTP and
+the pinned official OpenAI JavaScript and Python SDKs. All runtime services use
+an internal Compose network, and the SDK runners reject any gateway hostname
+other than `n2api` before creating a client.
+
+| Contract | Automated evidence |
+| --- | --- |
+| Models, Chat Completions JSON, and Responses SSE | PostgreSQL-backed Go E2E plus `openai` JavaScript `6.48.0` and Python `2.46.0` runners |
+| Upstream 401, 403, 429, 500, and 503 | Go E2E verifies the client status/error contract and persisted attempt/fallback attribution |
+| Missing or incorrect content type | Go E2E verifies bounded pass-through behavior without inventing upstream metadata |
+| Missing or malformed usage | Go E2E verifies Chat JSON and Responses SSE remain usable while Request Logs retain zero tokens and zero estimated cost instead of fabricating usage |
+| Timeout or disconnect before response headers | Go E2E verifies cancellation and pre-stream fallback without leaking response bodies |
+| Disconnect or clean EOF after the first SSE event | Go E2E verifies N2API never retries after streaming has begun and never fabricates a completion event |
+| Sticky routing, explicit fallback, and local key limits | Go E2E verifies persisted account selection, fallback counters, and OpenAI-compatible 429 responses |
+| Concurrent OAuth refresh single-flight | Deterministic provider component tests verify one refresh and reuse of the rotated token |
+| Real Codex OAuth and Codex CLI | Manual protected acceptance only; it is not a required PR check and must not upload request or response bodies |
+
+Run the SDK contracts locally after starting their isolated dependencies:
+
+```bash
+docker compose --project-name n2api-sdk-contracts-local \
+  -f deploy/compose.e2e.yaml \
+  up -d --build --wait postgres mock-openai n2api
+docker compose --project-name n2api-sdk-contracts-local \
+  --profile contracts -f deploy/compose.e2e.yaml \
+  run --rm --build --no-deps contracts-javascript
+docker compose --project-name n2api-sdk-contracts-local \
+  --profile contracts -f deploy/compose.e2e.yaml \
+  run --rm --build --no-deps contracts-python
+docker compose --project-name n2api-sdk-contracts-local \
+  -f deploy/compose.e2e.yaml \
+  down --volumes --remove-orphans --timeout 10
+```
+
+Each runner creates its own account, routing pool, and client key through the
+admin API, keeps generated secrets in memory only, and performs best-effort API
+cleanup. Removing the isolated PostgreSQL volume is the final cleanup boundary.
+
 Before upgrading an existing deployment, back up PostgreSQL because the upgrade adds unified provider account tables and client API key model-policy metadata.
 
 ## Required Services

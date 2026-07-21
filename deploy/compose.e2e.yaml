@@ -97,6 +97,54 @@ services:
     cap_drop:
       - ALL
 
+  contracts-javascript:
+    profiles:
+      - contracts
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.e2e
+      target: contracts-javascript
+    environment: &contract-environment
+      N2API_CONTRACT_BASE_URL: http://n2api:3000/v1
+      N2API_CONTRACT_ADMIN_BASE_URL: http://n2api:3000
+      N2API_CONTRACT_ADMIN_USERNAME: admin
+      N2API_CONTRACT_ADMIN_PASSWORD: e2e-admin-password
+      N2API_CONTRACT_MOCK_BASE_URL: http://mock-openai:8080
+      N2API_CONTRACT_MOCK_API_KEY: e2e-upstream-fixture-key
+    networks:
+      - e2e
+    depends_on: &contract-dependencies
+      mock-openai:
+        condition: service_healthy
+      n2api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  contracts-python:
+    profiles:
+      - contracts
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.e2e
+      target: contracts-python
+    environment: *contract-environment
+    networks:
+      - e2e
+    depends_on: *contract-dependencies
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
 networks:
   e2e:
     internal: true

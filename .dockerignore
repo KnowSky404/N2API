@@ -26,5 +26,10 @@ frontend/dist
 frontend/.vite
 frontend/bun.lockb
 
+tests/contracts/javascript/node_modules
+tests/contracts/python/.venv
+tests/contracts/python/__pycache__
+tests/contracts/python/.pytest_cache
+
 test-results
 playwright-report

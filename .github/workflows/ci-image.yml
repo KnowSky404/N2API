@@ -187,6 +187,53 @@ jobs:
           -f deploy/compose.e2e.yaml
           down --volumes --remove-orphans --timeout 10
 
+      - name: Run official OpenAI SDK contracts
+        id: sdk_contracts
+        env:
+          CONTRACT_PROJECT: n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --project-name "$CONTRACT_PROJECT" \
+            --profile contracts -f deploy/compose.e2e.yaml \
+            build contracts-javascript contracts-python
+          docker compose --project-name "$CONTRACT_PROJECT" \
+            -f deploy/compose.e2e.yaml \
+            up -d --build --wait postgres mock-openai n2api
+
+          javascript_status=0
+          python_status=0
+          docker compose --project-name "$CONTRACT_PROJECT" \
+            --profile contracts -f deploy/compose.e2e.yaml \
+            run --rm --no-deps contracts-javascript || javascript_status=$?
+          docker compose --project-name "$CONTRACT_PROJECT" \
+            --profile contracts -f deploy/compose.e2e.yaml \
+            run --rm --no-deps contracts-python || python_status=$?
+
+          if (( javascript_status != 0 || python_status != 0 )); then
+            exit 1
+          fi
+
+      - name: Show SDK contract infrastructure logs on failure
+        if: failure() && steps.sdk_contracts.outcome == 'failure'
+        continue-on-error: true
+        env:
+          CONTRACT_PROJECT: n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          docker compose --project-name "$CONTRACT_PROJECT"
+          -f deploy/compose.e2e.yaml
+          logs --no-color --timestamps --tail 500
+          postgres mock-openai n2api
+
+      - name: Stop official OpenAI SDK contracts
+        if: always()
+        env:
+          CONTRACT_PROJECT: n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}
+        run: >-
+          docker compose --project-name "$CONTRACT_PROJECT"
+          -f deploy/compose.e2e.yaml
+          down --volumes --remove-orphans --timeout 10
+
   image:
     name: Build and smoke test image (${{ matrix.platform }})
     runs-on: ubuntu-latest

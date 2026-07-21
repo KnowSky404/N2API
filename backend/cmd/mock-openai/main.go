@@ -35,10 +35,12 @@ var allowedScenarios = map[string]struct{}{
 	"status-429":                   {},
 	"status-500":                   {},
 	"status-503":                   {},
+	"status-503-once":              {},
 	"missing-content-type":         {},
 	"wrong-content-type":           {},
 	"missing-usage":                {},
 	"malformed-usage":              {},
+	"missing-completion":           {},
 	"timeout-before-headers":       {},
 	"disconnect-before-headers":    {},
 	"disconnect-after-first-event": {},
@@ -57,8 +59,15 @@ type mockRequest struct {
 }
 
 type diagnosticState struct {
-	mu      sync.Mutex
-	entries map[diagnosticKey]diagnosticEntry
+	mu        sync.Mutex
+	entries   map[diagnosticKey]diagnosticEntry
+	sequences map[diagnosticSequenceKey]int64
+}
+
+type diagnosticSequenceKey struct {
+	Scenario string
+	Method   string
+	Route    string
 }
 
 type diagnosticKey struct {
@@ -138,7 +147,10 @@ func newMockHandler(apiKeys ...string) http.Handler {
 }
 
 func newDiagnosticState() *diagnosticState {
-	return &diagnosticState{entries: make(map[diagnosticKey]diagnosticEntry)}
+	return &diagnosticState{
+		entries:   make(map[diagnosticKey]diagnosticEntry),
+		sequences: make(map[diagnosticSequenceKey]int64),
+	}
 }
 
 func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +206,12 @@ func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	status := scenarioStatus(scenario)
 	if status != 0 {
+		h.state.record(scenario, method, route, status, h.now())
+		writeScenarioStatus(w, status)
+		return
+	}
+	if scenario == "status-503-once" && h.state.nextSequenceAttempt(scenario, method, route) == 1 {
+		status = http.StatusServiceUnavailable
 		h.state.record(scenario, method, route, status, h.now())
 		writeScenarioStatus(w, status)
 		return
@@ -513,6 +531,9 @@ func writeResponsesStream(w http.ResponseWriter, scenario string) {
 		"type": "response.output_text.delta", "item_id": "msg_mock", "output_index": 0, "content_index": 0, "delta": "mock response",
 	})
 	flush(w)
+	if scenario == "missing-completion" {
+		return
+	}
 	response := map[string]any{"id": "resp_mock", "status": "completed", "model": mockModelID}
 	setResponsesUsage(response, scenario)
 	writeSSEEvent(w, "response.completed", map[string]any{
@@ -621,8 +642,17 @@ func (s *diagnosticState) snapshot() diagnosticSnapshot {
 	return diagnosticSnapshot{Entries: entries}
 }
 
+func (s *diagnosticState) nextSequenceAttempt(scenario, method, route string) int64 {
+	key := diagnosticSequenceKey{Scenario: scenario, Method: method, Route: route}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sequences[key]++
+	return s.sequences[key]
+}
+
 func (s *diagnosticState) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.entries = make(map[diagnosticKey]diagnosticEntry)
+	s.sequences = make(map[diagnosticSequenceKey]int64)
 }

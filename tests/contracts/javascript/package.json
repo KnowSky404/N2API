@@ -1,0 +1,13 @@
+{
+  "name": "n2api-openai-javascript-contracts",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "scripts": {
+    "test": "bun test openai.test.ts"
+  },
+  "dependencies": {
+    "openai": "6.48.0"
+  }
+}

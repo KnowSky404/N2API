@@ -155,6 +155,76 @@ func TestContentTypeAndUsageScenarios(t *testing.T) {
 	}
 }
 
+func TestMissingCompletionStreamEndsCleanly(t *testing.T) {
+	server := httptest.NewServer(newMockHandler())
+	defer server.Close()
+
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":true}`))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	request.Header.Set(scenarioHeader, "missing-completion")
+	request.Header.Set("Authorization", "Bearer "+defaultMockAPIKey)
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("perform request: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || response.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("response = %d %q", response.StatusCode, response.Header.Get("Content-Type"))
+	}
+	stream := string(body)
+	if !strings.Contains(stream, "event: response.created") || !strings.Contains(stream, "event: response.output_text.delta") {
+		t.Fatalf("stream missing initial events: %q", stream)
+	}
+	if strings.Contains(stream, "response.completed") {
+		t.Fatalf("stream unexpectedly contains completion: %q", stream)
+	}
+}
+
+func TestStatus503OnceFailsFirstAttemptThenSucceedsUntilReset(t *testing.T) {
+	handler := newMockHandler().(*mockHandler)
+
+	first := performRequest(t, handler, http.MethodPost, "/v1/responses", `{"model":"gpt-5","stream":true}`, "status-503-once")
+	if first.Code != http.StatusServiceUnavailable || !strings.Contains(first.Body.String(), `"code":"mock_upstream_error"`) {
+		t.Fatalf("first response = %d body=%s", first.Code, first.Body.String())
+	}
+	for attempt := 2; attempt <= 3; attempt++ {
+		response := performRequest(t, handler, http.MethodPost, "/v1/responses", `{"model":"gpt-5","stream":true}`, "status-503-once")
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "event: response.completed") {
+			t.Fatalf("attempt %d response = %d body=%s", attempt, response.Code, response.Body.String())
+		}
+	}
+
+	snapshot := handler.state.snapshot()
+	if len(snapshot.Entries) != 2 {
+		t.Fatalf("diagnostic entries = %+v", snapshot.Entries)
+	}
+	counts := map[int]int64{}
+	for _, entry := range snapshot.Entries {
+		if entry.Scenario != "status-503-once" || entry.Method != http.MethodPost || entry.Route != "/v1/responses" {
+			t.Fatalf("diagnostic entry = %+v", entry)
+		}
+		counts[entry.Status] = entry.Count
+	}
+	if counts[http.StatusServiceUnavailable] != 1 || counts[http.StatusOK] != 2 {
+		t.Fatalf("diagnostic counts = %+v", counts)
+	}
+
+	reset := performRequest(t, handler, http.MethodPost, "/__mock/reset", "", "")
+	if reset.Code != http.StatusNoContent {
+		t.Fatalf("reset response = %d body=%s", reset.Code, reset.Body.String())
+	}
+	afterReset := performRequest(t, handler, http.MethodPost, "/v1/responses", `{"model":"gpt-5","stream":true}`, "status-503-once")
+	if afterReset.Code != http.StatusServiceUnavailable {
+		t.Fatalf("response after reset = %d body=%s", afterReset.Code, afterReset.Body.String())
+	}
+}
+
 func TestScenarioAllowlistDoesNotReflectUnknownValue(t *testing.T) {
 	const secretScenario = "unknown-secret-scenario"
 	response := performRequest(t, newMockHandler(), http.MethodPost, "/v1/responses?token=query-secret", `{"model":"gpt-5","input":"prompt-secret"}`, secretScenario)
