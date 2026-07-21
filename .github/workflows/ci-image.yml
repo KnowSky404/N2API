@@ -494,6 +494,31 @@ jobs:
           docker cp n2api-ci:/tmp/index.html /tmp/index.html
           grep '<!doctype html>' /tmp/index.html
           grep '/_app/immutable/entry/app' /tmp/index.html
+          test "$(docker exec n2api-ci id -u)" = "10001"
+          test "$(docker exec n2api-ci id -g)" = "10001"
+          test "$(docker exec n2api-ci stat -c '%u:%g' /app/n2api)" = "0:10001"
+          test "$(docker exec n2api-ci stat -c '%u:%g' /app/frontend/build/200.html)" = "0:10001"
+          docker exec n2api-ci test ! -w /app/n2api
+          docker exec n2api-ci test ! -w /app/frontend/build/200.html
+          docker exec n2api-ci test -s /etc/ssl/certs/ca-certificates.crt
+          docker exec n2api-ci wget -qO /dev/null https://example.com
+
+      - name: Verify graceful shutdown
+        shell: bash
+        run: |
+          set -euo pipefail
+          SECONDS=0
+          docker stop --timeout 10 n2api-ci
+          elapsed="$SECONDS"
+          exit_code="$(docker inspect -f '{{.State.ExitCode}}' n2api-ci)"
+          if (( elapsed > 10 )); then
+            echo "N2API did not stop within ten seconds" >&2
+            exit 1
+          fi
+          if [ "$exit_code" != "0" ]; then
+            echo "N2API did not exit cleanly after SIGTERM" >&2
+            exit 1
+          fi
 
       - name: Stop smoke test containers
         if: always()

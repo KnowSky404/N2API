@@ -153,6 +153,27 @@ style elements. Inline style attributes and the manual OAuth callback style
 remain allowed because the current UI requires them; remote scripts are not
 allowed.
 
+## Container Runtime Identity
+
+The N2API application image runs as the fixed `n2api` identity with UID and GID
+`10001`. The binary and static admin assets are owned by `root:n2api` with no
+write bits, and the runtime user has no home directory or login shell. The
+image retains the Alpine CA bundle for HTTPS upstream verification but does not
+need a persistent writable application path.
+
+Inspect a running Compose container without printing its environment:
+
+```bash
+docker compose -f deploy/compose.yaml exec n2api id
+docker compose -f deploy/compose.yaml exec n2api stat -c '%u:%g %a %n' /app/n2api /app/frontend/build/200.html
+```
+
+The first command must report `uid=10001(n2api) gid=10001(n2api)`. The image
+smoke matrix also verifies readiness, static assets, the CA bundle, application
+file write denial, and a clean SIGTERM exit within ten seconds on both supported
+platforms. Future bind mounts must be readable by UID/GID `10001` and must not
+make application files writable.
+
 ## Published Images
 
 The `CI Image` workflow tests every pull request without publishing an image.

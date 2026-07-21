@@ -77,6 +77,9 @@ HTML health responses.
 
 ## Task 2: Run The Application As Non-root
 
+Task status: completed locally on 2026-07-21; amd64/arm64 CI smoke pending the
+next authorized push
+
 ### Goal
 
 Use a fixed unprivileged identity with only readable application files.
@@ -118,6 +121,11 @@ Not required after both image smoke jobs pass.
 ### Completion Criteria
 
 The release process never starts N2API as UID 0.
+
+The native ARM64 image runs healthy as `10001:10001`, keeps the binary and
+static assets root-owned and non-writable, reads the CA bundle, completes
+migrations, serves the UI, and exits cleanly on SIGTERM. The existing CI image
+matrix now enforces the same contract for ARM64 and AMD64 before publication.
 
 ### Commit
 
