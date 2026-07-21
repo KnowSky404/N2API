@@ -417,8 +417,11 @@ func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"load factor",
-			"same priority",
-			"higher load factor",
+			"strict descending preference tier",
+			"not a proportional request weight",
+			"least-recently-used time and account ID",
+			"sticky FNV hashing only changes order inside the highest tier",
+			"concurrency-full accounts are excluded",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in provider account load factor documentation", path, want)
@@ -514,6 +517,9 @@ func TestGatewayDocumentationMentionsRoutingPreviewScheduleReasons(t *testing.T)
 		for _, want := range []string{
 			"Schedule reason",
 			"diagnostic text",
+			"pool/global priority tier",
+			"recent-error tier",
+			"least-recently-used tie-breaker",
 			"does not change scheduler behavior",
 		} {
 			if !strings.Contains(text, want) {

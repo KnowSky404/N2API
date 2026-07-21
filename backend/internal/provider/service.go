@@ -2453,7 +2453,7 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 	for index, account := range accounts {
 		candidate := selectionCandidate(account, index+1, index == 0, true, "")
 		candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
-		candidate.ScheduleReason = scheduleReason(candidate.Selected, candidate.StickyBound)
+		candidate.ScheduleReason = scheduleReason(account, candidate.Selected, candidate.StickyBound, sessionID != "")
 		preview.Candidates = append(preview.Candidates, candidate)
 	}
 	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidates(ctx, model, accounts, excludedAccountIDs, now)...)
@@ -2548,7 +2548,7 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 		for index, account := range accounts {
 			candidate := selectionCandidate(account, index+1, index == 0, true, "")
 			candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
-			candidate.ScheduleReason = scheduleReason(candidate.Selected, candidate.StickyBound)
+			candidate.ScheduleReason = scheduleReason(account, candidate.Selected, candidate.StickyBound, sessionID != "")
 			preview.Candidates = append(preview.Candidates, candidate)
 		}
 		preview.Candidates = append(preview.Candidates, blockedChainCandidates...)
@@ -2680,14 +2680,44 @@ func selectionCandidate(account Account, scheduleRank int, selected bool, schedu
 	}
 }
 
-func scheduleReason(selected, stickyBound bool) string {
+func scheduleReason(account Account, selected, stickyBound, stickySession bool) string {
+	tier := scheduleTier(account)
+	baseTieBreakers := fmt.Sprintf("base tie-breakers least-recently-used then account ID %d", account.ID)
 	if stickyBound {
-		return "sticky session binding"
+		return fmt.Sprintf("reused sticky session binding for %s; new sticky FNV hashes stay within the highest exactly equal scheduling tier; %s", tier, baseTieBreakers)
+	}
+	if stickySession && selected {
+		return fmt.Sprintf("selected by sticky FNV hash within the highest exactly equal scheduling tier: %s; %s", tier, baseTieBreakers)
+	}
+	if stickySession {
+		return fmt.Sprintf("ordered after sticky FNV hash, which only changes order within the highest exactly equal scheduling tier: %s; %s", tier, baseTieBreakers)
 	}
 	if selected {
-		return "selected by priority, load factor, and least-recently-used order"
+		return fmt.Sprintf("selected by %s; tie-breakers least-recently-used then account ID %d", tier, account.ID)
 	}
-	return "ordered by priority, load factor, and least-recently-used order"
+	return fmt.Sprintf("ordered by %s; tie-breakers least-recently-used then account ID %d", tier, account.ID)
+}
+
+func scheduleTier(account Account) string {
+	recentErrorTier := "clean"
+	if account.LastErrorAt != nil {
+		recentErrorTier = "present"
+	}
+	if account.RoutingPoolPriority != nil {
+		return fmt.Sprintf(
+			"pool priority %d, global account priority %d, load factor %d, recent-error tier %s",
+			selectionPriority(account),
+			globalAccountPriority(account),
+			normalizedLoadFactor(account.LoadFactor),
+			recentErrorTier,
+		)
+	}
+	return fmt.Sprintf(
+		"account priority %d, load factor %d, recent-error tier %s",
+		account.Priority,
+		normalizedLoadFactor(account.LoadFactor),
+		recentErrorTier,
+	)
 }
 
 func (s *Service) stickySessionCandidates(ctx context.Context, accounts []Account, model, sessionID string) ([]Account, int64, error) {

@@ -2850,6 +2850,48 @@ func TestSelectAccountForModelAndSessionKeepsStickySelectionInsideHighestPriorit
 	}
 }
 
+func TestPreviewAccountSelectionMeasuresStrictLoadFactorTierAcrossTenThousandSessions(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 1, "high-load-first-token"),
+		testAccount(t, 2, true, 1, "high-load-second-token"),
+		testAccount(t, 3, true, 1, "low-load-token"),
+	}
+	repo.accounts[0].LoadFactor = 10
+	repo.accounts[1].LoadFactor = 10
+	repo.accounts[2].LoadFactor = 1
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	const sessionCount = 10_000
+	counts := map[int64]int{}
+	for i := 0; i < sessionCount; i++ {
+		sessionID := "distribution-" + strconv.Itoa(i)
+		preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", sessionID)
+		if err != nil {
+			t.Fatalf("PreviewAccountSelection(%q) returned error: %v", sessionID, err)
+		}
+		wantAccountID := int64(1 + stickyAccountIndex(sessionID, 2))
+		if preview.SelectedAccountID != wantAccountID {
+			t.Fatalf("session %q selected account %d, want deterministic FNV account %d", sessionID, preview.SelectedAccountID, wantAccountID)
+		}
+		counts[preview.SelectedAccountID]++
+	}
+
+	if counts[3] != 0 {
+		t.Fatalf("low load-factor account selections = %d, want 0 because load factor is a strict tier", counts[3])
+	}
+	for _, accountID := range []int64{1, 2} {
+		if counts[accountID] < 4_500 || counts[accountID] > 5_500 {
+			t.Fatalf("equal-tier account %d selections = %d, want 4500..5500 of %d", accountID, counts[accountID], sessionCount)
+		}
+	}
+}
+
 func TestSelectAccountForModelAndSessionDoesNotPromoteErroredPriorityPeer(t *testing.T) {
 	now := time.Now()
 	repo := newMemoryRepo()
@@ -2977,9 +3019,9 @@ func TestPreviewAccountSelectionIncludesScheduleReasons(t *testing.T) {
 	}
 
 	want := map[int64]string{
-		2: "sticky session binding",
-		1: "ordered by priority, load factor, and least-recently-used order",
-		3: "ordered by priority, load factor, and least-recently-used order",
+		2: "reused sticky session binding for account priority 1, load factor 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 2",
+		1: "ordered after sticky FNV hash, which only changes order within the highest exactly equal scheduling tier: account priority 1, load factor 1, recent-error tier clean; base tie-breakers least-recently-used then account ID 1",
+		3: "ordered after sticky FNV hash, which only changes order within the highest exactly equal scheduling tier: account priority 2, load factor 1, recent-error tier clean; base tie-breakers least-recently-used then account ID 3",
 	}
 	for _, candidate := range preview.Candidates {
 		if candidate.ScheduleReason != want[candidate.ID] {
@@ -3065,7 +3107,7 @@ func TestPreviewAccountSelectionReportsStoredStickyBindingForSingleCandidate(t *
 	if preview.StickyBoundAccountID != 7 {
 		t.Fatalf("StickyBoundAccountID = %d, want 7", preview.StickyBoundAccountID)
 	}
-	if len(preview.Candidates) != 1 || !preview.Candidates[0].StickyBound || preview.Candidates[0].ScheduleReason != "sticky session binding" {
+	if len(preview.Candidates) != 1 || !preview.Candidates[0].StickyBound || preview.Candidates[0].ScheduleReason != "reused sticky session binding for account priority 1, load factor 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 7" {
 		t.Fatalf("candidate = %+v, want single sticky-bound candidate", preview.Candidates)
 	}
 	if got := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]; !got.UpdatedAt.Equal(createdAt) {
@@ -3217,6 +3259,9 @@ func TestPreviewAccountSelectionInRoutingPoolScopesCandidatesAndStickyBinding(t 
 		}
 		if candidate.Schedulable != expected.schedulable || candidate.Selected != expected.selected || candidate.Priority != expected.priority || candidate.UnschedulableReason != expected.reason {
 			t.Fatalf("candidate %d = schedulable:%v selected:%v priority:%d reason:%q, want schedulable:%v selected:%v priority:%d reason:%q", candidate.ID, candidate.Schedulable, candidate.Selected, candidate.Priority, candidate.UnschedulableReason, expected.schedulable, expected.selected, expected.priority, expected.reason)
+		}
+		if candidate.ID == 2 && candidate.ScheduleReason != "reused sticky session binding for pool priority 20, global account priority 10, load factor 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 2" {
+			t.Fatalf("pool candidate ScheduleReason = %q, want pool and global account tiers", candidate.ScheduleReason)
 		}
 		delete(want, candidate.ID)
 	}

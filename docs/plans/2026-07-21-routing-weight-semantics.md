@@ -1,19 +1,23 @@
 # Routing Weight Semantics Plan
 
-Status: decision required before behavior change
+Status: Task 1 locally completed; Task 2 owner decision required before behavior change
 Public API changes: labels/explanation first; scheduler behavior only after owner approval
 Data migration: optional field rename or scheduler state
 
 ## Current Baseline
 
-Provider repository queries and routing-preview sorting order lower `priority`
-first, then higher `load_factor`, healthy/never-used/least-recently-used, then ID.
-`stickySessionHashCandidates` only hashes within an exactly equal priority,
-load-factor, and error group. Therefore `load_factor` is a scheduling preference
-tier, not a proportional request weight. A high value can continuously precede
-lower values inside the same priority.
+Provider repository queries and routing-preview sorting order lower pool
+membership priority when scoped, lower account/global priority, higher
+`load_factor`, no-recent-error before recent-error, never-used or
+least-recently-used, then ID. `stickySessionHashCandidates` only hashes within
+the highest exactly equal pool priority, account/global priority, load-factor,
+and recent-error group. Therefore `load_factor` is a scheduling preference tier,
+not a proportional request weight. A high value can continuously precede lower
+values inside the same priority.
 
 ## Task 1: Document And Measure Existing Semantics
+
+Status: locally completed on 2026-07-21
 
 ### Goal
 
@@ -41,11 +45,25 @@ sequences. Routing Preview must explain the selected tier and tie breaker.
 Tests prove the current algorithm and documentation no longer implies weighted
 distribution.
 
+### Local Completion Evidence
+
+- Existing focused tests cover account priority, load factor, least-recently-used
+  ordering, recent errors, concurrency exclusion and retry, sticky bindings and
+  hashes, pool membership priority, fallback chains, and recovered accounts.
+- A deterministic 10,000-session preview baseline proves that a lower
+  load-factor tier receives zero selections while two accounts in the equal
+  highest tier are stably distributed by the existing FNV session hash.
+- Routing Preview schedule reasons now expose the actual pool/global priority,
+  load-factor, recent-error, least-recently-used, account-ID, and sticky
+  tie-breakers without changing scheduler behavior.
+
 ### Commit
 
 `docs(routing): clarify load factor scheduling semantics`
 
 ## Task 2: Choose Rename Or Weighted Scheduling
+
+Status: owner decision required
 
 ### Goal
 
