@@ -74,6 +74,27 @@ one-minute window while throttling is enabled. The event uses a fixed
 administrator target; usernames, passwords, and request bodies are never stored
 in those events.
 
+## Browser Request Security
+
+N2API rejects unsafe browser requests that carry the administrator session
+cookie unless `Origin` matches the trusted external request origin and Fetch
+Metadata, when present, reports `Sec-Fetch-Site: same-origin`. Requests from
+scripts and CLI tools remain compatible when they omit both browser headers.
+The logout endpoint applies the same browser checks even when no session cookie
+is present, because its response still changes browser cookie state.
+Configure `N2API_PUBLIC_URL` or `N2API_TRUSTED_PROXY_CIDRS` correctly so N2API
+can derive the external scheme and host without trusting client-supplied proxy
+headers.
+
+All responses include MIME sniffing, referrer, permissions, framing, and Content
+Security Policy headers. HSTS is emitted only when the trusted external scheme
+is HTTPS. Admin API and OAuth callback responses use `Cache-Control: no-store`.
+The CSP permits only same-origin resources and `data:` images. SvelteKit emits
+build-specific SHA-256 hashes for the static bootstrap script and generated
+style elements. Inline style attributes and the manual OAuth callback style
+remain allowed because the current UI requires them; remote scripts are not
+allowed.
+
 ## Published Images
 
 The `CI Image` workflow tests every pull request without publishing an image.

@@ -23,6 +23,7 @@ const readText = await preloadTextFiles([
   ...expectedFiles,
   'src/app.css',
   'src/app.html',
+  'svelte.config.js',
   '../DESIGN.md',
   '../README.md'
 ]);
@@ -48,6 +49,7 @@ const adminState = readText('src/lib/admin-state.svelte.js');
 const authGate = readText('src/lib/AuthGate.svelte');
 const uiStyles = readText('src/app.css');
 const appHtml = readText('src/app.html');
+const svelteConfig = readText('svelte.config.js');
 const designSystem = readText('../DESIGN.md');
 const readme = readText('../README.md');
 
@@ -56,6 +58,12 @@ test('brand assets provide the README logo and website favicon', () => {
   assert.equal(fileExists('static/favicon.svg'), true, 'favicon should exist');
   assert.match(appHtml, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg" \/>/);
   assert.match(readme, /frontend\/static\/n2api-logo\.svg/);
+});
+
+test('static frontend uses hash-based content security policy', () => {
+  assert.match(svelteConfig, /mode:\s*'hash'/);
+  assert.match(svelteConfig, /'script-src':\s*\['self'\]/);
+  assert.match(svelteConfig, /'style-src-attr':\s*\['unsafe-inline'\]/);
 });
 
 test('admin UI has focused routes behind a shared sidebar shell', () => {

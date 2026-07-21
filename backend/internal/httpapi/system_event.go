@@ -16,9 +16,13 @@ type SystemEventRecorder interface {
 }
 
 func withSystemEventRequestContext(mux *http.ServeMux, recorder SystemEventRecorder) http.Handler {
+	return withSystemEventRequestContextAround(mux, mux, recorder)
+}
+
+func withSystemEventRequestContextAround(routes *http.ServeMux, next http.Handler, recorder SystemEventRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := systemevent.NormalizeCorrelationID(r.Header.Get("X-Request-ID"))
-		_, pattern := mux.Handler(r)
+		_, pattern := routes.Handler(r)
 		request := systemevent.RequestContext{
 			CorrelationID: requestID,
 			SourceIP:      requestInfoForRequest(r).ClientIP,
@@ -30,7 +34,7 @@ func withSystemEventRequestContext(mux *http.ServeMux, recorder SystemEventRecor
 		// The recorder is intentionally carried as a server option for HTTP-only
 		// security events. Ordinary request middleware never fabricates events.
 		_ = recorder
-		mux.ServeHTTP(w, r.WithContext(systemevent.WithRequestContext(r.Context(), request)))
+		next.ServeHTTP(w, r.WithContext(systemevent.WithRequestContext(r.Context(), request)))
 	})
 }
 

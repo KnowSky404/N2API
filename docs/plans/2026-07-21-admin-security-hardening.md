@@ -148,6 +148,8 @@ verification, and one global failure event per aggregation window.
 
 ## Task 3: Add Browser Request Policy And Security Headers
 
+Status: completed
+
 ### Goal
 
 Protect cookie-authenticated mutations and consistently harden browser responses.
@@ -160,6 +162,7 @@ Task 1 for trusted external origin derivation.
 
 - Create: `backend/internal/httpapi/security_middleware.go`, tests
 - Modify: `backend/internal/httpapi/server.go`
+- Modify: `frontend/svelte.config.js`, frontend source-contract tests
 - Test: static UI, OAuth callback, admin mutation, export, and SSE handlers
 - Migrate: none
 - Document: `docs/manual.md`

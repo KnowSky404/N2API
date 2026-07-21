@@ -1599,7 +1599,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		_, _ = w.Write([]byte("N2API bootstrap server\n"))
 	})
 
-	return withRequestInfo(withSystemEventRequestContext(mux, systemEvents), cfg.TrustedProxyCIDRs, cfg.PublicURL)
+	secured := withBrowserSecurity(mux)
+	contextual := withSystemEventRequestContextAround(mux, secured, systemEvents)
+	return withRequestInfo(contextual, cfg.TrustedProxyCIDRs, cfg.PublicURL)
 }
 
 func recordLoginFailureEvent(ctx context.Context, recorder SystemEventRecorder, errorCode string, statusCode int, started time.Time) {
