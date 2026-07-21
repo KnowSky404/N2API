@@ -173,6 +173,40 @@ document reports
 `unsupportedSections: ["alertRules", "alertActions"]` rather than presenting
 that dependency as complete.
 
+The alerting extension completes portable format v1 without exporting a usable
+delivery destination. Each `alertActions` entry has a file-local
+`alert_action:<id>` reference plus `name`, `kind`, `enabled`, and
+`destinationConfigured: true`. It does not include a `destination` placeholder
+that a future importer could mistake for an endpoint. The snapshot query never
+selects `encrypted_destination`, test results, delivery state, timestamps, or
+runtime errors. The configured flag makes the missing operator-supplied
+destination explicit for a future import while revealing neither ciphertext nor
+endpoint shape.
+
+Each `alertRules` entry has a file-local `alert_rule:<id>` reference and an
+`actionRef` that must resolve to an exported action. It includes only the
+portable rule definition: template key, name, enabled state, category,
+severity, trigger and recovery actions, aggregation count/window, cooldown,
+deduplication scope, and recovery-notification flag. Persisted matcher state,
+cooldown timestamps, delivery attempts, and created/updated timestamps are not
+portable configuration.
+
+Both lists are read and reference-validated inside the existing repeatable-read,
+read-only transaction and use deterministic name/ID ordering. Every configured
+rule and action is exported, including disabled rows, because omitting a
+referenced disabled action would break snapshot closure. Once this slice lands,
+`unsupportedSections` is an empty array, `redactions` continues to name
+`alertActionDestinations`, and the successful export event adds bounded action
+and rule counts. Format version remains 1 because these sections were explicitly
+declared unsupported rather than previously assigned a conflicting shape.
+
+Focused tests must prove reference closure, empty/non-empty deterministic
+arrays, exact DTO fields, no encrypted destination column in export queries,
+the absence of a destination field, no known destination canary in serialized
+JSON, updated audit counts, and removal of both unsupported-section markers.
+Snapshot failure, attachment-size, authentication, and fail-closed audit
+behavior remain unchanged.
+
 ### Completion Criteria
 
 Automated tests prove no sensitive column or known secret appears in output.
