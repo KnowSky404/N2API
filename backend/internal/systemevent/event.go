@@ -122,6 +122,12 @@ const (
 	ActionProviderAccountRateLimited         Action = "provider_account.rate_limited"
 	ActionProviderAccountExpired             Action = "provider_account.expired"
 	ActionProviderAccountRecovered           Action = "provider_account.recovered"
+	ActionAlertActionCreated                 Action = "alert_action.created"
+	ActionAlertActionUpdated                 Action = "alert_action.updated"
+	ActionAlertActionDeleted                 Action = "alert_action.deleted"
+	ActionAlertRuleCreated                   Action = "alert_rule.created"
+	ActionAlertRuleUpdated                   Action = "alert_rule.updated"
+	ActionAlertRuleDeleted                   Action = "alert_rule.deleted"
 )
 
 const (
@@ -431,4 +437,6 @@ var knownActions = map[Action]struct{}{
 	ActionSchedulerAPIKeyPurgeCompleted: {}, ActionSchedulerEventRetentionCompleted: {},
 	ActionSchedulerRequestLogRetentionSucceeded: {}, ActionSchedulerRequestLogRetentionFailed: {}, ActionProviderAccountCircuitOpened: {},
 	ActionProviderAccountRateLimited: {}, ActionProviderAccountExpired: {}, ActionProviderAccountRecovered: {},
+	ActionAlertActionCreated: {}, ActionAlertActionUpdated: {}, ActionAlertActionDeleted: {},
+	ActionAlertRuleCreated: {}, ActionAlertRuleUpdated: {}, ActionAlertRuleDeleted: {},
 }

@@ -661,11 +661,42 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 39 {
-		t.Fatalf("migration sources = %d, want 39", len(sources))
+	if len(sources) != 40 {
+		t.Fatalf("migration sources = %d, want 40", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[38].Path != "00039_request_log_index_rationalization.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[39].Path != "00040_alerting.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestAlertingMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00040_alerting.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS alert_actions",
+		"CREATE TABLE IF NOT EXISTS alert_rules",
+		"CREATE TABLE IF NOT EXISTS alert_rule_states",
+		"REFERENCES alert_actions(id) ON DELETE RESTRICT",
+		"REFERENCES alert_rules(id) ON DELETE CASCADE",
+		"alert_rules_action_id_idx",
+		"alert_rule_states_idle_eviction_idx",
+		"WHERE phase = 'idle'",
+		"PRIMARY KEY (rule_id, deduplication_key_hash)",
+		"cooldown_seconds INTEGER NOT NULL DEFAULT 300",
+		"alert_rules_distinct_actions_check",
+		"DROP TABLE IF EXISTS alert_actions",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+	if count := strings.Count(sql, "octet_length(name) <= 128"); count != 2 {
+		t.Fatalf("migration name byte-length constraints = %d, want 2", count)
+	}
+	if strings.Contains(sql, "alert_rule_states_rule_id_idx") {
+		t.Fatal("migration contains redundant rule state foreign-key index")
 	}
 }
 

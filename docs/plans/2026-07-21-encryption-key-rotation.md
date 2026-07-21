@@ -11,7 +11,7 @@ secret material. New writes use an authenticated
 `n2api:v1:<key-id>:<secret-kind>:<payload>` envelope while reads retain legacy
 raw-base64 compatibility. Provider
 access/refresh/ID tokens, API-upstream keys, reusable client key secrets, proxy
-credentials, and future webhook secrets depend on this reversible encryption.
+credentials, and alert action destinations depend on this reversible encryption.
 
 ## Task 1: Introduce A Backward-compatible Ciphertext Envelope
 
@@ -106,17 +106,17 @@ The command accounts for every reversible secret class and exits nonzero on
 any unreadable value.
 
 The local implementation uses one fixed, ordered PostgreSQL query to include
-all seven non-empty credential columns, including expired OAuth states,
+all eight non-empty secret columns, including expired OAuth states,
 disabled providers, and revoked client keys. The read-only command runs before
 server startup and does not migrate, bootstrap, or mutate the database. Its
-deterministic JSON always includes all seven types, verified counts, and only
+deterministic JSON always includes all eight types, verified counts, and only
 authenticated key IDs grouped by legacy or v1 format. Unreadable entries expose
 only table, credential type, stable numeric row ID, and the `unreadable` status;
 raw errors, plaintext, and ciphertext are never emitted. Exit codes distinguish
 verified (`0`), unreadable rows (`1`), and usage/infrastructure failure (`2`).
 
 Local tests cover current and previous v1 envelopes, the actual key that opens
-a legacy value, all seven classes, zero-count classes, deterministic ordering,
+a legacy value, all eight classes, zero-count classes, deterministic ordering,
 unreadable-row redaction, query coverage, stable row IDs, CLI dispatch, and
 secret-safe errors. No migration or data rewrite is part of this task.
 
@@ -131,8 +131,8 @@ operator-backup restore acceptance. The 2026-07-21 development-stack inventory
 found 14 unreadable values with the currently configured keyring: eight OAuth
 code verifiers, one access token, one refresh token, one ID token, one provider
 API key, and two reusable client-key secrets. No proxy value was present and no
-database value was modified. Do not infer, replace, or remove key material to
-bypass this gate.
+alert action destination was present; no database value was modified. Do not
+infer, replace, or remove key material to bypass this gate.
 
 ### Goal
 

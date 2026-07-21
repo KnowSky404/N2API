@@ -432,15 +432,16 @@ docker compose -f deploy/compose.yaml exec -T n2api \
 
 `verify-encryption` is a read-only dry run. It does not run migrations,
 bootstrap an administrator, rewrite credentials, or start HTTP/background
-services. Its single JSON document always contains all seven credential types,
+services. Its single JSON document always contains all eight credential types,
 including zero-count types. Counts cover OAuth code verifiers; provider access,
 refresh, and ID tokens; provider API keys and proxy URLs; and reusable client
-API-key secrets. Authenticated key IDs are grouped by `v1` or `legacy` format.
+API-key secrets and alert action destinations. Authenticated key IDs are grouped
+by `v1` or `legacy` format.
 For legacy values, the reported ID is the key that actually decrypted the
 value, not an inferred default.
 
 The shortened example below shows one type entry and one failure shape; actual
-output is never abbreviated and always includes all seven type entries.
+output is never abbreviated and always includes all eight type entries.
 
 ```json
 {
@@ -473,6 +474,26 @@ verified (including an empty database), `1` means the complete report contains
 one or more unreadable rows, and `2` means command usage, configuration,
 database access, query, or output failed. Do not begin re-encryption while any
 row is unreadable or before the backup restore drill succeeds.
+
+### Alert Rule Storage
+
+The database stores notification actions and exact-match System Event rules for
+future bounded delivery. Action destinations use the
+dedicated `alert-action-destination` encryption kind; action and rule reads
+return only whether a destination is configured, never its plaintext or
+ciphertext. Supported action records are `generic_webhook` and `ntfy`. Rules can
+filter by category, severity, and action, aggregate within a fixed window,
+apply a cooldown, deduplicate by rule or event target, and optionally recognize
+one explicit recovery action.
+
+Each rule is limited to 1024 deduplication states. When the limit is reached,
+only the oldest idle state may be evicted; active firing state is never silently
+discarded. Event evaluation and state admission are serialized per rule so
+concurrent events cannot lose aggregation counts or duplicate a notification
+decision. Updating a rule atomically clears its prior aggregation and firing
+state. The schema creates no action or rule by default. This storage layer does
+not start a dispatcher, send network requests, or expose an Admin API/UI; those
+behaviors remain separate alerting tasks.
 
 Changing `N2API_ENCRYPTION_SECRET` invalidates existing Request Log and System
 Event cursors because those cursor signatures intentionally use only the current
@@ -664,9 +685,10 @@ replaced with `[redacted]`, including values that do not look sensitive.
 The export never contains administrator or session state, OAuth state or
 subjects, provider credentials, proxy URLs, client API key hashes, prefixes or
 encrypted reusable secrets, request logs, system events, provider test history,
-or runtime failure state. Alert rule and action schemas do not exist yet, so
-version 1 reports `unsupportedSections: ["alertRules", "alertActions"]` instead
-of claiming that they were exported or redacted.
+or runtime failure state. Alert rule and action schemas exist, but portable
+format version 1 intentionally omits them and reports
+`unsupportedSections: ["alertRules", "alertActions"]` instead of claiming that
+they were exported or redacted.
 
 Portable configuration is a review and migration aid, not a complete backup
 and not currently importable. PostgreSQL remains the authoritative recovery

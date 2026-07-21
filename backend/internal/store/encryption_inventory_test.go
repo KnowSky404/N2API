@@ -17,6 +17,7 @@ func TestEncryptionInventoryQueryCoversEveryCredentialClass(t *testing.T) {
 		"encrypted_api_key", string(secret.SecretKindProviderAPIKey),
 		"encrypted_proxy_url", string(secret.SecretKindProviderProxyURL),
 		"client_api_keys", "encrypted_secret", string(secret.SecretKindClientAPIKey),
+		"alert_actions", "encrypted_destination", string(secret.SecretKindAlertActionDestination),
 		"ORDER BY class_order, row_id",
 	} {
 		if !strings.Contains(encryptionInventoryQuery, want) {
@@ -68,17 +69,30 @@ func TestEncryptionInventoryRepositoryListsAllCredentialClasses(t *testing.T) {
 		t.Fatalf("insert client key: %v", err)
 	}
 
+	var actionID int64
+	err = adminRepo.pool.QueryRow(ctx, `
+		INSERT INTO alert_actions (name, kind, encrypted_destination)
+		VALUES ('inventory-alert', 'generic_webhook', 'alert-destination-ciphertext')
+		RETURNING id
+	`).Scan(&actionID)
+	if err != nil {
+		t.Fatalf("insert alert action: %v", err)
+	}
+
 	values, err := NewEncryptionInventoryRepository(adminRepo.pool).ListEncryptedValues(ctx)
 	if err != nil {
 		t.Fatalf("ListEncryptedValues returned error: %v", err)
 	}
-	if len(values) != 7 {
-		t.Fatalf("value count = %d, want 7: %+v", len(values), values)
+	if len(values) != 8 {
+		t.Fatalf("value count = %d, want 8: %+v", len(values), values)
 	}
 	if values[0].RowID != stateID || values[0].Type != secret.SecretKindOAuthCodeVerifier {
 		t.Fatalf("first value = %+v, want oauth state %d", values[0], stateID)
 	}
 	if values[6].RowID != keyID || values[6].Type != secret.SecretKindClientAPIKey {
-		t.Fatalf("last value = %+v, want client key %d", values[6], keyID)
+		t.Fatalf("seventh value = %+v, want client key %d", values[6], keyID)
+	}
+	if values[7].RowID != actionID || values[7].Type != secret.SecretKindAlertActionDestination {
+		t.Fatalf("last value = %+v, want alert action %d", values[7], actionID)
 	}
 }

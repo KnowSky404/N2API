@@ -1,18 +1,21 @@
 # System Event Alerting Plan
 
-Status: planned after security, retention, and task-status foundations
+Status: in progress; Task 1 completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
 ## Current Baseline
 
-System Events already provide validated categories, severities, outcomes,
-bounded metadata, audit context, filters, a signed cursor, and retention. There
-is no notification rule/action model. Provider failures, budgets, routing
-exhaustion, cleanup, and runtime operations already generate many of the source
-signals that alerting should consume.
+System Events provide validated categories, severities, outcomes, bounded
+metadata, audit context, filters, a signed cursor, and retention. Notification
+actions, exact-match rules, and bounded per-rule state now persist without
+starting delivery. Provider failures, budgets, routing exhaustion, cleanup, and
+runtime operations already generate many of the source signals that alerting
+should consume.
 
 ## Task 1: Define Rules And Delivery Actions
+
+Task status: completed locally on 2026-07-21
 
 ### Goal
 
@@ -36,6 +39,17 @@ Model severity/category/action filters, aggregation window, cooldown,
 deduplication key, recovery notification, enabled state, and one encrypted
 action destination. Start with Generic Webhook plus either ntfy or Gotify;
 Telegram/Slack/Discord adapters follow as separate commits.
+
+The local implementation selects ntfy alongside Generic Webhook. Destinations
+use a dedicated authenticated encryption kind and are redacted from every
+returned action. Rules support exact category, severity, trigger-action, and
+explicit recovery-action fields; aggregation and cooldown boundaries; rule- or
+target-scoped SHA-256 deduplication; and at most 1024 persisted states per rule.
+The store serializes event evaluation and new-state admission by locking the
+rule, evicts only the oldest idle state at capacity, and refuses admission when
+every state is firing. A rule update clears its previous aggregation and firing
+state in the same transaction. No default rules, dispatcher, outbound request,
+Admin API, or UI are part of this task.
 
 ### Tests And Verification
 

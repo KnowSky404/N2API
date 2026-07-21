@@ -111,3 +111,18 @@ func TestConfigurationExportActionIsKnown(t *testing.T) {
 		t.Fatalf("action %q is not registered", ActionConfigurationExported)
 	}
 }
+
+func TestAlertingCRUDActionsAreKnown(t *testing.T) {
+	for _, action := range []Action{
+		ActionAlertActionCreated,
+		ActionAlertActionUpdated,
+		ActionAlertActionDeleted,
+		ActionAlertRuleCreated,
+		ActionAlertRuleUpdated,
+		ActionAlertRuleDeleted,
+	} {
+		if !IsKnownAction(action) {
+			t.Fatalf("action %q is not registered", action)
+		}
+	}
+}

@@ -24,6 +24,7 @@ func TestVerifyAccountsForEveryEncryptedCredentialClass(t *testing.T) {
 	legacy := legacyCiphertextFixture
 	previous := mustEncryptFor(t, keyring, secret.SecretKindOAuthRefreshToken, "previous-refresh-token")
 	current := mustEncryptFor(t, keyring, secret.SecretKindOAuthAccessToken, "current-access-token")
+	alertDestination := mustEncryptFor(t, keyring, secret.SecretKindAlertActionDestination, "https://alerts.example.test/topic")
 
 	repo := memoryRepository{values: []EncryptedValue{
 		{Table: "provider_account_credentials", Type: secret.SecretKindOAuthRefreshToken, RowID: 20, Ciphertext: previous},
@@ -34,17 +35,18 @@ func TestVerifyAccountsForEveryEncryptedCredentialClass(t *testing.T) {
 		{Table: "provider_account_credentials", Type: secret.SecretKindProviderProxyURL, RowID: 21, Ciphertext: legacy},
 		{Table: "client_api_keys", Type: secret.SecretKindClientAPIKey, RowID: 30, Ciphertext: legacy},
 		{Table: "client_api_keys", Type: secret.SecretKindClientAPIKey, RowID: 31, Ciphertext: ""},
+		{Table: "alert_actions", Type: secret.SecretKindAlertActionDestination, RowID: 40, Ciphertext: alertDestination},
 	}}
 
 	report, err := Verify(context.Background(), repo, keyring)
 	if err != nil {
 		t.Fatalf("Verify returned error: %v", err)
 	}
-	if report.Status != StatusOK || report.Totals != (Totals{Values: 7, Verified: 7}) {
-		t.Fatalf("report summary = %+v, want seven verified values", report)
+	if report.Status != StatusOK || report.Totals != (Totals{Values: 8, Verified: 8}) {
+		t.Fatalf("report summary = %+v, want eight verified values", report)
 	}
-	if len(report.Types) != 7 {
-		t.Fatalf("type count = %d, want 7", len(report.Types))
+	if len(report.Types) != 8 {
+		t.Fatalf("type count = %d, want 8", len(report.Types))
 	}
 	for _, typeReport := range report.Types {
 		if typeReport.Values != 1 || typeReport.Verified != 1 || typeReport.Failed != 0 {
@@ -106,7 +108,7 @@ func TestVerifyKeepsEmptyCredentialClassesAndDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify returned error: %v", err)
 	}
-	if report.Status != StatusOK || report.Totals != (Totals{}) || len(report.Types) != 7 || len(report.Failures) != 0 {
+	if report.Status != StatusOK || report.Totals != (Totals{}) || len(report.Types) != 8 || len(report.Failures) != 0 {
 		t.Fatalf("empty report = %+v", report)
 	}
 	wants := []secret.SecretKind{
@@ -117,6 +119,7 @@ func TestVerifyKeepsEmptyCredentialClassesAndDeterministicOrder(t *testing.T) {
 		secret.SecretKindProviderAPIKey,
 		secret.SecretKindProviderProxyURL,
 		secret.SecretKindClientAPIKey,
+		secret.SecretKindAlertActionDestination,
 	}
 	for index, want := range wants {
 		if report.Types[index].Type != want {

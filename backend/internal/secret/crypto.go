@@ -34,14 +34,15 @@ type SecretKind string
 type CiphertextFormat string
 
 const (
-	SecretKindGeneric           SecretKind = "generic"
-	SecretKindClientAPIKey      SecretKind = "client-api-key"
-	SecretKindOAuthCodeVerifier SecretKind = "oauth-code-verifier"
-	SecretKindProviderAPIKey    SecretKind = "provider-api-key"
-	SecretKindProviderProxyURL  SecretKind = "provider-proxy-url"
-	SecretKindOAuthAccessToken  SecretKind = "oauth-access-token"
-	SecretKindOAuthRefreshToken SecretKind = "oauth-refresh-token"
-	SecretKindOAuthIDToken      SecretKind = "oauth-id-token"
+	SecretKindGeneric                SecretKind = "generic"
+	SecretKindClientAPIKey           SecretKind = "client-api-key"
+	SecretKindOAuthCodeVerifier      SecretKind = "oauth-code-verifier"
+	SecretKindProviderAPIKey         SecretKind = "provider-api-key"
+	SecretKindProviderProxyURL       SecretKind = "provider-proxy-url"
+	SecretKindOAuthAccessToken       SecretKind = "oauth-access-token"
+	SecretKindOAuthRefreshToken      SecretKind = "oauth-refresh-token"
+	SecretKindOAuthIDToken           SecretKind = "oauth-id-token"
+	SecretKindAlertActionDestination SecretKind = "alert-action-destination"
 
 	CiphertextFormatV1     CiphertextFormat = "v1"
 	CiphertextFormatLegacy CiphertextFormat = "legacy"
@@ -362,7 +363,8 @@ func validSecretKind(kind SecretKind) bool {
 		SecretKindProviderProxyURL,
 		SecretKindOAuthAccessToken,
 		SecretKindOAuthRefreshToken,
-		SecretKindOAuthIDToken:
+		SecretKindOAuthIDToken,
+		SecretKindAlertActionDestination:
 		return true
 	default:
 		return false

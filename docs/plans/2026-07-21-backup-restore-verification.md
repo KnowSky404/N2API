@@ -140,7 +140,7 @@ real-backup recovery gate. No real operator drill is claimed by this task.
 ## Task 3: Export Non-sensitive Configuration
 
 Status: core format v1 completed locally on 2026-07-21; alert rules and actions
-are explicitly deferred until an alert schema exists.
+remain explicitly deferred from portable format v1.
 
 ### Goal
 
@@ -168,7 +168,8 @@ explicit export DTOs. It emits file-local references for relationships, strips
 userinfo/query/fragment from API-upstream base URLs, redacts every fingerprint
 custom-header value, excludes revoked API keys, caps the attachment at 5 MiB,
 and records the successful security audit event before sending the body. The
-current schema has no alert rule or action tables, so the document reports
+current portable format does not export alert rule or action tables, so the
+document reports
 `unsupportedSections: ["alertRules", "alertActions"]` rather than presenting
 that dependency as complete.
 

@@ -74,6 +74,7 @@ var credentialClasses = []credentialClass{
 	{table: "provider_account_credentials", kind: secret.SecretKindProviderAPIKey},
 	{table: "provider_account_credentials", kind: secret.SecretKindProviderProxyURL},
 	{table: "client_api_keys", kind: secret.SecretKindClientAPIKey},
+	{table: "alert_actions", kind: secret.SecretKindAlertActionDestination},
 }
 
 type keyCountKey struct {

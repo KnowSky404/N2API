@@ -291,6 +291,31 @@ func TestKeyringRejectsCrossKindEnvelopeSubstitution(t *testing.T) {
 	}
 }
 
+func TestKeyringEncryptsAlertActionDestinationWithDedicatedKind(t *testing.T) {
+	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "current-encryption-secret-at-least-32-bytes"}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+
+	encrypted, err := keyring.EncryptStringFor(SecretKindAlertActionDestination, "https://example.test/topic?token=canary")
+	if err != nil {
+		t.Fatalf("EncryptStringFor returned error: %v", err)
+	}
+	if !strings.HasPrefix(encrypted, "n2api:v1:current:alert-action-destination:") {
+		t.Fatalf("encrypted destination has unexpected envelope: %q", encrypted)
+	}
+	decrypted, err := keyring.DecryptStringFor(SecretKindAlertActionDestination, encrypted)
+	if err != nil {
+		t.Fatalf("DecryptStringFor returned error: %v", err)
+	}
+	if decrypted != "https://example.test/topic?token=canary" {
+		t.Fatalf("decrypted destination = %q", decrypted)
+	}
+	if _, err := keyring.DecryptStringFor(SecretKindProviderProxyURL, encrypted); err == nil {
+		t.Fatal("DecryptStringFor accepted an alert destination as a provider proxy URL")
+	}
+}
+
 func TestKeyringVerificationReportsAuthenticatedFormatAndActualKey(t *testing.T) {
 	keyring, err := NewKeyring(
 		EncryptionKey{ID: "current", Secret: "current-encryption-secret"},

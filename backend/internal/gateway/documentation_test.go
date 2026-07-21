@@ -970,11 +970,12 @@ func TestEncryptionInventoryDocumentationMatchesRuntimeContract(t *testing.T) {
 			"Tasks 1-2 completed locally on 2026-07-21",
 			"Task status: completed locally on 2026-07-21",
 			"operator backup and isolated",
-			"all seven non-empty credential columns",
+			"all eight non-empty secret columns",
 			"No migration or data rewrite is part of this task",
 			"Task status: blocked locally on the correct historical keyring",
 			"found 14 unreadable values",
 			"No proxy value was present and no",
+			"alert action destination was present",
 			"database value was modified",
 		},
 	}
@@ -988,6 +989,36 @@ func TestEncryptionInventoryDocumentationMatchesRuntimeContract(t *testing.T) {
 		for _, want := range wants {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in encryption-inventory contract", path, want)
+			}
+		}
+	}
+}
+
+func TestAlertingStorageDocumentationMatchesRuntimeContract(t *testing.T) {
+	checks := map[string][]string{
+		"../../../docs/manual.md": {
+			"alert-action-destination",
+			"`generic_webhook` and `ntfy`",
+			"Each rule is limited to 1024 deduplication states",
+			"Event evaluation and state admission are serialized per rule",
+			"not start a dispatcher, send network requests, or expose an Admin API/UI",
+		},
+		"../../../docs/plans/2026-07-21-system-event-alerting.md": {
+			"Task status: completed locally on 2026-07-21",
+			"oldest idle state at capacity",
+			"No default rules, dispatcher, outbound request",
+		},
+	}
+
+	for path, wants := range checks {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in alerting storage contract", path, want)
 			}
 		}
 	}

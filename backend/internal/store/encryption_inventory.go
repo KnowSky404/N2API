@@ -57,6 +57,17 @@ const encryptionInventoryQuery = `
 			encrypted_secret AS ciphertext
 		FROM client_api_keys
 		WHERE encrypted_secret <> ''
+
+		UNION ALL
+
+		SELECT
+			8 AS class_order,
+			'alert_actions'::text AS table_name,
+			'alert-action-destination'::text AS secret_type,
+			id AS row_id,
+			encrypted_destination AS ciphertext
+		FROM alert_actions
+		WHERE encrypted_destination <> ''
 	) AS encrypted_values
 	ORDER BY class_order, row_id
 `
