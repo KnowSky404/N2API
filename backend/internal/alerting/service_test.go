@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 8 {
-		t.Fatalf("RuleTemplates count = %d, want 8", len(templates))
+	if len(templates) != 9 {
+		t.Fatalf("RuleTemplates count = %d, want 9", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey || templates[7].Key != RoutingPoolExhaustedTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey || templates[7].Key != RoutingPoolExhaustedTemplateKey || templates[8].Key != APIKeyPurgeFailedTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -645,6 +645,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		routingExhaustedTemplate.DeduplicationScope != DeduplicationScopeTarget || !routingExhaustedTemplate.NotifyRecovery {
 		t.Fatalf("routing exhaustion template = %+v", routingExhaustedTemplate)
 	}
+	apiKeyPurgeFailedTemplate := templates[8]
+	if apiKeyPurgeFailedTemplate.Name != "API key purge failures" || apiKeyPurgeFailedTemplate.Enabled ||
+		apiKeyPurgeFailedTemplate.Category != systemevent.CategoryScheduler || apiKeyPurgeFailedTemplate.Severity != systemevent.SeverityError ||
+		apiKeyPurgeFailedTemplate.EventAction != systemevent.ActionSchedulerAPIKeyPurgeFailed || apiKeyPurgeFailedTemplate.RecoveryAction != systemevent.ActionSchedulerAPIKeyPurgeCompleted ||
+		apiKeyPurgeFailedTemplate.AggregationCount != 1 || apiKeyPurgeFailedTemplate.AggregationWindowSeconds != 0 || apiKeyPurgeFailedTemplate.CooldownSeconds != 86400 ||
+		apiKeyPurgeFailedTemplate.DeduplicationScope != DeduplicationScopeTarget || !apiKeyPurgeFailedTemplate.NotifyRecovery {
+		t.Fatalf("API key purge failure template = %+v", apiKeyPurgeFailedTemplate)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -706,6 +714,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	routingAgain, created, err := service.InstallRuleTemplate(context.Background(), RoutingPoolExhaustedTemplateKey, 53)
 	if err != nil || created || routingAgain.ID != routingRule.ID || routingAgain.ActionID != 47 {
 		t.Fatalf("routing exhaustion reinstall = %+v, %v, %v", routingAgain, created, err)
+	}
+	apiKeyPurgeRule, created, err := service.InstallRuleTemplate(context.Background(), APIKeyPurgeFailedTemplateKey, 59)
+	if err != nil || !created || apiKeyPurgeRule.TemplateKey != APIKeyPurgeFailedTemplateKey || apiKeyPurgeRule.ActionID != 59 || apiKeyPurgeRule.Enabled {
+		t.Fatalf("API key purge failure InstallRuleTemplate = %+v, %v, %v", apiKeyPurgeRule, created, err)
+	}
+	apiKeyPurgeAgain, created, err := service.InstallRuleTemplate(context.Background(), APIKeyPurgeFailedTemplateKey, 61)
+	if err != nil || created || apiKeyPurgeAgain.ID != apiKeyPurgeRule.ID || apiKeyPurgeAgain.ActionID != 59 {
+		t.Fatalf("API key purge failure reinstall = %+v, %v, %v", apiKeyPurgeAgain, created, err)
 	}
 	for _, input := range []struct {
 		key      string

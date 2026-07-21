@@ -103,12 +103,21 @@ func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
 	var catalog struct {
 		Templates []alerting.RuleTemplate `json:"templates"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 8 ||
+	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 9 ||
 		catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey || catalog.Templates[1].Key != alerting.RequestLogRetentionFailedTemplateKey ||
 		catalog.Templates[2].Key != alerting.ProviderAutoTestFailedTemplateKey || catalog.Templates[3].Key != alerting.ProviderAccountExpiredTemplateKey ||
 		catalog.Templates[4].Key != alerting.ProviderAccountCircuitOpenTemplateKey || catalog.Templates[5].Key != alerting.APIKeyBudget80PercentTemplateKey ||
-		catalog.Templates[6].Key != alerting.APIKeyBudget100PercentTemplateKey || catalog.Templates[7].Key != alerting.RoutingPoolExhaustedTemplateKey {
+		catalog.Templates[6].Key != alerting.APIKeyBudget100PercentTemplateKey || catalog.Templates[7].Key != alerting.RoutingPoolExhaustedTemplateKey ||
+		catalog.Templates[8].Key != alerting.APIKeyPurgeFailedTemplateKey {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
+	}
+	apiKeyPurgeTemplate := catalog.Templates[8]
+	if apiKeyPurgeTemplate.Name != "API key purge failures" || apiKeyPurgeTemplate.Enabled ||
+		apiKeyPurgeTemplate.Category != systemevent.CategoryScheduler || apiKeyPurgeTemplate.Severity != systemevent.SeverityError ||
+		apiKeyPurgeTemplate.EventAction != systemevent.ActionSchedulerAPIKeyPurgeFailed || apiKeyPurgeTemplate.RecoveryAction != systemevent.ActionSchedulerAPIKeyPurgeCompleted ||
+		apiKeyPurgeTemplate.AggregationCount != 1 || apiKeyPurgeTemplate.AggregationWindowSeconds != 0 || apiKeyPurgeTemplate.CooldownSeconds != 86400 ||
+		apiKeyPurgeTemplate.DeduplicationScope != alerting.DeduplicationScopeTarget || !apiKeyPurgeTemplate.NotifyRecovery {
+		t.Fatalf("API key purge template=%+v", apiKeyPurgeTemplate)
 	}
 
 	service.rule.TemplateKey = alerting.RequestLogRetentionFailedTemplateKey

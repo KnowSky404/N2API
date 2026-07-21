@@ -611,6 +611,13 @@ Normal shutdown cancellation emits no failure. Every successful cycle,
 including a zero-row cycle, commits `scheduler.api_key_purge.completed` with the
 purge transaction; that completion is the recovery signal for custom rules.
 
+The `api-key-purge-failed-v1` template matches the first scheduled API Key purge
+failure, uses target-scoped deduplication and a 24-hour cooldown, and can notify
+when the next purge cycle completes successfully. It starts disabled and must be
+installed explicitly against an existing delivery action. Because failure
+reporting and completion events use the same PostgreSQL store, an event-storage
+failure can prevent either the trigger or recovery notification.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a

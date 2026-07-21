@@ -349,6 +349,54 @@ func TestRoutingPoolExhaustedTemplateNotifiesPerAPIKeyAndRecoversExactly(t *test
 	}
 }
 
+func TestAPIKeyPurgeFailedTemplateNotifiesForCollectionAndRecoversExactly(t *testing.T) {
+	template, ok := ruleTemplate(APIKeyPurgeFailedTemplateKey)
+	if !ok {
+		t.Fatal("API key purge failure template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 18
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	failure := triggerEvent()
+	failure.Category = systemevent.CategoryScheduler
+	failure.Severity = systemevent.SeverityError
+	failure.Action = systemevent.ActionSchedulerAPIKeyPurgeFailed
+	failure.Outcome = systemevent.OutcomeFailure
+	failure.Target = systemevent.Target{Type: "client_api_key_collection"}
+	state := RuleState{RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle}
+	state, decision, err := Evaluate(rule, state, failure, now)
+	if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+		t.Fatalf("API key purge failure evaluation state=%+v decision=%q err=%v", state, decision, err)
+	}
+	state, decision, err = Evaluate(rule, state, failure, now.Add(12*time.Hour))
+	if err != nil || decision != DecisionSuppress || state.Phase != StatePhaseFiring {
+		t.Fatalf("API key purge failure cooldown state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	otherTarget := failure
+	otherTarget.Target.ID = "other"
+	if rule.DeduplicationKeyHash(failure) == rule.DeduplicationKeyHash(otherTarget) {
+		t.Fatal("target-scoped template reused the same deduplication key for different collections")
+	}
+
+	wrongRecovery := failure
+	wrongRecovery.Severity = systemevent.SeverityInfo
+	wrongRecovery.Action = systemevent.ActionSchedulerEventRetentionCompleted
+	wrongRecovery.Outcome = systemevent.OutcomeSuccess
+	state, decision, err = Evaluate(rule, state, wrongRecovery, now.Add(13*time.Hour))
+	if err != nil || decision != DecisionNone || state.Phase != StatePhaseFiring {
+		t.Fatalf("unrelated recovery affected API key purge failure state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	recovery := wrongRecovery
+	recovery.Action = systemevent.ActionSchedulerAPIKeyPurgeCompleted
+	state, decision, err = Evaluate(rule, state, recovery, now.Add(14*time.Hour))
+	if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+		t.Fatalf("API key purge recovery state=%+v decision=%q err=%v", state, decision, err)
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

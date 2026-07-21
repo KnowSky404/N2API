@@ -765,6 +765,24 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if err != nil || !created || routingRule.ID == edited.ID || routingRule.ID == retentionRule.ID || routingRule.ID == autoTestRule.ID || routingRule.ID == expiredRule.ID || routingRule.ID == circuitRule.ID || routingRule.ID == budget80Rule.ID || routingRule.ID == budget100Rule.ID || routingRule.TemplateKey != routingTemplate.TemplateKey || routingRule.ActionID != secondAction.ID {
 		t.Fatalf("eighth template install = %+v, created=%t, err=%v", routingRule, created, err)
 	}
+	apiKeyPurgeTemplate := routingTemplate
+	apiKeyPurgeTemplate.TemplateKey = alerting.APIKeyPurgeFailedTemplateKey
+	apiKeyPurgeTemplate.Name = "API key purge failures"
+	apiKeyPurgeTemplate.ActionID = firstAction.ID
+	apiKeyPurgeTemplate.Category = systemevent.CategoryScheduler
+	apiKeyPurgeTemplate.Severity = systemevent.SeverityError
+	apiKeyPurgeTemplate.EventAction = systemevent.ActionSchedulerAPIKeyPurgeFailed
+	apiKeyPurgeTemplate.RecoveryAction = systemevent.ActionSchedulerAPIKeyPurgeCompleted
+	apiKeyPurgeTemplate.CooldownSeconds = 86400
+	apiKeyPurgeRule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: apiKeyPurgeTemplate})
+	if err != nil || !created || apiKeyPurgeRule.ID == edited.ID || apiKeyPurgeRule.ID == retentionRule.ID || apiKeyPurgeRule.ID == autoTestRule.ID || apiKeyPurgeRule.ID == expiredRule.ID || apiKeyPurgeRule.ID == circuitRule.ID || apiKeyPurgeRule.ID == budget80Rule.ID || apiKeyPurgeRule.ID == budget100Rule.ID || apiKeyPurgeRule.ID == routingRule.ID || apiKeyPurgeRule.TemplateKey != apiKeyPurgeTemplate.TemplateKey || apiKeyPurgeRule.ActionID != firstAction.ID || apiKeyPurgeRule.Enabled {
+		t.Fatalf("ninth template install = %+v, created=%t, err=%v", apiKeyPurgeRule, created, err)
+	}
+	apiKeyPurgeTemplate.ActionID = secondAction.ID
+	apiKeyPurgeAgain, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: apiKeyPurgeTemplate})
+	if err != nil || created || apiKeyPurgeAgain.ID != apiKeyPurgeRule.ID || apiKeyPurgeAgain.ActionID != firstAction.ID {
+		t.Fatalf("ninth template reinstall = %+v, created=%t, err=%v", apiKeyPurgeAgain, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `
