@@ -291,6 +291,67 @@ func TestKeyringRejectsCrossKindEnvelopeSubstitution(t *testing.T) {
 	}
 }
 
+func TestKeyringVerificationReportsAuthenticatedFormatAndActualKey(t *testing.T) {
+	keyring, err := NewKeyring(
+		EncryptionKey{ID: "current", Secret: "current-encryption-secret"},
+		[]EncryptionKey{{ID: "previous", Secret: "legacy-encryption-secret"}},
+	)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	encrypted, err := keyring.EncryptStringFor(SecretKindOAuthAccessToken, "access-token")
+	if err != nil {
+		t.Fatalf("EncryptStringFor returned error: %v", err)
+	}
+	verification, err := keyring.VerifyStringFor(SecretKindOAuthAccessToken, encrypted)
+	if err != nil {
+		t.Fatalf("VerifyStringFor returned error: %v", err)
+	}
+	if verification != (CiphertextVerification{KeyID: "current", Format: CiphertextFormatV1}) {
+		t.Fatalf("verification = %+v, want current v1", verification)
+	}
+	previousWriter, err := NewKeyring(EncryptionKey{ID: "previous", Secret: "legacy-encryption-secret"}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring previous writer returned error: %v", err)
+	}
+	previousEnvelope, err := previousWriter.EncryptStringFor(SecretKindOAuthAccessToken, "previous-access-token")
+	if err != nil {
+		t.Fatalf("EncryptStringFor previous returned error: %v", err)
+	}
+	verification, err = keyring.VerifyStringFor(SecretKindOAuthAccessToken, previousEnvelope)
+	if err != nil {
+		t.Fatalf("VerifyStringFor previous envelope returned error: %v", err)
+	}
+	if verification != (CiphertextVerification{KeyID: "previous", Format: CiphertextFormatV1}) {
+		t.Fatalf("previous verification = %+v, want previous v1", verification)
+	}
+
+	const legacyCiphertext = "AAECAwQFBgcICQoLshPzMSnIGUlIyhB+W347vBUF57bAkCtXBN4l54ODVswuO/ASFnqXSM2t"
+	verification, err = keyring.VerifyStringFor(SecretKindOAuthRefreshToken, legacyCiphertext)
+	if err != nil {
+		t.Fatalf("VerifyStringFor legacy returned error: %v", err)
+	}
+	if verification != (CiphertextVerification{KeyID: "previous", Format: CiphertextFormatLegacy}) {
+		t.Fatalf("legacy verification = %+v, want actual previous key", verification)
+	}
+}
+
+func TestKeyringVerificationRejectsUnauthenticatedMetadata(t *testing.T) {
+	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "current-encryption-secret"}, nil)
+	if err != nil {
+		t.Fatalf("NewKeyring returned error: %v", err)
+	}
+	for _, encoded := range []string{
+		"n2api:v1:current:oauth-access-token:AA",
+		"n2api:v1:missing:oauth-access-token:AA",
+		"plaintext-canary",
+	} {
+		if _, err := keyring.VerifyStringFor(SecretKindOAuthAccessToken, encoded); err == nil {
+			t.Fatalf("VerifyStringFor accepted %q", encoded)
+		}
+	}
+}
+
 func TestKeyringRejectsUnknownEnvelopeVersionAndKey(t *testing.T) {
 	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "current-encryption-secret"}, nil)
 	if err != nil {

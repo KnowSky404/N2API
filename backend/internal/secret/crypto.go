@@ -31,6 +31,8 @@ const DefaultEncryptionKeyID = "default"
 
 type SecretKind string
 
+type CiphertextFormat string
+
 const (
 	SecretKindGeneric           SecretKind = "generic"
 	SecretKindClientAPIKey      SecretKind = "client-api-key"
@@ -40,7 +42,15 @@ const (
 	SecretKindOAuthAccessToken  SecretKind = "oauth-access-token"
 	SecretKindOAuthRefreshToken SecretKind = "oauth-refresh-token"
 	SecretKindOAuthIDToken      SecretKind = "oauth-id-token"
+
+	CiphertextFormatV1     CiphertextFormat = "v1"
+	CiphertextFormatLegacy CiphertextFormat = "legacy"
 )
+
+type CiphertextVerification struct {
+	KeyID  string
+	Format CiphertextFormat
+}
 
 type EncryptionKey struct {
 	ID     string `json:"id"`
@@ -219,11 +229,28 @@ func (k *Keyring) DecryptString(encoded string) (string, error) {
 }
 
 func (k *Keyring) DecryptStringFor(kind SecretKind, encoded string) (string, error) {
+	plaintext, _, err := k.decryptBytesFor(kind, encoded)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
+
+func (k *Keyring) VerifyStringFor(kind SecretKind, encoded string) (CiphertextVerification, error) {
+	plaintext, verification, err := k.decryptBytesFor(kind, encoded)
+	if err != nil {
+		return CiphertextVerification{}, err
+	}
+	clear(plaintext)
+	return verification, nil
+}
+
+func (k *Keyring) decryptBytesFor(kind SecretKind, encoded string) ([]byte, CiphertextVerification, error) {
 	if k == nil {
-		return "", fmt.Errorf("encryption keyring is not configured")
+		return nil, CiphertextVerification{}, fmt.Errorf("encryption keyring is not configured")
 	}
 	if !validSecretKind(kind) {
-		return "", fmt.Errorf("encryption secret kind is invalid")
+		return nil, CiphertextVerification{}, fmt.Errorf("encryption secret kind is invalid")
 	}
 	if strings.HasPrefix(encoded, ciphertextEnvelopeNamespace+":") {
 		return k.decryptEnvelope(kind, encoded)
@@ -231,71 +258,71 @@ func (k *Keyring) DecryptStringFor(kind SecretKind, encoded string) (string, err
 	return k.decryptLegacy(encoded)
 }
 
-func (k *Keyring) decryptEnvelope(kind SecretKind, encoded string) (string, error) {
+func (k *Keyring) decryptEnvelope(kind SecretKind, encoded string) ([]byte, CiphertextVerification, error) {
 	parts := strings.SplitN(encoded, ":", 5)
 	if len(parts) != 5 || parts[0] != ciphertextEnvelopeNamespace {
-		return "", fmt.Errorf("ciphertext envelope is malformed")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext envelope is malformed")
 	}
 	if parts[1] != ciphertextEnvelopeVersion {
-		return "", fmt.Errorf("ciphertext envelope version is unsupported")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext envelope version is unsupported")
 	}
 	if !validEncryptionKeyID(parts[2]) {
-		return "", fmt.Errorf("ciphertext envelope key ID is invalid")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext envelope key ID is invalid")
 	}
 	key, ok := k.byID[parts[2]]
 	if !ok {
-		return "", fmt.Errorf("ciphertext envelope key is unavailable")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext envelope key is unavailable")
 	}
 	envelopeKind := SecretKind(parts[3])
 	if !validSecretKind(envelopeKind) {
-		return "", fmt.Errorf("ciphertext envelope secret kind is invalid")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext envelope secret kind is invalid")
 	}
 	if envelopeKind != kind {
-		return "", fmt.Errorf("ciphertext envelope secret kind does not match")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext envelope secret kind does not match")
 	}
 
 	payload, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return "", fmt.Errorf("ciphertext payload encoding is invalid")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext payload encoding is invalid")
 	}
 	gcm, err := newRandomNonceGCM(key.Secret)
 	if err != nil {
-		return "", err
+		return nil, CiphertextVerification{}, err
 	}
 	if len(payload) < gcm.Overhead() {
-		return "", fmt.Errorf("ciphertext is too short")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext is too short")
 	}
 
 	header := ciphertextEnvelopeHeader(parts[2], envelopeKind)
 	plaintext, err := gcm.Open(nil, nil, payload, []byte(header))
 	if err != nil {
-		return "", fmt.Errorf("decrypt ciphertext: authentication failed")
+		return nil, CiphertextVerification{}, fmt.Errorf("decrypt ciphertext: authentication failed")
 	}
-	return string(plaintext), nil
+	return plaintext, CiphertextVerification{KeyID: key.ID, Format: CiphertextFormatV1}, nil
 }
 
-func (k *Keyring) decryptLegacy(encoded string) (string, error) {
+func (k *Keyring) decryptLegacy(encoded string) ([]byte, CiphertextVerification, error) {
 	payload, err := base64.RawStdEncoding.DecodeString(encoded)
 	if err != nil {
-		return "", fmt.Errorf("ciphertext payload encoding is invalid")
+		return nil, CiphertextVerification{}, fmt.Errorf("ciphertext payload encoding is invalid")
 	}
 	for _, key := range k.legacyKeys {
 		gcm, err := newGCM(key.Secret)
 		if err != nil {
-			return "", err
+			return nil, CiphertextVerification{}, err
 		}
 		if len(payload) <= gcm.NonceSize() {
-			return "", fmt.Errorf("ciphertext is too short")
+			return nil, CiphertextVerification{}, fmt.Errorf("ciphertext is too short")
 		}
 
 		nonce := payload[:gcm.NonceSize()]
 		ciphertext := payload[gcm.NonceSize():]
 		plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 		if err == nil {
-			return string(plaintext), nil
+			return plaintext, CiphertextVerification{KeyID: key.ID, Format: CiphertextFormatLegacy}, nil
 		}
 	}
-	return "", fmt.Errorf("decrypt ciphertext: authentication failed")
+	return nil, CiphertextVerification{}, fmt.Errorf("decrypt ciphertext: authentication failed")
 }
 
 func ciphertextEnvelopeHeader(keyID string, kind SecretKind) string {

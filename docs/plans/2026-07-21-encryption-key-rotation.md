@@ -1,6 +1,6 @@
 # Encryption Key Rotation Plan
 
-Status: in progress; Task 1 completed locally on 2026-07-21
+Status: in progress; Tasks 1-2 completed locally on 2026-07-21
 Public API changes: CLI first; optional admin status later
 Data migration: versioned ciphertext envelope and rotation run state
 
@@ -77,6 +77,9 @@ or keep the upgraded reader and prior keyring available.
 
 ## Task 2: Inventory And Verify Encrypted Values
 
+Task status: completed locally on 2026-07-21; operator backup and isolated
+restore acceptance remain prerequisites for Task 3
+
 ### Goal
 
 Prove which rows can be decrypted before rotation.
@@ -102,11 +105,34 @@ plaintext.
 The command accounts for every reversible secret class and exits nonzero on
 any unreadable value.
 
+The local implementation uses one fixed, ordered PostgreSQL query to include
+all seven non-empty credential columns, including expired OAuth states,
+disabled providers, and revoked client keys. The read-only command runs before
+server startup and does not migrate, bootstrap, or mutate the database. Its
+deterministic JSON always includes all seven types, verified counts, and only
+authenticated key IDs grouped by legacy or v1 format. Unreadable entries expose
+only table, credential type, stable numeric row ID, and the `unreadable` status;
+raw errors, plaintext, and ciphertext are never emitted. Exit codes distinguish
+verified (`0`), unreadable rows (`1`), and usage/infrastructure failure (`2`).
+
+Local tests cover current and previous v1 envelopes, the actual key that opens
+a legacy value, all seven classes, zero-count classes, deterministic ordering,
+unreadable-row redaction, query coverage, stable row IDs, CLI dispatch, and
+secret-safe errors. No migration or data rewrite is part of this task.
+
 ### Commit
 
 `feat(admin): verify encrypted credential inventory`
 
 ## Task 3: Add Resumable Re-encryption
+
+Task status: blocked locally on the correct historical keyring and successful
+operator-backup restore acceptance. The 2026-07-21 development-stack inventory
+found 14 unreadable values with the currently configured keyring: eight OAuth
+code verifiers, one access token, one refresh token, one ID token, one provider
+API key, and two reusable client-key secrets. No proxy value was present and no
+database value was modified. Do not infer, replace, or remove key material to
+bypass this gate.
 
 ### Goal
 

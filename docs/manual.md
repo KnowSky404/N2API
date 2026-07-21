@@ -421,6 +421,59 @@ the original GCM integrity guarantee until Task 3 re-encrypts them. Version 1
 binds the credential kind but not a database row identity; same-kind row
 substitution remains outside this task's protection boundary.
 
+Before changing encryption keys, take a database backup and complete the
+isolated restore drill with the exact image and keyring that created it. Then
+verify every non-empty reversible credential in the live database:
+
+```bash
+docker compose -f deploy/compose.yaml exec -T n2api \
+  /app/n2api admin verify-encryption
+```
+
+`verify-encryption` is a read-only dry run. It does not run migrations,
+bootstrap an administrator, rewrite credentials, or start HTTP/background
+services. Its single JSON document always contains all seven credential types,
+including zero-count types. Counts cover OAuth code verifiers; provider access,
+refresh, and ID tokens; provider API keys and proxy URLs; and reusable client
+API-key secrets. Authenticated key IDs are grouped by `v1` or `legacy` format.
+For legacy values, the reported ID is the key that actually decrypted the
+value, not an inferred default.
+
+The shortened example below shows one type entry and one failure shape; actual
+output is never abbreviated and always includes all seven type entries.
+
+```json
+{
+  "status": "failed",
+  "totals": {"values": 2, "verified": 1, "failed": 1},
+  "types": [
+    {
+      "table": "provider_account_credentials",
+      "type": "oauth-refresh-token",
+      "values": 2,
+      "verified": 1,
+      "failed": 1,
+      "keyIds": [{"id": "default", "format": "legacy", "count": 1}]
+    }
+  ],
+  "failures": [
+    {
+      "table": "provider_account_credentials",
+      "type": "oauth-refresh-token",
+      "rowId": "42",
+      "status": "unreadable"
+    }
+  ]
+}
+```
+
+The report never includes plaintext, ciphertext, provider identity, key prefix,
+state hash, or raw crypto/database errors. Exit code `0` means every value was
+verified (including an empty database), `1` means the complete report contains
+one or more unreadable rows, and `2` means command usage, configuration,
+database access, query, or output failed. Do not begin re-encryption while any
+row is unreadable or before the backup restore drill succeeds.
+
 Changing `N2API_ENCRYPTION_SECRET` invalidates existing Request Log and System
 Event cursors because those cursor signatures intentionally use only the current
 secret. Previous encryption keys do not keep old cursors valid. This task does
