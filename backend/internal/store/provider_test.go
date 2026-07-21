@@ -444,6 +444,64 @@ func TestProviderRepositoryRoutingPoolSelectionAndBinding(t *testing.T) {
 	}
 }
 
+func TestProviderRepositoryRoutingPoolSelectionPreservesGlobalPriority(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	preferred := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "pool-global-priority-preferred",
+		DisplayName:           "Preferred",
+		EncryptedAccessToken:  "preferred-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              1,
+		Status:                provider.AccountStatusActive,
+	})
+	lowerPriority := saveProviderTestAccount(t, repo, provider.Account{
+		Provider:              "openai",
+		AccountType:           provider.AccountTypeCodexOAuth,
+		Subject:               "pool-global-priority-lower",
+		DisplayName:           "Lower priority",
+		EncryptedAccessToken:  "lower-token",
+		EncryptedRefreshToken: "refresh-token",
+		Enabled:               true,
+		Priority:              100,
+		Status:                provider.AccountStatusActive,
+	})
+	for _, account := range []provider.Account{preferred, lowerPriority} {
+		if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{{Model: "gpt-5", Enabled: true}}); err != nil {
+			t.Fatalf("ReplaceAccountModels(%d) returned error: %v", account.ID, err)
+		}
+	}
+	poolID := insertProviderRoutingPool(t, repo.pool, "global priority", preferred.ID)
+	if _, err := repo.pool.Exec(ctx, `
+		INSERT INTO routing_pool_accounts (pool_id, account_id, priority)
+		VALUES ($1, $2, 0)
+	`, poolID, lowerPriority.ID); err != nil {
+		t.Fatalf("insert lower priority routing pool account: %v", err)
+	}
+
+	accounts, err := repo.ListAccountsForRoutingPool(ctx, "openai", poolID, "gpt-5", nil, time.Now())
+	if err != nil {
+		t.Fatalf("ListAccountsForRoutingPool returned error: %v", err)
+	}
+	if got := accountIDs(accounts); !reflect.DeepEqual(got, []int64{preferred.ID, lowerPriority.ID}) {
+		t.Fatalf("routing pool account IDs = %v, want global priority order [%d %d]", got, preferred.ID, lowerPriority.ID)
+	}
+	for index, wantGlobalPriority := range []int{1, 100} {
+		account := accounts[index]
+		if account.Priority != 0 || account.RoutingPoolPriority == nil || *account.RoutingPoolPriority != 0 {
+			t.Fatalf("account %d pool priority = %d/%v, want 0", account.ID, account.Priority, account.RoutingPoolPriority)
+		}
+		if account.GlobalPriority != wantGlobalPriority {
+			t.Fatalf("account %d global priority = %d, want %d", account.ID, account.GlobalPriority, wantGlobalPriority)
+		}
+	}
+}
+
 func TestProviderRepositoryRoutingPoolHasAccounts(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

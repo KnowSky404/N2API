@@ -2452,6 +2452,51 @@ func TestSelectAccountForModelInRoutingPoolUsesMembershipPriority(t *testing.T) 
 	}
 }
 
+func TestSelectAccountForModelAndSessionInRoutingPoolKeepsStickyHashInsideGlobalPriorityTier(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[7] = RoutingPool{ID: 7, Name: "primary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 1, true, 100, "lower-global-priority-token"),
+		testAccount(t, 2, true, 1, "preferred-first-token"),
+		testAccount(t, 3, true, 1, "preferred-second-token"),
+	}
+	repo.routingPoolAccounts[7] = []RoutingPoolAccount{
+		{AccountID: 1, Priority: 0},
+		{AccountID: 2, Priority: 0},
+		{AccountID: 3, Priority: 0},
+	}
+	for i := range repo.accounts {
+		repo.accountModels[repo.accounts[i].ID] = []AccountModel{
+			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
+		}
+	}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selectedIDs := map[int64]bool{}
+	for i := 0; i < 100; i++ {
+		selected, err := service.SelectAccountForModelAndSessionInRoutingPool(
+			context.Background(),
+			7,
+			"gpt-5",
+			"workspace-"+strconv.Itoa(i),
+		)
+		if err != nil {
+			t.Fatalf("SelectAccountForModelAndSessionInRoutingPool returned error: %v", err)
+		}
+		if selected.AccountID == 1 {
+			t.Fatalf("session %d selected lower global priority account 1", i)
+		}
+		wantAccountID := int64(2 + stickyAccountIndex("workspace-"+strconv.Itoa(i), 2))
+		if selected.AccountID != wantAccountID {
+			t.Fatalf("session %d selected account %d, want deterministic equal-tier account %d", i, selected.AccountID, wantAccountID)
+		}
+		selectedIDs[selected.AccountID] = true
+	}
+	if !selectedIDs[2] || !selectedIDs[3] {
+		t.Fatalf("selected accounts = %+v, want deterministic hash to reach equal-tier accounts 2 and 3", selectedIDs)
+	}
+}
+
 func TestSelectAccountForModelInRoutingPoolMissingPoolFailsClosed(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -4557,15 +4602,13 @@ func (r *memoryRepo) ListAccountsForRoutingPool(ctx context.Context, providerNam
 				continue
 			}
 		}
+		account.GlobalPriority = account.Priority
 		account.Priority = poolPriority
+		account.RoutingPoolPriority = new(int)
+		*account.RoutingPoolPriority = poolPriority
 		eligible = append(eligible, account)
 	}
-	sort.SliceStable(eligible, func(i, j int) bool {
-		if eligible[i].Priority != eligible[j].Priority {
-			return eligible[i].Priority < eligible[j].Priority
-		}
-		return eligible[i].ID < eligible[j].ID
-	})
+	sortRoutingPoolAccounts(eligible)
 	return eligible, nil
 }
 
@@ -4584,16 +4627,43 @@ func (r *memoryRepo) ListRoutingPoolAccounts(ctx context.Context, providerName s
 		if !ok {
 			continue
 		}
+		account.GlobalPriority = account.Priority
 		account.Priority = priority
+		account.RoutingPoolPriority = new(int)
+		*account.RoutingPoolPriority = priority
 		members = append(members, account)
 	}
-	sort.SliceStable(members, func(i, j int) bool {
-		if members[i].Priority != members[j].Priority {
-			return members[i].Priority < members[j].Priority
-		}
-		return members[i].ID < members[j].ID
-	})
+	sortRoutingPoolAccounts(members)
 	return members, nil
+}
+
+func sortRoutingPoolAccounts(accounts []Account) {
+	sort.SliceStable(accounts, func(i, j int) bool {
+		if selectionPriority(accounts[i]) != selectionPriority(accounts[j]) {
+			return selectionPriority(accounts[i]) < selectionPriority(accounts[j])
+		}
+		if globalAccountPriority(accounts[i]) != globalAccountPriority(accounts[j]) {
+			return globalAccountPriority(accounts[i]) < globalAccountPriority(accounts[j])
+		}
+		if normalizedLoadFactor(accounts[i].LoadFactor) != normalizedLoadFactor(accounts[j].LoadFactor) {
+			return normalizedLoadFactor(accounts[i].LoadFactor) > normalizedLoadFactor(accounts[j].LoadFactor)
+		}
+		iHasError := accounts[i].LastErrorAt != nil
+		jHasError := accounts[j].LastErrorAt != nil
+		if iHasError != jHasError {
+			return !iHasError
+		}
+		if accounts[i].LastUsedAt == nil && accounts[j].LastUsedAt != nil {
+			return true
+		}
+		if accounts[i].LastUsedAt != nil && accounts[j].LastUsedAt == nil {
+			return false
+		}
+		if accounts[i].LastUsedAt != nil && accounts[j].LastUsedAt != nil && !accounts[i].LastUsedAt.Equal(*accounts[j].LastUsedAt) {
+			return accounts[i].LastUsedAt.Before(*accounts[j].LastUsedAt)
+		}
+		return accounts[i].ID < accounts[j].ID
+	})
 }
 
 func (r *memoryRepo) FindSessionBinding(ctx context.Context, providerName string, model string, sessionID string) (SessionBinding, error) {

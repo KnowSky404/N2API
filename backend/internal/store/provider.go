@@ -74,7 +74,7 @@ const providerAccountColumns = `
 	a.last_test_at, a.last_test_status, a.last_test_error, a.fingerprint_profile_id, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
 	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
-	c.encrypted_proxy_url, c.base_url, c.metadata
+	c.encrypted_proxy_url, c.base_url, c.metadata, a.priority, NULL::integer
 `
 
 const routingPoolProviderAccountColumns = `
@@ -84,7 +84,7 @@ const routingPoolProviderAccountColumns = `
 	a.last_test_at, a.last_test_status, a.last_test_error, a.fingerprint_profile_id, a.created_at, a.updated_at, c.credential_type, c.encrypted_access_token,
 	c.encrypted_refresh_token, c.encrypted_id_token, c.access_token_expires_at,
 	c.last_refresh_at, c.last_refresh_error, c.last_refresh_error_at, c.encrypted_api_key,
-	c.encrypted_proxy_url, c.base_url, c.metadata
+	c.encrypted_proxy_url, c.base_url, c.metadata, a.priority, rpa.priority
 `
 
 const providerAccountModelColumns = `
@@ -143,6 +143,8 @@ func scanProviderAccount(row pgx.Row) (provider.Account, error) {
 		&account.Credential.EncryptedProxyURL,
 		&account.Credential.BaseURL,
 		&account.Credential.Metadata,
+		&account.GlobalPriority,
+		&account.RoutingPoolPriority,
 	)
 	if err == nil {
 		syncAccountLegacyFields(&account)

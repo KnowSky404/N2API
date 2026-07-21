@@ -302,6 +302,8 @@ type Account struct {
 	LastRefreshAt         *time.Time        `json:"lastRefreshAt"`
 	Enabled               bool              `json:"enabled"`
 	Priority              int               `json:"priority"`
+	GlobalPriority        int               `json:"-"`
+	RoutingPoolPriority   *int              `json:"-"`
 	LoadFactor            int               `json:"loadFactor"`
 	MaxConcurrentRequests int               `json:"maxConcurrentRequests"`
 	LastUsedAt            *time.Time        `json:"lastUsedAt"`
@@ -2664,7 +2666,7 @@ func selectionCandidate(account Account, scheduleRank int, selected bool, schedu
 		ID:                  account.ID,
 		DisplayName:         accountDisplayName(account),
 		AccountType:         account.AccountType,
-		Priority:            account.Priority,
+		Priority:            selectionPriority(account),
 		LoadFactor:          normalizedLoadFactor(account.LoadFactor),
 		Status:              valueOrDefault(account.Status, AccountStatusActive),
 		LastUsedAt:          account.LastUsedAt,
@@ -2882,12 +2884,14 @@ func stickySessionHashCandidates(accounts []Account, sessionID string) []Account
 		return accounts
 	}
 
-	priority := accounts[0].Priority
+	poolPriority := selectionPriority(accounts[0])
+	globalPriority := globalAccountPriority(accounts[0])
 	loadFactor := normalizedLoadFactor(accounts[0].LoadFactor)
 	hasError := accounts[0].LastErrorAt != nil
 	groupEnd := 0
 	for groupEnd < len(accounts) &&
-		accounts[groupEnd].Priority == priority &&
+		selectionPriority(accounts[groupEnd]) == poolPriority &&
+		globalAccountPriority(accounts[groupEnd]) == globalPriority &&
 		normalizedLoadFactor(accounts[groupEnd].LoadFactor) == loadFactor &&
 		(accounts[groupEnd].LastErrorAt != nil) == hasError {
 		groupEnd++
@@ -2905,6 +2909,20 @@ func stickySessionHashCandidates(accounts []Account, sessionID string) []Account
 	rotated = append(rotated, priorityGroup[:start]...)
 	rotated = append(rotated, accounts[groupEnd:]...)
 	return rotated
+}
+
+func selectionPriority(account Account) int {
+	if account.RoutingPoolPriority != nil {
+		return *account.RoutingPoolPriority
+	}
+	return account.Priority
+}
+
+func globalAccountPriority(account Account) int {
+	if account.RoutingPoolPriority != nil {
+		return account.GlobalPriority
+	}
+	return account.Priority
 }
 
 func stickyAccountIndex(sessionID string, count int) int {
