@@ -581,24 +581,19 @@ test('request log details show complete token usage', () => {
   assert.match(requestLogsPage, /Estimated cost \{selectedRequestLogCost\}/);
 });
 
-test('request logs table paginates locally with a bounded sticky scroll area', () => {
-  assert.match(requestLogsPage, /let requestLogPage = \$state\(1\)/);
-  assert.match(requestLogsPage, /let requestLogPageSize = \$state\(10\)/);
-  assert.match(requestLogsPage, /requestLogPageCount/);
-  assert.match(requestLogsPage, /normalizedRequestLogPage/);
-  assert.match(requestLogsPage, /paginatedRequestLogs/);
-  assert.match(requestLogsPage, /requestLogPageSummary/);
-  assert.match(requestLogsPage, /\{#each paginatedRequestLogs as log\}/);
+test('request logs table uses server cursor pagination with a bounded sticky scroll area', () => {
+  assert.doesNotMatch(requestLogsPage, /let requestLogPage = \$state/);
+  assert.doesNotMatch(requestLogsPage, /paginatedRequestLogs/);
+  assert.match(requestLogsPage, /\{#each requestLogs\.items as log \(log\.id\)\}/);
   assert.match(requestLogsPage, /ui-table-shell--scroll/);
   assert.match(requestLogsPage, /<thead class="sticky top-0 z-20">/);
-  assert.match(requestLogsPage, /bind:value=\{requestLogPageSize\}/);
-  assert.match(requestLogsPage, /<option value=\{10\}>10<\/option>/);
-  assert.match(requestLogsPage, /<option value=\{20\}>20<\/option>/);
-  assert.match(requestLogsPage, /<option value=\{50\}>50<\/option>/);
-  assert.match(requestLogsPage, /Page \{normalizedRequestLogPage\} of \{requestLogPageCount\}/);
-  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(normalizedRequestLogPage - 1\)\}/);
-  assert.match(requestLogsPage, /onclick=\{\(\) => goToRequestLogPage\(normalizedRequestLogPage \+ 1\)\}/);
-  assert.doesNotMatch(requestLogsPage, /goToRequestLogPage\(requestLogPage [+-] 1\)/);
+  assert.match(requestLogsPage, /requestLogs\.hasMore/);
+  assert.match(requestLogsPage, /Load older/);
+  assert.match(requestLogsPage, /loadRequestLogs\(\{ append: true \}\)/);
+  assert.match(requestLogsPage, /requestLogs\.loadingOlder/);
+  assert.match(requestLogsPage, /from '\$app\/navigation'/);
+  assert.match(requestLogsPage, /goto\(search \? `\/request-logs\?\$\{search\}` : '\/request-logs'/);
+  assert.match(requestLogsPage, /item\.id === selected\.id/);
 });
 
 test('request logs page focuses on searchable request records without a usage summary', () => {
@@ -619,10 +614,11 @@ test('request logs export links request explicit formats', () => {
   assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("csv"\)\}[\s\S]*>CSV<\/a>/);
   assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("json"\)\}[\s\S]*>JSON<\/a>/);
   assert.match(requestLogsPage, /href=\{exportRequestLogsURL\("jsonl"\)\}[\s\S]*>JSONL<\/a>/);
-  assert.match(requestLogsPage, /requestLogs\.providerAccountId !== 'all'/);
-  assert.match(requestLogsPage, /requestLogs\.routingPoolId !== 'all'/);
-  assert.match(requestLogsPage, /requestLogs\.clientKeyId !== 'all'/);
-  assert.match(requestLogsPage, /requestLogs\.routingPoolError !== 'all'/);
+  assert.match(requestLogsPage, /appliedRequestLogFilterParams\(\)/);
+  assert.match(adminState, /requestLogs\.providerAccountId !== 'all'/);
+  assert.match(adminState, /requestLogs\.routingPoolId !== 'all'/);
+  assert.match(adminState, /requestLogs\.clientKeyId !== 'all'/);
+  assert.match(adminState, /requestLogs\.routingPoolError !== 'all'/);
 });
 
 test('request logs page formats gateway error codes for scanning', () => {

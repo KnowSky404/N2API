@@ -1,7 +1,9 @@
 <script>
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
     accountLabel,
+    appliedRequestLogFilterParams,
     apiKeys,
     formatDate,
     formatRequestLogCost,
@@ -12,6 +14,7 @@
     loadRequestLogs,
     providerAccounts,
     requestLogs,
+    requestLogFilterParams,
     resetRequestLogFilters,
     routingPools,
     session,
@@ -27,26 +30,7 @@
   let appliedRequestLogSearch = $state(null);
   let showAdvancedFilters = $state(false);
   let requestLogDateRange = $state('all');
-  let requestLogPage = $state(1);
-  let requestLogPageSize = $state(10);
   let selectedRequestLog = $state(/** @type {import('$lib/admin-state.svelte.js').RequestLog | null} */ (null));
-
-  let requestLogPageCount = $derived(Math.max(1, Math.ceil(requestLogs.items.length / requestLogPageSize)));
-  let normalizedRequestLogPage = $derived(Math.min(Math.max(requestLogPage, 1), requestLogPageCount));
-  let paginatedRequestLogs = $derived(
-    requestLogs.items.slice(
-      (normalizedRequestLogPage - 1) * requestLogPageSize,
-      normalizedRequestLogPage * requestLogPageSize
-    )
-  );
-  let requestLogPageSummary = $derived(
-    requestLogs.items.length === 0
-      ? '0'
-      : `${(normalizedRequestLogPage - 1) * requestLogPageSize + 1}-${Math.min(
-          normalizedRequestLogPage * requestLogPageSize,
-          requestLogs.items.length
-        )}`
-  );
   let advancedRequestLogFilterCount = $derived(
     [
       requestLogs.requestId.trim(),
@@ -177,22 +161,7 @@
   }
   /** @param {string} [format] */
   function exportRequestLogsURL(format) {
-    const params = new URLSearchParams();
-    if (requestLogs.requestId) params.set('requestId', requestLogs.requestId);
-    if (requestLogs.query) params.set('q', requestLogs.query);
-    if (requestLogs.statusClass && requestLogs.statusClass !== 'all') params.set('statusClass', requestLogs.statusClass);
-    if (/^[1-5]\d\d$/.test(requestLogs.statusCode)) params.set('statusCode', requestLogs.statusCode);
-    if (/^\d+$/.test(requestLogs.since)) params.set('since', requestLogs.since);
-    if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') params.set('providerAccountId', requestLogs.providerAccountId);
-    if (requestLogs.routingPoolId && requestLogs.routingPoolId !== 'all') params.set('routingPoolId', requestLogs.routingPoolId);
-    if (requestLogs.clientKeyId && requestLogs.clientKeyId !== 'all') params.set('clientKeyId', requestLogs.clientKeyId);
-    if (requestLogs.model) params.set('model', requestLogs.model);
-    if (requestLogs.sessionId) params.set('sessionId', requestLogs.sessionId);
-    if (requestLogs.errorCode) params.set('error', requestLogs.errorCode);
-    if (requestLogs.usageSource && requestLogs.usageSource !== 'all') params.set('usageSource', requestLogs.usageSource);
-    if (requestLogs.routingPoolError && requestLogs.routingPoolError !== 'all') params.set('routingPoolError', requestLogs.routingPoolError);
-    if (requestLogs.routingPoolChain) params.set('routingPoolChain', requestLogs.routingPoolChain);
-    if (requestLogs.gatewayFallbacks) params.set('gatewayFallbacks', '1');
+    const params = appliedRequestLogFilterParams();
     if (format) params.set('format', format);
     return '/api/admin/request-logs/export?' + params.toString();
   }
@@ -209,7 +178,6 @@
     if (appliedRequestLogSearch !== page.url.search) {
       appliedRequestLogSearch = page.url.search;
       applyRequestLogURLFilters(page.url.search);
-      requestLogPage = 1;
       void loadRequestLogs();
     }
     if (!providerAccountsRequested && providerAccounts.items.length === 0) {
@@ -327,28 +295,34 @@
       : '';
   }
 
-  function applyRequestLogFilters() {
-    requestLogPage = 1;
-    void loadRequestLogs();
+  async function applyRequestLogFilters() {
+    const search = requestLogFilterParams().toString();
+    const nextSearch = search ? `?${search}` : '';
+    if (page.url.search === nextSearch) {
+      await loadRequestLogs();
+      return;
+    }
+    await goto(search ? `/request-logs?${search}` : '/request-logs', {
+      keepFocus: true,
+      noScroll: true
+    });
   }
 
-  function clearRequestLogFilters() {
+  async function clearRequestLogFilters() {
     resetRequestLogFilters();
     requestLogDateRange = 'all';
     showAdvancedFilters = false;
-    requestLogPage = 1;
-    void loadRequestLogs();
+    if (page.url.search === '') {
+      await loadRequestLogs();
+      return;
+    }
+    await goto('/request-logs', { keepFocus: true, noScroll: true });
   }
 
   /** @param {SubmitEvent} event */
   function submitRequestLogFilters(event) {
     event.preventDefault();
-    applyRequestLogFilters();
-  }
-
-  /** @param {number} targetPage */
-  function goToRequestLogPage(targetPage) {
-    requestLogPage = Math.min(Math.max(targetPage, 1), requestLogPageCount);
+    void applyRequestLogFilters();
   }
 
   /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
@@ -364,6 +338,17 @@
   function handleRequestLogKeydown(event) {
     if (event.key === 'Escape' && selectedRequestLog) closeRequestLogDetails();
   }
+
+  $effect(() => {
+    const selected = selectedRequestLog;
+    if (!selected) return;
+    const current = requestLogs.items.find((item) => item.id === selected.id);
+    if (current && current !== selected) {
+      selectedRequestLog = current;
+    } else if (!current && !requestLogs.loading && !requestLogs.loadingOlder) {
+      selectedRequestLog = null;
+    }
+  });
 
 </script>
 
@@ -624,7 +609,7 @@
             </td>
           </tr>
         {:else}
-          {#each paginatedRequestLogs as log}
+          {#each requestLogs.items as log (log.id)}
             {@const requestLogCost = formatRequestLogCost(log)}
             <tr>
               <td class="whitespace-nowrap text-[#3c3c3c]" data-label="Time">{formatDate(log.createdAt)}</td>
@@ -678,40 +663,21 @@
     </table>
   </div>
   <div class="ui-pagination mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
-    <p>Showing {requestLogPageSummary} of {requestLogs.items.length} loaded</p>
-    <div class="flex flex-wrap items-center gap-2">
-      <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
-        Rows
-        <select
-          class="rounded-lg border border-[#e5e5e5] bg-white px-2 py-1.5 text-xs text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={requestLogPageSize}
-          onchange={() => {
-            requestLogPage = 1;
-          }}
-        >
-          <option value={10}>10</option>
-          <option value={20}>20</option>
-          <option value={50}>50</option>
-        </select>
-      </label>
-      <span class="text-xs tabular-nums text-[#6e6e6e]">Page {normalizedRequestLogPage} of {requestLogPageCount}</span>
+    <p>
+      Showing {requestLogs.items.length} loaded {requestLogs.items.length === 1 ? 'request' : 'requests'}
+      {#if requestLogs.hasMore}<span class="text-[#8e8e8e]"> · More available</span>{/if}
+    </p>
+    {#if requestLogs.hasMore}
       <button
-        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-3 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
         type="button"
-        disabled={normalizedRequestLogPage <= 1}
-        onclick={() => goToRequestLogPage(normalizedRequestLogPage - 1)}
+        disabled={requestLogs.loadingOlder || requestLogs.loading}
+        onclick={() => void loadRequestLogs({ append: true })}
       >
-        Previous
+        <ChevronDown class="size-3.5" aria-hidden="true" />
+        {requestLogs.loadingOlder ? 'Loading...' : 'Load older'}
       </button>
-      <button
-        class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={normalizedRequestLogPage >= requestLogPageCount}
-        onclick={() => goToRequestLogPage(normalizedRequestLogPage + 1)}
-      >
-        Next
-      </button>
-    </div>
+    {/if}
   </div>
 </section>
 </div>

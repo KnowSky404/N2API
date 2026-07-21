@@ -462,9 +462,10 @@ export const gatewaySettings = $state({
   cleanupResult: null,
   data: null
 });
-/** @type {{ loading: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, since: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[] }} */
+/** @type {{ loading: boolean, loadingOlder: boolean, error: string, requestId: string, query: string, statusClass: string, statusCode: string, since: string, providerAccountId: string, routingPoolId: string, clientKeyId: string, model: string, sessionId: string, errorCode: string, usageSource: string, routingPoolError: string, routingPoolChain: string, gatewayFallbacks: boolean, items: RequestLog[], nextCursor: string, hasMore: boolean, appliedFilterQuery: string | null }} */
 export const requestLogs = $state({
   loading: false,
+  loadingOlder: false,
   error: '',
   requestId: '',
   query: '',
@@ -481,8 +482,12 @@ export const requestLogs = $state({
   routingPoolError: 'all',
   routingPoolChain: '',
   gatewayFallbacks: false,
-  items: []
+  items: [],
+  nextCursor: '',
+  hasMore: false,
+  appliedFilterQuery: null
 });
+let requestLogRequestSequence = 0;
 
 /** @type {{ loading: boolean, loadingOlder: boolean, error: string, query: string, since: string, category: string, outcome: string, severity: string, action: string, actor: string, targetType: string, targetId: string, items: SystemEvent[], nextCursor: string, hasMore: boolean }} */
 export const systemEvents = $state({
@@ -536,6 +541,9 @@ export function resetRequestLogFilters() {
   requestLogs.routingPoolError = 'all';
   requestLogs.routingPoolChain = '';
   requestLogs.gatewayFallbacks = false;
+  requestLogs.nextCursor = '';
+  requestLogs.hasMore = false;
+  requestLogs.appliedFilterQuery = null;
 }
 /** @type {{ loading: boolean, error: string, range: string, groupBy: string, summaries: Record<string, UsageSummary>, current: UsageSummary | null }} */
 export const usage = $state({
@@ -1128,6 +1136,7 @@ function clearGatewaySettings() {
 function clearRequestLogs() {
   replaceState(requestLogs, {
     loading: false,
+    loadingOlder: false,
     error: '',
     requestId: '',
     query: '',
@@ -1144,7 +1153,10 @@ function clearRequestLogs() {
     routingPoolError: 'all',
     routingPoolChain: '',
     gatewayFallbacks: false,
-    items: []
+    items: [],
+    nextCursor: '',
+    hasMore: false,
+    appliedFilterQuery: null
   });
 }
 
@@ -3298,77 +3310,120 @@ export async function saveModelSettings(event) {
   }
 }
 
-export async function loadRequestLogs() {
+/**
+ * @param {URLSearchParams} params
+ * @returns {Promise<{ logs?: RequestLog[], nextCursor?: string, hasMore?: boolean }>}
+ */
+async function requestRequestLogPage(params) {
+  const response = await fetch(`/api/admin/request-logs?${params.toString()}`);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      clearAuthenticatedAdminState();
+    }
+    const error = new Error(payload.error ?? `Request failed with ${response.status}`);
+    // @ts-expect-error Attach the status so an invalid keyset cursor can recover.
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+export function requestLogFilterParams() {
+  const params = new URLSearchParams();
+  const requestId = requestLogs.requestId.trim();
+  if (requestId) params.set('requestId', requestId);
+  const query = requestLogs.query.trim();
+  if (query) params.set('q', query);
+  if (requestLogs.statusClass && requestLogs.statusClass !== 'all') params.set('statusClass', requestLogs.statusClass);
+  const statusCode = requestLogs.statusCode.trim();
+  if (/^[1-5]\d\d$/.test(statusCode)) params.set('statusCode', statusCode);
+  const since = requestLogs.since.trim();
+  if (/^\d+$/.test(since)) params.set('since', since);
+  if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') params.set('providerAccountId', requestLogs.providerAccountId);
+  if (requestLogs.routingPoolId && requestLogs.routingPoolId !== 'all') params.set('routingPoolId', requestLogs.routingPoolId);
+  if (requestLogs.clientKeyId && requestLogs.clientKeyId !== 'all') params.set('clientKeyId', requestLogs.clientKeyId);
+  const model = requestLogs.model.trim();
+  if (model) params.set('model', model);
+  const sessionId = requestLogs.sessionId.trim();
+  if (sessionId) params.set('sessionId', sessionId);
+  const errorCode = requestLogs.errorCode.trim();
+  if (errorCode) params.set('error', errorCode);
+  if (requestLogs.usageSource && requestLogs.usageSource !== 'all') params.set('usageSource', requestLogs.usageSource);
+  if (requestLogs.routingPoolError && requestLogs.routingPoolError !== 'all') params.set('routingPoolError', requestLogs.routingPoolError);
+  const routingPoolChain = requestLogs.routingPoolChain.trim();
+  if (routingPoolChain) params.set('routingPoolChain', routingPoolChain);
+  if (requestLogs.gatewayFallbacks) params.set('gatewayFallbacks', '1');
+  return params;
+}
+
+export function appliedRequestLogFilterParams() {
+  return requestLogs.appliedFilterQuery === null
+    ? requestLogFilterParams()
+    : new URLSearchParams(requestLogs.appliedFilterQuery);
+}
+
+/**
+ * @param {{ append?: boolean }} [options]
+ */
+export async function loadRequestLogs(options = {}) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
 
-  requestLogs.loading = true;
+  let append = options.append === true;
+  if (append && (!requestLogs.hasMore || !requestLogs.nextCursor || requestLogs.loading || requestLogs.loadingOlder)) return;
+  const requestSequence = ++requestLogRequestSequence;
+
+  if (append) {
+    requestLogs.loadingOlder = true;
+  } else {
+    requestLogs.loading = true;
+  }
   requestLogs.error = '';
 
+  const filterQuery = (append ? appliedRequestLogFilterParams() : requestLogFilterParams()).toString();
+  const params = new URLSearchParams(filterQuery);
+  params.set('limit', '50');
+  if (append) {
+    params.set('cursor', requestLogs.nextCursor);
+  }
+
   try {
-    const params = new URLSearchParams({ limit: '50' });
-    const requestId = requestLogs.requestId.trim();
-    if (requestId) {
-      params.set('requestId', requestId);
+    let payload;
+    try {
+      payload = await requestRequestLogPage(params);
+    } catch (error) {
+      // @ts-expect-error Status is attached by requestRequestLogPage.
+      if (!append || error?.status !== 400) throw error;
+      append = false;
+      params.delete('cursor');
+      payload = await requestRequestLogPage(params);
     }
-    const query = requestLogs.query.trim();
-    if (query) {
-      params.set('q', query);
+    if (!isCurrentAuthenticated(version) || requestSequence !== requestLogRequestSequence) return;
+
+    const logs = Array.isArray(payload.logs) ? payload.logs : [];
+    const seenIDs = new Set(append ? requestLogs.items.map((log) => String(log.id)) : []);
+    const uniqueLogs = logs.filter((log) => {
+      const id = String(log.id);
+      if (seenIDs.has(id)) return false;
+      seenIDs.add(id);
+      return true;
+    });
+    if (append) {
+      requestLogs.items = [...requestLogs.items, ...uniqueLogs];
+    } else {
+      requestLogs.items = uniqueLogs;
+      requestLogs.appliedFilterQuery = filterQuery;
     }
-    if (requestLogs.statusClass && requestLogs.statusClass !== 'all') {
-      params.set('statusClass', requestLogs.statusClass);
-    }
-    const statusCode = requestLogs.statusCode.trim();
-    if (/^[1-5]\d\d$/.test(statusCode)) {
-      params.set('statusCode', statusCode);
-    }
-    const since = requestLogs.since.trim();
-    if (/^\d+$/.test(since)) {
-      params.set('since', since);
-    }
-    if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') {
-      params.set('providerAccountId', requestLogs.providerAccountId);
-    }
-    if (requestLogs.routingPoolId && requestLogs.routingPoolId !== 'all') {
-      params.set('routingPoolId', requestLogs.routingPoolId);
-    }
-    if (requestLogs.clientKeyId && requestLogs.clientKeyId !== 'all') {
-      params.set('clientKeyId', requestLogs.clientKeyId);
-    }
-    const model = requestLogs.model.trim();
-    if (model) {
-      params.set('model', model);
-    }
-    const sessionId = requestLogs.sessionId.trim();
-    if (sessionId) {
-      params.set('sessionId', sessionId);
-    }
-    const errorCode = requestLogs.errorCode.trim();
-    if (errorCode) {
-      params.set('error', errorCode);
-    }
-    if (requestLogs.usageSource && requestLogs.usageSource !== 'all') {
-      params.set('usageSource', requestLogs.usageSource);
-    }
-    if (requestLogs.routingPoolError && requestLogs.routingPoolError !== 'all') {
-      params.set('routingPoolError', requestLogs.routingPoolError);
-    }
-    const routingPoolChain = requestLogs.routingPoolChain.trim();
-    if (routingPoolChain) {
-      params.set('routingPoolChain', routingPoolChain);
-    }
-    if (requestLogs.gatewayFallbacks) {
-      params.set('gatewayFallbacks', '1');
-    }
-    const payload = await requestJSON(`/api/admin/request-logs?${params.toString()}`);
-    if (!isCurrentAuthenticated(version)) return;
-    requestLogs.items = payload.logs ?? [];
+    requestLogs.nextCursor = payload.nextCursor ?? '';
+    requestLogs.hasMore = payload.hasMore === true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version) || requestSequence !== requestLogRequestSequence) return;
     requestLogs.error = error instanceof Error ? error.message : 'Failed to load request logs';
   } finally {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version) || requestSequence !== requestLogRequestSequence) return;
     requestLogs.loading = false;
+    requestLogs.loadingOlder = false;
   }
 }
 

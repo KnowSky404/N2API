@@ -599,6 +599,8 @@ Request Logs support exact **Provider account**, **Routing pool**, **API key**, 
 
 The authenticated `GET /api/admin/request-logs` endpoint returns `logs`, `hasMore`, and `nextCursor`. When `hasMore` is true, pass the opaque `nextCursor` value back as `cursor` while keeping every filter unchanged to load older rows. Cursors are signed and filter-bound but not encrypted; clients must not parse or modify them. Restart from the first page when the API returns `400 invalid_input`, such as after a cursor is changed, a filter is changed, or the server encryption secret is rotated. Page size may change between requests without invalidating a cursor.
 
+The Request Logs page keeps active filters in the URL and loads 50 rows at a time. Use **Load older** to append the next cursor page without replacing rows already under review. Applying or clearing filters starts a fresh first page; if a saved cursor is no longer valid, the page also recovers by restarting from the current URL-backed filters.
+
 API upstream accounts and `OPENAI_API_BASE_URL` require HTTPS by default so
 upstream API keys are not sent over plaintext HTTP. Set
 `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP

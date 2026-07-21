@@ -76,6 +76,8 @@ Repeated page requests traverse all matching rows exactly once.
 
 ## Task 2: Move The UI To Server Pagination
 
+Status: completed locally on 2026-07-21.
+
 ### Goal
 
 Replace bounded local page slicing with URL-backed older-page loading.
