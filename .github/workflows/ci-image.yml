@@ -16,6 +16,20 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: n2api_store_test
+          POSTGRES_USER: n2api
+          POSTGRES_PASSWORD: ci-store-test-password
+        options: >-
+          --health-cmd "pg_isready -U n2api -d n2api_store_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -26,9 +40,23 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
 
+      - name: Preflight PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec "${{ job.services.postgres.id }}" pg_isready -U n2api -d n2api_store_test
+          timeout 10 bash -c \
+            'until (exec 3<>/dev/tcp/127.0.0.1/5432) 2>/dev/null; do sleep 1; done'
+
       - name: Test backend
         working-directory: backend
-        run: go test ./...
+        env:
+          N2API_STORE_TEST_DATABASE_URL: postgres://n2api:ci-store-test-password@127.0.0.1:5432/n2api_store_test?sslmode=disable
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${N2API_STORE_TEST_DATABASE_URL:-}"
+          go test -count=1 ./...
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2

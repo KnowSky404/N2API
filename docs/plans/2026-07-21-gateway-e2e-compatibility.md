@@ -1,6 +1,6 @@
 # Gateway E2E Compatibility Plan
 
-Status: planned
+Status: in progress
 Public API changes: none; tests validate existing `/v1/*` contracts
 Data migration: none
 
@@ -13,6 +13,9 @@ real Codex OAuth path was manually accepted in July 2026, but no ordinary CI
 test proves the full persisted loop. Real-account tests must remain manual.
 
 ## Task 1: Run PostgreSQL Integration Tests in CI
+
+Status: completed locally on 2026-07-21; pending the next authorized push and
+GitHub Actions run.
 
 ### Goal
 
