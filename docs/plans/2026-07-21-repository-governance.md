@@ -1,6 +1,6 @@
 # Repository Governance Plan
 
-Status: in progress; Task 3 completed locally, owner decisions remain
+Status: in progress; Tasks 3 and 5 completed locally, owner decisions remain
 Public API changes: none
 Data migration: none
 
@@ -8,10 +8,12 @@ Data migration: none
 
 The repository has CI Image and Release workflows with commit-pinned actions,
 multi-platform smoke tests, tested-digest publication, attestations, and
-Conventional Commit-based release notes. It has no `LICENSE`, `SECURITY.md`,
-`CONTRIBUTING.md`, issue/PR templates, CodeQL, `govulncheck`, frontend audit,
-container scan, published SBOM, or documented supported-version/security-release
-policy. Dependabot version updates are configured locally across every current
+Conventional Commit-based release notes. The workflows now generate and attest
+two platform SPDX SBOMs and retain report-only Trivy evidence tied to the tested
+parent manifest digest. It has no `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`,
+issue/PR templates, CodeQL, `govulncheck`, frontend audit, approved blocking
+vulnerability policy, or documented supported-version/security-release policy.
+Dependabot version updates are configured locally across every current
 dependency ecosystem.
 
 ## Task 1: Establish Security And Contribution Policies
@@ -156,6 +158,9 @@ Checks produce actionable findings and an expiring exception format.
 
 ## Task 5: Scan Images And Publish SBOMs
 
+Task status: implemented locally on 2026-07-21; remote workflow and registry
+evidence remain pending after an owner-authorized push
+
 ### Goal
 
 Attach machine-readable composition and vulnerability evidence to tested images.
@@ -171,14 +176,37 @@ Pinned runtime image and tested-digest release path.
 
 ### Implementation
 
-Generate SPDX or CycloneDX SBOM from the tested manifest, attach/attest it to
-the immutable digest, scan the same digest, and gate only on an approved
-severity/fix-available policy. Never rebuild for scanning.
+The manifest publication job exports the fully-qualified image name and tested
+parent manifest digest. A dependent `linux/amd64` and `linux/arm64` matrix reads
+that exact `IMAGE@digest` with platform-specific Syft and Trivy selection; it
+does not build or retag the image. Each matrix leg validates its SPDX JSON,
+attests it to the parent manifest in GHCR, validates the Trivy JSON schema,
+writes only severity counts and the report-only status to the job summary, and
+uploads the SBOM, vulnerability report, and non-sensitive relationship metadata
+for 14 days.
+
+The release prepare job verifies at least one SPDX attestation for the exact
+parent digest, source commit, repository, and `CI Image` workflow before it
+renders a preview or publishes. The two-platform completeness guarantee remains
+the CI evidence matrix rather than a fragile count of CLI verification output.
+The Release body and operator documentation state that both platform records
+are tied to the same digest and that stable release promotion never rebuilds it.
+
+Vulnerability findings remain report-only. Selecting blocking severities,
+whether only fixed findings should block, and the exception/expiry process are
+owner decisions; scanner, schema, attestation, and artifact failures already
+fail CI.
 
 ### Completion Criteria
 
 Each release digest has provenance, SBOM, and scan results tied to the same
 artifact.
+
+Local completion covers pinned action references, workflow syntax, static
+contracts, documentation, and the no-rebuild digest relationship. Because no
+push is authorized in this task, the first two-platform workflow artifacts,
+registry attestations, and Release prepare verification remain remote acceptance
+evidence rather than a local completion claim.
 
 ### Commit
 

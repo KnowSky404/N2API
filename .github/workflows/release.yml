@@ -28,6 +28,10 @@ jobs:
   prepare:
     name: Prepare release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
     outputs:
       image: ${{ steps.prepare.outputs.image }}
       source_digest: ${{ steps.prepare.outputs.source_digest }}
@@ -170,6 +174,21 @@ jobs:
           echo "resume=$resume" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      - name: Verify tested image SPDX attestation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ steps.prepare.outputs.image }}
+          SOURCE_DIGEST: ${{ steps.prepare.outputs.source_digest }}
+          SOURCE_SHA: ${{ steps.prepare.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://${IMAGE}@${SOURCE_DIGEST}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://spdx.dev/Document \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci-image.yml" \
+            --source-digest "$SOURCE_SHA"
+
       - name: Generate release notes for a new tag
         if: steps.prepare.outputs.resume == 'false'
         uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4
@@ -219,6 +238,14 @@ jobs:
             printf -- '- Source commit: `%s`\n' "$SOURCE_SHA"
             printf -- '- Manifest digest: `%s`\n' "$SOURCE_DIGEST"
             printf -- '- Platforms: `%s`\n\n' "$SOURCE_PLATFORMS"
+            printf '%s\n' \
+              '## Supply Chain Evidence' \
+              '' \
+              "- SPDX JSON SBOM attestations for \`linux/amd64\` and \`linux/arm64\` are bound to \`${IMAGE}@${SOURCE_DIGEST}\`." \
+              '- Both platform SBOMs and vulnerability reports were generated from that existing parent manifest without rebuilding it.' \
+              '- Trivy vulnerability findings are report-only; scanner, schema, and report-generation failures still fail CI.' \
+              '- The per-platform SBOM, Trivy JSON, and non-sensitive evidence metadata artifacts are retained with the originating CI run for 14 days.' \
+              ''
             printf '%s\n' \
               '## Upgrade' \
               '' \

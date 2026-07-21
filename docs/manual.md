@@ -254,6 +254,22 @@ already-tested manifest without rebuilding it, so a running release continues
 to report its source `sha-<12 characters>` build version while the CalVer tag
 identifies the promoted manifest.
 
+For every published `main` image, CI generates separate SPDX JSON SBOMs and
+Trivy vulnerability reports for `linux/amd64` and `linux/arm64`. Both evidence
+jobs read the same immutable parent manifest reference, `IMAGE@sha256:...`, and
+select their platform without rebuilding the image. Each platform SBOM is
+attested to that parent manifest digest in GHCR. CI also retains the SBOM,
+Trivy JSON, and a non-sensitive metadata file naming the parent digest,
+platform, and evidence filenames for 14 days.
+
+Vulnerability findings are report-only until the owner approves a blocking
+severity, fix-availability, and exception-expiry policy. Scanner execution,
+invalid JSON or schema, attestation, and artifact upload errors still fail the
+platform evidence job. Release preview and publish runs verify that the tested
+parent digest has an SPDX attestation issued by this repository's `CI Image`
+workflow for the selected source commit; stable tags continue to promote that
+same digest without rebuilding it.
+
 Release `2026071401` predates multi-platform publishing and supports only
 `linux/amd64`. ARM64 hosts must use a later release. Inspect any tag before
 deployment with:
@@ -271,6 +287,12 @@ calculates the next CalVer, generates release notes from Conventional Commits,
 and uploads the proposed Release body. It does not create Git tags, container
 tags, or GitHub Releases. A later run may select a newer `main` commit, so a
 standalone preview is informational rather than a locked release candidate.
+
+The generated Release body records that the two platform SBOM attestations and
+report-only vulnerability evidence are tied to the tested manifest digest. The
+attestations remain associated with the immutable image in GHCR; the downloadable
+per-platform evidence artifacts are retained with the originating `CI Image`
+run for 14 days.
 
 Complete the [release checklist](release-checklist.md) for the exact candidate
 before publish approval. In particular, record the last successful real-backup

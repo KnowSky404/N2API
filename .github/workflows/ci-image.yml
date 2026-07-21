@@ -672,6 +672,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: image
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+      digest: ${{ steps.publish.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -800,3 +803,155 @@ jobs:
           subject-name: ${{ steps.publish.outputs.image }}
           subject-digest: ${{ steps.publish.outputs.digest }}
           push-to-registry: true
+
+  image-evidence:
+    name: Image evidence (${{ matrix.platform }})
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: manifest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+          - platform: linux/arm64
+            suffix: arm64
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Prepare evidence paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/n2api-image-evidence/${{ matrix.suffix }}"
+          mkdir -p "$evidence_dir"
+          echo "EVIDENCE_DIR=$evidence_dir" >> "$GITHUB_ENV"
+          echo "SBOM_FILE=$evidence_dir/n2api-sbom-${{ matrix.suffix }}.spdx.json" >> "$GITHUB_ENV"
+          echo "TRIVY_FILE=$evidence_dir/n2api-trivy-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
+          echo "METADATA_FILE=$evidence_dir/n2api-evidence-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate platform SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        env:
+          SYFT_PLATFORM: ${{ matrix.platform }}
+        with:
+          image: ${{ needs.manifest.outputs.image }}@${{ needs.manifest.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ env.SBOM_FILE }}
+          upload-artifact: false
+          dependency-snapshot: false
+          upload-release-assets: false
+
+      - name: Validate platform SPDX SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$SBOM_FILE"
+          jq -e '
+            type == "object" and
+            (.spdxVersion | type == "string") and
+            (.SPDXID | type == "string") and
+            (.packages | type == "array")
+          ' "$SBOM_FILE" >/dev/null
+
+      - name: Attest platform SPDX SBOM
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-name: ${{ needs.manifest.outputs.image }}
+          subject-digest: ${{ needs.manifest.outputs.digest }}
+          sbom-path: ${{ env.SBOM_FILE }}
+          push-to-registry: true
+          show-summary: false
+
+      - name: Scan platform image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          image-ref: ${{ needs.manifest.outputs.image }}@${{ needs.manifest.outputs.digest }}
+          scanners: vuln
+          format: json
+          output: ${{ env.TRIVY_FILE }}
+          exit-code: '0'
+          ignore-unfixed: false
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+
+      - name: Validate and summarize platform evidence
+        env:
+          PARENT_DIGEST: ${{ needs.manifest.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$TRIVY_FILE"
+          jq -e '
+            type == "object" and
+            (.SchemaVersion | type == "integer") and
+            (.ArtifactName | type == "string") and
+            (.Results | type == "array") and
+            ([.Results[]? | (.Vulnerabilities // [])] | all(.[]; type == "array"))
+          ' "$TRIVY_FILE" >/dev/null
+
+          sbom_name="${SBOM_FILE##*/}"
+          trivy_name="${TRIVY_FILE##*/}"
+          jq -n \
+            --arg parentDigest "$PARENT_DIGEST" \
+            --arg platform "$PLATFORM" \
+            --arg sbom "$sbom_name" \
+            --arg vulnerabilityReport "$trivy_name" \
+            '{
+              parentDigest: $parentDigest,
+              platform: $platform,
+              files: {
+                sbom: $sbom,
+                vulnerabilityReport: $vulnerabilityReport
+              }
+            }' > "$METADATA_FILE"
+          jq -e \
+            --arg digest "$PARENT_DIGEST" \
+            --arg platform "$PLATFORM" \
+            --arg sbom "$sbom_name" \
+            --arg trivy "$trivy_name" \
+            '.parentDigest == $digest and
+             .platform == $platform and
+             .files.sbom == $sbom and
+             .files.vulnerabilityReport == $trivy' \
+            "$METADATA_FILE" >/dev/null
+
+          {
+            printf '### Image vulnerability evidence (%s)\n\n' "$PLATFORM"
+            printf '| Severity | Findings |\n'
+            printf '| --- | ---: |\n'
+            for severity in UNKNOWN LOW MEDIUM HIGH CRITICAL; do
+              count="$(
+                jq --arg severity "$severity" \
+                  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "UNKNOWN") == $severity)] | length' \
+                  "$TRIVY_FILE"
+              )"
+              printf '| %s | %s |\n' "$severity" "$count"
+            done
+            printf '\nPolicy: report-only. Scanner, schema, and report-generation errors still fail this job.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload platform image evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: image-evidence-${{ matrix.suffix }}
+          path: |
+            ${{ env.SBOM_FILE }}
+            ${{ env.TRIVY_FILE }}
+            ${{ env.METADATA_FILE }}
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false

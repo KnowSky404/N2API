@@ -15,6 +15,19 @@ record.
 - [ ] Release preview workflow run:
 - [ ] Required backend, frontend, and image checks passed:
 
+## Supply Chain Evidence
+
+- [ ] `linux/amd64` and `linux/arm64` image evidence matrix jobs passed:
+- [ ] Both platform SBOMs were generated from the tested parent manifest digest without rebuilding:
+- [ ] The release prepare job verified an SPDX attestation for the exact tested digest, repository workflow, and source commit:
+- [ ] Both 14-day evidence artifacts contain a non-empty SPDX JSON SBOM, Trivy JSON, and non-sensitive metadata naming the same parent digest:
+- [ ] UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL report-only counts were reviewed for both platforms:
+
+Vulnerability findings do not currently block a release by severity. The owner
+must approve a severity, fix-availability, and time-bounded exception policy
+before findings become a release gate. Evidence generation, schema validation,
+attestation, and upload failures are already blocking workflow errors.
+
 ## Restore Drill Gate
 
 Run a real-backup restore drill at least monthly and again before every upgrade.

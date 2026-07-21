@@ -866,3 +866,49 @@ func TestGatewayDocumentationMentionsRoutingPreviewExclusions(t *testing.T) {
 		}
 	}
 }
+
+func TestImageEvidenceDocumentationMatchesWorkflowContract(t *testing.T) {
+	checks := map[string][]string{
+		"../../../docs/manual.md": {
+			"linux/amd64",
+			"linux/arm64",
+			"same immutable parent manifest",
+			"without rebuilding the image",
+			"report-only",
+			"14 days",
+		},
+		"../../../docs/release-checklist.md": {
+			"exact tested digest",
+			"repository workflow",
+			"source commit",
+			"Trivy JSON",
+			"report-only counts",
+		},
+		"../../../.github/workflows/ci-image.yml": {
+			"needs: manifest",
+			"SYFT_PLATFORM: ${{ matrix.platform }}",
+			"TRIVY_PLATFORM: ${{ matrix.platform }}",
+			"push-to-registry: true",
+			"retention-days: 14",
+		},
+		"../../../.github/workflows/release.yml": {
+			"gh attestation verify",
+			"--predicate-type https://spdx.dev/Document",
+			"--signer-workflow",
+			"--source-digest",
+		},
+	}
+
+	for path, wants := range checks {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in image evidence contract", path, want)
+			}
+		}
+	}
+}
