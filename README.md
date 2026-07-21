@@ -43,9 +43,10 @@ docker compose -f deploy/compose.yaml --env-file .env up --build
 ```
 
 Open `http://localhost:3000` and sign in with the admin credentials from
-`.env`. The development Compose file explicitly accepts its container wildcard
-bind and plaintext private-network database topology; published-image
-deployments remain fail-closed until those risks are selected individually.
+`.env`. The development Compose file explicitly accepts its HTTP public origin,
+container wildcard bind, and plaintext private-network database topology;
+published-image deployments remain fail-closed until those risks are selected
+individually.
 
 ## Basic Setup
 

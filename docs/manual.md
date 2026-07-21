@@ -39,10 +39,10 @@ must be acknowledged individually in the comma-separated
 Unknown values, empty list elements, and a blanket `all` value are rejected.
 These acknowledgements never bypass malformed URLs or connection strings,
 placeholder or short secrets, or identical administrator and encryption
-secrets. The development Compose file supplies only `public-bind` and
-`database-plaintext` by default and uses separate local-only credentials when
-no `.env` exists. Set `N2API_ACCEPT_RISKS` explicitly in `.env` to narrow or
-replace those development defaults.
+secrets. The development Compose file supplies `public-http`, `public-bind`,
+and `database-plaintext` by default and uses separate local-only credentials
+when no `.env` exists. Set `N2API_ACCEPT_RISKS` explicitly in `.env` to narrow
+or replace those development defaults.
 
 `OPENAI_API_BASE_URL` and the OpenAI OAuth endpoints are also parsed at
 startup. OAuth authorization and token endpoints must use HTTPS. The API base

@@ -8,7 +8,7 @@ services:
       - path: ../.env
         required: false
     environment:
-      N2API_ACCEPT_RISKS: ${N2API_ACCEPT_RISKS:-public-bind,database-plaintext}
+      N2API_ACCEPT_RISKS: ${N2API_ACCEPT_RISKS:-public-http,public-bind,database-plaintext}
       N2API_ADMIN_PASSWORD: ${N2API_ADMIN_PASSWORD:-n2api-local-admin-password}
       N2API_ENCRYPTION_SECRET: ${N2API_ENCRYPTION_SECRET:-n2api-local-encryption-secret-at-least-32-bytes}
       DATABASE_URL: ${DATABASE_URL:-postgres://n2api:n2api-local-postgres-password@postgres:5432/n2api?sslmode=disable}

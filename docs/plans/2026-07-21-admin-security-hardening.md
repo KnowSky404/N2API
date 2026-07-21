@@ -314,7 +314,7 @@ Known unsafe production combinations cannot start silently.
 Configuration tests cover canonical public origins, reserved placeholder hosts,
 secret length and separation, pgx TLS fallbacks, structured upstream URLs, and
 non-leaking errors. Development, release, E2E, and CI image-smoke paths declare
-only their required risks; release Compose requires a real environment file and
+their explicit risks; release Compose requires a real environment file and
 publishes to host loopback by default.
 
 ### Commit
