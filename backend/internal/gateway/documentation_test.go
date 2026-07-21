@@ -566,6 +566,24 @@ func TestGatewayDocumentationMentionsConfirmedProviderAccountRecovery(t *testing
 	}
 }
 
+func TestGatewayDocumentationMentionsExplicitProviderAccountRecoveryPaths(t *testing.T) {
+	content, err := os.ReadFile("../../../docs/manual.md")
+	if err != nil {
+		t.Fatalf("ReadFile manual returned error: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"Reauthorization replaces the saved OAuth credentials but preserves current account health",
+		"Rotating the encrypted API key, base URL, or per-account outbound proxy URL preserves current account health",
+		"Reset is an explicit operator override",
+		"records both the status-reset audit event and a runtime recovery event",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("manual missing %q in explicit provider account recovery documentation", want)
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsProviderAccountBulkEnable(t *testing.T) {
 	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)

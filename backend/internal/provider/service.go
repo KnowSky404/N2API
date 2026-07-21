@@ -116,14 +116,16 @@ func oauthRefreshIntent(account Account, trigger RefreshTrigger, succeeded bool,
 
 func runtimeAccountIntent(action systemevent.Action, id int64, status string) systemevent.EventIntent {
 	severity := systemevent.SeverityWarning
+	outcome := systemevent.OutcomeFailure
 	if action == systemevent.ActionProviderAccountRecovered {
 		severity = systemevent.SeverityInfo
+		outcome = systemevent.OutcomeSuccess
 	}
 	return systemevent.EventIntent{
 		Category: systemevent.CategoryRuntime,
 		Severity: severity,
 		Action:   action,
-		Outcome:  systemevent.OutcomeSuccess,
+		Outcome:  outcome,
 		Target:   providerAccountTarget(id, ""),
 		Metadata: map[string]any{"status": status},
 	}
@@ -1443,9 +1445,6 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		}
 		update.ProxyURL = &proxyURL
 		update.EncryptedProxyURL = &encryptedProxyURL
-	}
-	if update.APIUpstreamBaseURL != nil || update.EncryptedAPIUpstreamAPIKey != nil || update.EncryptedProxyURL != nil {
-		update.ClearStatus = true
 	}
 	intent := providerAuditIntent(systemevent.ActionProviderAccountUpdated, id, "")
 	changed := make([]string, 0, 9)

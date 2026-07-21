@@ -108,19 +108,169 @@ func TestProviderRuntimeEventOnlyRecordsStateTransitions(t *testing.T) {
 	}
 }
 
+func TestSaveExistingAccountPreservesHealthUntilConfirmedRecovery(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "reauthorize-account",
+		Name: "Reauthorize account", DisplayName: "owner@example.test", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-old-access", EncryptedRefreshToken: "encrypted-old-refresh",
+	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	until := now.Add(time.Hour)
+	if _, err := repo.pool.Exec(context.Background(), `
+		UPDATE provider_accounts
+		SET status = $2, status_reason = 'existing authorization failure', last_error = 'existing authorization failure',
+			last_error_at = $3, failure_count = 2, circuit_open_until = $4
+		WHERE id = $1
+	`, account.ID, provider.AccountStatusExpired, now, until); err != nil {
+		t.Fatal(err)
+	}
+	callbackCtx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionOAuthCallbackCompleted, Outcome: systemevent.OutcomeSuccess,
+	})
+	saved, err := repo.SaveAccount(callbackCtx, provider.Account{
+		ID: account.ID, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "new-subject",
+		Name: "Reauthorized account", DisplayName: "new@example.test", Enabled: true, Priority: 5,
+		Status: provider.AccountStatusActive, EncryptedAccessToken: "encrypted-new-access", EncryptedRefreshToken: "encrypted-new-refresh",
+	})
+	if err != nil {
+		t.Fatalf("SaveAccount reauthorization returned error: %v", err)
+	}
+	if saved.EncryptedAccessToken != "encrypted-new-access" || saved.EncryptedRefreshToken != "encrypted-new-refresh" || saved.Subject != "new-subject" {
+		t.Fatalf("reauthorized identity/credentials = %+v", saved)
+	}
+	if saved.Status != provider.AccountStatusExpired || saved.StatusReason != "existing authorization failure" || saved.LastError != "existing authorization failure" ||
+		saved.LastErrorAt == nil || saved.FailureCount != 2 || saved.CircuitOpenUntil == nil {
+		t.Fatalf("account health after reauthorization = %+v, want preserved", saved)
+	}
+	var recoveredEvents int
+	if err := repo.pool.QueryRow(context.Background(), `SELECT count(*) FROM system_events WHERE action = $1`, systemevent.ActionProviderAccountRecovered).Scan(&recoveredEvents); err != nil {
+		t.Fatal(err)
+	}
+	if recoveredEvents != 0 {
+		t.Fatalf("recovery events = %d, want none for credential replacement", recoveredEvents)
+	}
+}
+
+func TestProviderAccountStatusResetAuditsOperatorRecovery(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "operator-reset-account",
+		Name: "Operator reset account", DisplayName: "Operator reset account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+	})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := repo.pool.Exec(context.Background(), `
+		UPDATE provider_accounts
+		SET status = $2, status_reason = 'expired token', last_error = 'expired token', last_error_at = $3
+		WHERE id = $1
+	`, account.ID, provider.AccountStatusExpired, now); err != nil {
+		t.Fatal(err)
+	}
+	resetCtx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionProviderAccountStatusReset, Outcome: systemevent.OutcomeSuccess,
+	})
+	for range 2 {
+		if _, err := repo.UpdateAccount(resetCtx, "openai", account.ID, provider.AccountUpdate{ClearStatus: true}); err != nil {
+			t.Fatalf("UpdateAccount status reset returned error: %v", err)
+		}
+	}
+	rows, err := repo.pool.Query(context.Background(), `
+		SELECT action, category, severity, outcome, target_type, target_name,
+			COALESCE(metadata->>'status', ''), COALESCE(metadata->>'confirmation', '')
+		FROM system_events
+		WHERE target_id = $1 AND action IN ($2, $3)
+		ORDER BY id
+	`, strconv.FormatInt(account.ID, 10), systemevent.ActionProviderAccountStatusReset, systemevent.ActionProviderAccountRecovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type eventFields struct{ action, category, severity, outcome, targetType, targetName, status, confirmation string }
+	events := make([]eventFields, 0, 3)
+	for rows.Next() {
+		var event eventFields
+		if err := rows.Scan(&event.action, &event.category, &event.severity, &event.outcome, &event.targetType, &event.targetName, &event.status, &event.confirmation); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[0].action != string(systemevent.ActionProviderAccountStatusReset) || events[1].action != string(systemevent.ActionProviderAccountRecovered) || events[2].action != string(systemevent.ActionProviderAccountStatusReset) {
+		t.Fatalf("status reset events = %+v, want audit/recovery/audit", events)
+	}
+	if events[1].category != string(systemevent.CategoryRuntime) || events[1].severity != string(systemevent.SeverityInfo) ||
+		events[1].outcome != string(systemevent.OutcomeSuccess) || events[1].targetType != "provider_account" || events[1].targetName != "Operator reset account" ||
+		events[1].status != provider.AccountStatusActive || events[1].confirmation != "operator_reset" {
+		t.Fatalf("operator recovery event = %+v", events[1])
+	}
+}
+
 func TestSaveAccountSubjectConflictPreservesSchedulingFields(t *testing.T) {
 	source, err := os.ReadFile("provider.go")
 	if err != nil {
 		t.Fatalf("ReadFile provider.go returned error: %v", err)
 	}
 	sql := string(source)
+	conflictStart := strings.Index(sql, "ON CONFLICT (provider, account_type, subject)")
+	if conflictStart < 0 {
+		t.Fatal("SaveAccount subject conflict clause is missing")
+	}
+	conflictEnd := strings.Index(sql[conflictStart:], "RETURNING id")
+	if conflictEnd < 0 {
+		t.Fatal("SaveAccount subject conflict RETURNING clause is missing")
+	}
+	conflictSQL := sql[conflictStart : conflictStart+conflictEnd]
 	for _, forbidden := range []string{
 		"enabled = EXCLUDED.enabled",
 		"priority = EXCLUDED.priority",
+		"last_error = ''",
+		"last_error_at = NULL",
+		"status = EXCLUDED.status",
+		"status_reason = EXCLUDED.status_reason",
+		"failure_count = EXCLUDED.failure_count",
+		"circuit_open_until = EXCLUDED.circuit_open_until",
+		"rate_limited_until = EXCLUDED.rate_limited_until",
 	} {
-		if strings.Contains(sql, forbidden) {
+		if strings.Contains(conflictSQL, forbidden) {
 			t.Fatalf("SaveAccount subject conflict must preserve scheduling field, found %q", forbidden)
 		}
+	}
+}
+
+func TestRefreshFailureCircuitEventUsesFailureOutcome(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "refresh-circuit-account",
+		Name: "Refresh circuit account", DisplayName: "Refresh circuit account", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "encrypted-access", EncryptedRefreshToken: "encrypted-refresh",
+	})
+	now := time.Now().UTC()
+	openUntil := now.Add(5 * time.Minute)
+	failureCtx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityWarning,
+		Action: systemevent.ActionOAuthRefreshAutomaticFailed, Outcome: systemevent.OutcomeFailure,
+	})
+	if err := repo.RecordRefreshFailure(failureCtx, "openai", account.ID, "refresh unavailable", now, &openUntil); err != nil {
+		t.Fatalf("RecordRefreshFailure returned error: %v", err)
+	}
+	var category, severity, outcome, targetType, targetID string
+	if err := repo.pool.QueryRow(context.Background(), `
+		SELECT category, severity, outcome, target_type, target_id
+		FROM system_events WHERE action = $1
+	`, systemevent.ActionProviderAccountCircuitOpened).Scan(&category, &severity, &outcome, &targetType, &targetID); err != nil {
+		t.Fatal(err)
+	}
+	if category != string(systemevent.CategoryRuntime) || severity != string(systemevent.SeverityWarning) || outcome != string(systemevent.OutcomeFailure) ||
+		targetType != "provider_account" || targetID != strconv.FormatInt(account.ID, 10) {
+		t.Fatalf("circuit event = %s/%s/%s target=%s/%s", category, severity, outcome, targetType, targetID)
 	}
 }
 
@@ -942,7 +1092,7 @@ func TestProviderAccountSaveAndScanIncludeFingerprintProfileID(t *testing.T) {
 	for _, want := range []string{
 		"a.fingerprint_profile_id",
 		"&account.FingerprintProfileID",
-		"fingerprint_profile_id = $19",
+		"fingerprint_profile_id = $",
 		"fingerprint_profile_id, updated_at",
 		"account.FingerprintProfileID",
 	} {

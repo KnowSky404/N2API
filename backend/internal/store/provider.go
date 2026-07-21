@@ -691,19 +691,12 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 				display_name = $6,
 				enabled = $7,
 				priority = CASE WHEN $8 = 0 THEN 100 ELSE $8 END,
-				load_factor = CASE WHEN $17 = 0 THEN 1 ELSE $17 END,
-				max_concurrent_requests = $18,
-				last_error = '',
-				last_error_at = NULL,
-				status = COALESCE(NULLIF($9, ''), 'active'),
-				status_reason = $10,
-				fingerprint_hash = $11,
-				user_agent_hash = $12,
-				ip_hash = $13,
-				failure_count = $14,
-				circuit_open_until = $15,
-				rate_limited_until = $16,
-				fingerprint_profile_id = $19,
+				load_factor = CASE WHEN $12 = 0 THEN 1 ELSE $12 END,
+				max_concurrent_requests = $13,
+				fingerprint_hash = $9,
+				user_agent_hash = $10,
+				ip_hash = $11,
+				fingerprint_profile_id = $14,
 				updated_at = now()
 			WHERE provider = $1
 				AND id = $2
@@ -716,14 +709,9 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			account.DisplayName,
 			account.Enabled,
 			account.Priority,
-			account.Status,
-			account.StatusReason,
 			account.FingerprintHash,
 			account.UserAgentHash,
 			account.IPHash,
-			account.FailureCount,
-			account.CircuitOpenUntil,
-			account.RateLimitedUntil,
 			account.LoadFactor,
 			account.MaxConcurrentRequests,
 			account.FingerprintProfileID,
@@ -776,16 +764,9 @@ func (r *ProviderRepository) SaveAccount(ctx context.Context, account provider.A
 			name = EXCLUDED.name,
 			display_name = EXCLUDED.display_name,
 			load_factor = EXCLUDED.load_factor,
-			last_error = '',
-			last_error_at = NULL,
-			status = EXCLUDED.status,
-			status_reason = EXCLUDED.status_reason,
 			fingerprint_hash = EXCLUDED.fingerprint_hash,
 			user_agent_hash = EXCLUDED.user_agent_hash,
 			ip_hash = EXCLUDED.ip_hash,
-			failure_count = EXCLUDED.failure_count,
-			circuit_open_until = EXCLUDED.circuit_open_until,
-			rate_limited_until = EXCLUDED.rate_limited_until,
 			updated_at = now()
 		RETURNING id
 	`, account.Provider,
@@ -968,12 +949,28 @@ func (r *ProviderRepository) UpdateAccount(ctx context.Context, providerName str
 	if err != nil {
 		return provider.Account{}, err
 	}
+	stateChanged := previousStatus != provider.AccountStatusActive || previousStatusReason != "" || previousLastError != "" || previousLastErrorAt != nil || previousFailureCount != 0 || previousCircuitOpenUntil != nil || previousRateLimitedUntil != nil
+	intent, hasIntent := systemevent.IntentFromContext(ctx)
 	emitEvent := true
-	if intent, ok := systemevent.IntentFromContext(ctx); ok && intent.Category == systemevent.CategoryRuntime && update.ClearStatus {
-		emitEvent = previousStatus != provider.AccountStatusActive || previousStatusReason != "" || previousLastError != "" || previousLastErrorAt != nil || previousFailureCount != 0 || previousCircuitOpenUntil != nil || previousRateLimitedUntil != nil
+	if hasIntent && intent.Category == systemevent.CategoryRuntime && update.ClearStatus {
+		emitEvent = stateChanged
 	}
 	if emitEvent {
 		if err := insertProviderIntent(ctx, tx, target, started); err != nil {
+			return provider.Account{}, err
+		}
+	}
+	if hasIntent && intent.Action == systemevent.ActionProviderAccountStatusReset && update.ClearStatus && stateChanged {
+		recoveryIntent := systemevent.EventIntent{
+			Category: systemevent.CategoryRuntime,
+			Severity: systemevent.SeverityInfo,
+			Action:   systemevent.ActionProviderAccountRecovered,
+			Outcome:  systemevent.OutcomeSuccess,
+			Target:   target,
+			Metadata: map[string]any{"status": provider.AccountStatusActive, "confirmation": "operator_reset"},
+		}
+		recoveryEvent := systemevent.BuildEvent(ctx, recoveryIntent, target, time.Now().UTC(), time.Since(started))
+		if err := InsertSystemEventTx(ctx, tx, recoveryEvent); err != nil {
 			return provider.Account{}, err
 		}
 	}
@@ -1169,7 +1166,7 @@ func (r *ProviderRepository) RecordRefreshFailure(ctx context.Context, providerN
 			Category: systemevent.CategoryRuntime,
 			Severity: systemevent.SeverityWarning,
 			Action:   systemevent.ActionProviderAccountCircuitOpened,
-			Outcome:  systemevent.OutcomeSuccess,
+			Outcome:  systemevent.OutcomeFailure,
 			Target:   target,
 			Metadata: map[string]any{"status": provider.AccountStatusCircuitOpen, "circuit_open_until": openUntil.UTC()},
 		}

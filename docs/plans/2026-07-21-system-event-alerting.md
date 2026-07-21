@@ -350,6 +350,12 @@ complete, add `provider-account-expired-v1` and
 commits. Routing exhaustion remains deferred until a bounded persistent
 aggregator emits dedicated trigger and recovery System Events.
 
+Fifth-slice status: completed locally on 2026-07-21. Focused Provider and
+isolated PostgreSQL Store tests cover preserved health during OAuth
+reauthorization and API-upstream configuration changes, transactional operator
+reset recovery, and failure outcomes for negative Runtime transitions. The
+account-expiry and circuit-open templates are now unblocked as separate slices.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.

@@ -492,6 +492,11 @@ func TestCompleteCallbackCreatesNamedAccountWithIsolatedFingerprint(t *testing.T
 	if account.Metadata["email"] != "work@example.com" || account.Metadata["chatgpt_account_id"] != "acct_work" || account.Metadata["access_token_sha256"] == "" {
 		t.Fatalf("metadata = %+v", account.Metadata)
 	}
+	for _, intent := range repo.intents {
+		if intent.Action == systemevent.ActionProviderAccountRecovered {
+			t.Fatalf("new account connect emitted recovery intent: %+v", intent)
+		}
+	}
 }
 
 func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIdentity(t *testing.T) {
@@ -511,6 +516,14 @@ func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIden
 	if err != nil {
 		t.Fatalf("SaveAccount returned error: %v", err)
 	}
+	now := time.Now()
+	until := now.Add(time.Hour)
+	repo.accounts[0].Status = AccountStatusExpired
+	repo.accounts[0].StatusReason = "existing authorization failure"
+	repo.accounts[0].LastError = "existing authorization failure"
+	repo.accounts[0].LastErrorAt = &now
+	repo.accounts[0].FailureCount = 2
+	repo.accounts[0].CircuitOpenUntil = &until
 	client := &captureExchangeOAuthClient{
 		exchange: TokenResponse{
 			AccessToken:  "new-access",
@@ -550,6 +563,10 @@ func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIden
 	}
 	if token != "new-access" {
 		t.Fatalf("token = %q, want new-access", token)
+	}
+	if account.Status != AccountStatusExpired || account.StatusReason != "existing authorization failure" || account.LastError != "existing authorization failure" ||
+		account.LastErrorAt == nil || account.FailureCount != 2 || account.CircuitOpenUntil == nil {
+		t.Fatalf("account health after reauthorization = %+v, want preserved until confirmed recovery", account)
 	}
 }
 
@@ -1976,6 +1993,20 @@ func TestRecordAccountFailureMapsUpstreamStatusesToAccountState(t *testing.T) {
 	if repo.accounts[0].Status != AccountStatusCircuitOpen || repo.accounts[0].CircuitOpenUntil == nil || !repo.accounts[0].CircuitOpenUntil.After(time.Now()) {
 		t.Fatalf("circuit account = %+v", repo.accounts[0])
 	}
+	if len(repo.intents) != 3 {
+		t.Fatalf("runtime intents = %+v, want rate-limit, expiry, and circuit transitions", repo.intents)
+	}
+	wantActions := []systemevent.Action{
+		systemevent.ActionProviderAccountRateLimited,
+		systemevent.ActionProviderAccountExpired,
+		systemevent.ActionProviderAccountCircuitOpened,
+	}
+	for index, intent := range repo.intents {
+		if intent.Action != wantActions[index] || intent.Category != systemevent.CategoryRuntime || intent.Severity != systemevent.SeverityWarning || intent.Outcome != systemevent.OutcomeFailure ||
+			intent.Target.Type != "provider_account" || intent.Target.ID != "7" {
+			t.Fatalf("runtime intent %d = %+v, want warning failure %q for provider_account/7", index, intent, wantActions[index])
+		}
+	}
 }
 
 func TestRecordAccountFailureDoesNotExpireAccountForResponsesScopeForbidden(t *testing.T) {
@@ -2142,8 +2173,9 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 	if decrypted != "new-secret" {
 		t.Fatalf("decrypted API key = %q, want new-secret", decrypted)
 	}
-	if account.Status != AccountStatusActive || account.LastError != "" || account.CircuitOpenUntil != nil || account.FailureCount != 0 {
-		t.Fatalf("account status after credential rotation = %+v, want local failure state cleared", account)
+	if account.Status != AccountStatusCircuitOpen || account.StatusReason != "old upstream credential failed" || account.LastError != "old upstream credential failed" ||
+		account.LastErrorAt == nil || account.CircuitOpenUntil == nil || account.FailureCount != 3 {
+		t.Fatalf("account status after credential rotation = %+v, want health preserved until confirmed recovery", account)
 	}
 }
 
@@ -3591,6 +3623,14 @@ func TestUpdateAccountCanSetAndClearProxyURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
 	}
+	now := time.Now()
+	until := now.Add(time.Hour)
+	repo.accounts[0].Status = AccountStatusCircuitOpen
+	repo.accounts[0].StatusReason = "existing proxy failure"
+	repo.accounts[0].LastError = "existing proxy failure"
+	repo.accounts[0].LastErrorAt = &now
+	repo.accounts[0].FailureCount = 2
+	repo.accounts[0].CircuitOpenUntil = &until
 
 	proxyURL := "https://proxy.example.test:8443"
 	updated, err := service.UpdateAccount(context.Background(), account.ID, AccountUpdate{ProxyURL: &proxyURL})
@@ -3600,6 +3640,10 @@ func TestUpdateAccountCanSetAndClearProxyURL(t *testing.T) {
 	if !updated.ProxyURLConfigured || updated.ProxyURLSummary != "https://proxy.example.test:8443" {
 		t.Fatalf("updated proxy summary = configured:%v summary:%q", updated.ProxyURLConfigured, updated.ProxyURLSummary)
 	}
+	if updated.Status != AccountStatusCircuitOpen || updated.StatusReason != "existing proxy failure" || updated.LastError != "existing proxy failure" ||
+		updated.LastErrorAt == nil || updated.FailureCount != 2 || updated.CircuitOpenUntil == nil {
+		t.Fatalf("account health after proxy update = %+v, want preserved", updated)
+	}
 
 	clear := ""
 	updated, err = service.UpdateAccount(context.Background(), account.ID, AccountUpdate{ProxyURL: &clear})
@@ -3608,6 +3652,9 @@ func TestUpdateAccountCanSetAndClearProxyURL(t *testing.T) {
 	}
 	if updated.ProxyURLConfigured || updated.ProxyURLSummary != "" || updated.Credential.EncryptedProxyURL != "" {
 		t.Fatalf("cleared proxy fields = %+v", updated)
+	}
+	if updated.Status != AccountStatusCircuitOpen || updated.LastError != "existing proxy failure" || updated.CircuitOpenUntil == nil {
+		t.Fatalf("account health after proxy removal = %+v, want preserved", updated)
 	}
 }
 
@@ -4272,6 +4319,7 @@ func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account,
 	now := time.Now()
 	for i := range r.accounts {
 		if r.accounts[i].Provider == account.Provider && (r.accounts[i].Subject == account.Subject || (account.ID > 0 && r.accounts[i].ID == account.ID)) {
+			previous := r.accounts[i]
 			account.ID = valueOrDefaultInt64(account.ID, r.accounts[i].ID)
 			if !account.Enabled {
 				account.Enabled = r.accounts[i].Enabled
@@ -4279,6 +4327,17 @@ func (r *memoryRepo) SaveAccount(ctx context.Context, account Account) (Account,
 			if account.Priority == 0 {
 				account.Priority = r.accounts[i].Priority
 			}
+			account.LastUsedAt = previous.LastUsedAt
+			account.LastError = previous.LastError
+			account.LastErrorAt = previous.LastErrorAt
+			account.LastTestAt = previous.LastTestAt
+			account.LastTestStatus = previous.LastTestStatus
+			account.LastTestError = previous.LastTestError
+			account.Status = previous.Status
+			account.StatusReason = previous.StatusReason
+			account.FailureCount = previous.FailureCount
+			account.CircuitOpenUntil = previous.CircuitOpenUntil
+			account.RateLimitedUntil = previous.RateLimitedUntil
 			account.CreatedAt = r.accounts[i].CreatedAt
 			account.UpdatedAt = now
 			r.accounts[i] = account
