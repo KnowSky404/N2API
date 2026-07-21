@@ -543,6 +543,45 @@ System Event, catalog, matcher, service, Store, HTTP, manual, and documentation
 tests must assert exact fields, cooldown/recovery behavior, stable template
 order, and idempotent installation.
 
+The fallback-window slice remains owner-blocked until its product thresholds
+are selected. Request Logs already persist `gateway_attempt_count` and
+`gateway_fallback_count`, but the latter measures fallback pressure: it can
+include a final concurrency-full selection that did not successfully move to
+another account. A future rule must therefore avoid describing it as a
+successful-switch rate and must explicitly choose its rolling window, minimum
+sample size, trigger threshold, recovery hysteresis, and API-Key target
+semantics. The current implementation must not silently adopt provisional
+values for those policy decisions.
+
+The thirteenth source-event slice closes API Key physical-cleanup failures. The
+existing hourly cleanup already writes
+`scheduler.api_key_purge.completed` transactionally after every successful
+cycle, including zero-row cycles. A failed cycle emits the new Scheduler
+error/failure action `scheduler.api_key_purge.failed` after the failed purge
+transaction has rolled back. Both actions use the stable
+`client_api_key_collection` target so the next successful cycle is an exact
+recovery for the same incident. Parent-context cancellation during shutdown
+does not emit a failure event.
+
+The failure event is best effort because the System Event store shares
+PostgreSQL with the cleanup transaction. It contains no database error text,
+SQL, key identity, prefix, or secret. Its fixed error code is
+`api_key_purge_failed`, its message is static, and its only metadata is the
+scheduled retention duration in days. Event-recording failure is logged with a
+fixed error code rather than the storage error. Focused runner tests must prove
+immediate execution, interval behavior, success and failure paths, cancellation
+suppression, exact event fields, and sanitized logs. Existing Store tests must
+continue proving that a successful purge and its completion event commit
+atomically.
+
+After that source event exists, add `api-key-purge-failed-v1` in an independent
+commit. The template starts disabled, fires on the first cleanup failure, uses
+target-scoped deduplication and a 24-hour cooldown, and recognizes
+`scheduler.api_key_purge.completed` as recovery with recovery notifications
+enabled. Catalog, matcher, service, Store, HTTP, manual, and documentation
+tests must cover exact fields, cooldown, recovery, stable order, and idempotent
+installation.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.
