@@ -592,6 +592,35 @@ Fourteenth-slice status: completed locally on 2026-07-21. The template is
 additive, explicitly installed by an owner, and disabled until that owner
 reviews and enables it.
 
+The fifteenth source-event slice closes scheduled System Event retention
+failures. The existing daily runner emits
+`scheduler.system_event_retention.completed` after every successful cycle,
+including zero-row cycles. A failed delete cycle emits the new Scheduler action
+`scheduler.system_event_retention.failed` against the same stable
+`system_events/retention` target. A failure before any committed batch is
+error/failure; a failure after one or more committed delete batches is
+warning/partial. The next completed cycle is the exact recovery signal. Parent
+context cancellation during shutdown emits no failure event.
+
+Failure recording is best effort because retention and System Events share the
+same PostgreSQL store. The event contains only the configured retention days,
+UTC cutoff, and already-deleted row count. It uses the fixed error code
+`system_event_retention_failed` and never includes SQL, database errors, event
+payloads, or deleted-event attributes. Failure-event insertion errors and the
+underlying delete error are logged only as fixed error codes. Focused runner
+tests must cover immediate and interval execution, multi-batch success, full
+and partial failure fields, cancellation suppression, exact target/recovery
+compatibility, and sanitized logging.
+
+After the source event exists, add `system-event-retention-failed-v1` in an
+independent commit. The template starts disabled, matches both full and partial
+failures by leaving severity unrestricted, fires on the first failed cycle,
+uses target-scoped deduplication and a 24-hour cooldown, and recognizes
+`scheduler.system_event_retention.completed` as recovery with recovery
+notifications enabled. Catalog, matcher, service, Store, HTTP, manual, and
+documentation tests must cover exact fields, cooldown, recovery, stable order,
+and idempotent installation.
+
 ### Completion Criteria
 
 Every event has trigger, aggregation, cooldown, recovery, and test coverage.
