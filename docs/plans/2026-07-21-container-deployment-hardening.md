@@ -271,6 +271,10 @@ manifest.
 
 ## Task 6: Pin Maintainable Dependencies
 
+Task status: dependency pins completed locally on 2026-07-21; automated update
+configuration is tracked by Repository Governance Task 3, and amd64 execution
+remains pending the next authorized push
+
 ### Goal
 
 Remove moving `latest` behavior from builds and releases.
@@ -295,6 +299,16 @@ deploy `latest` for production.
 
 The same source and inputs resolve the same base artifacts, and update PRs run
 the complete test/image suite.
+
+All main, E2E, Compose, and CI runtime images now use readable exact version
+tags plus multi-platform manifest digests. Bun `1.3.14` is consistent across
+the frontend package metadata, Docker builds, and CI; Go `1.26.4` is consistent
+between `go.mod` and container builds. Release Compose requires an explicit
+`N2API_IMAGE` and no longer falls back to `latest`. A CI preflight rejects
+missing digests or toolchain drift. Every pinned manifest includes amd64 and
+arm64; native arm64 main/E2E builds and the PostgreSQL-backed gateway plus both
+SDK contract suites passed locally. The existing image matrix will execute the
+amd64 build after the next authorized push.
 
 ### Commit
 

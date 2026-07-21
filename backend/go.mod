@@ -1,6 +1,6 @@
 module github.com/KnowSky404/N2API/backend
 
-go 1.26.2
+go 1.26.4
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2

@@ -222,6 +222,14 @@ Published images support:
 - `linux/amd64`
 - `linux/arm64`
 
+All repository-owned container builds pin readable dependency versions and their
+multi-platform manifest digests. The current baseline is Bun `1.3.14`, Go
+`1.26.4` on Alpine `3.23`, Alpine `3.23.5`, and PostgreSQL `18.4` on Alpine
+`3.23`. E2E-only uv and Python images are pinned the same way. A version tag
+communicates the intended dependency while the digest makes the resolved bytes
+reproducible on both supported architectures. Update both together; never
+replace a digest without verifying that it belongs to the adjacent tag.
+
 Every tested image carries the same build identity in the binary and OCI
 metadata:
 
@@ -324,7 +332,7 @@ cd N2API || exit 1
 N2API_VERSION=YYYYMMDDNN
 git checkout "$N2API_VERSION"
 cp .env.example .env
-printf '\nN2API_IMAGE=ghcr.io/knowsky404/n2api:%s\n' "$N2API_VERSION" >> .env
+sed -i "s|^N2API_IMAGE=.*|N2API_IMAGE=ghcr.io/knowsky404/n2api:${N2API_VERSION}|" .env
 ```
 
 Replace every `change-me` value before starting the stack. At minimum, set:
@@ -342,10 +350,13 @@ Replace every `change-me` value before starting the stack. At minimum, set:
   the bundled PostgreSQL service does not enable TLS. For an external
   TLS-required PostgreSQL service, omit `database-plaintext`.
 
-The release Compose file requires `.env`, rejects missing required variables at
-Compose interpolation time, and publishes N2API on `127.0.0.1` by default. Set
-`N2API_BIND_ADDRESS=0.0.0.0` or `::` only when an intentionally public host
-listener is protected by the host firewall or an operator-provided ingress.
+The release Compose file requires `.env` and an explicit `N2API_IMAGE`; it has
+no `latest` fallback. Use the immutable CalVer matching the checked-out release
+or a complete digest reference. Missing required variables are rejected at
+Compose interpolation time. The stack publishes N2API on `127.0.0.1` by
+default. Set `N2API_BIND_ADDRESS=0.0.0.0` or `::` only when an intentionally
+public host listener is protected by the host firewall or an operator-provided
+ingress.
 
 ### Host Binding Modes
 
@@ -451,8 +462,9 @@ docker compose -f deploy/compose.release.yaml --env-file .env up -d
 curl -fsS http://127.0.0.1:3000/readyz
 ```
 
-Use `latest` only when automatic movement to the newest stable release is
-intentional. Use `main` only for development validation, not production.
+Use immutable CalVer tags or complete digest references for production. The
+moving `latest` and `main` tags are for explicit update experiments and
+development validation, not unattended release deployment.
 
 ## Health Probes
 

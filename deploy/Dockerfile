@@ -1,11 +1,11 @@
-FROM oven/bun:1 AS frontend
+FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS frontend
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/bun.lock* ./
 RUN bun install --frozen-lockfile
 COPY frontend/ ./
 RUN bun run build
 
-FROM golang:1.26-alpine AS backend
+FROM golang:1.26.4-alpine3.23@sha256:18b460dd17542c2ba43299a633cf6ebfc1115101509531471d7cfce1019af083 AS backend
 ARG N2API_VERSION=dev
 ARG N2API_COMMIT=unknown
 ARG N2API_BUILD_TIME=1970-01-01T00:00:00Z
@@ -18,7 +18,7 @@ RUN go build -trimpath \
     -ldflags="-s -w -X=github.com/KnowSky404/N2API/backend/internal/buildinfo.Version=${N2API_VERSION} -X=github.com/KnowSky404/N2API/backend/internal/buildinfo.Commit=${N2API_COMMIT} -X=github.com/KnowSky404/N2API/backend/internal/buildinfo.BuildTime=${N2API_BUILD_TIME}" \
     -o /out/n2api ./cmd/n2api
 
-FROM alpine:3.23
+FROM alpine:3.23.5@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
 ARG N2API_VERSION=dev
 ARG N2API_COMMIT=unknown
 ARG N2API_BUILD_TIME=1970-01-01T00:00:00Z
