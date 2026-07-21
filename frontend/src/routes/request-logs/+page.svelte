@@ -4,30 +4,29 @@
     accountLabel,
     apiKeys,
     formatDate,
-    formatCostMicrousd,
     formatRequestLogCost,
     formatTokens,
     loadKeys,
     loadProviderAccounts,
     loadRoutingPools,
-    loadUsageSummary,
     loadRequestLogs,
     providerAccounts,
     requestLogs,
     resetRequestLogFilters,
     routingPools,
     session,
-    usage,
   } from '$lib/admin-state.svelte.js';
 
   import AuthGate from '$lib/AuthGate.svelte';
-  import { Download, RefreshCw, SlidersHorizontal } from 'lucide-svelte';
+  import { ChevronDown, Download, Search, SlidersHorizontal, X } from 'lucide-svelte';
 
   let providerAccountsRequested = $state(false);
   let routingPoolsRequested = $state(false);
   let apiKeysRequested = $state(false);
-  let appliedRequestLogSearch = $state('');
+  /** @type {string | null} */
+  let appliedRequestLogSearch = $state(null);
   let showAdvancedFilters = $state(false);
+  let requestLogDateRange = $state('all');
   let requestLogPage = $state(1);
   let requestLogPageSize = $state(10);
 
@@ -46,6 +45,28 @@
           normalizedRequestLogPage * requestLogPageSize,
           requestLogs.items.length
         )}`
+  );
+  let advancedRequestLogFilterCount = $derived(
+    [
+      requestLogs.requestId.trim(),
+      requestLogs.model.trim(),
+      requestLogs.sessionId.trim(),
+      requestLogs.errorCode.trim(),
+      requestLogs.statusCode.trim(),
+      requestLogs.usageSource !== 'all',
+      requestLogs.routingPoolError !== 'all',
+      requestLogs.routingPoolChain.trim(),
+      requestLogs.providerAccountId !== 'all',
+      requestLogs.routingPoolId !== 'all',
+      requestLogs.clientKeyId !== 'all',
+      requestLogs.gatewayFallbacks
+    ].filter(Boolean).length
+  );
+  let activeRequestLogFilterCount = $derived(
+    advancedRequestLogFilterCount
+      + (requestLogs.query.trim() ? 1 : 0)
+      + (requestLogs.statusClass !== 'all' ? 1 : 0)
+      + (requestLogs.since ? 1 : 0)
   );
 
   /** @param {string} search */
@@ -122,6 +143,7 @@
     if (/^\d+$/.test(since)) {
       requestLogs.since = since;
     }
+    requestLogDateRange = requestLogDateRangeForSince(requestLogs.since);
 
     const routingPoolError = params.get('routingPoolError') ?? '';
     if (
@@ -149,7 +171,7 @@
 
     showAdvancedFilters = [
       'requestId', 'providerAccountId', 'routingPoolId', 'clientKeyId', 'model', 'sessionId',
-      'error', 'usageSource', 'statusCode', 'since', 'routingPoolError', 'routingPoolChain', 'gatewayFallbacks'
+      'error', 'usageSource', 'statusCode', 'routingPoolError', 'routingPoolChain', 'gatewayFallbacks'
     ].some((key) => params.has(key));
   }
   /** @param {string} [format] */
@@ -160,14 +182,14 @@
     if (requestLogs.statusClass && requestLogs.statusClass !== 'all') params.set('statusClass', requestLogs.statusClass);
     if (/^[1-5]\d\d$/.test(requestLogs.statusCode)) params.set('statusCode', requestLogs.statusCode);
     if (/^\d+$/.test(requestLogs.since)) params.set('since', requestLogs.since);
-    if (requestLogs.providerAccountId) params.set('providerAccountId', requestLogs.providerAccountId);
-    if (requestLogs.routingPoolId) params.set('routingPoolId', requestLogs.routingPoolId);
-    if (requestLogs.clientKeyId) params.set('clientKeyId', requestLogs.clientKeyId);
+    if (requestLogs.providerAccountId && requestLogs.providerAccountId !== 'all') params.set('providerAccountId', requestLogs.providerAccountId);
+    if (requestLogs.routingPoolId && requestLogs.routingPoolId !== 'all') params.set('routingPoolId', requestLogs.routingPoolId);
+    if (requestLogs.clientKeyId && requestLogs.clientKeyId !== 'all') params.set('clientKeyId', requestLogs.clientKeyId);
     if (requestLogs.model) params.set('model', requestLogs.model);
     if (requestLogs.sessionId) params.set('sessionId', requestLogs.sessionId);
     if (requestLogs.errorCode) params.set('error', requestLogs.errorCode);
     if (requestLogs.usageSource && requestLogs.usageSource !== 'all') params.set('usageSource', requestLogs.usageSource);
-    if (requestLogs.routingPoolError) params.set('routingPoolError', requestLogs.routingPoolError);
+    if (requestLogs.routingPoolError && requestLogs.routingPoolError !== 'all') params.set('routingPoolError', requestLogs.routingPoolError);
     if (requestLogs.routingPoolChain) params.set('routingPoolChain', requestLogs.routingPoolChain);
     if (requestLogs.gatewayFallbacks) params.set('gatewayFallbacks', '1');
     if (format) params.set('format', format);
@@ -180,7 +202,7 @@
       providerAccountsRequested = false;
       routingPoolsRequested = false;
       apiKeysRequested = false;
-      appliedRequestLogSearch = '';
+      appliedRequestLogSearch = null;
       return;
     }
     if (appliedRequestLogSearch !== page.url.search) {
@@ -254,15 +276,11 @@
     return `/request-logs?${params.toString()}`;
   }
 
-  const usageRanges = ['24h', '7d', '30d'];
-  const usageGroups = [
-    { value: 'model', label: 'Model' },
-    { value: 'client_key', label: 'Client key' },
-    { value: 'provider_account', label: 'Provider account' },
-    { value: 'routing_pool', label: 'Routing pool' },
-    { value: 'routing_pool_chain', label: 'Routing pool chain' },
-    { value: 'session', label: 'Session' },
-    { value: 'usage_source', label: 'Usage source' }
+  const requestLogDateRanges = [
+    { value: 'all', label: 'All time', seconds: 0 },
+    { value: '24h', label: 'Last 24 hours', seconds: 86400 },
+    { value: '7d', label: 'Last 7 days', seconds: 604800 },
+    { value: '30d', label: 'Last 30 days', seconds: 2592000 }
   ];
   const requestLogStatusClasses = [
     { value: 'all', label: 'All statuses' },
@@ -289,76 +307,42 @@
     { value: 'anthropic_usage', label: 'Anthropic usage' }
   ];
 
-  /** @param {string} range */
-  function summaryForRange(range) {
-    return usage.summaries[`${range}:${usage.groupBy}`] ?? null;
-  }
-
-  function usageRangeSinceParam() {
-    let seconds = 86400;
-    if (usage.range === '7d') seconds = 604800;
-    if (usage.range === '30d') seconds = 2592000;
-    return String(Math.max(0, Math.floor(Date.now() / 1000) - seconds));
-  }
-
-  /** @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row */
-  function usageRowHref(row) {
-    const id = String(row?.id ?? '');
-    if (!id || id === 'unknown' || id === 'none') return '';
-    const params = new URLSearchParams();
-    if (usage.groupBy === 'model') {
-      params.set('model', id);
-      params.set('since', usageRangeSinceParam());
-      return `/request-logs?${params.toString()}`;
-    }
-    if (usage.groupBy === 'client_key' && /^[1-9]\d*$/.test(id)) {
-      params.set('clientKeyId', id);
-      params.set('since', usageRangeSinceParam());
-      return `/request-logs?${params.toString()}`;
-    }
-    if (usage.groupBy === 'provider_account') {
-      const accountId = id.split('/').pop() ?? '';
-      if (!/^[1-9]\d*$/.test(accountId)) return '';
-      params.set('providerAccountId', accountId);
-      params.set('since', usageRangeSinceParam());
-      return `/request-logs?${params.toString()}`;
-    }
-    if (usage.groupBy === 'routing_pool' && /^[1-9]\d*$/.test(id)) {
-      params.set('routingPoolId', id);
-      params.set('since', usageRangeSinceParam());
-      return `/request-logs?${params.toString()}`;
-    }
-    if (usage.groupBy === 'routing_pool_chain') {
-      params.set('routingPoolChain', id);
-      params.set('since', usageRangeSinceParam());
-      return `/request-logs?${params.toString()}`;
-    }
-    if (usage.groupBy === 'session') {
-      params.set('sessionId', id);
-      params.set('since', usageRangeSinceParam());
-      return `/request-logs?${params.toString()}`;
-    }
-    if (usage.groupBy === 'usage_source') {
-      params.set('usageSource', id);
-      params.set('since', usageRangeSinceParam());
-      return `/request-logs?${params.toString()}`;
-    }
-    return '';
+  /** @param {string} since */
+  function requestLogDateRangeForSince(since) {
+    if (!/^\d+$/.test(since)) return 'all';
+    const age = Math.floor(Date.now() / 1000) - Number(since);
+    const matchedRange = requestLogDateRanges.find(
+      (range) => range.seconds > 0 && Math.abs(range.seconds - age) <= 300
+    );
+    return matchedRange?.value ?? 'custom';
   }
 
   /** @param {Event & { currentTarget: HTMLSelectElement }} event */
-  function changeUsageGroup(event) {
-    loadUsageSummary(usage.range, event.currentTarget.value);
-  }
-
-  /** @param {Event & { currentTarget: HTMLSelectElement }} event */
-  function changeUsageRange(event) {
-    loadUsageSummary(event.currentTarget.value, usage.groupBy);
+  function changeRequestLogDateRange(event) {
+    requestLogDateRange = event.currentTarget.value;
+    const selectedRange = requestLogDateRanges.find((range) => range.value === requestLogDateRange);
+    requestLogs.since = selectedRange?.seconds
+      ? String(Math.max(0, Math.floor(Date.now() / 1000) - selectedRange.seconds))
+      : '';
   }
 
   function applyRequestLogFilters() {
     requestLogPage = 1;
     void loadRequestLogs();
+  }
+
+  function clearRequestLogFilters() {
+    resetRequestLogFilters();
+    requestLogDateRange = 'all';
+    showAdvancedFilters = false;
+    requestLogPage = 1;
+    void loadRequestLogs();
+  }
+
+  /** @param {SubmitEvent} event */
+  function submitRequestLogFilters(event) {
+    event.preventDefault();
+    applyRequestLogFilters();
   }
 
   /** @param {number} targetPage */
@@ -378,176 +362,30 @@
 <header class="ui-page-header">
   <div class="ui-page-heading">
     <h1 class="ui-page-title">Request logs</h1>
-    <p class="ui-page-description">Inspect gateway usage, routing decisions, latency, and request failures.</p>
+    <p class="ui-page-description">Search gateway requests and inspect routing, latency, token usage, and failures.</p>
+  </div>
+  <div class="ui-page-actions">
+    <details class="group relative">
+      <summary class="ui-button ui-button--sm ui-button--secondary cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        <Download class="size-4" aria-hidden="true" />
+        Export
+        <ChevronDown class="size-3.5 transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div class="absolute right-0 z-30 mt-2 w-40 rounded-lg border border-[#e5e5e5] bg-white p-1 shadow-lg">
+        <a class="ui-button ui-button--sm ui-button--start w-full" href={exportRequestLogsURL("csv")} target="_blank" rel="noopener noreferrer">CSV</a>
+        <a class="ui-button ui-button--sm ui-button--start w-full" href={exportRequestLogsURL("json")} target="_blank" rel="noopener noreferrer">JSON</a>
+        <a class="ui-button ui-button--sm ui-button--start w-full" href={exportRequestLogsURL("jsonl")} target="_blank" rel="noopener noreferrer">JSONL</a>
+      </div>
+    </details>
   </div>
 </header>
-<section class="rounded-lg border border-[#ededed] bg-white p-6">
-  <div class="flex flex-wrap items-center justify-between gap-4">
-    <div>
-<h2 class="ui-section-title">Usage summary</h2>
-<p class="mt-1 text-sm text-[#6e6e6e]">Gateway usage by time range and routing dimension.</p>
-    </div>
-    <div class="flex flex-wrap items-center gap-3">
-      <label class="text-sm font-medium text-[#3c3c3c]">
-        Range
-        <select
-          class="ml-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={usage.range}
-          onchange={changeUsageRange}
-        >
-          {#each usageRanges as range}
-            <option value={range}>{range}</option>
-          {/each}
-        </select>
-      </label>
-      <label class="text-sm font-medium text-[#3c3c3c]">
-        Group
-        <select
-          class="ml-2 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={usage.groupBy}
-          onchange={changeUsageGroup}
-        >
-          {#each usageGroups as group}
-            <option value={group.value}>{group.label}</option>
-          {/each}
-        </select>
-      </label>
-      <button
-        class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-        type="button"
-        disabled={usage.loading}
-        onclick={() => loadUsageSummary(usage.range, usage.groupBy)}
-      >
-        {usage.loading ? 'Loading' : 'Refresh usage'}
-      </button>
-    </div>
-  </div>
-
-  {#if usage.error}
-    <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{usage.error}</p>
-  {/if}
-
-  <div class="mt-5 grid gap-3 md:grid-cols-3">
-    {#each usageRanges as range}
-      {@const summary = summaryForRange(range)}
-      <button
-        class={[
-          'rounded-lg border p-4 text-left hover:bg-[#f5f5f5]',
-          usage.range === range ? '' : 'hidden md:block',
-          usage.range === range ? 'border-[#10a37f] bg-[#e8f5f0]' : 'border-[#ededed] bg-white'
-        ]}
-        type="button"
-        onclick={() => loadUsageSummary(range, usage.groupBy)}
-      >
-        <p class="text-xs font-medium text-[#6e6e6e]">{range}</p>
-        <p class="mt-2 text-2xl font-semibold tabular-nums text-[#0d0d0d]">{formatTokens(summary?.totalTokens)}</p>
-        <p class="mt-1 text-sm text-[#6e6e6e]">{formatTokens(summary?.totalRequests)} requests · {formatCostMicrousd(summary?.estimatedCostMicrousd)}</p>
-        <div class="mt-3 grid gap-2 text-xs text-[#6e6e6e] sm:grid-cols-2">
-          <div>
-            <p class="font-medium text-[#3c3c3c]">Cached input tokens</p>
-            <p class="mt-1 font-mono tabular-nums">{formatTokens(summary?.totalCachedInputTokens)}</p>
-          </div>
-          <div>
-            <p class="font-medium text-[#3c3c3c]">Reasoning tokens</p>
-            <p class="mt-1 font-mono tabular-nums">{formatTokens(summary?.totalReasoningTokens)}</p>
-          </div>
-        </div>
-      </button>
-    {/each}
-  </div>
-
-  <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
-    <table class="ui-table ui-table--stacked w-full min-w-[760px] text-left text-sm">
-      <thead class="border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
-        <tr>
-          <th class="px-4 py-3 font-medium">Group</th>
-          <th class="px-4 py-3 font-medium">Requests</th>
-          <th class="px-4 py-3 font-medium">Input tokens</th>
-          <th class="px-4 py-3 font-medium">Output tokens</th>
-          <th class="px-4 py-3 font-medium">Total tokens</th>
-          <th class="px-4 py-3 font-medium">Cached input</th>
-          <th class="px-4 py-3 font-medium">Reasoning</th>
-          <th class="px-4 py-3 font-medium">Estimated cost</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-[#ededed]">
-        {#if usage.loading && !usage.current}
-          <tr>
-            <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="8">Loading usage summary...</td>
-          </tr>
-        {:else if !usage.current?.rows?.length}
-          <tr>
-            <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="8">No usage in this range.</td>
-          </tr>
-        {:else}
-          {#each usage.current.rows as row}
-            <tr>
-              <td class="px-4 py-3 font-medium text-[#0d0d0d]" data-label="Group">
-                {#if usageRowHref(row)}
-                  <a class="max-w-[260px] truncate inline-block underline-offset-2 hover:underline" href={usageRowHref(row)}>
-                    {row.label || row.id}
-                  </a>
-                {:else}
-                  {row.label || row.id}
-                {/if}
-              </td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Requests">{formatTokens(row.requests)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Input tokens">{formatTokens(row.inputTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Output tokens">{formatTokens(row.outputTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Total tokens">{formatTokens(row.totalTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Cached input">{formatTokens(row.cachedInputTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Reasoning">{formatTokens(row.reasoningTokens)}</td>
-              <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Estimated cost">{formatCostMicrousd(row.estimatedCostMicrousd)}</td>
-            </tr>
-          {/each}
-        {/if}
-      </tbody>
-    </table>
-  </div>
-</section>
-
-
-<section class="rounded-lg border border-[#ededed] bg-white p-6">
-  <div class="flex flex-wrap items-start justify-between gap-4">
-    <div>
-<h2 class="ui-section-title">Recent requests</h2>
-<p class="mt-1 text-sm text-[#6e6e6e]">
-  Recent OpenAI-compatible gateway requests.
-</p>
-    </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <a
-          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
-          href={exportRequestLogsURL("csv")}
-          target="_blank" rel="noopener noreferrer"
-        >
-          <Download class="size-4" aria-hidden="true" />
-          Export CSV
-        </a>
-        <a
-          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
-          href={exportRequestLogsURL("json")}
-          target="_blank" rel="noopener noreferrer"
-        >
-          <Download class="size-4" aria-hidden="true" />
-          Export JSON
-        </a>
-        <a
-          class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] shrink-0"
-          href={exportRequestLogsURL("jsonl")}
-          target="_blank" rel="noopener noreferrer"
-        >
-          <Download class="size-4" aria-hidden="true" />
-          Export JSONL
-        </a>
-      </div>
-  </div>
-
-    <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_12rem_auto_auto] lg:items-end">
+<section aria-label="Request log search">
+  <form class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4" onsubmit={submitRequestLogFilters}>
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(18rem,1fr)_11rem_11rem_auto_auto] xl:items-end">
       <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Search
         <input
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="h-9 w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.query}
           placeholder="key, account, model, route, error"
         />
@@ -555,7 +393,7 @@
       <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Status
         <select
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          class="h-9 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           bind:value={requestLogs.statusClass}
         >
           {#each requestLogStatusClasses as statusClass}
@@ -563,28 +401,43 @@
           {/each}
         </select>
       </label>
+      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
+        Date
+        <select
+          class="h-9 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+          value={requestLogDateRange}
+          onchange={changeRequestLogDateRange}
+        >
+          {#if requestLogDateRange === 'custom'}
+            <option value="custom" disabled>Custom start time</option>
+          {/if}
+          {#each requestLogDateRanges as range}
+            <option value={range.value}>{range.label}</option>
+          {/each}
+        </select>
+      </label>
       <button
         class="ui-button ui-button--sm ui-button--secondary"
         type="button"
         aria-expanded={showAdvancedFilters}
+        aria-controls="request-log-advanced-filters"
         onclick={() => (showAdvancedFilters = !showAdvancedFilters)}
       >
         <SlidersHorizontal class="size-4" aria-hidden="true" />
-        {showAdvancedFilters ? 'Fewer filters' : 'More filters'}
+        {showAdvancedFilters ? 'Fewer filters' : 'More filters'}{advancedRequestLogFilterCount ? ` (${advancedRequestLogFilterCount})` : ''}
       </button>
       <button
         class="ui-button ui-button--sm ui-button--primary"
-        type="button"
+        type="submit"
         disabled={requestLogs.loading}
-        onclick={applyRequestLogFilters}
       >
-        <RefreshCw class={requestLogs.loading ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
-        {requestLogs.loading ? 'Refreshing' : 'Apply'}
+        <Search class="size-4" aria-hidden="true" />
+        {requestLogs.loading ? 'Searching' : 'Search'}
       </button>
     </div>
 
     {#if showAdvancedFilters}
-    <div class="mt-3 grid grid-cols-1 gap-3 rounded-lg border border-[#ededed] bg-[#fafafa] p-4 sm:grid-cols-2 lg:grid-cols-3">
+    <div id="request-log-advanced-filters" class="mt-4 grid grid-cols-1 gap-3 border-t border-[#e5e5e5] pt-4 sm:grid-cols-2 lg:grid-cols-3">
       <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
         Request ID filter
         <input
@@ -625,16 +478,6 @@
           placeholder="503"
           inputmode="numeric"
           pattern="[1-5][0-9][0-9]"
-        />
-      </label>
-      <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
-        Since
-        <input
-          class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-          bind:value={requestLogs.since}
-          placeholder="Unix seconds"
-          inputmode="numeric"
-          pattern="[0-9]*"
         />
       </label>
       <label class="grid gap-1 text-sm font-medium text-[#3c3c3c]">
@@ -713,6 +556,16 @@
       </label>
     </div>
     {/if}
+    {#if activeRequestLogFilterCount > 0}
+      <div class="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-[#e5e5e5] pt-3 text-xs text-[#6e6e6e]">
+        <p>{activeRequestLogFilterCount} {activeRequestLogFilterCount === 1 ? 'filter' : 'filters'} active</p>
+        <button class="ui-button ui-button--sm ui-button--secondary" type="button" onclick={clearRequestLogFilters}>
+          <X class="size-3.5" aria-hidden="true" />
+          Clear filters
+        </button>
+      </div>
+    {/if}
+  </form>
 
   {#if requestLogs.error}
     <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
@@ -720,172 +573,135 @@
     </p>
   {/if}
 
-  <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed] sm:max-h-[65vh] sm:overflow-auto">
-    <table class="ui-table ui-table--stacked w-full min-w-[1560px] text-left text-sm">
-<thead class="sticky top-0 z-20 border-b border-[#e5e5e5] bg-[#f5f5f5] text-[#6e6e6e]">
-  <tr>
-    <th class="px-4 py-3 font-medium">Time</th>
-    <th class="px-4 py-3 font-medium">Key</th>
-    <th class="px-4 py-3 font-medium">Provider account</th>
-    <th class="px-4 py-3 font-medium">Routing pool</th>
-    <th class="px-4 py-3 font-medium">Model</th>
-    <th class="px-4 py-3 font-medium">Session</th>
-    <th class="px-4 py-3 font-medium">Tokens</th>
-    <th class="px-4 py-3 font-medium">Estimated cost</th>
-    <th class="px-4 py-3 font-medium">Usage</th>
-    <th class="px-4 py-3 font-medium">Gateway diagnostics</th>
-    <th class="px-4 py-3 font-medium">Route</th>
-    <th class="px-4 py-3 font-medium">Method</th>
-    <th class="px-4 py-3 font-medium">Status</th>
-    <th class="px-4 py-3 font-medium">Latency</th>
-    <th class="px-4 py-3 font-medium">Error</th>
-  </tr>
-</thead>
-<tbody class="divide-y divide-[#ededed]">
-  {#if requestLogs.loading}
-    <tr>
-      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="15">Loading request logs...</td>
-    </tr>
-  {:else if requestLogs.items.length === 0}
-    <tr>
-      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="15">No gateway requests yet.</td>
-    </tr>
-  {:else}
-    {#each paginatedRequestLogs as log}
-      {@const requestLogCost = formatRequestLogCost(log)}
-      <tr class="bg-white">
-        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Time">{formatDate(log.createdAt)}</td>
-        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Key">
-          {#if log.clientKeyId}
-            <a
-              class="block max-w-[180px] truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]"
-              href={`/api-keys?clientKeyId=${log.clientKeyId}`}
-              title="View API key"
-              aria-label="View API key"
-            >
-              {log.clientKey || `Key ${log.clientKeyId}`}
-            </a>
-          {:else}
-            {log.clientKey || 'Unknown'}
-          {/if}
-        </td>
-        <td class="px-4 py-3" data-label="Provider account">
-          {#if log.providerAccountId}
-            <div class="max-w-[220px]">
-              <a
-                class="block truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]"
-                href={`/providers?providerAccountId=${log.providerAccountId}`}
-                title="View provider account"
-                aria-label="View provider account"
-              >
-                {log.providerAccountName || `Account ${log.providerAccountId}`}
-              </a>
-              <p class="mt-1 text-xs text-[#6e6e6e]">
-                {log.provider || 'Unknown'} · {accountTypeLabel(log.providerAccountType)} · ID {log.providerAccountId}
-              </p>
-            </div>
-          {:else}
-            <span class="text-[#6e6e6e]">Unassigned</span>
-          {/if}
-        </td>
-        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Routing pool">
-          {#if log.routingPoolId}
-            <div class="max-w-[180px]">
-              <a
-                class="block truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]"
-                href={`/routing-pools?routingPoolId=${log.routingPoolId}`}
-                title="View routing pool"
-                aria-label="View routing pool"
-              >
-                {log.routingPoolName || `Pool ${log.routingPoolId}`}
-              </a>
-              <p class="mt-1 text-xs text-[#6e6e6e]">ID {log.routingPoolId}</p>
-              {#if log.routingPoolFallbackDepth > 0}
-                <p class="mt-1 text-xs text-[#6e6e6e]">Fallback depth {log.routingPoolFallbackDepth}</p>
-              {/if}
-              {#if log.routingPoolFallbackChain}
-                <a
-                  class="mt-1 block max-w-[180px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]"
-                  href={routingPoolFallbackChainHref(log)}
-                  title={log.routingPoolFallbackChain}
-                  aria-label="View fallback chain logs"
-                >
-                  Fallback chain {log.routingPoolFallbackChain}
-                </a>
-              {/if}
-            </div>
-          {:else}
-            <span class="text-[#6e6e6e]">Global pool</span>
-          {/if}
-        </td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]" data-label="Model">{log.model || '-'}</td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]" data-label="Session">
-          <span class="block max-w-[180px] truncate">{log.sessionId || '-'}</span>
-        </td>
-        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Tokens">
-          {formatTokens(log.inputTokens)} in / {formatTokens(log.outputTokens)} out
-          <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total</p>
-          <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.cachedInputTokens)} Cached</p>
-          <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.reasoningTokens)} Reasoning</p>
-        </td>
-        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Estimated cost">
-          {#if requestLogCost === 'Unpriced'}
-            <span class="font-sans text-sm text-[#6e6e6e]">{requestLogCost}</span>
-          {:else}
-            {requestLogCost}
-          {/if}
-        </td>
-        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Usage">
-          <span class="text-sm">{usageSourceLabel(log.usageSource)}</span>
-        </td>
-        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Gateway diagnostics">
-          <span class="text-sm tabular-nums">Attempts {log.gatewayAttemptCount ?? 0}</span>
-          <p class="mt-1 text-xs text-[#6e6e6e]">Fallbacks {log.gatewayFallbackCount ?? 0}</p>
-          {#if log.routingPoolError}
-            <p class="mt-1 text-xs font-medium text-amber-700">{errorLabel(log.routingPoolError)}</p>
-          {/if}
-        </td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#0d0d0d]" data-label="Route">{log.route}</td>
-        <td class="px-4 py-3 font-mono text-[13px] text-[#3c3c3c]" data-label="Method">{log.method}</td>
-        <td class="px-4 py-3" data-label="Status">
-          <span
-            class={[
-              'inline-flex rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
-              log.statusCode >= 500
-                ? 'bg-red-50 text-red-700'
-                : log.statusCode >= 400
-                  ? 'bg-amber-50 text-amber-700'
-                  : 'bg-[#e8f5f0] text-[#0a7a5e]'
-            ]}
-          >
-            {log.statusCode}
-          </span>
-        </td>
-        <td class="px-4 py-3 font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Latency">
-          {log.latencyMs}ms
-        </td>
-        <td class="px-4 py-3 text-[#3c3c3c]" data-label="Error">
-          {#if errorHref(log)}
-            <a
-              class="underline-offset-2 hover:underline"
-              href={errorHref(log)}
-              title={log.error || ''}
-              aria-label="View same error logs"
-            >
-              {errorLabel(log.error)}
-            </a>
-          {:else}
-            <span title={log.error || ''}>{errorLabel(log.error)}</span>
-          {/if}
-        </td>
-      </tr>
-    {/each}
-  {/if}
-</tbody>
+  <div class="mt-5 flex flex-wrap items-center justify-between gap-2">
+    <h2 class="ui-section-title">Requests</h2>
+    <p class="text-xs text-[#6e6e6e]">{requestLogs.items.length} loaded</p>
+  </div>
+
+  <div class="ui-table-shell ui-table-shell--scroll mt-3">
+    <table class="ui-table ui-table--stacked min-w-[1040px]">
+      <thead class="sticky top-0 z-20">
+        <tr>
+          <th class="w-[140px]">Time</th>
+          <th class="w-[180px]">Request</th>
+          <th class="w-[240px]">Attribution</th>
+          <th class="w-[160px]">Model</th>
+          <th class="w-[220px]">Usage</th>
+          <th class="w-[180px]">Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#if requestLogs.loading && requestLogs.items.length === 0}
+          <tr>
+            <td class="ui-table-empty ui-table-empty--loading" colspan="6">Loading request logs...</td>
+          </tr>
+        {:else if requestLogs.items.length === 0}
+          <tr>
+            <td class="ui-table-empty" colspan="6">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <span>{activeRequestLogFilterCount ? 'No requests match the current filters.' : 'No gateway requests yet.'}</span>
+                {#if activeRequestLogFilterCount}
+                  <button class="ui-button ui-button--sm ui-button--secondary" type="button" onclick={clearRequestLogFilters}>Clear filters</button>
+                {/if}
+              </div>
+            </td>
+          </tr>
+        {:else}
+          {#each paginatedRequestLogs as log}
+            {@const requestLogCost = formatRequestLogCost(log)}
+            <tr>
+              <td class="whitespace-nowrap text-[#3c3c3c]" data-label="Time">{formatDate(log.createdAt)}</td>
+              <td class="min-w-[190px]" data-label="Request">
+                <div class="min-w-0">
+                  <p class="font-mono text-[13px] text-[#0d0d0d]">{log.method} {log.route}</p>
+                  <p class="mt-1 max-w-[240px] truncate font-mono text-xs text-[#6e6e6e]" title={log.requestId || ''}>{log.requestId || 'No request ID'}</p>
+                </div>
+              </td>
+              <td class="min-w-[240px] text-[#3c3c3c]" data-label="Attribution">
+                <div class="grid gap-1.5">
+                  {#if log.clientKeyId}
+                    <a class="max-w-[220px] truncate font-medium text-[#0d0d0d] hover:text-[#0a7a5e]" href={`/api-keys?clientKeyId=${log.clientKeyId}`} title="View API key" aria-label="View API key">
+                      {log.clientKey || `Key ${log.clientKeyId}`}
+                    </a>
+                  {:else}
+                    <span>{log.clientKey || 'Unknown key'}</span>
+                  {/if}
+                  {#if log.providerAccountId}
+                    <a class="max-w-[220px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]" href={`/providers?providerAccountId=${log.providerAccountId}`} title="View provider account" aria-label="View provider account">
+                      {log.providerAccountName || `Account ${log.providerAccountId}`} · {log.provider || 'Unknown'} · {accountTypeLabel(log.providerAccountType)}
+                    </a>
+                  {:else}
+                    <span class="text-xs text-[#6e6e6e]">Unassigned provider</span>
+                  {/if}
+                  {#if log.routingPoolId}
+                    <a class="max-w-[220px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]" href={`/routing-pools?routingPoolId=${log.routingPoolId}`} title="View routing pool" aria-label="View routing pool">
+                      {log.routingPoolName || `Pool ${log.routingPoolId}`}
+                    </a>
+                  {:else}
+                    <span class="text-xs text-[#6e6e6e]">Global pool</span>
+                  {/if}
+                </div>
+              </td>
+              <td class="min-w-[170px]" data-label="Model">
+                <div class="min-w-0">
+                  <p class="font-mono text-[13px] text-[#3c3c3c]">{log.model || '-'}</p>
+                  <p class="mt-1 max-w-[180px] truncate font-mono text-xs text-[#6e6e6e]" title={log.sessionId || ''}>Session {log.sessionId || '-'}</p>
+                </div>
+              </td>
+              <td class="min-w-[190px] font-mono text-[13px] tabular-nums text-[#3c3c3c]" data-label="Usage">
+                <div class="min-w-0">
+                  <p>{formatTokens(log.inputTokens)} in / {formatTokens(log.outputTokens)} out</p>
+                  <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.totalTokens)} total · {formatTokens(log.cachedInputTokens)} cached</p>
+                  <p class="mt-1 text-xs text-[#6e6e6e]">{formatTokens(log.reasoningTokens)} reasoning · {usageSourceLabel(log.usageSource)}</p>
+                  <p class="mt-1 font-sans text-xs text-[#6e6e6e]">Estimated cost {requestLogCost}</p>
+                </div>
+              </td>
+              <td class="min-w-[180px]" data-label="Result">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span
+                      class={[
+                        'inline-flex rounded-full px-2.5 py-1 text-xs font-medium tabular-nums',
+                        log.statusCode >= 500
+                          ? 'bg-red-50 text-red-700'
+                          : log.statusCode >= 400
+                            ? 'bg-amber-50 text-amber-700'
+                            : 'bg-[#e8f5f0] text-[#0a7a5e]'
+                      ]}
+                    >
+                      {log.statusCode}
+                    </span>
+                    <span class="font-mono text-xs tabular-nums text-[#6e6e6e]">{log.latencyMs}ms</span>
+                  </div>
+                  <div class="mt-2 text-xs text-[#3c3c3c]">
+                  {#if errorHref(log)}
+                    <a class="underline-offset-2 hover:underline" href={errorHref(log)} title={log.error || ''} aria-label="View same error logs">{errorLabel(log.error)}</a>
+                  {:else}
+                    <span title={log.error || ''}>{errorLabel(log.error)}</span>
+                  {/if}
+                  </div>
+                  <p class="mt-2 text-xs tabular-nums text-[#6e6e6e]">{log.gatewayAttemptCount ?? 0} attempts · {log.gatewayFallbackCount ?? 0} fallbacks</p>
+                  {#if log.routingPoolFallbackDepth > 0}
+                    <p class="mt-1 text-xs text-[#6e6e6e]">Fallback depth {log.routingPoolFallbackDepth}</p>
+                  {/if}
+                  {#if log.routingPoolFallbackChain}
+                    <a class="mt-1 block max-w-[170px] truncate text-xs text-[#6e6e6e] hover:text-[#0a7a5e]" href={routingPoolFallbackChainHref(log)} title={log.routingPoolFallbackChain} aria-label="View fallback chain logs">
+                      {log.routingPoolFallbackChain}
+                    </a>
+                  {/if}
+                  {#if log.routingPoolError}
+                    <p class="mt-1 text-xs font-medium text-amber-700">{errorLabel(log.routingPoolError)}</p>
+                  {/if}
+                </div>
+              </td>
+            </tr>
+          {/each}
+        {/if}
+      </tbody>
     </table>
   </div>
   <div class="ui-pagination mt-4 flex flex-col gap-3 text-sm text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
-    <p>Showing {requestLogPageSummary} of {requestLogs.items.length}</p>
+    <p>Showing {requestLogPageSummary} of {requestLogs.items.length} loaded</p>
     <div class="flex flex-wrap items-center gap-2">
       <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
         Rows
