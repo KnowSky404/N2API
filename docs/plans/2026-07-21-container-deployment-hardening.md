@@ -133,6 +133,9 @@ matrix now enforces the same contract for ARM64 and AMD64 before publication.
 
 ## Task 3: Apply Compose Runtime Restrictions
 
+Task status: completed locally on 2026-07-21; CI enforcement pending the next
+authorized push
+
 ### Goal
 
 Remove unnecessary application container privileges and writes.
@@ -143,7 +146,7 @@ Task 2.
 
 ### Files
 
-- Modify: both Compose files and `docs/manual.md`
+- Modify: development, release, and E2E Compose files, CI, and `docs/manual.md`
 - Test: Compose config, startup, health, read-only write attempt, shutdown
 - Migrate: none
 
@@ -154,10 +157,21 @@ Add `read_only: true`, `security_opt: [no-new-privileges:true]`,
 restart behavior. Do not apply speculative restrictions to PostgreSQL; its
 official image owns a persistent write path and separate trust boundary.
 
+The E2E stack applies the same application restrictions and CI checks the
+effective container configuration plus denied root-filesystem and allowed
+bounded `/tmp` writes.
+
 ### Completion Criteria
 
 N2API runs and migrates with all listed restrictions; root filesystem writes
 fail.
+
+The development and isolated E2E stacks run healthy with a read-only root
+filesystem, zero effective capabilities, `no-new-privileges`, a 16 MiB
+`noexec,nosuid,nodev` `/tmp`, and a ten-second stop timeout. PostgreSQL remains
+writable and unrestricted. The PostgreSQL-backed gateway E2E suite passes under
+the application restrictions, and CI now enforces the effective runtime
+configuration and write boundaries.
 
 ### Risks And Rollback
 

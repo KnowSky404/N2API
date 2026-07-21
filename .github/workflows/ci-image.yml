@@ -221,6 +221,40 @@ jobs:
               >"$raw_dir/gateway-e2e.log"
             exit 1
           fi
+          n2api_container="$(docker compose --project-name "$E2E_PROJECT" \
+            -f deploy/compose.e2e.yaml ps -q n2api)"
+          test -n "$n2api_container"
+          test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$n2api_container")" = "true"
+          test "$(docker inspect -f '{{.HostConfig.SecurityOpt}}' "$n2api_container")" = "[no-new-privileges:true]"
+          test "$(docker inspect -f '{{.HostConfig.CapDrop}}' "$n2api_container")" = "[ALL]"
+          test "$(docker inspect -f '{{.Config.StopTimeout}}' "$n2api_container")" = "10"
+          tmpfs_options="$(docker inspect -f '{{index .HostConfig.Tmpfs "/tmp"}}' "$n2api_container")"
+          for option in rw noexec nosuid nodev size=16m mode=1777 uid=10001 gid=10001; do
+            case ",$tmpfs_options," in
+              *",$option,"*) ;;
+              *) echo "N2API /tmp is missing $option" >&2; exit 1 ;;
+            esac
+          done
+          test "$(docker exec "$n2api_container" stat -c '%u:%g %a' /tmp)" = "10001:10001 1777"
+          test "$(docker exec "$n2api_container" df -k /tmp | awk 'NR == 2 { print $2 }')" = "16384"
+          mount_options="$(docker exec "$n2api_container" awk '$2 == "/tmp" { print $4 }' /proc/mounts)"
+          for option in rw noexec nosuid nodev; do
+            case ",$mount_options," in
+              *",$option,"*) ;;
+              *) echo "N2API /tmp mount is missing $option" >&2; exit 1 ;;
+            esac
+          done
+          if docker exec --user 0 "$n2api_container" touch /rootfs-write-probe 2>/dev/null; then
+            echo "N2API root filesystem unexpectedly accepted a write" >&2
+            exit 1
+          fi
+          docker exec "$n2api_container" sh -c \
+            "printf '#!/bin/sh\nexit 0\n' > /tmp/n2api-exec-probe && chmod 700 /tmp/n2api-exec-probe"
+          if docker exec "$n2api_container" /tmp/n2api-exec-probe 2>/dev/null; then
+            echo "N2API /tmp unexpectedly allowed execution" >&2
+            exit 1
+          fi
+          docker exec "$n2api_container" rm /tmp/n2api-exec-probe
           gateway_status=0
           docker compose --project-name "$E2E_PROJECT" \
             -f deploy/compose.e2e.yaml \

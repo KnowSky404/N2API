@@ -174,6 +174,30 @@ file write denial, and a clean SIGTERM exit within ten seconds on both supported
 platforms. Future bind mounts must be readable by UID/GID `10001` and must not
 make application files writable.
 
+## Container Runtime Restrictions
+
+The development and release Compose definitions run only the N2API application
+container with a read-only root filesystem, all Linux capabilities dropped, and
+`no-new-privileges` enabled. A writable 16 MiB `/tmp` tmpfs is available to the
+unprivileged application identity with `noexec`, `nosuid`, and `nodev`; it is
+ephemeral and must not be used for persistent data. PostgreSQL is intentionally
+excluded because its official image requires a persistent writable data path.
+
+N2API uses the `unless-stopped` restart policy and has ten seconds to exit after
+SIGTERM before Docker sends SIGKILL. Inspect the effective restrictions without
+printing container environment variables:
+
+```bash
+docker inspect "$(docker compose -f deploy/compose.yaml ps -q n2api)" \
+  --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.SecurityOpt}} {{.HostConfig.CapDrop}} {{json .HostConfig.Tmpfs}}'
+```
+
+The output must report a read-only root filesystem,
+`no-new-privileges:true`, capability drop `ALL`, and a bounded `/tmp` tmpfs.
+Writes outside `/tmp` must fail. Bind mounts added by operators are separate
+writable surfaces and should remain read-only unless the application has a
+documented persistence requirement.
+
 ## Published Images
 
 The `CI Image` workflow tests every pull request without publishing an image.

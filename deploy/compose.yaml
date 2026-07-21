@@ -3,6 +3,15 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=10001,gid=10001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 10s
     env_file:
       - path: ../.env.example
       - path: ../.env
