@@ -1,6 +1,6 @@
 # Backup And Restore Verification Plan
 
-Status: planned before encryption rotation
+Status: in progress; Task 1 completed locally on 2026-07-21
 Public API changes: optional non-sensitive configuration export/import
 Data migration: none initially
 
@@ -14,6 +14,9 @@ separate convenience feature.
 
 ## Task 1: Add An Isolated Restore Verification Script
 
+Status: completed locally on 2026-07-21; real operator-backup acceptance remains
+required before claiming recoverability.
+
 ### Goal
 
 Prove a dump can restore and serve core queries without touching production.
@@ -26,6 +29,7 @@ Readiness endpoint and E2E mock upstream.
 
 - Create: `dev/verification/restore-backup.sh`
 - Create: `deploy/compose.restore-test.yaml`
+- Create: `backend/e2e/restore_verification_test.go`
 - Modify: `docs/manual.md`
 - Test: shell validation plus a generated non-sensitive fixture database
 - Migrate: none
@@ -38,10 +42,30 @@ apply migrations, wait for readiness, run counts/integrity queries and one mock
 gateway request, emit a redacted report, then remove the temporary project.
 Never derive or accept the production database target.
 
+The script requires the exact N2API image, restored administrator credentials,
+and encryption secret through environment variables. It uses a fixed internal
+database URL and rejects any pre-existing resource carrying its generated
+Compose project label before arming cleanup. `EXIT`, `INT`, and `TERM` cleanup
+only that exact project. Restore uses `--single-transaction --exit-on-error
+--no-owner --no-privileges`. A restored reusable API key is read through the
+admin API without logging its value, proving the supplied encryption secret
+matches before the mock gateway exercise runs.
+
 ### Tests And Verification
 
 Run with a valid dump, corrupt dump, older schema dump, wrong encryption key,
 and interrupted cleanup. Confirm production containers and volumes are unchanged.
+
+Local generated-fixture evidence:
+
+- current schema dump restored at schema 39 with secret and gateway checks;
+- schema 38 dump migrated to schema 39 and passed the same checks;
+- corrupt archive failed at `archive_list`;
+- wrong encryption key failed at the restored-secret check;
+- `TERM` during archive startup returned failure and left no generated
+  container, volume, or network; and
+- the existing `deploy` development stack remained healthy and was not
+  recreated by any drill.
 
 ### Compatibility And Security
 
@@ -61,7 +85,8 @@ Required on a real operator backup before claiming recoverability.
 ### Completion Criteria
 
 A current backup restores into isolation and passes readiness and minimum
-gateway validation.
+gateway validation. Automated generated fixtures satisfy the code acceptance;
+a real operator backup remains the manual recovery claim gate.
 
 ### Commit
 

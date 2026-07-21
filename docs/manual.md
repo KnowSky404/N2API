@@ -451,7 +451,34 @@ docker compose -f deploy/compose.release.yaml --env-file .env exec -T postgres \
 ```
 
 Keep backups outside the Compose volume and periodically verify them with
-`pg_restore --list backups/n2api-YYYYMMDD-HHMMSS.dump`.
+the isolated restore drill below. The repository ignores `backups/`, but a
+database dump still belongs in encrypted off-host storage and must never be
+committed.
+
+Use the exact N2API image tag or digest that should serve the restored data.
+Provide the administrator credentials and encryption secret from the backup's
+deployment through the environment; the script does not print them. It creates
+its own random Compose project, fixed temporary database, internal network, and
+volume. It never accepts a database URL or Compose project name.
+
+```bash
+read -rsp 'Restore admin password: ' N2API_RESTORE_ADMIN_PASSWORD; echo
+read -rsp 'Restore encryption secret: ' N2API_RESTORE_ENCRYPTION_SECRET; echo
+export N2API_RESTORE_ADMIN_PASSWORD N2API_RESTORE_ENCRYPTION_SECRET
+export N2API_RESTORE_ADMIN_USERNAME='admin'
+export N2API_RESTORE_IMAGE='ghcr.io/knowsky404/n2api:YYYYMMDDNN'
+dev/verification/restore-backup.sh backups/n2api-YYYYMMDD-HHMMSS.dump
+unset N2API_RESTORE_ADMIN_PASSWORD N2API_RESTORE_ENCRYPTION_SECRET
+```
+
+The drill lists and restores the custom archive in one transaction, starts the
+selected image so pending migrations run, waits for readiness, checks schema
+version/counts/foreign-key integrity, verifies one restored reusable API key
+can be decrypted when present, and runs the mock-upstream gateway E2E. Its
+report contains counts and status labels only. Success and failure both remove
+the exact temporary containers, network, and volume. A successful generated
+fixture drill is automated evidence; run the same command on a current real
+operator backup before claiming the deployment is recoverable.
 
 For an upgrade or rollback, change `N2API_IMAGE` to the target CalVer, then pull
 and recreate the stack:

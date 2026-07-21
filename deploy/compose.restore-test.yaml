@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
+    environment:
+      POSTGRES_DB: n2api_restore
+      POSTGRES_USER: n2api_restore
+      POSTGRES_PASSWORD: restore-only-postgres-password
+    volumes:
+      - restore-postgres:/var/lib/postgresql
+      - type: bind
+        source: ${N2API_RESTORE_DUMP_PATH:?set N2API_RESTORE_DUMP_PATH}
+        target: /restore/input.dump
+        read_only: true
+    networks:
+      - restore
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n2api_restore -d n2api_restore"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  mock-openai:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.e2e
+      target: mock-openai
+    environment:
+      N2API_MOCK_ADDR: :8080
+      N2API_MOCK_API_KEY: restore-upstream-fixture-key
+    expose:
+      - "8080"
+    networks:
+      - restore
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  n2api:
+    image: ${N2API_RESTORE_IMAGE:?set N2API_RESTORE_IMAGE}
+    environment:
+      N2API_HOST: 0.0.0.0
+      N2API_PORT: 3000
+      N2API_PUBLIC_URL: http://n2api:3000
+      N2API_ACCEPT_RISKS: public-http,public-bind,database-plaintext
+      N2API_ADMIN_USERNAME: ${N2API_RESTORE_ADMIN_USERNAME:?set N2API_RESTORE_ADMIN_USERNAME}
+      N2API_ADMIN_PASSWORD: ${N2API_RESTORE_ADMIN_PASSWORD:?set N2API_RESTORE_ADMIN_PASSWORD}
+      N2API_ENCRYPTION_SECRET: ${N2API_RESTORE_ENCRYPTION_SECRET:?set N2API_RESTORE_ENCRYPTION_SECRET}
+      N2API_ALLOW_HTTP_API_UPSTREAMS: "true"
+      N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED: "false"
+      N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED: "false"
+      N2API_SYSTEM_EVENT_RETENTION_DAYS: 0
+      DATABASE_URL: postgres://n2api_restore:restore-only-postgres-password@postgres:5432/n2api_restore?sslmode=disable
+    expose:
+      - "3000"
+    networks:
+      - restore
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=10001,gid=10001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/readyz"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s
+
+  gateway-restore:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.e2e
+      target: gateway-e2e
+    command:
+      - -test.run=^(TestRestoredAPIKeySecretDecrypts|TestGatewayPostgresBackedHappyPath)$$
+    environment:
+      N2API_E2E_BASE_URL: http://n2api:3000
+      N2API_E2E_DATABASE_URL: postgres://n2api_restore:restore-only-postgres-password@postgres:5432/n2api_restore?sslmode=disable
+      N2API_E2E_ADMIN_USERNAME: ${N2API_RESTORE_ADMIN_USERNAME:?set N2API_RESTORE_ADMIN_USERNAME}
+      N2API_E2E_ADMIN_PASSWORD: ${N2API_RESTORE_ADMIN_PASSWORD:?set N2API_RESTORE_ADMIN_PASSWORD}
+      N2API_E2E_MOCK_BASE_URL: http://mock-openai:8080
+      N2API_E2E_MOCK_API_KEY: restore-upstream-fixture-key
+      N2API_E2E_RESTORED_API_KEY_ID: ${N2API_RESTORE_API_KEY_ID:-}
+    networks:
+      - restore
+    depends_on:
+      mock-openai:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      n2api:
+        condition: service_healthy
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+networks:
+  restore:
+    internal: true
+
+volumes:
+  restore-postgres:
