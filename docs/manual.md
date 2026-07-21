@@ -148,7 +148,8 @@ docker compose -f deploy/compose.release.yaml --env-file .env config --quiet
 docker compose -f deploy/compose.release.yaml --env-file .env pull
 docker compose -f deploy/compose.release.yaml --env-file .env up -d
 docker compose -f deploy/compose.release.yaml --env-file .env ps
-curl -fsS http://127.0.0.1:3000/healthz
+curl -fsS http://127.0.0.1:3000/readyz
+curl -fsS http://127.0.0.1:3000/livez
 curl -fsS http://127.0.0.1:3000/api/admin/health
 docker image inspect "ghcr.io/knowsky404/n2api:${N2API_VERSION}" --format '{{.Os}}/{{.Architecture}}'
 ```
@@ -182,11 +183,30 @@ and recreate the stack:
 ```bash
 docker compose -f deploy/compose.release.yaml --env-file .env pull
 docker compose -f deploy/compose.release.yaml --env-file .env up -d
-curl -fsS http://127.0.0.1:3000/healthz
+curl -fsS http://127.0.0.1:3000/readyz
 ```
 
 Use `latest` only when automatic movement to the newest stable release is
 intentional. Use `main` only for development validation, not production.
+
+## Health Probes
+
+N2API exposes separate process and dependency probes:
+
+- `GET /livez` reports only that the HTTP process can respond. It does not
+  check PostgreSQL or provider accounts.
+- `GET /readyz` reports ready only when PostgreSQL responds and the static admin
+  build contains its application entry document. Migrations, administrator
+  bootstrap, and background runner construction finish before the HTTP server
+  starts listening. Provider account availability does not affect readiness.
+- `GET /healthz` remains a compatibility alias for the liveness behavior.
+- `GET /api/admin/health` is the existing database-focused status response used
+  by the admin UI; it will gain richer authenticated operational detail in a
+  later reliability phase.
+
+Both development and release Compose configurations use `/readyz` for the
+application container healthcheck. A temporary provider outage therefore does
+not restart or mark the entire gateway unavailable.
 
 ## Downstream Codex CLI
 

@@ -180,8 +180,37 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
 
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	livenessHandler := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+	mux.HandleFunc("GET /livez", livenessHandler)
+	mux.HandleFunc("GET /healthz", livenessHandler)
+
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]string{
+			"status":       "not_ready",
+			"database":     "not_configured",
+			"staticAssets": "error",
+		}
+
+		if health != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			if err := health.Ping(ctx); err == nil {
+				response["database"] = "ok"
+			} else {
+				response["database"] = "error"
+			}
+		}
+		if webAssetsAvailable(webFS) {
+			response["staticAssets"] = "ok"
+		}
+		if response["database"] == "ok" && response["staticAssets"] == "ok" {
+			response["status"] = "ok"
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		writeJSON(w, http.StatusServiceUnavailable, response)
 	})
 
 	mux.HandleFunc("GET /api/admin/health", func(w http.ResponseWriter, r *http.Request) {
@@ -2905,6 +2934,18 @@ func serveWeb(w http.ResponseWriter, r *http.Request, webFS fs.FS) bool {
 	if _, err := fs.Stat(webFS, "200.html"); err == nil {
 		http.ServeFileFS(w, r, webFS, "200.html")
 		return true
+	}
+	return false
+}
+
+func webAssetsAvailable(webFS fs.FS) bool {
+	if webFS == nil {
+		return false
+	}
+	for _, name := range []string{"index.html", "200.html"} {
+		if info, err := fs.Stat(webFS, name); err == nil && !info.IsDir() {
+			return true
+		}
 	}
 	return false
 }

@@ -15,6 +15,8 @@ reproducibly pinned.
 
 ## Task 1: Separate Liveness And Readiness
 
+Task status: completed 2026-07-21
+
 ### Goal
 
 Expose non-overlapping probes and prevent SPA fallback from returning false

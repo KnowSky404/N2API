@@ -152,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
-            if docker exec n2api-ci wget -qO /tmp/health.json http://127.0.0.1:3000/healthz; then
+            if docker exec n2api-ci wget -qO /tmp/readiness.json http://127.0.0.1:3000/readyz; then
               break
             fi
             if [ "$attempt" = "30" ]; then
@@ -161,8 +161,13 @@ jobs:
             fi
             sleep 1
           done
-          docker cp n2api-ci:/tmp/health.json /tmp/health.json
-          grep '"status":"ok"' /tmp/health.json
+          docker cp n2api-ci:/tmp/readiness.json /tmp/readiness.json
+          grep '"status":"ok"' /tmp/readiness.json
+          grep '"database":"ok"' /tmp/readiness.json
+          grep '"staticAssets":"ok"' /tmp/readiness.json
+          docker exec n2api-ci wget -qO /tmp/liveness.json http://127.0.0.1:3000/livez
+          docker cp n2api-ci:/tmp/liveness.json /tmp/liveness.json
+          grep '"status":"ok"' /tmp/liveness.json
           docker exec n2api-ci wget -qO /tmp/bootstrap.json http://127.0.0.1:3000/api/admin/bootstrap
           docker cp n2api-ci:/tmp/bootstrap.json /tmp/bootstrap.json
           grep '"adminUsername":"admin"' /tmp/bootstrap.json

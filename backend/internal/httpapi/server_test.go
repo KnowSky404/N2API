@@ -926,11 +926,11 @@ func (s *fakeProviderService) SyncUpstreamAccountModels(_ context.Context, accou
 	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
 }
 
-func TestHealthzReturnsOK(t *testing.T) {
+func TestLivezReturnsOK(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil)
 	recorder := httptest.NewRecorder()
 
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/livez", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", recorder.Code)
@@ -944,6 +944,84 @@ func TestHealthzReturnsOK(t *testing.T) {
 	}
 	if body["status"] != "ok" {
 		t.Fatalf("status body = %q, want ok", body["status"])
+	}
+}
+
+func TestHealthzRemainsLivenessAlias(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{err: errHealth}, nil, nil)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("status body = %q, want ok", body["status"])
+	}
+}
+
+func TestReadyzReturnsComponentStatus(t *testing.T) {
+	webFS := fstest.MapFS{"200.html": {Data: []byte("ready")}}
+	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil, webFS)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	for field, want := range map[string]string{
+		"status": "ok", "database": "ok", "staticAssets": "ok",
+	} {
+		if body[field] != want {
+			t.Fatalf("%s = %q, want %q", field, body[field], want)
+		}
+	}
+}
+
+func TestReadyzReportsDatabaseError(t *testing.T) {
+	webFS := fstest.MapFS{"index.html": {Data: []byte("ready")}}
+	server := NewServer(config.Config{}, staticHealth{err: errHealth}, nil, nil, webFS)
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "not_ready" || body["database"] != "error" || body["staticAssets"] != "ok" {
+		t.Fatalf("body = %+v, want database error only", body)
+	}
+}
+
+func TestReadyzReportsMissingStaticAssets(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil, fstest.MapFS{})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "not_ready" || body["database"] != "ok" || body["staticAssets"] != "error" {
+		t.Fatalf("body = %+v, want static asset error only", body)
 	}
 }
 
