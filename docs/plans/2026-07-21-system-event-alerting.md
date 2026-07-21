@@ -630,23 +630,112 @@ Sixteenth-slice status: completed locally on 2026-07-21. The template is
 additive, explicitly installed by an owner, and disabled until that owner
 reviews and enables it.
 
-The remaining Task 4 slices are decision-blocked. A `5xx` window needs an owner
-choice of target dimension, window, minimum sample size, failure threshold, and
-recovery hysteresis. A latency window additionally needs a decision on
-percentile, threshold, and whether the current full streaming lifetime is the
-intended measurement instead of time to first byte. The fallback-window
-decisions and counter semantics are recorded above. None of these thresholds
-may be inferred from the template engine or current traffic volume.
+### Remaining Owner Decision Gate
 
-General PostgreSQL storage failure cannot reliably emit a System Event into the
-same unavailable store. Cleanup-query failures now have dedicated best-effort
-signals, while database availability must continue to use health probes,
-sanitized process logs, or a future independently hosted monitor. Choosing that
-external monitor is an architecture and exposure decision. Optional version
-availability also remains blocked on an owner-selected authoritative source,
-release channel, polling interval, outbound-network policy, and failure
-semantics. It must remain off for `dev` and `sha-*` builds and must never become
-a startup dependency.
+No remaining Task 4 signal is implementation-ready without an owner decision.
+The current alert matcher compares exact category, severity, trigger action,
+and recovery action. It does not inspect event metadata or calculate ratios,
+percentiles, or denominator-based rates. Every request-derived signal below
+therefore requires an always-on bounded monitor, persistent crossing state, and
+dedicated trigger and recovery System Events before a template can be added.
+
+The recommended implementation order is fallback pressure, 5xx rate, latency,
+storage capacity, then version availability. Fallback pressure has the strongest
+existing persistence and index support. The values in this section are proposals
+for owner review, not accepted defaults, and must not be implemented until the
+corresponding decision is recorded as approved.
+
+#### Fallback Pressure Decision
+
+Recommended proposal, pending owner approval:
+
+- Measure per-API-Key fallback incidence over a rolling 15-minute window.
+- Eligible rows are Request Logs with `gateway_attempt_count > 0`. The numerator
+  is eligible rows with `gateway_fallback_count > 0`; do not divide the sum of
+  fallback counts by request count because one request can contain multiple
+  fallback attempts.
+- Require at least 20 eligible requests. Trigger at 20 percent or greater and
+  recover at 5 percent or less.
+- Treat `gateway_fallback_count` as fallback pressure, not successful switching.
+  This intentionally includes a final concurrency-full selection even when no
+  next account was attempted.
+- Evaluate once per minute with a bounded, always-on monitor. Persist only active
+  crossings. No traffic or fewer than 20 eligible requests holds the current
+  state and emits neither a trigger nor a recovery.
+- Use `client_api_key/<key-id>` as the target. Revoking the key explicitly emits
+  recovery with `confirmation: key_revoked` and deletes its crossing state.
+- Emit Runtime warning/partial action `api_key.fallback_pressure.crossed` and
+  Runtime info/success action `api_key.fallback_pressure.recovered`. Metadata is
+  limited to key ID, window, eligible request count, fallback request count, and
+  threshold percentage; API key prefixes, request data, and error text are
+  excluded.
+- Add a separately committed `api-key-fallback-pressure-v1` template only after
+  source events exist. It starts disabled, uses target deduplication, fires on
+  the first crossing, has a one-hour cooldown, and can notify on recovery.
+
+Owner approval must either accept this complete proposal or replace its target,
+window, denominator, minimum sample, trigger threshold, recovery threshold,
+pressure semantics, and low-volume behavior. Approving only a percentage is not
+enough to establish a stable alert contract.
+
+#### 5xx Rate Decision
+
+`request_logs.status_code` contains the final client-visible status and currently
+mixes gateway-owned failures with upstream responses, including configured error
+passthrough. The existing Ops query that labels `status_code >= 502` as upstream
+is a dashboard approximation, not a precise alert contract.
+
+The owner must select the rolling window, minimum request sample, trigger rate,
+recovery hysteresis, target dimension, no-traffic behavior, whether error
+passthrough counts, and one of these source scopes:
+
+- all final client-visible 5xx responses, which can use current persistence;
+- upstream-attributed 5xx responses, which first requires a persisted response
+  origin or failure-owner field; or
+- gateway-owned 5xx responses, which requires the same attribution prerequisite.
+
+No 5xx monitor or template is approved by this plan yet.
+
+#### Latency Decision
+
+`request_logs.latency_ms` is measured when the gateway handler returns. For a
+streaming response it includes the stream lifetime, so it is not time to first
+byte. The current Ops distribution also considers only successful 2xx/3xx rows
+with positive latency. These semantics must not be reused silently for alerting.
+
+The owner must select average, p95, p99, or threshold-exceedance rate; rolling
+window; minimum sample; trigger and recovery thresholds; target dimension;
+included response statuses; and whether streaming routes are excluded or
+evaluated separately. The recommended prerequisite is a new persisted upstream
+TTFB measurement plus an explicit streaming classification. No latency monitor
+or template is approved by this plan yet.
+
+#### Storage Capacity Decision
+
+The service currently persists no PostgreSQL capacity or filesystem free-space
+signal. A PostgreSQL logical database-size check and a host/container filesystem
+check answer different operational questions and cannot share thresholds.
+
+The owner must select the measured resource, absolute-byte or percentage
+thresholds, warning/error levels, polling interval, recovery hysteresis, target
+identity, and supported deployment boundary. Filesystem monitoring additionally
+requires an explicit mount and permission contract; database-size monitoring
+must define managed PostgreSQL compatibility. A PostgreSQL outage cannot
+reliably alert through the same PostgreSQL-backed System Event store and needs
+an external availability monitor. No storage monitor or template is approved by
+this plan yet.
+
+#### Version Availability Decision
+
+Build identity exists, but there is no update source or checker. Version checks
+remain optional, disabled by default, and must never block startup. Development
+and `sha-*` builds remain ineligible.
+
+The owner must select GitHub Releases, GHCR tags, or another authoritative
+source; stable or prerelease channel; CalVer comparison rules; check interval;
+timeout and proxy/TLS behavior; egress and privacy expectations; cache/backoff;
+probe-failure semantics; target; and recovery behavior. No version monitor or
+template is approved by this plan yet.
 
 ### Completion Criteria
 
