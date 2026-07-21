@@ -1055,6 +1055,7 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"no rule is installed or enabled automatically",
 			"`api-key-budget-80-percent-v1` template",
 			"`api-key-budget-100-percent-v1` template",
+			"Startup establishes `LISTEN` synchronously",
 		},
 		"../../../docs/plans/2026-07-21-system-event-alerting.md": {
 			"Tasks 1-3 and the first ten Task 4 slices completed locally on 2026-07-21",

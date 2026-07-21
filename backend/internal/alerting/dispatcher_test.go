@@ -60,6 +60,27 @@ type memoryDeliveryRecorder struct {
 	err    error
 }
 
+type queuedEventSubscription struct {
+	ids       chan int64
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func (subscription *queuedEventSubscription) Wait(ctx context.Context) (int64, error) {
+	select {
+	case id := <-subscription.ids:
+		return id, nil
+	case <-subscription.closed:
+		return 0, context.Canceled
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
+func (subscription *queuedEventSubscription) Close() {
+	subscription.closeOnce.Do(func() { close(subscription.closed) })
+}
+
 type orderedBlockingAdapter struct {
 	mu            sync.Mutex
 	calls         int
@@ -127,6 +148,56 @@ func TestDispatcherEvaluatesInOrderAndDeliversRecovery(t *testing.T) {
 	status := dispatcher.AlertDeliveryStatus()
 	if status.Running || status.EnqueuedCount != 2 || status.DeliveredCount != 2 || status.FailedCount != 0 {
 		t.Fatalf("delivery status = %+v", status)
+	}
+}
+
+func TestDispatcherConsumesNotificationQueuedOnInitialSubscription(t *testing.T) {
+	service, _ := dispatcherService(t, 1)
+	adapter := &recordingDeliveryAdapter{}
+	subscription := &queuedEventSubscription{ids: make(chan int64, 1), closed: make(chan struct{})}
+	subscription.ids <- 91
+	var subscribeCalls atomic.Int64
+	var readID atomic.Int64
+	event := triggerEvent()
+	event.ID = 91
+	dispatcher := NewDispatcher(DispatcherConfig{
+		Enabled: true, Service: service, Adapter: adapter,
+		InitialSubscription: subscription,
+		Subscribe: func(context.Context) (EventSubscription, error) {
+			subscribeCalls.Add(1)
+			return nil, context.Canceled
+		},
+		GetEvent: func(_ context.Context, id int64) (systemevent.Event, error) {
+			readID.Store(id)
+			return event, nil
+		},
+		EventQueueCapacity: 1, DeliveryQueueCapacity: 1, WorkerCount: 1,
+	})
+	dispatcher.Start()
+	waitFor(t, time.Second, func() bool { return len(adapter.snapshot()) == 1 })
+	if subscribeCalls.Load() != 0 {
+		t.Fatalf("Subscribe calls before initial subscription failure = %d, want 0", subscribeCalls.Load())
+	}
+	if readID.Load() != event.ID {
+		t.Fatalf("GetEvent ID = %d, want %d", readID.Load(), event.ID)
+	}
+	shutdownDispatcher(t, dispatcher)
+}
+
+func TestDispatcherClosesInitialSubscriptionOnImmediateShutdown(t *testing.T) {
+	subscription := &queuedEventSubscription{ids: make(chan int64), closed: make(chan struct{})}
+	dispatcher := NewDispatcher(DispatcherConfig{
+		Enabled: true, Service: &Service{}, InitialSubscription: subscription,
+		GetEvent: func(context.Context, int64) (systemevent.Event, error) {
+			return systemevent.Event{}, nil
+		},
+	})
+	dispatcher.Start()
+	shutdownDispatcher(t, dispatcher)
+	select {
+	case <-subscription.closed:
+	default:
+		t.Fatal("initial subscription remained open after immediate shutdown")
 	}
 }
 

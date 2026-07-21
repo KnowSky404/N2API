@@ -41,6 +41,7 @@ type DeliveryEventRecorder interface {
 type DispatcherConfig struct {
 	Enabled                bool
 	Service                DispatcherService
+	InitialSubscription    EventSubscription
 	Subscribe              func(context.Context) (EventSubscription, error)
 	GetEvent               func(context.Context, int64) (systemevent.Event, error)
 	Recorder               DeliveryEventRecorder
@@ -141,6 +142,9 @@ func (dispatcher *Dispatcher) Start() {
 	}
 	dispatcher.startOnce.Do(func() {
 		if !dispatcher.cfg.Enabled || dispatcher.cfg.Service == nil {
+			if dispatcher.cfg.InitialSubscription != nil {
+				dispatcher.cfg.InitialSubscription.Close()
+			}
 			close(dispatcher.listenerDone)
 			close(dispatcher.evaluatorDone)
 			close(dispatcher.workersDone)
@@ -225,18 +229,31 @@ func (dispatcher *Dispatcher) finishShutdown() {
 
 func (dispatcher *Dispatcher) runListener(ctx context.Context) {
 	defer close(dispatcher.listenerDone)
-	if dispatcher.cfg.Subscribe == nil || dispatcher.cfg.GetEvent == nil {
+	subscription := dispatcher.cfg.InitialSubscription
+	defer func() {
+		if subscription != nil {
+			subscription.Close()
+		}
+	}()
+	if dispatcher.cfg.GetEvent == nil || (dispatcher.cfg.InitialSubscription == nil && dispatcher.cfg.Subscribe == nil) {
 		<-ctx.Done()
 		return
 	}
 	for ctx.Err() == nil {
-		subscription, err := dispatcher.cfg.Subscribe(ctx)
-		if err != nil {
-			dispatcher.markFailure("alert_delivery_listener_unavailable")
-			if !waitContext(ctx, dispatcher.cfg.ListenerRetryDelay) {
+		if subscription == nil {
+			if dispatcher.cfg.Subscribe == nil {
+				<-ctx.Done()
 				return
 			}
-			continue
+			var err error
+			subscription, err = dispatcher.cfg.Subscribe(ctx)
+			if err != nil {
+				dispatcher.markFailure("alert_delivery_listener_unavailable")
+				if !waitContext(ctx, dispatcher.cfg.ListenerRetryDelay) {
+					return
+				}
+				continue
+			}
 		}
 		for ctx.Err() == nil {
 			id, err := subscription.Wait(ctx)
@@ -251,6 +268,7 @@ func (dispatcher *Dispatcher) runListener(ctx context.Context) {
 			dispatcher.tryEnqueue(event)
 		}
 		subscription.Close()
+		subscription = nil
 		if ctx.Err() == nil && !waitContext(ctx, dispatcher.cfg.ListenerRetryDelay) {
 			return
 		}

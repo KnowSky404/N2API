@@ -70,6 +70,8 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"requestLogRetentionRunner.Run",
 		"admin.NewAPIKeyBudgetMonitor",
 		"go apiKeyBudgetMonitor.Run(ctx)",
+		"initialAlertSubscription, err = systemEventRepo.Subscribe(ctx)",
+		"InitialSubscription: initialAlertSubscription",
 		"ProviderAccountAutoTestEnabled",
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",

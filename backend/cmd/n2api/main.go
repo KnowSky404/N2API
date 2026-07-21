@@ -197,9 +197,17 @@ func runServer() {
 	alertingService := alerting.NewService(alertingRepo, cfg.EncryptionKeyring)
 	alertHTTPAdapter := alerting.NewHTTPAdapter(nil)
 	alertActionTester := alerting.NewActionTester(alertingService, alertHTTPAdapter)
+	var initialAlertSubscription alerting.EventSubscription
+	if cfg.AlertDeliveryEnabled {
+		initialAlertSubscription, err = systemEventRepo.Subscribe(ctx)
+		if err != nil {
+			slog.Error("alert delivery listener unavailable", "error_code", "alert_delivery_listener_unavailable")
+			os.Exit(1)
+		}
+	}
 	alertDispatcher := alerting.NewDispatcher(alerting.DispatcherConfig{
 		Enabled: cfg.AlertDeliveryEnabled, Service: alertingService, Recorder: systemEventRepo,
-		Adapter: alertHTTPAdapter,
+		Adapter: alertHTTPAdapter, InitialSubscription: initialAlertSubscription,
 		Subscribe: func(ctx context.Context) (alerting.EventSubscription, error) {
 			return systemEventRepo.Subscribe(ctx)
 		},

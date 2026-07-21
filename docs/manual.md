@@ -592,6 +592,9 @@ Bounded delivery is independently gated by
 committed System Event ID to a dedicated listener; events in rolled-back
 transactions are never sent. The listener reserves one pool connection, so an
 enabled deployment must configure at least two PostgreSQL pool connections.
+Startup establishes `LISTEN` synchronously before background source-event
+monitors run, so their first committed notifications are already queued for the
+dispatcher.
 The listener, one ordered evaluator, and two HTTP workers run outside gateway
 request processing. Each rule/deduplication stream is stably assigned to one
 worker so its firing and recovery notifications remain ordered; unrelated
