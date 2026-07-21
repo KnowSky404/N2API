@@ -80,6 +80,8 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"go autoTestRunner.Run(ctx)",
 		"go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour)",
 		"service.PurgeExpiredAPIKeys(ctx)",
+		"go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour)",
+		"runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now)",
 		"autoTestRunner, requestLogRetentionRunner, os.DirFS(\"frontend/build\")",
 		"server.Shutdown",
 	} {

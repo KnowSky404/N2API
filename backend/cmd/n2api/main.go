@@ -409,36 +409,7 @@ type systemEventRetentionStore interface {
 
 func runSystemEventCleanup(ctx context.Context, events systemEventRetentionStore, retentionDays int, interval time.Duration) {
 	cleanup := func() {
-		cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
-		var deleted int64
-		for {
-			count, err := events.DeleteBeforeBatch(ctx, cutoff, 1000)
-			if err != nil {
-				if ctx.Err() == nil {
-					slog.Error("system event retention failed", "error_code", "system_event_retention_failed")
-				}
-				return
-			}
-			deleted += count
-			if count < 1000 {
-				break
-			}
-		}
-		metadata, _ := systemevent.SafeMetadata(map[string]any{
-			"cutoff": cutoff.Format(time.RFC3339), "deleted_count": deleted, "retention_days": retentionDays,
-		}, "cutoff", "deleted_count", "retention_days")
-		requestContext := systemevent.RequestContext{
-			CorrelationID: systemevent.NewCorrelationID(), Actor: systemevent.Actor{Type: systemevent.ActorSystem},
-		}
-		event := systemevent.BuildEvent(systemevent.WithRequestContext(ctx, requestContext), systemevent.EventIntent{
-			Category: systemevent.CategoryScheduler, Severity: systemevent.SeverityInfo,
-			Action: systemevent.ActionSchedulerEventRetentionCompleted, Outcome: systemevent.OutcomeSuccess,
-			Target:  systemevent.Target{Type: "system_events", ID: "retention", Name: "System event retention"},
-			Message: "System event retention completed", Metadata: metadata,
-		}, systemevent.Target{}, time.Now().UTC(), 0)
-		if err := events.Insert(ctx, event); err != nil && ctx.Err() == nil {
-			slog.Error("system event retention summary failed", "error_code", "system_event_retention_summary_failed")
-		}
+		runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now)
 	}
 	cleanup()
 	ticker := time.NewTicker(interval)
@@ -450,5 +421,67 @@ func runSystemEventCleanup(ctx context.Context, events systemEventRetentionStore
 		case <-ticker.C:
 			cleanup()
 		}
+	}
+}
+
+func runSystemEventCleanupCycle(ctx context.Context, events systemEventRetentionStore, retentionDays int, logger *slog.Logger, now func() time.Time) {
+	started := now().UTC()
+	cutoff := started.Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	var deleted int64
+	for {
+		count, err := events.DeleteBeforeBatch(ctx, cutoff, 1000)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			recordSystemEventRetentionFailure(ctx, events, logger, started, now().UTC(), cutoff, retentionDays, deleted)
+			logger.Error("system event retention failed", "error_code", "system_event_retention_failed")
+			return
+		}
+		deleted += count
+		if count < 1000 {
+			break
+		}
+	}
+	metadata, _ := systemevent.SafeMetadata(map[string]any{
+		"cutoff": cutoff.Format(time.RFC3339), "deleted_count": deleted, "retention_days": retentionDays,
+	}, "cutoff", "deleted_count", "retention_days")
+	requestContext := systemevent.RequestContext{
+		CorrelationID: systemevent.NewCorrelationID(), Actor: systemevent.Actor{Type: systemevent.ActorSystem},
+	}
+	event := systemevent.BuildEvent(systemevent.WithRequestContext(ctx, requestContext), systemevent.EventIntent{
+		Category: systemevent.CategoryScheduler, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionSchedulerEventRetentionCompleted, Outcome: systemevent.OutcomeSuccess,
+		Target:  systemevent.Target{Type: "system_events", ID: "retention", Name: "System event retention"},
+		Message: "System event retention completed", Metadata: metadata,
+	}, systemevent.Target{}, now().UTC(), 0)
+	if err := events.Insert(ctx, event); err != nil && ctx.Err() == nil {
+		logger.Error("system event retention summary failed", "error_code", "system_event_retention_summary_failed")
+	}
+}
+
+func recordSystemEventRetentionFailure(ctx context.Context, events systemEventRetentionStore, logger *slog.Logger, started, finished, cutoff time.Time, retentionDays int, deleted int64) {
+	severity := systemevent.SeverityError
+	outcome := systemevent.OutcomeFailure
+	if deleted > 0 {
+		severity = systemevent.SeverityWarning
+		outcome = systemevent.OutcomePartial
+	}
+	metadata, _ := systemevent.SafeMetadata(map[string]any{
+		"cutoff": cutoff.Format(time.RFC3339), "deleted_count": deleted, "retention_days": retentionDays,
+	}, "cutoff", "deleted_count", "retention_days")
+	eventCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	eventCtx = systemevent.WithRequestContext(eventCtx, systemevent.RequestContext{
+		CorrelationID: systemevent.NewCorrelationID(), Actor: systemevent.Actor{Type: systemevent.ActorSystem},
+	})
+	event := systemevent.BuildEvent(eventCtx, systemevent.EventIntent{
+		Category: systemevent.CategoryScheduler, Severity: severity,
+		Action: systemevent.ActionSchedulerEventRetentionFailed, Outcome: outcome,
+		Target:    systemevent.Target{Type: "system_events", ID: "retention", Name: "System event retention"},
+		ErrorCode: "system_event_retention_failed", Message: "System event retention failed", Metadata: metadata,
+	}, systemevent.Target{}, finished, finished.Sub(started))
+	if err := events.Insert(eventCtx, event); err != nil {
+		logger.Error("system event retention failure event recording failed", "error_code", "system_event_retention_failure_event_record_failed")
 	}
 }

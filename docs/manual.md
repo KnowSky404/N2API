@@ -618,6 +618,17 @@ installed explicitly against an existing delivery action. Because failure
 reporting and completion events use the same PostgreSQL store, an event-storage
 failure can prevent either the trigger or recovery notification.
 
+The daily System Event retention runner emits
+`scheduler.system_event_retention.failed` against the stable
+`system_events/retention` target when a delete batch fails. A failure before any
+committed batch is error/failure; a failure after one or more committed batches
+is warning/partial and reports the already-deleted row count. The event contains
+only the UTC cutoff, configured retention days, and deleted count, never SQL,
+database errors, or deleted-event attributes. Normal shutdown cancellation
+emits no failure. The next `scheduler.system_event_retention.completed` cycle is
+the recovery signal for custom rules. No System Event retention failure template
+is installed or enabled automatically.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a

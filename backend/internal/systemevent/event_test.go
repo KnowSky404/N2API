@@ -170,3 +170,9 @@ func TestAPIKeyPurgeFailureActionIsKnown(t *testing.T) {
 		t.Fatalf("action %q is not registered", ActionSchedulerAPIKeyPurgeFailed)
 	}
 }
+
+func TestSystemEventRetentionFailureActionIsKnown(t *testing.T) {
+	if !IsKnownAction(ActionSchedulerEventRetentionFailed) {
+		t.Fatalf("action %q is not registered", ActionSchedulerEventRetentionFailed)
+	}
+}

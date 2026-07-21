@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first fourteen Task 4 slices completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first fifteen Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -611,6 +611,12 @@ underlying delete error are logged only as fixed error codes. Focused runner
 tests must cover immediate and interval execution, multi-batch success, full
 and partial failure fields, cancellation suppression, exact target/recovery
 compatibility, and sanitized logging.
+
+Fifteenth source-event status: completed locally on 2026-07-21. Focused runner
+and System Event tests cover immediate and interval execution, multi-batch
+success, exact full and partial failure events, cancellation suppression, and
+sanitized delete and failure-event insertion logs. Successful completion event
+behavior remains unchanged.
 
 After the source event exists, add `system-event-retention-failed-v1` in an
 independent commit. The template starts disabled, matches both full and partial
