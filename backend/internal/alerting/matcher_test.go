@@ -92,6 +92,44 @@ func TestRequestLogRetentionTemplateMatchesFullAndPartialFailuresAndRecovers(t *
 	}
 }
 
+func TestProviderAutoTestTemplateAggregatesFullAndPartialFailuresAndRecovers(t *testing.T) {
+	template, ok := ruleTemplate(ProviderAutoTestFailedTemplateKey)
+	if !ok {
+		t.Fatal("provider auto-test template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 12
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	for _, severity := range []systemevent.Severity{systemevent.SeverityError, systemevent.SeverityWarning} {
+		t.Run(string(severity), func(t *testing.T) {
+			failure := triggerEvent()
+			failure.Category = systemevent.CategoryScheduler
+			failure.Severity = severity
+			failure.Action = systemevent.ActionSchedulerProviderAutoTestFailed
+			failure.Target = systemevent.Target{Type: "provider_account_scheduler", ID: "auto_test"}
+			state := RuleState{RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle}
+			state, decision, err := Evaluate(rule, state, failure, now)
+			if err != nil || decision != DecisionNone || state.WindowMatchCount != 1 {
+				t.Fatalf("first failure state=%+v decision=%q err=%v", state, decision, err)
+			}
+			state, decision, err = Evaluate(rule, state, failure, now.Add(time.Minute))
+			if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+				t.Fatalf("second failure state=%+v decision=%q err=%v", state, decision, err)
+			}
+
+			recovery := failure
+			recovery.Severity = systemevent.SeverityInfo
+			recovery.Action = systemevent.ActionSchedulerProviderAutoTestCompleted
+			recovery.Outcome = systemevent.OutcomeSuccess
+			state, decision, err = Evaluate(rule, state, recovery, now.Add(2*time.Minute))
+			if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+				t.Fatalf("recovery state=%+v decision=%q err=%v", state, decision, err)
+			}
+		})
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

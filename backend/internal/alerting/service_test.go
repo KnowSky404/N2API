@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 2 {
-		t.Fatalf("RuleTemplates count = %d, want 2", len(templates))
+	if len(templates) != 3 {
+		t.Fatalf("RuleTemplates count = %d, want 3", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -597,6 +597,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		retentionTemplate.DeduplicationScope != DeduplicationScopeRule || !retentionTemplate.NotifyRecovery {
 		t.Fatalf("retention template = %+v", retentionTemplate)
 	}
+	autoTestTemplate := templates[2]
+	if autoTestTemplate.Name != "Provider account auto-test failures" || autoTestTemplate.Enabled ||
+		autoTestTemplate.Category != systemevent.CategoryScheduler || autoTestTemplate.Severity != "" ||
+		autoTestTemplate.EventAction != systemevent.ActionSchedulerProviderAutoTestFailed || autoTestTemplate.RecoveryAction != systemevent.ActionSchedulerProviderAutoTestCompleted ||
+		autoTestTemplate.AggregationCount != 2 || autoTestTemplate.AggregationWindowSeconds != 900 || autoTestTemplate.CooldownSeconds != 3600 ||
+		autoTestTemplate.DeduplicationScope != DeduplicationScopeTarget || !autoTestTemplate.NotifyRecovery {
+		t.Fatalf("auto-test template = %+v", autoTestTemplate)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -614,6 +622,10 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	retentionRule, created, err := service.InstallRuleTemplate(context.Background(), RequestLogRetentionFailedTemplateKey, 11)
 	if err != nil || !created || retentionRule.TemplateKey != RequestLogRetentionFailedTemplateKey || retentionRule.ActionID != 11 || retentionRule.Enabled {
 		t.Fatalf("retention InstallRuleTemplate = %+v, %v, %v", retentionRule, created, err)
+	}
+	autoTestRule, created, err := service.InstallRuleTemplate(context.Background(), ProviderAutoTestFailedTemplateKey, 13)
+	if err != nil || !created || autoTestRule.TemplateKey != ProviderAutoTestFailedTemplateKey || autoTestRule.ActionID != 13 || autoTestRule.Enabled {
+		t.Fatalf("auto-test InstallRuleTemplate = %+v, %v, %v", autoTestRule, created, err)
 	}
 	for _, input := range []struct {
 		key      string

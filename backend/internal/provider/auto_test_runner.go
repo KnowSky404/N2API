@@ -150,7 +150,6 @@ func (r *AutoTestRunner) runCycle(ctx context.Context) {
 	if err != nil {
 		if ctx.Err() != nil {
 			r.setStatusFinished(time.Now(), len(accounts), ctx.Err().Error())
-			r.recordCycleEvent(cycleCtx, started, len(accounts), err)
 			return
 		}
 		r.setStatusFinished(time.Now(), len(accounts), err.Error())
@@ -169,11 +168,13 @@ func (r *AutoTestRunner) recordCycleEvent(ctx context.Context, started time.Time
 	}
 	severity := systemevent.SeverityInfo
 	outcome := systemevent.OutcomeSuccess
+	action := systemevent.ActionSchedulerProviderAutoTestCompleted
 	errorCode := ""
 	metadata := map[string]any{"account_count": accountCount}
 	if cycleErr != nil {
 		severity = systemevent.SeverityError
 		outcome = systemevent.OutcomeFailure
+		action = systemevent.ActionSchedulerProviderAutoTestFailed
 		errorCode = "provider_auto_test_failed"
 		var batchErr *accountBatchError
 		if errors.As(cycleErr, &batchErr) {
@@ -191,7 +192,7 @@ func (r *AutoTestRunner) recordCycleEvent(ctx context.Context, started time.Time
 	intent := systemevent.EventIntent{
 		Category:  systemevent.CategoryScheduler,
 		Severity:  severity,
-		Action:    systemevent.ActionSchedulerProviderAutoTestCompleted,
+		Action:    action,
 		Outcome:   outcome,
 		Target:    systemevent.Target{Type: "provider_account_scheduler", ID: "auto_test", Name: "Provider account auto test"},
 		ErrorCode: errorCode,

@@ -693,6 +693,20 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if err != nil || !created || retentionRule.ID == edited.ID || retentionRule.TemplateKey != retentionTemplate.TemplateKey || retentionRule.ActionID != secondAction.ID {
 		t.Fatalf("second template install = %+v, created=%t, err=%v", retentionRule, created, err)
 	}
+	autoTestTemplate := retentionTemplate
+	autoTestTemplate.TemplateKey = "provider-auto-test-failed-v1"
+	autoTestTemplate.Name = "Provider account auto-test failures"
+	autoTestTemplate.ActionID = firstAction.ID
+	autoTestTemplate.EventAction = systemevent.ActionSchedulerProviderAutoTestFailed
+	autoTestTemplate.RecoveryAction = systemevent.ActionSchedulerProviderAutoTestCompleted
+	autoTestTemplate.AggregationCount = 2
+	autoTestTemplate.AggregationWindowSeconds = 900
+	autoTestTemplate.CooldownSeconds = 3600
+	autoTestTemplate.DeduplicationScope = alerting.DeduplicationScopeTarget
+	autoTestRule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: autoTestTemplate})
+	if err != nil || !created || autoTestRule.ID == edited.ID || autoTestRule.ID == retentionRule.ID || autoTestRule.TemplateKey != autoTestTemplate.TemplateKey || autoTestRule.ActionID != firstAction.ID {
+		t.Fatalf("third template install = %+v, created=%t, err=%v", autoTestRule, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `

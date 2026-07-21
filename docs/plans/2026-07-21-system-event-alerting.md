@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first two Task 4 rules completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first three Task 4 rules completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -216,8 +216,9 @@ desktop/mobile workflow passes browser verification.
 
 ## Task 4: Add Operational Rules Incrementally
 
-Task status: in progress; repeated automatic OAuth refresh failures and Request
-Log retention failures completed locally on 2026-07-21
+Task status: in progress; repeated automatic OAuth refresh failures, Request
+Log retention failures, and Provider account auto-test cycle failures completed
+locally on 2026-07-21
 
 ### Goal
 
@@ -262,8 +263,8 @@ are emitted only after confirmed recovery. Request-derived thresholds require a
 bounded periodic aggregator with persistent crossing state before templates can
 be added without per-request event noise.
 
-The third slice will close the existing Provider account auto-test scheduler
-signal before adding `provider-auto-test-failed-v1`. Successful cycles keep
+The third slice closes the existing Provider account auto-test scheduler signal
+and adds `provider-auto-test-failed-v1`. Successful cycles keep
 `scheduler.provider_account_auto_test.completed`; full and partial failures use
 the new `scheduler.provider_account_auto_test.failed` action. Parent-context
 cancellation during shutdown updates task status without emitting a failed

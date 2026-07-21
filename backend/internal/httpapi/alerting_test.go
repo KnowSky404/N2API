@@ -103,8 +103,9 @@ func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
 	var catalog struct {
 		Templates []alerting.RuleTemplate `json:"templates"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 2 ||
-		catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey || catalog.Templates[1].Key != alerting.RequestLogRetentionFailedTemplateKey {
+	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 3 ||
+		catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey || catalog.Templates[1].Key != alerting.RequestLogRetentionFailedTemplateKey ||
+		catalog.Templates[2].Key != alerting.ProviderAutoTestFailedTemplateKey {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
 

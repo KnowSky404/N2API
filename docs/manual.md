@@ -522,6 +522,13 @@ notify when the next scheduled retention cycle succeeds. Shutdown cancellation
 updates task status but does not emit the failure signal. Disabling the runner,
 disabling the saved retention policy, persistent lock contention, or failure to
 record a System Event can leave a firing rule without a recovery event.
+The `provider-auto-test-failed-v1` template matches both complete and partial
+Provider account auto-test cycle failures, not individual probe results. It
+requires two failed cycles within 15 minutes, uses a one-hour cooldown, and can
+notify when the next scheduled cycle completes successfully. Normal shutdown
+cancellation updates task status without emitting a failure. The rule starts
+disabled, and disabling the auto-test runner or failing to record a System Event
+can leave a firing rule without a recovery event.
 
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or

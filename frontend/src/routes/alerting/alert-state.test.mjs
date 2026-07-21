@@ -101,15 +101,17 @@ test('loadAlertRuleTemplates ignores an older response after a new load starts',
   const second = loadAlertRuleTemplates();
   resolveSecond(Response.json({ templates: [
     template({ key: 'new', name: 'New' }),
-    template({ key: 'request-log-retention-failed-v1', name: 'Request log retention failures' })
+    template({ key: 'request-log-retention-failed-v1', name: 'Request log retention failures' }),
+    template({ key: 'provider-auto-test-failed-v1', name: 'Provider account auto-test failures' })
   ] }));
   await second;
   resolveFirst(Response.json({ templates: [template({ key: 'old', name: 'Old' })] }));
   await first;
 
-  assert.equal(alertRuleTemplates.items.length, 2);
+  assert.equal(alertRuleTemplates.items.length, 3);
   assert.equal(alertRuleTemplates.items[0].name, 'New');
   assert.equal(alertRuleTemplates.items[1].key, 'request-log-retention-failed-v1');
+  assert.equal(alertRuleTemplates.items[2].key, 'provider-auto-test-failed-v1');
   assert.equal(alertRuleTemplates.loading, false);
 });
 

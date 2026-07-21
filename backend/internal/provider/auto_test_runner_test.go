@@ -56,7 +56,7 @@ type immediateAutoTestService struct {
 
 func (s immediateAutoTestService) TestAccounts(context.Context) ([]Account, error) {
 	if s.err != nil {
-		return nil, s.err
+		return s.accounts, s.err
 	}
 	return s.accounts, nil
 }
@@ -102,13 +102,18 @@ func TestAutoTestRunnerStatusTracksFailedCycle(t *testing.T) {
 
 func TestAutoTestRunnerRecordsSafeCycleSummaries(t *testing.T) {
 	for _, testCase := range []struct {
-		name        string
-		service     immediateAutoTestService
-		wantOutcome systemevent.Outcome
-		wantCount   int
+		name          string
+		service       immediateAutoTestService
+		wantAction    systemevent.Action
+		wantSeverity  systemevent.Severity
+		wantOutcome   systemevent.Outcome
+		wantCount     int
+		wantErrorCode string
+		wantBatch     bool
 	}{
-		{name: "success", service: immediateAutoTestService{accounts: []Account{{ID: 1}, {ID: 2}}}, wantOutcome: systemevent.OutcomeSuccess, wantCount: 2},
-		{name: "failure", service: immediateAutoTestService{err: errors.New("raw provider probe failure")}, wantOutcome: systemevent.OutcomeFailure},
+		{name: "success", service: immediateAutoTestService{accounts: []Account{{ID: 1}, {ID: 2}}}, wantAction: systemevent.ActionSchedulerProviderAutoTestCompleted, wantSeverity: systemevent.SeverityInfo, wantOutcome: systemevent.OutcomeSuccess, wantCount: 2},
+		{name: "failure", service: immediateAutoTestService{err: errors.New("raw provider probe failure")}, wantAction: systemevent.ActionSchedulerProviderAutoTestFailed, wantSeverity: systemevent.SeverityError, wantOutcome: systemevent.OutcomeFailure, wantErrorCode: "provider_auto_test_failed"},
+		{name: "partial", service: immediateAutoTestService{accounts: []Account{{ID: 1}}, err: &accountBatchError{Err: errors.New("raw partial probe failure"), Requested: 3, Attempted: 2, Succeeded: 1, Failed: 1, Skipped: 1}}, wantAction: systemevent.ActionSchedulerProviderAutoTestFailed, wantSeverity: systemevent.SeverityWarning, wantOutcome: systemevent.OutcomePartial, wantCount: 1, wantErrorCode: "provider_auto_test_failed", wantBatch: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			recorder := &captureSystemEventRecorder{}
@@ -119,10 +124,16 @@ func TestAutoTestRunnerRecordsSafeCycleSummaries(t *testing.T) {
 				t.Fatalf("events = %d, want 1", len(recorder.events))
 			}
 			event := recorder.events[0]
-			if event.Action != systemevent.ActionSchedulerProviderAutoTestCompleted || event.Outcome != testCase.wantOutcome || event.Metadata["account_count"] != testCase.wantCount {
+			if event.Action != testCase.wantAction || event.Category != systemevent.CategoryScheduler || event.Severity != testCase.wantSeverity || event.Outcome != testCase.wantOutcome || event.ErrorCode != testCase.wantErrorCode || event.Metadata["account_count"] != testCase.wantCount {
 				t.Fatalf("event = %+v, want cycle summary", event)
 			}
-			if strings.Contains(event.Message, "raw provider probe failure") || event.Message != "" {
+			if event.Target.Type != "provider_account_scheduler" || event.Target.ID != "auto_test" || event.Target.Name != "Provider account auto test" {
+				t.Fatalf("event target = %+v, want stable auto-test target", event.Target)
+			}
+			if testCase.wantBatch && (event.Metadata["requested_count"] != 3 || event.Metadata["attempted_count"] != 2 || event.Metadata["succeeded_count"] != 1 || event.Metadata["failed_count"] != 1 || event.Metadata["skipped_count"] != 1) {
+				t.Fatalf("event metadata = %+v, want bounded batch counts", event.Metadata)
+			}
+			if strings.Contains(event.Message, "raw provider probe failure") || strings.Contains(event.Message, "raw partial probe failure") || event.Message != "" {
 				t.Fatalf("event message = %q, want no raw error", event.Message)
 			}
 			if err := systemevent.ValidateEvent(event); err != nil {
@@ -133,9 +144,11 @@ func TestAutoTestRunnerRecordsSafeCycleSummaries(t *testing.T) {
 }
 
 func TestAutoTestRunnerStatusClearsRunningAfterCanceledCycle(t *testing.T) {
+	recorder := &captureSystemEventRecorder{}
 	runner := NewAutoTestRunner(immediateAutoTestService{
 		err: context.Canceled,
 	}, AutoTestRunnerConfig{Enabled: true}, slog.Default())
+	runner.SetSystemEventRecorder(recorder)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -144,6 +157,9 @@ func TestAutoTestRunnerStatusClearsRunningAfterCanceledCycle(t *testing.T) {
 	status := runner.ProviderAccountAutoTestStatus()
 	if status.Running || status.LastStartedAt == nil || status.LastFinishedAt == nil {
 		t.Fatalf("status = %+v, want canceled completed cycle", status)
+	}
+	if len(recorder.events) != 0 {
+		t.Fatalf("events = %+v, want shutdown cancellation suppressed", recorder.events)
 	}
 }
 

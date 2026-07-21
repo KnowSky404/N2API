@@ -5,6 +5,7 @@ import "github.com/KnowSky404/N2API/backend/internal/systemevent"
 const (
 	OAuthRefreshRepeatedTemplateKey      = "oauth-refresh-repeated-v1"
 	RequestLogRetentionFailedTemplateKey = "request-log-retention-failed-v1"
+	ProviderAutoTestFailedTemplateKey    = "provider-auto-test-failed-v1"
 )
 
 var ruleTemplateCatalog = []RuleTemplate{
@@ -33,6 +34,19 @@ var ruleTemplateCatalog = []RuleTemplate{
 		CooldownSeconds:    86400,
 		DeduplicationScope: DeduplicationScopeRule,
 		NotifyRecovery:     true,
+	},
+	{
+		Key:                      ProviderAutoTestFailedTemplateKey,
+		Name:                     "Provider account auto-test failures",
+		Enabled:                  false,
+		Category:                 systemevent.CategoryScheduler,
+		EventAction:              systemevent.ActionSchedulerProviderAutoTestFailed,
+		RecoveryAction:           systemevent.ActionSchedulerProviderAutoTestCompleted,
+		AggregationCount:         2,
+		AggregationWindowSeconds: 900,
+		CooldownSeconds:          3600,
+		DeduplicationScope:       DeduplicationScopeTarget,
+		NotifyRecovery:           true,
 	},
 }
 
