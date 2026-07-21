@@ -707,6 +707,21 @@ func TestAlertingRepositoryInstallsRuleTemplateIdempotentlyWithoutOverwritingEdi
 	if err != nil || !created || autoTestRule.ID == edited.ID || autoTestRule.ID == retentionRule.ID || autoTestRule.TemplateKey != autoTestTemplate.TemplateKey || autoTestRule.ActionID != firstAction.ID {
 		t.Fatalf("third template install = %+v, created=%t, err=%v", autoTestRule, created, err)
 	}
+	expiredTemplate := autoTestTemplate
+	expiredTemplate.TemplateKey = "provider-account-expired-v1"
+	expiredTemplate.Name = "Provider account expiry"
+	expiredTemplate.ActionID = secondAction.ID
+	expiredTemplate.Category = systemevent.CategoryRuntime
+	expiredTemplate.Severity = systemevent.SeverityWarning
+	expiredTemplate.EventAction = systemevent.ActionProviderAccountExpired
+	expiredTemplate.RecoveryAction = systemevent.ActionProviderAccountRecovered
+	expiredTemplate.AggregationCount = 1
+	expiredTemplate.AggregationWindowSeconds = 0
+	expiredTemplate.CooldownSeconds = 86400
+	expiredRule, created, err := repo.InstallRuleTemplate(auditCtx, alerting.RuleCreate{Rule: expiredTemplate})
+	if err != nil || !created || expiredRule.ID == edited.ID || expiredRule.ID == retentionRule.ID || expiredRule.ID == autoTestRule.ID || expiredRule.TemplateKey != expiredTemplate.TemplateKey || expiredRule.ActionID != secondAction.ID {
+		t.Fatalf("fourth template install = %+v, created=%t, err=%v", expiredRule, created, err)
+	}
 
 	var createdAudits int
 	if err := repo.pool.QueryRow(ctx, `

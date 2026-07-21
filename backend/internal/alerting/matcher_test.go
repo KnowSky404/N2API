@@ -130,6 +130,47 @@ func TestProviderAutoTestTemplateAggregatesFullAndPartialFailuresAndRecovers(t *
 	}
 }
 
+func TestProviderAccountExpiredTemplateNotifiesPerTargetAndRecovers(t *testing.T) {
+	template, ok := ruleTemplate(ProviderAccountExpiredTemplateKey)
+	if !ok {
+		t.Fatal("provider account expired template is missing")
+	}
+	rule := template.rule(7)
+	rule.ID = 13
+	rule.Enabled = true
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	failure := triggerEvent()
+	failure.Category = systemevent.CategoryRuntime
+	failure.Severity = systemevent.SeverityWarning
+	failure.Action = systemevent.ActionProviderAccountExpired
+	failure.Outcome = systemevent.OutcomeFailure
+	failure.Target = systemevent.Target{Type: "provider_account", ID: "42", Name: "Work account"}
+	state := RuleState{RuleID: rule.ID, DeduplicationKeyHash: rule.DeduplicationKeyHash(failure), Phase: StatePhaseIdle}
+	state, decision, err := Evaluate(rule, state, failure, now)
+	if err != nil || decision != DecisionNotify || state.Phase != StatePhaseFiring {
+		t.Fatalf("expiry evaluation state=%+v decision=%q err=%v", state, decision, err)
+	}
+	state, decision, err = Evaluate(rule, state, failure, now.Add(time.Hour))
+	if err != nil || decision != DecisionSuppress || state.Phase != StatePhaseFiring {
+		t.Fatalf("cooldown evaluation state=%+v decision=%q err=%v", state, decision, err)
+	}
+
+	otherTarget := failure
+	otherTarget.Target.ID = "43"
+	if rule.DeduplicationKeyHash(failure) == rule.DeduplicationKeyHash(otherTarget) {
+		t.Fatal("target-scoped template reused the same deduplication key for different accounts")
+	}
+
+	recovery := failure
+	recovery.Severity = systemevent.SeverityInfo
+	recovery.Action = systemevent.ActionProviderAccountRecovered
+	recovery.Outcome = systemevent.OutcomeSuccess
+	state, decision, err = Evaluate(rule, state, recovery, now.Add(2*time.Hour))
+	if err != nil || decision != DecisionRecover || state.Phase != StatePhaseIdle {
+		t.Fatalf("recovery evaluation state=%+v decision=%q err=%v", state, decision, err)
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

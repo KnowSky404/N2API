@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first three Task 4 rules completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first four Task 4 rules completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -217,8 +217,8 @@ desktop/mobile workflow passes browser verification.
 ## Task 4: Add Operational Rules Incrementally
 
 Task status: in progress; repeated automatic OAuth refresh failures, Request
-Log retention failures, and Provider account auto-test cycle failures completed
-locally on 2026-07-21
+Log retention failures, Provider account auto-test cycle failures, and Provider
+account expiry completed locally on 2026-07-21
 
 ### Goal
 
@@ -355,6 +355,19 @@ isolated PostgreSQL Store tests cover preserved health during OAuth
 reauthorization and API-upstream configuration changes, transactional operator
 reset recovery, and failure outcomes for negative Runtime transitions. The
 account-expiry and circuit-open templates are now unblocked as separate slices.
+
+The sixth slice adds `provider-account-expired-v1` as a disabled Runtime warning
+template. The first `provider_account.expired` event fires for its Provider
+account target, a 24-hour cooldown limits repeat notifications, and
+`provider_account.recovered` for the same target ends the incident and can send
+a recovery notification. Target-scoped deduplication keeps unrelated accounts
+independent. Catalog, matcher, service, Store, HTTP, and documentation tests
+cover exact fields, trigger/cooldown/recovery transitions, stable order, and
+idempotent installation. No migration or automatic rule installation is added.
+
+Sixth-slice status: completed locally on 2026-07-21. The template is additive,
+explicitly installed by an owner, and disabled until that owner reviews and
+enables it.
 
 ### Completion Criteria
 

@@ -529,6 +529,14 @@ notify when the next scheduled cycle completes successfully. Normal shutdown
 cancellation updates task status without emitting a failure. The rule starts
 disabled, and disabling the auto-test runner or failing to record a System Event
 can leave a firing rule without a recovery event.
+The `provider-account-expired-v1` template matches the first
+`provider_account.expired` Runtime warning for each Provider account, uses a
+24-hour cooldown, and can notify when that same account emits
+`provider_account.recovered`. It starts disabled and is deduplicated by account
+target. OAuth reauthorization and API-upstream configuration edits preserve the
+current health state, so they do not recover a firing rule. Recovery follows a
+confirmed 2xx gateway/account-probe response or an explicit **Reset local
+status** operator override.
 
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or

@@ -6,6 +6,7 @@ const (
 	OAuthRefreshRepeatedTemplateKey      = "oauth-refresh-repeated-v1"
 	RequestLogRetentionFailedTemplateKey = "request-log-retention-failed-v1"
 	ProviderAutoTestFailedTemplateKey    = "provider-auto-test-failed-v1"
+	ProviderAccountExpiredTemplateKey    = "provider-account-expired-v1"
 )
 
 var ruleTemplateCatalog = []RuleTemplate{
@@ -47,6 +48,19 @@ var ruleTemplateCatalog = []RuleTemplate{
 		CooldownSeconds:          3600,
 		DeduplicationScope:       DeduplicationScopeTarget,
 		NotifyRecovery:           true,
+	},
+	{
+		Key:                ProviderAccountExpiredTemplateKey,
+		Name:               "Provider account expiry",
+		Enabled:            false,
+		Category:           systemevent.CategoryRuntime,
+		Severity:           systemevent.SeverityWarning,
+		EventAction:        systemevent.ActionProviderAccountExpired,
+		RecoveryAction:     systemevent.ActionProviderAccountRecovered,
+		AggregationCount:   1,
+		CooldownSeconds:    86400,
+		DeduplicationScope: DeduplicationScopeTarget,
+		NotifyRecovery:     true,
 	},
 }
 

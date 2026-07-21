@@ -575,10 +575,10 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 3 {
-		t.Fatalf("RuleTemplates count = %d, want 3", len(templates))
+	if len(templates) != 4 {
+		t.Fatalf("RuleTemplates count = %d, want 4", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey {
+	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
 	oauthTemplate := templates[0]
@@ -605,6 +605,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		autoTestTemplate.DeduplicationScope != DeduplicationScopeTarget || !autoTestTemplate.NotifyRecovery {
 		t.Fatalf("auto-test template = %+v", autoTestTemplate)
 	}
+	expiredTemplate := templates[3]
+	if expiredTemplate.Name != "Provider account expiry" || expiredTemplate.Enabled ||
+		expiredTemplate.Category != systemevent.CategoryRuntime || expiredTemplate.Severity != systemevent.SeverityWarning ||
+		expiredTemplate.EventAction != systemevent.ActionProviderAccountExpired || expiredTemplate.RecoveryAction != systemevent.ActionProviderAccountRecovered ||
+		expiredTemplate.AggregationCount != 1 || expiredTemplate.AggregationWindowSeconds != 0 || expiredTemplate.CooldownSeconds != 86400 ||
+		expiredTemplate.DeduplicationScope != DeduplicationScopeTarget || !expiredTemplate.NotifyRecovery {
+		t.Fatalf("expired template = %+v", expiredTemplate)
+	}
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -626,6 +634,14 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	autoTestRule, created, err := service.InstallRuleTemplate(context.Background(), ProviderAutoTestFailedTemplateKey, 13)
 	if err != nil || !created || autoTestRule.TemplateKey != ProviderAutoTestFailedTemplateKey || autoTestRule.ActionID != 13 || autoTestRule.Enabled {
 		t.Fatalf("auto-test InstallRuleTemplate = %+v, %v, %v", autoTestRule, created, err)
+	}
+	expiredRule, created, err := service.InstallRuleTemplate(context.Background(), ProviderAccountExpiredTemplateKey, 17)
+	if err != nil || !created || expiredRule.TemplateKey != ProviderAccountExpiredTemplateKey || expiredRule.ActionID != 17 || expiredRule.Enabled {
+		t.Fatalf("expired InstallRuleTemplate = %+v, %v, %v", expiredRule, created, err)
+	}
+	expiredAgain, created, err := service.InstallRuleTemplate(context.Background(), ProviderAccountExpiredTemplateKey, 19)
+	if err != nil || created || expiredAgain.ID != expiredRule.ID || expiredAgain.ActionID != 17 {
+		t.Fatalf("expired reinstall = %+v, %v, %v", expiredAgain, created, err)
 	}
 	for _, input := range []struct {
 		key      string
