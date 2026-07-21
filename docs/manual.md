@@ -575,6 +575,29 @@ for each stream, uses a one-hour cooldown, and recovers only on that stream's
 100-percent recovery action. An 80-percent recovery cannot close its firing
 state. This template also starts disabled and requires explicit installation.
 
+Routing exhaustion source events are projected from Request Logs by a separate
+always-on monitor that runs at startup and every minute. Migration 45 baselines
+its persistent checkpoint at the current maximum Request Log ID, so retained
+history is not replayed after upgrade. Each transaction reads at most 1000 logs
+in ID order, emits at most 100 transitions, and commits the checkpoint, current
+per-key firing state, and System Events together. PostgreSQL advisory lock
+contention or an in-flight Request Log write is a normal skipped cycle rather
+than a failure. A short `SHARE ... NOWAIT` table lock prevents a lower sequence
+ID from committing after the checkpoint has advanced past it. The lock is
+released immediately after capturing a committed safe maximum ID; event
+projection never holds it while processing the batch.
+
+A log with `routing_pool_error = routing_pool_exhausted` emits Runtime
+error/failure action `api_key.routing_pool.exhausted` once for that API Key.
+Only a later log for the same key with a real upstream `2xx`, a non-null
+Provider account, and no routing-pool error emits the Runtime info/success
+`api_key.routing_pool.recovered` action. Local responses, rate or budget
+rejections, other failures, and idle periods do not recover the incident.
+Events target only the API Key and contain bounded attribution IDs and fallback
+depth, never request/response content, error text, key material, or pool names.
+Revoking the key emits a recovery with `confirmation: key_revoked` in the revoke
+transaction. Source events support custom exact-match rules; no routing exhaustion rule is installed or enabled automatically.
+
 `POST /api/admin/alert-actions/{id}/test` tests only the saved destination and
 requires the same action revision. It remains available when the dispatcher or
 action is disabled, performs one bounded five-second attempt, and returns only a

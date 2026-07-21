@@ -274,6 +274,8 @@ func runServer() {
 	go requestLogRetentionRunner.Run(ctx)
 	apiKeyBudgetMonitor := admin.NewAPIKeyBudgetMonitor(adminRepo, admin.APIKeyBudgetMonitorConfig{}, slog.Default())
 	go apiKeyBudgetMonitor.Run(ctx)
+	routingExhaustionProjector := admin.NewRoutingExhaustionProjector(adminRepo, admin.RoutingExhaustionProjectorConfig{}, slog.Default())
+	go routingExhaustionProjector.Run(ctx)
 
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL:                 cfg.OpenAIAPIBaseURL,

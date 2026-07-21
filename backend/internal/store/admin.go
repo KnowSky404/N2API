@@ -485,8 +485,12 @@ func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.API
 	if err != nil {
 		return admin.APIKey{}, err
 	}
+	now := time.Now().UTC()
 	snapshot := apiKeyBudgetSnapshotFromValues(updatedID, name, requestBudget24h, tokenBudget24h, costBudget24h, requestBudget30d, tokenBudget30d, costBudget30d)
-	if err := recoverAPIKeyBudgetThresholdsForRevocation(ctx, tx, snapshot, time.Now().UTC()); err != nil {
+	if err := recoverAPIKeyBudgetThresholdsForRevocation(ctx, tx, snapshot, now); err != nil {
+		return admin.APIKey{}, err
+	}
+	if err := recoverAPIKeyRoutingExhaustionForRevocation(ctx, tx, updatedID, name, now); err != nil {
 		return admin.APIKey{}, err
 	}
 	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {

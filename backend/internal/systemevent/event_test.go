@@ -156,3 +156,11 @@ func TestAPIKeyBudgetThresholdActionsAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestAPIKeyRoutingPoolLifecycleActionsAreKnown(t *testing.T) {
+	for _, action := range []Action{ActionAPIKeyRoutingPoolExhausted, ActionAPIKeyRoutingPoolRecovered} {
+		if !IsKnownAction(action) {
+			t.Fatalf("action %q is not registered", action)
+		}
+	}
+}

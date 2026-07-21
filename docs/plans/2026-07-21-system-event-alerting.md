@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first ten Task 4 slices completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first eleven Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -494,8 +494,12 @@ always-on monitor starts with the server, runs immediately and once per minute,
 reads at most 1000 log rows in ID order, and emits at most 100 transitions per
 cycle. It stops before a row that would exceed the transition bound and resumes
 from the last committed checkpoint. A PostgreSQL transaction advisory lock
-allows only one instance to project a cycle at a time; lock contention is a
-normal skip.
+allows only one instance to project a cycle at a time. A short Request Log table
+`SHARE ... NOWAIT` lock also prevents sequence IDs from committing out of order
+across the checkpoint by capturing a committed safe maximum ID, then releases
+the table lock before projecting `checkpoint < id <= safe-max`. Either form of
+lock contention is a normal skip. The migration takes the blocking equivalent
+before establishing its non-replay baseline.
 
 Checkpoint movement, firing-state insert/delete, and Runtime System Events
 commit in one transaction. A failed event write therefore rolls back the
@@ -512,6 +516,12 @@ Revoking an API Key closes an active routing-exhaustion state in the existing
 revoke transaction and emits `api_key.routing_pool.recovered` with
 `confirmation: key_revoked`. This prevents the state-table foreign-key cascade
 from leaving the matching alert-rule state firing after physical cleanup.
+
+Eleventh source-event status: completed locally on 2026-07-21. The migration,
+bounded projector, revoke recovery, startup wiring, and isolated PostgreSQL
+coverage are in place. Alert delivery now establishes its PostgreSQL `LISTEN`
+subscription before either source-event monitor can emit its startup cycle. The
+default template remains the next independent slice.
 
 After the source events exist, add `routing-pool-exhausted-v1` in an independent
 commit. The template starts disabled, matches the first Runtime error trigger,

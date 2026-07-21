@@ -663,11 +663,35 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 44 {
-		t.Fatalf("migration sources = %d, want 44", len(sources))
+	if len(sources) != 45 {
+		t.Fatalf("migration sources = %d, want 45", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[43].Path != "00044_api_key_budget_threshold_states.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[44].Path != "00045_routing_exhaustion_projector.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestRoutingExhaustionProjectorMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00045_routing_exhaustion_projector.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE request_log_projector_checkpoints",
+		"projector_key TEXT PRIMARY KEY",
+		"last_request_log_id BIGINT NOT NULL",
+		"LOCK TABLE request_logs IN SHARE MODE",
+		"'routing_exhaustion_v1'",
+		"COALESCE(MAX(id), 0)",
+		"CREATE TABLE api_key_routing_exhaustion_states",
+		"client_key_id BIGINT PRIMARY KEY REFERENCES client_api_keys(id) ON DELETE CASCADE",
+		"trigger_request_log_id BIGINT NOT NULL",
+		"DROP TABLE IF EXISTS api_key_routing_exhaustion_states",
+		"DROP TABLE IF EXISTS request_log_projector_checkpoints",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }
 
@@ -751,6 +775,13 @@ func TestAlertRuleTemplateKeyMigrationRoundTrip(t *testing.T) {
 		t.Fatalf("create migration provider: %v", err)
 	}
 	result, err := provider.Down(ctx)
+	if err != nil {
+		t.Fatalf("roll back routing exhaustion projector migration: %v", err)
+	}
+	if result == nil || result.Source.Version != 45 {
+		t.Fatalf("migration down result = %+v, want version 45", result)
+	}
+	result, err = provider.Down(ctx)
 	if err != nil {
 		t.Fatalf("roll back API key budget threshold migration: %v", err)
 	}
