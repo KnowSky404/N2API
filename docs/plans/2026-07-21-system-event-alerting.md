@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Tasks 1-3 and the first five Task 4 rules completed locally on 2026-07-21
+Status: in progress; Tasks 1-3 and the first seven Task 4 slices completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -384,6 +384,68 @@ Seventh-slice status: completed locally on 2026-07-21. The template is additive,
 explicitly installed by an owner, and disabled until that owner reviews and
 enables it. Routing exhaustion remains deferred because it has no dedicated
 persistent trigger and recovery System Events.
+
+The eighth slice projects API Key budget threshold crossings from the existing
+rolling request-log aggregates. It covers all six configured budget streams:
+request count, token count, and estimated cost over 24-hour and 30-day windows.
+Each configured stream maintains independent 80-percent and 100-percent
+crossings. A stream that moves directly from below 80 percent to at least 100
+percent opens both incidents; falling below 100 percent recovers only the
+100-percent incident, and falling below 80 percent recovers the remaining one.
+The crossing boundary is `used >= ceil(limit * threshold / 100)`, while a zero
+limit means the stream is not configured.
+
+Migration `00044` adds `api_key_budget_threshold_states`, containing only
+currently crossed rows keyed by API Key, budget kind, window, and threshold.
+The monitor starts immediately with the server, repeats every five minutes, and
+processes at most 100 keys per cycle with an ID cursor. It always runs so an
+installed rule cannot silently lose its source signal behind a second feature
+gate. Keys with configured budgets or existing crossing state are eligible.
+Each key is evaluated in one transaction that locks the key row, aggregates no
+more than its rolling 30-day Request Logs, diffs persisted crossings, and writes
+state changes and System Events atomically. Multiple instances therefore
+serialize on the key row; a failed event write rolls back the crossing state and
+can be retried in the next cycle. Server shutdown cancellation emits no failure
+event, and other cycle failures produce only a sanitized log before retrying.
+
+The trigger actions are `api_key.budget.threshold_80.crossed` and
+`api_key.budget.threshold_100.crossed`; their recovery actions use the same
+prefix with `.recovered`. The 80-percent trigger is Runtime warning/partial, the
+100-percent trigger is Runtime error/failure, and both recoveries are Runtime
+info/success. Every event targets `client_api_key_budget` with ID
+`<key-id>:<request|token|cost>:<24h|30d>` and the API Key name. Safe metadata is
+limited to `client_key_id`, `budget_kind`, `window`, `threshold_percent`,
+`used`, and `limit`; it never includes the key prefix or secret, request data,
+or error text. The event message names the kind, window, and threshold so
+notification destinations remain useful even though alert payloads do not
+include metadata.
+
+Revoking an API Key closes and deletes every active crossing in the existing
+revoke transaction, emitting the matching recoveries with
+`confirmation: key_revoked`. This prevents physical key cleanup from cascading
+away source state while leaving alert-rule state firing. Setting a budget to
+zero or raising it above current use recovers on the next monitor cycle. Disabled
+keys continue to age out naturally because their rolling usage can still fall
+below the thresholds.
+
+After the source-event slice, add two separate default-disabled templates.
+`api-key-budget-80-percent-v1` matches the 80-percent trigger and recovery with
+target deduplication, one-event aggregation, no aggregation window, a 24-hour
+cooldown, and recovery notifications. `api-key-budget-100-percent-v1` uses the
+same shape for the 100-percent actions with a one-hour cooldown. Installing a
+template remains explicit and idempotent, and no rule or outbound delivery is
+enabled automatically.
+
+Focused migration and PostgreSQL tests must cover six-stream aggregation,
+integer boundaries, direct jumps to 100 percent, independent downgrade
+recoveries, unchanged-state idempotence, transaction rollback, two concurrent
+evaluators, cursor bounds, zeroed budgets, and revoke recovery. Runner and main
+wiring tests must prove immediate execution, the five-minute cadence, bounded
+cycles, cancellation, cursor wrap, and sanitized logging. System Event tests
+must assert exact actions, category, severity, outcome, target, and metadata.
+Each template then requires the existing catalog, matcher, service, Store, HTTP,
+manual, and documentation-contract coverage for ordering, cooldown, recovery,
+target isolation, and idempotent installation.
 
 ### Completion Criteria
 

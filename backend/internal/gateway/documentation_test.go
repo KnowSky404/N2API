@@ -1051,7 +1051,7 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"latest sanitized result",
 		},
 		"../../../docs/plans/2026-07-21-system-event-alerting.md": {
-			"Tasks 1-3 and the first five Task 4 rules completed locally on 2026-07-21",
+			"Tasks 1-3 and the first seven Task 4 slices completed locally on 2026-07-21",
 			"oldest idle state at capacity",
 			"No default rules, dispatcher, outbound request",
 			"dedicated pgx listener",
@@ -1063,6 +1063,9 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 			"`provider-auto-test-failed-v1`",
 			"`provider-account-expired-v1`",
 			"`provider-account-circuit-open-v1`",
+			"`api-key-budget-80-percent-v1`",
+			"`api-key-budget-100-percent-v1`",
+			"`api_key_budget_threshold_states`",
 			"`oauth.refresh.diagnostic.failed`",
 		},
 	}
