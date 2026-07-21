@@ -17,6 +17,19 @@ uses predictable development-only credentials. To customize them, copy
 `.env.example` to `.env`, replace every `change-me` value, and then add
 `--env-file .env` to the command.
 
+An existing zero-configuration development volume created before startup
+validation still has the legacy PostgreSQL password stored inside the volume.
+Migrate that local role once without deleting data, then start the stack again:
+
+```bash
+docker compose -f deploy/compose.yaml exec postgres psql -U n2api -d n2api -v ON_ERROR_STOP=1 -c "ALTER ROLE n2api PASSWORD 'n2api-local-postgres-password'"
+docker compose -f deploy/compose.yaml up -d --force-recreate
+```
+
+Do not run this fixed development-password command on a deployment with custom
+credentials. Update its `.env` and PostgreSQL role to the same operator-chosen
+random password instead.
+
 ## Startup Configuration Safety
 
 N2API validates security-sensitive configuration before opening its listener.
