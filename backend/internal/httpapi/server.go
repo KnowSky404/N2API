@@ -8,7 +8,6 @@ import (
 	"html"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -1566,7 +1565,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		_, _ = w.Write([]byte("N2API bootstrap server\n"))
 	})
 
-	return withSystemEventRequestContext(mux, systemEvents)
+	return withRequestInfo(withSystemEventRequestContext(mux, systemEvents), cfg.TrustedProxyCIDRs, cfg.PublicURL)
 }
 
 func parsePositivePathID(r *http.Request, name string) (int64, error) {
@@ -2621,25 +2620,11 @@ func writeManualOAuthCallbackPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func absoluteRequestURL(r *http.Request) string {
-	if r.URL.IsAbs() {
-		return r.URL.String()
-	}
-	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
-	if scheme == "" {
-		if r.TLS != nil {
-			scheme = "https"
-		} else {
-			scheme = "http"
-		}
-	}
-	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = strings.TrimSpace(r.Host)
-	}
-	if host == "" {
+	info := requestInfoForRequest(r)
+	if info.Host == "" {
 		return r.URL.RequestURI()
 	}
-	return scheme + "://" + host + r.URL.RequestURI()
+	return info.Scheme + "://" + info.Host + r.URL.RequestURI()
 }
 
 func modelRoutingStatus(ctx context.Context, admins AdminService, providers ProviderService) (admin.ModelRoutingStatus, error) {
@@ -2833,7 +2818,7 @@ func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.Conn
 		RedirectAfter: "/",
 		Fingerprint: provider.Fingerprint{
 			UserAgent: strings.TrimSpace(r.UserAgent()),
-			IP:        clientIP(r),
+			IP:        requestInfoForRequest(r).ClientIP,
 		},
 	}
 	if r.Body == nil {
@@ -2867,29 +2852,6 @@ func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.Conn
 	}
 	options.Fingerprint.Value = strings.TrimSpace(req.Fingerprint)
 	return options, nil
-}
-
-func clientIP(r *http.Request) string {
-	forwardedFor := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-	if forwardedFor != "" {
-		parts := strings.Split(forwardedFor, ",")
-		if len(parts) > 0 {
-			return strings.TrimSpace(parts[0])
-		}
-	}
-	realIP := strings.TrimSpace(r.Header.Get("X-Real-IP"))
-	if realIP != "" {
-		return realIP
-	}
-	remoteAddr := strings.TrimSpace(r.RemoteAddr)
-	if remoteAddr == "" {
-		return ""
-	}
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err == nil {
-		return strings.TrimSpace(host)
-	}
-	return remoteAddr
 }
 
 func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAutoTestStatusSource) {

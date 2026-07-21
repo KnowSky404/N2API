@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,7 +21,7 @@ func withSystemEventRequestContext(mux *http.ServeMux, recorder SystemEventRecor
 		_, pattern := mux.Handler(r)
 		request := systemevent.RequestContext{
 			CorrelationID: requestID,
-			SourceIP:      directRemoteIP(r.RemoteAddr),
+			SourceIP:      requestInfoForRequest(r).ClientIP,
 			HTTPMethod:    r.Method,
 			RoutePattern:  pattern,
 			Actor:         systemevent.Actor{Type: systemevent.ActorSystem},
@@ -40,7 +39,7 @@ func withAdminEventActor(r *http.Request, currentAdmin admin.Admin) *http.Reques
 	if !ok {
 		request = systemevent.RequestContext{
 			CorrelationID: systemevent.NewCorrelationID(),
-			SourceIP:      directRemoteIP(r.RemoteAddr),
+			SourceIP:      requestInfoForRequest(r).ClientIP,
 			HTTPMethod:    r.Method,
 			RoutePattern:  r.Pattern,
 		}
@@ -50,18 +49,6 @@ func withAdminEventActor(r *http.Request, currentAdmin admin.Admin) *http.Reques
 		request.RoutePattern = r.Pattern
 	}
 	return r.WithContext(systemevent.WithRequestContext(r.Context(), request))
-}
-
-func directRemoteIP(remoteAddr string) string {
-	remoteAddr = strings.TrimSpace(remoteAddr)
-	if remoteAddr == "" {
-		return ""
-	}
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err == nil {
-		return strings.TrimSpace(host)
-	}
-	return remoteAddr
 }
 
 func buildSystemEventFilter(r *http.Request) (admin.SystemEventFilter, error) {

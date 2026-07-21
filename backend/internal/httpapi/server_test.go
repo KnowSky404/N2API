@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -2132,7 +2133,10 @@ func TestProviderConnectReturnsAuthorizationURL(t *testing.T) {
 
 func TestProviderConnectAcceptsAccountOptionsAndFingerprint(t *testing.T) {
 	providers := newFakeProviderService()
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	server := NewServer(config.Config{TrustedProxyCIDRs: []netip.Prefix{
+		netip.MustParsePrefix("192.0.2.0/24"),
+		netip.MustParsePrefix("198.51.100.0/24"),
+	}}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp","fingerprintProfileId":9}`))
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
@@ -4056,6 +4060,75 @@ func TestProviderCallbackDoesNotConsumeManualCallback(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
 		t.Fatalf("Content-Type = %q, want text/html", got)
+	}
+}
+
+func TestManualOAuthCallbackUsesTrustedRequestInfo(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        config.Config
+		target     string
+		remoteAddr string
+		host       string
+		headers    http.Header
+		want       string
+		reject     string
+	}{
+		{
+			name:       "untrusted forwarded metadata ignored",
+			cfg:        config.Config{PublicURL: "http://canonical.example:3000"},
+			target:     "/oauth/openai/callback?code=abc&state=state",
+			remoteAddr: "192.0.2.10:1234",
+			host:       "direct.example:3000",
+			headers: http.Header{
+				"X-Forwarded-Proto": {"https"},
+				"X-Forwarded-Host":  {"attacker.example"},
+			},
+			want:   "http://canonical.example:3000/oauth/openai/callback?code=abc",
+			reject: "attacker.example",
+		},
+		{
+			name:       "trusted forwarded metadata accepted",
+			cfg:        config.Config{TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}},
+			target:     "/oauth/openai/callback?code=abc&state=state",
+			remoteAddr: "10.0.0.2:1234",
+			host:       "internal.example:3000",
+			headers: http.Header{
+				"X-Forwarded-Proto": {"https"},
+				"X-Forwarded-Host":  {"public.example"},
+			},
+			want: "https://public.example/oauth/openai/callback?code=abc",
+		},
+		{
+			name:       "absolute form cannot bypass direct host",
+			cfg:        config.Config{PublicURL: "https://canonical.example"},
+			target:     "http://attacker.example/oauth/openai/callback?code=abc&state=state",
+			remoteAddr: "192.0.2.10:1234",
+			host:       "direct.example",
+			want:       "https://canonical.example/oauth/openai/callback?code=abc",
+			reject:     "attacker.example",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := NewServer(tt.cfg, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
+			req.RemoteAddr = tt.remoteAddr
+			req.Host = tt.host
+			req.Header = tt.headers
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			body := recorder.Body.String()
+			if recorder.Code != http.StatusOK || !strings.Contains(body, tt.want) {
+				t.Fatalf("status = %d body = %s, want URL containing %q", recorder.Code, body, tt.want)
+			}
+			if tt.reject != "" && strings.Contains(body, tt.reject) {
+				t.Fatalf("body contains rejected host %q: %s", tt.reject, body)
+			}
+		})
 	}
 }
 

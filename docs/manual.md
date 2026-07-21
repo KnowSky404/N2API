@@ -15,6 +15,38 @@ docker compose -f deploy/compose.yaml --env-file .env up --build
 
 The default app URL is `http://localhost:3000`.
 
+## Reverse Proxy Trust
+
+N2API ignores `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`, and
+`X-Forwarded-Host` by default. If a reverse proxy connects directly to N2API,
+set `N2API_TRUSTED_PROXY_CIDRS` to the proxy's exact address or network. For a
+same-host proxy using the loopback interface:
+
+```dotenv
+N2API_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
+```
+
+`N2API_PUBLIC_URL` is the canonical scheme and host for direct requests. A
+trusted proxy may override them with one valid `X-Forwarded-Proto` and
+`X-Forwarded-Host` value; untrusted requests cannot replace the configured
+origin with either forwarding headers or a forged HTTP `Host` value.
+
+For a containerized proxy, use its actual Compose network CIDR after verifying
+the direct peer address seen by N2API. Do not configure `0.0.0.0/0` or `::/0`.
+An invalid CIDR prevents startup instead of silently weakening the boundary.
+
+In a multi-hop chain, `X-Forwarded-For` is ordered from the original client on
+the left to the proxy nearest N2API on the right. N2API walks the list from
+right to left, skips only configured trusted proxy hops, and uses the first
+untrusted address as the client. Every proxy hop that should be skipped must be
+listed in `N2API_TRUSTED_PROXY_CIDRS`; malformed chains are ignored in favor of
+the direct peer, including scheme and host metadata. If every visible hop is
+trusted, the farthest visible address is recorded. The public edge proxy must
+overwrite or sanitize client-sent forwarding headers before appending its own
+hop, and the proxy nearest N2API must overwrite `X-Forwarded-Proto` and
+`X-Forwarded-Host` as single values rather than comma-separated lists. The
+standardized `Forwarded` header is not currently used.
+
 ## Published Images
 
 The `CI Image` workflow tests every pull request without publishing an image.

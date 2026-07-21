@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ type Config struct {
 	ProviderAccountAutoTestEnabled         bool
 	ProviderAccountAutoTestInterval        time.Duration
 	SystemEventRetentionDays               int
+	TrustedProxyCIDRs                      []netip.Prefix
 }
 
 const (
@@ -65,6 +67,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.AllowHTTPAPIUpstreams = allowHTTPAPIUpstreams
+	trustedProxyCIDRs, err := parseTrustedProxyCIDRs(lookup("N2API_TRUSTED_PROXY_CIDRS"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.TrustedProxyCIDRs = trustedProxyCIDRs
 
 	autoTestEnabled, err := parseBool(lookup("N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED"), "N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED")
 	if err != nil {
@@ -195,4 +202,32 @@ func parseSystemEventRetentionDays(value string) (int, error) {
 		return 0, fmt.Errorf("N2API_SYSTEM_EVENT_RETENTION_DAYS must be 0 or between 30 and 3650")
 	}
 	return days, nil
+}
+
+func parseTrustedProxyCIDRs(value string) ([]netip.Prefix, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	prefixes := make([]netip.Prefix, 0)
+	seen := make(map[netip.Prefix]struct{})
+	for _, raw := range strings.Split(value, ",") {
+		raw = strings.TrimSpace(raw)
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return nil, fmt.Errorf("N2API_TRUSTED_PROXY_CIDRS contains invalid CIDR %q: %w", raw, err)
+		}
+		if prefix.Addr().Is4In6() {
+			if prefix.Bits() < 96 {
+				return nil, fmt.Errorf("N2API_TRUSTED_PROXY_CIDRS contains invalid mapped IPv4 CIDR %q", raw)
+			}
+			prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+		}
+		prefix = prefix.Masked()
+		if _, ok := seen[prefix]; ok {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, nil
 }

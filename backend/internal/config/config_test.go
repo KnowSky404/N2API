@@ -2,6 +2,8 @@ package config
 
 import (
 	"maps"
+	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,6 +31,43 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	}
 	if cfg.Addr() != "0.0.0.0:3000" {
 		t.Fatalf("Addr() = %q, want 0.0.0.0:3000", cfg.Addr())
+	}
+	if len(cfg.TrustedProxyCIDRs) != 0 {
+		t.Fatalf("TrustedProxyCIDRs = %v, want empty", cfg.TrustedProxyCIDRs)
+	}
+}
+
+func TestLoadTrustedProxyCIDRs(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "encryption-secret", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	values := maps.Clone(base)
+	values["N2API_TRUSTED_PROXY_CIDRS"] = " 10.0.0.9/8, 2001:db8::1/32, ::ffff:192.0.2.8/120, 10.0.0.0/8 "
+	cfg, err := Load(mapLookup(values))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	want := []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("2001:db8::/32"),
+		netip.MustParsePrefix("192.0.2.0/24"),
+	}
+	if !slices.Equal(cfg.TrustedProxyCIDRs, want) {
+		t.Fatalf("TrustedProxyCIDRs = %v, want %v", cfg.TrustedProxyCIDRs, want)
+	}
+}
+
+func TestLoadRejectsInvalidTrustedProxyCIDRs(t *testing.T) {
+	for _, value := range []string{"not-a-cidr", "10.0.0.1", "10.0.0.0/8,,192.0.2.0/24", "::ffff:192.0.2.0/80"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Load(mapLookup(map[string]string{
+				"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "encryption-secret", "N2API_ADMIN_PASSWORD": "admin-password",
+				"N2API_TRUSTED_PROXY_CIDRS": value,
+			}))
+			if err == nil {
+				t.Fatal("Load returned nil error")
+			}
+		})
 	}
 }
 

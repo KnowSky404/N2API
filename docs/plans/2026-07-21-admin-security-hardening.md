@@ -19,6 +19,9 @@ without evidence it is needed.
 
 ## Task 1: Enforce Trusted Proxy Boundaries
 
+Status: completed locally on 2026-07-21; real reverse-proxy acceptance remains
+manual.
+
 ### Goal
 
 Make audit, OAuth fingerprint, scheme, and host derivation use one trustworthy
@@ -71,6 +74,10 @@ Verify one real reverse-proxy deployment.
 ### Completion Criteria
 
 Untrusted peers cannot spoof client address, scheme, or host.
+
+Local resolver, configuration, OAuth callback, fingerprint, and System Event
+tests pass. Final deployment acceptance requires confirming the direct peer and
+multi-hop chain against the owner's real reverse proxy configuration.
 
 ### Commit
 

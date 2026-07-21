@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -45,6 +46,23 @@ func TestSystemEventRequestContextUsesDirectRemoteIPAndValidatedRequestID(t *tes
 	}
 	if res.Header().Get("X-Request-ID") != "valid-request-42" {
 		t.Fatalf("X-Request-ID = %q", res.Header().Get("X-Request-ID"))
+	}
+}
+
+func TestSystemEventRequestContextUsesTrustedProxyClientIP(t *testing.T) {
+	recorder := &memorySystemEventRecorder{}
+	cfg := config.Config{TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
+	server := NewServer(cfg, staticHealth{}, newFakeAdminService(), newFakeProviderService(), recorder)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/login", strings.NewReader(`{"username":"owner","password":"wrong"}`))
+	req.RemoteAddr = "10.0.0.2:1234"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", "203.0.113.8, 10.0.0.1")
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if len(recorder.events) != 1 || recorder.events[0].SourceIP != "203.0.113.8" {
+		t.Fatalf("events = %+v, want trusted proxy client source", recorder.events)
 	}
 }
 
