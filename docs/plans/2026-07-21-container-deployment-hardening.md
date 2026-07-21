@@ -1,6 +1,7 @@
 # Container And Deployment Hardening Plan
 
-Status: in progress; Task 1 is the first implementation slice
+Status: Tasks 1-6 implemented locally; owner loopback acceptance and authorized
+CI/release evidence remain
 Public API changes: additive health and version endpoints
 Data migration: none
 

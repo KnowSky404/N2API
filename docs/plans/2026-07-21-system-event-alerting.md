@@ -216,10 +216,9 @@ desktop/mobile workflow passes browser verification.
 
 ## Task 4: Add Operational Rules Incrementally
 
-Task status: in progress; repeated automatic OAuth refresh failures, Request
-Log retention failures, Provider account auto-test cycle failures, Provider
-account expiry, and Provider account circuit-open completed locally on
-2026-07-21
+Task status: in progress; the first sixteen source/template slices completed
+locally on 2026-07-21; remaining window, storage, and version policies require
+owner decisions or external monitoring
 
 ### Goal
 
@@ -630,6 +629,24 @@ and idempotent installation.
 Sixteenth-slice status: completed locally on 2026-07-21. The template is
 additive, explicitly installed by an owner, and disabled until that owner
 reviews and enables it.
+
+The remaining Task 4 slices are decision-blocked. A `5xx` window needs an owner
+choice of target dimension, window, minimum sample size, failure threshold, and
+recovery hysteresis. A latency window additionally needs a decision on
+percentile, threshold, and whether the current full streaming lifetime is the
+intended measurement instead of time to first byte. The fallback-window
+decisions and counter semantics are recorded above. None of these thresholds
+may be inferred from the template engine or current traffic volume.
+
+General PostgreSQL storage failure cannot reliably emit a System Event into the
+same unavailable store. Cleanup-query failures now have dedicated best-effort
+signals, while database availability must continue to use health probes,
+sanitized process logs, or a future independently hosted monitor. Choosing that
+external monitor is an architecture and exposure decision. Optional version
+availability also remains blocked on an owner-selected authoritative source,
+release channel, polling interval, outbound-network policy, and failure
+semantics. It must remain off for `dev` and `sha-*` builds and must never become
+a startup dependency.
 
 ### Completion Criteria
 

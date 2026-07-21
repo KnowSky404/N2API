@@ -1,7 +1,6 @@
 # Backup And Restore Verification Plan
 
-Status: in progress; Tasks 1-2 and the available Task 3 scope completed locally
-on 2026-07-21
+Status: Tasks 1-3 completed locally on 2026-07-21; Task 4 is owner-blocked
 Public API changes: optional non-sensitive configuration export/import
 Data migration: none initially
 
