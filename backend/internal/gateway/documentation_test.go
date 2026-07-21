@@ -1112,3 +1112,37 @@ func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 		}
 	}
 }
+
+func TestPortableConfigurationDocumentationMatchesAlertExportContract(t *testing.T) {
+	checks := map[string][]string{
+		"../../../docs/manual.md": {
+			"`destinationConfigured: true`",
+			"complete alert rule",
+			"file-local `actionRef` values",
+			"there is no `destination` placeholder",
+			"`unsupportedSections: []`",
+			"`alertActionDestinations`",
+		},
+		"../../../docs/plans/2026-07-21-backup-restore-verification.md": {
+			"Status: completed locally on 2026-07-21",
+			"`alert_action:<id>`",
+			"`alert_rule:<id>`",
+			"`actionRef` that must resolve to an exported action",
+			"`encrypted_destination`, test results",
+			"reports `unsupportedSections: []`",
+		},
+	}
+
+	for path, wants := range checks {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s missing %q in portable alert configuration contract", path, want)
+			}
+		}
+	}
+}

@@ -39,6 +39,12 @@ func (r *AdminRepository) ExportConfigurationSnapshot(ctx context.Context) (admi
 	if snapshot.ErrorPassthroughRules, err = exportErrorPassthroughRules(ctx, tx); err != nil {
 		return admin.ConfigurationSnapshot{}, err
 	}
+	if snapshot.AlertActions, err = exportAlertActions(ctx, tx); err != nil {
+		return admin.ConfigurationSnapshot{}, err
+	}
+	if snapshot.AlertRules, err = exportAlertRules(ctx, tx); err != nil {
+		return admin.ConfigurationSnapshot{}, err
+	}
 	if err = validateConfigurationSnapshotReferences(snapshot); err != nil {
 		return admin.ConfigurationSnapshot{}, err
 	}
@@ -345,6 +351,60 @@ func exportErrorPassthroughRules(ctx context.Context, tx pgx.Tx) ([]admin.Config
 	return rules, rows.Err()
 }
 
+func exportAlertActions(ctx context.Context, tx pgx.Tx) ([]admin.ConfigurationAlertAction, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, name, kind, enabled
+		FROM alert_actions
+		ORDER BY name ASC, id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	actions := []admin.ConfigurationAlertAction{}
+	for rows.Next() {
+		var id int64
+		var action admin.ConfigurationAlertAction
+		if err := rows.Scan(&id, &action.Name, &action.Kind, &action.Enabled); err != nil {
+			return nil, err
+		}
+		action.Ref = configurationRef("alert_action", id)
+		action.DestinationConfigured = true
+		actions = append(actions, action)
+	}
+	return actions, rows.Err()
+}
+
+func exportAlertRules(ctx context.Context, tx pgx.Tx) ([]admin.ConfigurationAlertRule, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, template_key, name, action_id, enabled, category, severity,
+			event_action, recovery_action, aggregation_count, aggregation_window_seconds,
+			cooldown_seconds, deduplication_scope, notify_recovery
+		FROM alert_rules
+		ORDER BY name ASC, id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	rules := []admin.ConfigurationAlertRule{}
+	for rows.Next() {
+		var id, actionID int64
+		var rule admin.ConfigurationAlertRule
+		if err := rows.Scan(
+			&id, &rule.TemplateKey, &rule.Name, &actionID, &rule.Enabled, &rule.Category, &rule.Severity,
+			&rule.EventAction, &rule.RecoveryAction, &rule.AggregationCount, &rule.AggregationWindowSeconds,
+			&rule.CooldownSeconds, &rule.DeduplicationScope, &rule.NotifyRecovery,
+		); err != nil {
+			return nil, err
+		}
+		rule.Ref = configurationRef("alert_rule", id)
+		rule.ActionRef = configurationRef("alert_action", actionID)
+		rules = append(rules, rule)
+	}
+	return rules, rows.Err()
+}
+
 func redactConfigurationHeaders(raw []byte) (map[string]string, error) {
 	headers := map[string]string{}
 	if len(raw) > 0 {
@@ -368,6 +428,7 @@ func validateConfigurationSnapshotReferences(snapshot admin.ConfigurationSnapsho
 	pools := make(map[string]struct{}, len(snapshot.RoutingPools))
 	accounts := make(map[string]struct{}, len(snapshot.ProviderAccounts))
 	profiles := make(map[string]struct{}, len(snapshot.FingerprintProfiles))
+	actions := make(map[string]struct{}, len(snapshot.AlertActions))
 	for _, pool := range snapshot.RoutingPools {
 		pools[pool.Ref] = struct{}{}
 	}
@@ -376,6 +437,9 @@ func validateConfigurationSnapshotReferences(snapshot admin.ConfigurationSnapsho
 	}
 	for _, profile := range snapshot.FingerprintProfiles {
 		profiles[profile.Ref] = struct{}{}
+	}
+	for _, action := range snapshot.AlertActions {
+		actions[action.Ref] = struct{}{}
 	}
 	for _, pool := range snapshot.RoutingPools {
 		if pool.FallbackRef != "" {
@@ -401,6 +465,11 @@ func validateConfigurationSnapshotReferences(snapshot admin.ConfigurationSnapsho
 			if _, ok := profiles[account.FingerprintProfileRef]; !ok {
 				return fmt.Errorf("configuration export provider account references missing fingerprint profile")
 			}
+		}
+	}
+	for _, rule := range snapshot.AlertRules {
+		if _, ok := actions[rule.ActionRef]; !ok {
+			return fmt.Errorf("configuration export alert rule references missing action")
 		}
 	}
 	return nil

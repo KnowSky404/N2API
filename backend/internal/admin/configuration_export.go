@@ -16,6 +16,8 @@ type ConfigurationSnapshot struct {
 	GatewaySettings       GatewaySettings                     `json:"gatewaySettings"`
 	FingerprintProfiles   []ConfigurationFingerprintProfile   `json:"fingerprintProfiles"`
 	ErrorPassthroughRules []ConfigurationErrorPassthroughRule `json:"errorPassthroughRules"`
+	AlertActions          []ConfigurationAlertAction          `json:"alertActions"`
+	AlertRules            []ConfigurationAlertRule            `json:"alertRules"`
 
 	ModelSettingsPresent   bool `json:"-"`
 	UsagePricingPresent    bool `json:"-"`
@@ -91,6 +93,31 @@ type ConfigurationErrorPassthroughRule struct {
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
 	Priority    int    `json:"priority"`
+}
+
+type ConfigurationAlertAction struct {
+	Ref                   string `json:"ref"`
+	Name                  string `json:"name"`
+	Kind                  string `json:"kind"`
+	Enabled               bool   `json:"enabled"`
+	DestinationConfigured bool   `json:"destinationConfigured"`
+}
+
+type ConfigurationAlertRule struct {
+	Ref                      string `json:"ref"`
+	TemplateKey              string `json:"templateKey,omitempty"`
+	Name                     string `json:"name"`
+	ActionRef                string `json:"actionRef"`
+	Enabled                  bool   `json:"enabled"`
+	Category                 string `json:"category"`
+	Severity                 string `json:"severity"`
+	EventAction              string `json:"eventAction"`
+	RecoveryAction           string `json:"recoveryAction"`
+	AggregationCount         int    `json:"aggregationCount"`
+	AggregationWindowSeconds int    `json:"aggregationWindowSeconds"`
+	CooldownSeconds          int    `json:"cooldownSeconds"`
+	DeduplicationScope       string `json:"deduplicationScope"`
+	NotifyRecovery           bool   `json:"notifyRecovery"`
 }
 
 type configurationExportRepository interface {

@@ -40,7 +40,7 @@ func handleExportConfiguration(w http.ResponseWriter, r *http.Request, admins Ad
 		FormatVersion:       configurationExportFormatVersion,
 		Application:         build,
 		ExportedAt:          exportedAt,
-		UnsupportedSections: []string{"alertRules", "alertActions"},
+		UnsupportedSections: []string{},
 		Redactions: []string{
 			"providerCredentials",
 			"providerProxyURLs",
@@ -100,10 +100,13 @@ func configurationExportMetadata(applicationVersion string, snapshot admin.Confi
 		"provider_account_count":    len(snapshot.ProviderAccounts),
 		"fingerprint_profile_count": len(snapshot.FingerprintProfiles),
 		"error_rule_count":          len(snapshot.ErrorPassthroughRules),
+		"alert_action_count":        len(snapshot.AlertActions),
+		"alert_rule_count":          len(snapshot.AlertRules),
 	}
 	return systemevent.SafeMetadata(values,
 		"format_version", "application_version", "body_bytes", "routing_pool_count",
 		"key_template_count", "provider_account_count", "fingerprint_profile_count", "error_rule_count",
+		"alert_action_count", "alert_rule_count",
 	)
 }
 

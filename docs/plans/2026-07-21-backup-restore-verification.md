@@ -139,8 +139,8 @@ real-backup recovery gate. No real operator drill is claimed by this task.
 
 ## Task 3: Export Non-sensitive Configuration
 
-Status: core format v1 completed locally on 2026-07-21; alert rules and actions
-remain explicitly deferred from portable format v1.
+Status: completed locally on 2026-07-21, including non-sensitive alert rules
+and redacted alert actions.
 
 ### Goal
 
@@ -167,11 +167,7 @@ The implemented v1 uses a repeatable-read, read-only PostgreSQL transaction and
 explicit export DTOs. It emits file-local references for relationships, strips
 userinfo/query/fragment from API-upstream base URLs, redacts every fingerprint
 custom-header value, excludes revoked API keys, caps the attachment at 5 MiB,
-and records the successful security audit event before sending the body. The
-current portable format does not export alert rule or action tables, so the
-document reports
-`unsupportedSections: ["alertRules", "alertActions"]` rather than presenting
-that dependency as complete.
+and records the successful security audit event before sending the body.
 
 The alerting extension completes portable format v1 without exporting a usable
 delivery destination. Each `alertActions` entry has a file-local
@@ -194,13 +190,13 @@ portable configuration.
 Both lists are read and reference-validated inside the existing repeatable-read,
 read-only transaction and use deterministic name/ID ordering. Every configured
 rule and action is exported, including disabled rows, because omitting a
-referenced disabled action would break snapshot closure. Once this slice lands,
-`unsupportedSections` is an empty array, `redactions` continues to name
+referenced disabled action would break snapshot closure. The completed format
+reports `unsupportedSections: []`, while `redactions` continues to name
 `alertActionDestinations`, and the successful export event adds bounded action
 and rule counts. Format version remains 1 because these sections were explicitly
 declared unsupported rather than previously assigned a conflicting shape.
 
-Focused tests must prove reference closure, empty/non-empty deterministic
+Focused tests prove reference closure, empty/non-empty deterministic
 arrays, exact DTO fields, no encrypted destination column in export queries,
 the absence of a destination field, no known destination canary in serialized
 JSON, updated audit counts, and removal of both unsupported-section markers.
@@ -212,10 +208,11 @@ behavior remain unchanged.
 Automated tests prove no sensitive column or known secret appears in output.
 
 Local evidence: focused store/service/HTTP tests cover URL sanitation, complete
-fingerprint-header value redaction, forbidden JSON field names, relationship
-closure, authentication, attachment bounds, audit failure, and snapshot
-failure. The Gateway UI provides a bounded authenticated download without a new
-route, modal, or import placeholder.
+fingerprint-header value redaction, forbidden JSON field names, alert action
+destination exclusion, deterministic action/rule ordering, relationship
+closure, authentication, attachment bounds, audit counts, audit failure, and
+snapshot failure. The Gateway UI provides a bounded authenticated download
+without a new route, modal, or import placeholder.
 
 ### Commit
 

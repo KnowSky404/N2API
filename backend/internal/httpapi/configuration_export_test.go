@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -46,8 +47,14 @@ func TestConfigurationExportReturnsBoundedAuditedAttachment(t *testing.T) {
 	if document.FormatVersion != 1 || document.Application != build || document.ExportedAt.IsZero() {
 		t.Fatalf("document identity = %+v", document)
 	}
-	if len(document.UnsupportedSections) != 2 || document.UnsupportedSections[0] != "alertRules" {
+	if document.UnsupportedSections == nil || len(document.UnsupportedSections) != 0 {
 		t.Fatalf("unsupported sections = %#v", document.UnsupportedSections)
+	}
+	if !slices.Contains(document.Redactions, "alertActionDestinations") {
+		t.Fatalf("redactions = %#v, want alertActionDestinations", document.Redactions)
+	}
+	if len(document.Configuration.AlertActions) != 1 || len(document.Configuration.AlertRules) != 1 {
+		t.Fatalf("alert configuration = actions %#v rules %#v", document.Configuration.AlertActions, document.Configuration.AlertRules)
 	}
 	if len(recorder.events) != 1 {
 		t.Fatalf("events = %d, want 1", len(recorder.events))
@@ -59,7 +66,13 @@ func TestConfigurationExportReturnsBoundedAuditedAttachment(t *testing.T) {
 	if event.Metadata["format_version"] != float64(1) && event.Metadata["format_version"] != 1 {
 		t.Fatalf("event metadata = %#v", event.Metadata)
 	}
-	for _, forbidden := range []string{"primary-key-hash-canary", "oauth-access-token-canary", "proxy-url-canary", "fingerprint-header-canary"} {
+	if event.Metadata["alert_action_count"] != float64(1) && event.Metadata["alert_action_count"] != 1 {
+		t.Fatalf("event metadata = %#v", event.Metadata)
+	}
+	if event.Metadata["alert_rule_count"] != float64(1) && event.Metadata["alert_rule_count"] != 1 {
+		t.Fatalf("event metadata = %#v", event.Metadata)
+	}
+	for _, forbidden := range []string{"primary-key-hash-canary", "oauth-access-token-canary", "proxy-url-canary", "fingerprint-header-canary", "alert-destination-canary"} {
 		if strings.Contains(response.Body.String(), forbidden) {
 			t.Fatalf("export contains forbidden canary %q", forbidden)
 		}
@@ -138,5 +151,13 @@ func configurationExportFixture() admin.ConfigurationSnapshot {
 		GatewaySettings:       admin.GatewaySettings{ProviderAccountAutoTestIntervalSeconds: 300},
 		FingerprintProfiles:   []admin.ConfigurationFingerprintProfile{{Ref: "fingerprint_profile:1", Name: "default", Headers: map[string]string{"X-Private": admin.ConfigurationRedactedValue}, Enabled: true}},
 		ErrorPassthroughRules: []admin.ConfigurationErrorPassthroughRule{},
+		AlertActions: []admin.ConfigurationAlertAction{{
+			Ref: "alert_action:1", Name: "Primary webhook", Kind: "generic_webhook", Enabled: true, DestinationConfigured: true,
+		}},
+		AlertRules: []admin.ConfigurationAlertRule{{
+			Ref: "alert_rule:1", Name: "Provider expiry", ActionRef: "alert_action:1", Enabled: true,
+			Category: "runtime", Severity: "warning", EventAction: "provider_account.expired", RecoveryAction: "provider_account.recovered",
+			AggregationCount: 1, CooldownSeconds: 86400, DeduplicationScope: "target", NotifyRecovery: true,
+		}},
 	}
 }

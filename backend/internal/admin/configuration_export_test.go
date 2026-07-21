@@ -25,6 +25,8 @@ func TestExportConfigurationUsesEffectiveDefaults(t *testing.T) {
 		ProviderAccounts:      []ConfigurationProviderAccount{},
 		FingerprintProfiles:   []ConfigurationFingerprintProfile{},
 		ErrorPassthroughRules: []ConfigurationErrorPassthroughRule{},
+		AlertActions:          []ConfigurationAlertAction{},
+		AlertRules:            []ConfigurationAlertRule{},
 	}}
 	service := NewService(repo, Config{DefaultGatewaySettings: GatewaySettings{
 		MaxConcurrentGatewayRequests: 11,
@@ -74,6 +76,15 @@ func TestConfigurationSnapshotJSONExcludesSensitiveFields(t *testing.T) {
 		ErrorPassthroughRules: []ConfigurationErrorPassthroughRule{{
 			Ref: "error_passthrough_rule:1", Pattern: "429", MatchType: "status_code",
 		}},
+		AlertActions: []ConfigurationAlertAction{{
+			Ref: "alert_action:1", Name: "Primary webhook", Kind: "generic_webhook", Enabled: true, DestinationConfigured: true,
+		}},
+		AlertRules: []ConfigurationAlertRule{{
+			Ref: "alert_rule:1", TemplateKey: "provider-auto-test-failed-v1", Name: "Provider tests", ActionRef: "alert_action:1",
+			Enabled: true, Category: "scheduler", Severity: "warning", EventAction: "scheduler.provider_account_auto_test.failed",
+			RecoveryAction: "scheduler.provider_account_auto_test.completed", AggregationCount: 2, AggregationWindowSeconds: 900,
+			CooldownSeconds: 3600, DeduplicationScope: "target", NotifyRecovery: true,
+		}},
 	}
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
@@ -89,6 +100,15 @@ func TestConfigurationSnapshotJSONExcludesSensitiveFields(t *testing.T) {
 		"systemevent", "testhistory", "runtimefailure", "responsebody",
 	}
 	assertConfigurationJSONKeysSafe(t, document, forbidden)
+	root := document.(map[string]any)
+	actions := root["alertActions"].([]any)
+	action := actions[0].(map[string]any)
+	if _, ok := action["destination"]; ok {
+		t.Fatalf("configuration alert action contains destination field: %#v", action)
+	}
+	if action["destinationConfigured"] != true {
+		t.Fatalf("configuration alert action = %#v", action)
+	}
 }
 
 func assertConfigurationJSONKeysSafe(t *testing.T, value any, forbidden []string) {

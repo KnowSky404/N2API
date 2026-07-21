@@ -844,18 +844,23 @@ non-deleted API key templates (active or disabled) with names, policies,
 limits, budgets and pool references;
 provider account names, scheduling fields, models and sanitized base URLs;
 model, usage-pricing and gateway settings; fingerprint profiles; and error
-passthrough rules. File-local references preserve relationships without making
-database IDs an import conflict key. API upstream base URLs have user info,
-query strings and fragments removed. Every custom fingerprint header value is
-replaced with `[redacted]`, including values that do not look sensitive.
+passthrough rules. It also contains every alert action's non-sensitive name,
+kind, enabled state, and `destinationConfigured: true`, plus complete alert rule
+definitions linked through file-local `actionRef` values. File-local references
+preserve relationships without making database IDs an import conflict key. API
+upstream base URLs have user info, query strings and fragments removed. Every
+custom fingerprint header value is replaced with `[redacted]`, including values
+that do not look sensitive.
 
 The export never contains administrator or session state, OAuth state or
 subjects, provider credentials, proxy URLs, client API key hashes, prefixes or
 encrypted reusable secrets, request logs, system events, provider test history,
-or runtime failure state. Alert rule and action schemas exist, but portable
-format version 1 intentionally omits them and reports
-`unsupportedSections: ["alertRules", "alertActions"]` instead of claiming that
-they were exported or redacted.
+or runtime failure state. Alert action destinations are never queried or placed
+in the document, and there is no `destination` placeholder that a future
+importer could mistake for an endpoint. Action test results, delivery state,
+rule matcher state, cooldown timestamps, and configuration timestamps are also
+omitted. The document reports `unsupportedSections: []` and names
+`alertActionDestinations` in its top-level `redactions` list.
 
 Portable configuration is a review and migration aid, not a complete backup
 and not currently importable. PostgreSQL remains the authoritative recovery
