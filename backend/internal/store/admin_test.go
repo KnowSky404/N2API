@@ -297,19 +297,25 @@ func TestListRequestLogsSelectsGatewayFallbackDiagnostics(t *testing.T) {
 	}
 }
 
-func TestDeleteRequestLogsBeforeUsesCreatedAtCutoff(t *testing.T) {
+func TestRequestLogRetentionUsesOrderedBoundedDeleteAndSessionLock(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {
 		t.Fatalf("ReadFile admin.go returned error: %v", err)
 	}
 	sql := string(source)
 	for _, want := range []string{
+		"pg_try_advisory_lock",
+		"pg_advisory_unlock",
+		"Hijack()",
+		"discardRequestLogRetentionConnection(conn)",
+		"ORDER BY created_at ASC, id ASC",
+		"LIMIT $2",
 		"DELETE FROM request_logs",
 		"created_at < $1",
 		"RowsAffected()",
 	} {
 		if !strings.Contains(sql, want) {
-			t.Fatalf("DeleteRequestLogsBefore source missing %q", want)
+			t.Fatalf("request log retention source missing %q", want)
 		}
 	}
 }
@@ -881,6 +887,137 @@ func TestAdminRepositoryPagesRequestLogsWithoutDuplicatesOrOmissions(t *testing.
 	}
 	if _, err := repo.ListRequestLogs(ctx, mismatched); !errors.Is(err, admin.ErrInvalidInput) {
 		t.Fatalf("filter-mismatched ListRequestLogs error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestAdminRepositoryRequestLogRetentionDeletesBoundedBatchesAndReportsStats(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	key, err := repo.CreateAPIKey(ctx, "retention-key", "hash-retention-key", "n2api_", "encrypted-retention-key", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	cutoff := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	for i := 5; i >= 1; i-- {
+		insertRequestLog(t, repo.pool, key.ID, cutoff.Add(-time.Duration(i)*time.Minute), 200, 10, 100)
+	}
+	insertRequestLog(t, repo.pool, key.ID, cutoff, 200, 10, 100)
+	insertRequestLog(t, repo.pool, key.ID, cutoff.Add(time.Minute), 200, 10, 100)
+	if _, err := repo.pool.Exec(ctx, "ANALYZE request_logs"); err != nil {
+		t.Fatalf("ANALYZE request_logs returned error: %v", err)
+	}
+
+	stats, err := repo.GetRequestLogRetentionStats(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("GetRequestLogRetentionStats returned error: %v", err)
+	}
+	if stats.EligibleCount != 5 || stats.TotalCountEstimate != 7 {
+		t.Fatalf("stats counts = eligible %d estimate %d, want 5 and 7", stats.EligibleCount, stats.TotalCountEstimate)
+	}
+	if stats.OldestLogAt == nil || !stats.OldestLogAt.Equal(cutoff.Add(-5*time.Minute)) ||
+		stats.NewestLogAt == nil || !stats.NewestLogAt.Equal(cutoff.Add(time.Minute)) {
+		t.Fatalf("stats timestamps = oldest %v newest %v", stats.OldestLogAt, stats.NewestLogAt)
+	}
+
+	lease, acquired, err := repo.TryAcquireRequestLogRetention(ctx)
+	if err != nil || !acquired {
+		t.Fatalf("TryAcquireRequestLogRetention = acquired %v error %v", acquired, err)
+	}
+	for batch, want := range []int64{2, 2, 1, 0} {
+		deleted, err := lease.DeleteBeforeBatch(ctx, cutoff, 2)
+		if err != nil {
+			t.Fatalf("DeleteBeforeBatch %d returned error: %v", batch, err)
+		}
+		if deleted != want {
+			t.Fatalf("DeleteBeforeBatch %d deleted %d, want %d", batch, deleted, want)
+		}
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatalf("retention lease Close returned error: %v", err)
+	}
+	var remaining int
+	if err := repo.pool.QueryRow(ctx, "SELECT count(*) FROM request_logs").Scan(&remaining); err != nil {
+		t.Fatalf("count remaining request logs: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("remaining request logs = %d, want cutoff boundary and newer row", remaining)
+	}
+}
+
+func TestAdminRepositoryRequestLogRetentionLockContentionAndReacquire(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	first, acquired, err := repo.TryAcquireRequestLogRetention(ctx)
+	if err != nil || !acquired {
+		t.Fatalf("first acquire = %v, %v", acquired, err)
+	}
+	second, acquired, err := repo.TryAcquireRequestLogRetention(ctx)
+	if err != nil {
+		t.Fatalf("contended acquire returned error: %v", err)
+	}
+	if acquired || second != nil {
+		t.Fatal("contended acquire unexpectedly obtained the advisory lock")
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("first Close returned error: %v", err)
+	}
+	third, acquired, err := repo.TryAcquireRequestLogRetention(ctx)
+	if err != nil || !acquired {
+		t.Fatalf("reacquire = %v, %v", acquired, err)
+	}
+	if err := third.Close(); err != nil {
+		t.Fatalf("third Close returned error: %v", err)
+	}
+}
+
+func TestAdminRepositoryRequestLogRetentionCancellationKeepsCommittedBatch(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	key, err := repo.CreateAPIKey(ctx, "cancel-retention-key", "hash-cancel-retention-key", "n2api_", "encrypted-cancel-retention-key", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	cutoff := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	for i := 1; i <= 3; i++ {
+		insertRequestLog(t, repo.pool, key.ID, cutoff.Add(-time.Duration(i)*time.Minute), 200, 10, 100)
+	}
+	lease, acquired, err := repo.TryAcquireRequestLogRetention(ctx)
+	if err != nil || !acquired {
+		t.Fatalf("acquire = %v, %v", acquired, err)
+	}
+	if deleted, err := lease.DeleteBeforeBatch(ctx, cutoff, 1); err != nil || deleted != 1 {
+		t.Fatalf("first batch = deleted %d, error %v", deleted, err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := lease.DeleteBeforeBatch(canceled, cutoff, 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled batch error = %v, want context.Canceled", err)
+	}
+	_ = lease.Close()
+	var remaining int
+	if err := repo.pool.QueryRow(ctx, "SELECT count(*) FROM request_logs").Scan(&remaining); err != nil {
+		t.Fatalf("count remaining request logs: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("remaining request logs = %d, want two after one committed batch", remaining)
+	}
+	next, acquired, err := repo.TryAcquireRequestLogRetention(ctx)
+	if err != nil || !acquired {
+		t.Fatalf("reacquire after canceled connection = %v, %v", acquired, err)
+	}
+	if err := next.Close(); err != nil {
+		t.Fatalf("Close reacquired lease returned error: %v", err)
+	}
+}
+
+func TestAdminRepositoryRequestLogRetentionStatsAreEmptySafe(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	stats, err := repo.GetRequestLogRetentionStats(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("GetRequestLogRetentionStats returned error: %v", err)
+	}
+	if stats.OldestLogAt != nil || stats.NewestLogAt != nil || stats.EligibleCount != 0 || stats.TotalCountEstimate != 0 {
+		t.Fatalf("empty stats = %+v", stats)
 	}
 }
 

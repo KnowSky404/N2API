@@ -9,6 +9,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
@@ -26,6 +27,8 @@ const modelSettingsKey = "model_settings"
 const usagePricingKey = "usage_pricing"
 const gatewaySettingsKey = "gateway_settings"
 const requestLogCursorVersion = 1
+const requestLogRetentionAdvisoryLockID int64 = 0x4e32415049524c
+const requestLogRetentionUnlockTimeout = 2 * time.Second
 const apiKeySelectColumns = `
 	k.id, k.name, k.prefix, k.encrypted_secret <> '', k.created_at, k.last_used_at, k.revoked_at, k.disabled_at,
 	k.model_policy, k.requests_per_minute, k.tokens_per_minute,
@@ -1297,27 +1300,123 @@ func (r *AdminRepository) decodeRequestLogCursor(value string, filter admin.Requ
 	return cursor, nil
 }
 
-func (r *AdminRepository) DeleteRequestLogsBefore(ctx context.Context, before time.Time) (int64, error) {
-	tx, err := r.pool.Begin(ctx)
+type requestLogRetentionLease struct {
+	conn       *pgxpool.Conn
+	acquireCtx context.Context
+	mu         sync.Mutex
+	closed     bool
+}
+
+func (r *AdminRepository) TryAcquireRequestLogRetention(ctx context.Context) (admin.RequestLogRetentionLease, bool, error) {
+	conn, err := r.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	var acquired bool
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", requestLogRetentionAdvisoryLockID).Scan(&acquired); err != nil {
+		discardRequestLogRetentionConnection(conn)
+		return nil, false, err
+	}
+	if !acquired {
+		conn.Release()
+		return nil, false, nil
+	}
+	return &requestLogRetentionLease{conn: conn, acquireCtx: ctx}, true, nil
+}
+
+func (l *requestLogRetentionLease) DeleteBeforeBatch(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	if batchSize < 1 || batchSize > 10000 || before.IsZero() {
+		return 0, admin.ErrInvalidInput
+	}
+	tx, err := l.conn.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), requestLogRetentionUnlockTimeout)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}()
 	tag, err := tx.Exec(ctx, `
-		DELETE FROM request_logs
-		WHERE created_at < $1
-	`, before)
+		WITH candidates AS (
+			SELECT id
+			FROM request_logs
+			WHERE created_at < $1
+			ORDER BY created_at ASC, id ASC
+			LIMIT $2
+		)
+		DELETE FROM request_logs AS logs
+		USING candidates
+		WHERE logs.id = candidates.id
+	`, before.UTC(), batchSize)
 	if err != nil {
-		return 0, err
-	}
-	deleted := tag.RowsAffected()
-	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "request_log_collection"}, map[string]any{"deleted_count": deleted}); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, err
 	}
-	return deleted, nil
+	committed = true
+	return tag.RowsAffected(), nil
+}
+
+func (l *requestLogRetentionLease) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	l.closed = true
+
+	unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(l.acquireCtx), requestLogRetentionUnlockTimeout)
+	defer cancel()
+	var unlocked bool
+	err := l.conn.QueryRow(unlockCtx, "SELECT pg_advisory_unlock($1)", requestLogRetentionAdvisoryLockID).Scan(&unlocked)
+	if err == nil && unlocked {
+		l.conn.Release()
+		return nil
+	}
+	discardRequestLogRetentionConnection(l.conn)
+	if err != nil {
+		return err
+	}
+	return errors.New("request log retention advisory lock was not held")
+}
+
+func discardRequestLogRetentionConnection(poolConn *pgxpool.Conn) {
+	conn := poolConn.Hijack()
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), requestLogRetentionUnlockTimeout)
+	defer closeCancel()
+	_ = conn.Close(closeCtx)
+}
+
+func (r *AdminRepository) GetRequestLogRetentionStats(ctx context.Context, before time.Time) (admin.RequestLogRetentionStats, error) {
+	if before.IsZero() {
+		return admin.RequestLogRetentionStats{}, admin.ErrInvalidInput
+	}
+	var stats admin.RequestLogRetentionStats
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT min(created_at) FROM request_logs),
+			(SELECT max(created_at) FROM request_logs),
+			GREATEST(COALESCE((SELECT reltuples::bigint FROM pg_class WHERE oid = 'request_logs'::regclass), 0), 0),
+			(SELECT count(*) FROM request_logs WHERE created_at < $1)
+	`, before.UTC()).Scan(&stats.OldestLogAt, &stats.NewestLogAt, &stats.TotalCountEstimate, &stats.EligibleCount)
+	if err != nil {
+		return admin.RequestLogRetentionStats{}, err
+	}
+	if stats.OldestLogAt != nil {
+		oldest := stats.OldestLogAt.UTC()
+		stats.OldestLogAt = &oldest
+	}
+	if stats.NewestLogAt != nil {
+		newest := stats.NewestLogAt.UTC()
+		stats.NewestLogAt = &newest
+	}
+	return stats, nil
 }
 
 func requestLogFilterSQL(filter admin.RequestLogFilter) (string, []any) {

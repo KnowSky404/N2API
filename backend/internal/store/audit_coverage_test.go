@@ -20,8 +20,8 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 			"UpdateAPIKeyLimits": "insertIntentSystemEvent", "UpdateAPIKeyBudgets": "insertIntentSystemEvent",
 			"CreateRoutingPool": "insertIntentSystemEvent", "UpdateRoutingPool": "insertIntentSystemEvent",
 			"DeleteRoutingPool": "insertIntentSystemEvent", "ReplaceRoutingPoolAccounts": "insertIntentSystemEvent",
-			"UpdateAPIKeyRoutingPool": "insertIntentSystemEvent", "DeleteRequestLogsBefore": "insertIntentSystemEvent",
-			"SaveUsagePricing": "insertIntentSystemEvent", "SaveModelSettings": "insertIntentSystemEvent",
+			"UpdateAPIKeyRoutingPool": "insertIntentSystemEvent",
+			"SaveUsagePricing":        "insertIntentSystemEvent", "SaveModelSettings": "insertIntentSystemEvent",
 			"SaveGatewaySettings": "insertIntentSystemEvent",
 		},
 		"fingerprint.go": {

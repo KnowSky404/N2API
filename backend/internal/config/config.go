@@ -35,6 +35,9 @@ type Config struct {
 	GatewayTokensPerMinutePerKey           int
 	ProviderAccountAutoTestEnabled         bool
 	ProviderAccountAutoTestInterval        time.Duration
+	RequestLogRetentionRunnerEnabled       bool
+	RequestLogRetentionInterval            time.Duration
+	RequestLogRetentionBatchSize           int
 	SystemEventRetentionDays               int
 	TrustedProxyCIDRs                      []netip.Prefix
 	AdminLoginThrottleEnabled              bool
@@ -51,6 +54,10 @@ const (
 
 	defaultProviderAccountAutoTestInterval = 5 * time.Minute
 	minProviderAccountAutoTestInterval     = time.Minute
+	defaultRequestLogRetentionInterval     = 24 * time.Hour
+	minRequestLogRetentionInterval         = 5 * time.Minute
+	maxRequestLogRetentionInterval         = 7 * 24 * time.Hour
+	defaultRequestLogRetentionBatchSize    = 1000
 	defaultSystemEventRetentionDays        = 365
 	defaultAdminLoginThrottleFailures      = 5
 	defaultAdminLoginThrottleMaxEntries    = 4096
@@ -139,6 +146,33 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.ProviderAccountAutoTestEnabled = autoTestEnabled
+	requestLogRetentionRunnerEnabled, err := parseBool(lookup("N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED"), "N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.RequestLogRetentionRunnerEnabled = requestLogRetentionRunnerEnabled
+	requestLogRetentionIntervalSeconds, err := parsePositiveIntWithDefault(
+		lookup("N2API_REQUEST_LOG_RETENTION_INTERVAL_SECONDS"),
+		"N2API_REQUEST_LOG_RETENTION_INTERVAL_SECONDS",
+		int(defaultRequestLogRetentionInterval/time.Second),
+		int(minRequestLogRetentionInterval/time.Second),
+		int(maxRequestLogRetentionInterval/time.Second),
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.RequestLogRetentionInterval = time.Duration(requestLogRetentionIntervalSeconds) * time.Second
+	requestLogRetentionBatchSize, err := parsePositiveIntWithDefault(
+		lookup("N2API_REQUEST_LOG_RETENTION_BATCH_SIZE"),
+		"N2API_REQUEST_LOG_RETENTION_BATCH_SIZE",
+		defaultRequestLogRetentionBatchSize,
+		100,
+		10000,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.RequestLogRetentionBatchSize = requestLogRetentionBatchSize
 	retentionDays, err := parseSystemEventRetentionDays(lookup("N2API_SYSTEM_EVENT_RETENTION_DAYS"))
 	if err != nil {
 		return Config{}, err

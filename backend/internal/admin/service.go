@@ -37,10 +37,13 @@ const (
 	dummyAdminPasswordHash        = "pbkdf2-sha256$210000$AAECAwQFBgcICQoLDA0ODw$6M7ZGtW4Xq6fsrLYeKn/xgsZw5E2huTtOgwzsiPv+Vk"
 )
 
+const DefaultRequestLogRetentionBatchSize = 1000
+
 var (
 	ErrNotFound     = errors.New("not found")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrInvalidInput = errors.New("invalid input")
+	ErrConflict     = errors.New("conflict")
 )
 
 type Config struct {
@@ -55,6 +58,7 @@ type SystemEventPage = systemevent.Page
 
 type SystemEventRepository interface {
 	List(ctx context.Context, filter systemevent.Filter) (systemevent.Page, error)
+	Insert(ctx context.Context, event systemevent.Event) error
 }
 
 type Admin struct {
@@ -281,7 +285,22 @@ type GatewaySettings struct {
 type RequestLogCleanupResult struct {
 	RetentionDays int       `json:"retentionDays"`
 	Deleted       int64     `json:"deleted"`
+	Batches       int       `json:"batches"`
 	Before        time.Time `json:"before"`
+}
+
+type RequestLogRetentionStats struct {
+	Cutoff             time.Time  `json:"cutoff"`
+	OldestLogAt        *time.Time `json:"oldestLogAt,omitempty"`
+	NewestLogAt        *time.Time `json:"newestLogAt,omitempty"`
+	TotalCountEstimate int64      `json:"totalCountEstimate"`
+	EligibleCount      int64      `json:"eligibleCount"`
+	ObservedAt         time.Time  `json:"observedAt"`
+}
+
+type RequestLogRetentionLease interface {
+	DeleteBeforeBatch(ctx context.Context, before time.Time, batchSize int) (int64, error)
+	Close() error
 }
 
 type ModelRoutingStatus struct {
@@ -354,7 +373,8 @@ type Repository interface {
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
 	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, filter RequestLogFilter) (RequestLogPage, error)
-	DeleteRequestLogsBefore(ctx context.Context, before time.Time) (int64, error)
+	TryAcquireRequestLogRetention(ctx context.Context) (RequestLogRetentionLease, bool, error)
+	GetRequestLogRetentionStats(ctx context.Context, before time.Time) (RequestLogRetentionStats, error)
 	GetUsageSummary(ctx context.Context, since time.Time, groupBy string) (UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (UsagePricing, error)
 	SaveUsagePricing(ctx context.Context, pricing UsagePricing) (UsagePricing, error)
@@ -1218,6 +1238,7 @@ func (s *Service) UpdateGatewaySettings(ctx context.Context, settings GatewaySet
 }
 
 func (s *Service) CleanupRequestLogs(ctx context.Context, now time.Time) (RequestLogCleanupResult, error) {
+	started := s.now()
 	settings, err := s.GetGatewaySettings(ctx)
 	if err != nil {
 		return RequestLogCleanupResult{}, err
@@ -1226,19 +1247,103 @@ func (s *Service) CleanupRequestLogs(ctx context.Context, now time.Time) (Reques
 		return RequestLogCleanupResult{}, ErrInvalidInput
 	}
 	if now.IsZero() {
-		now = time.Now()
+		now = s.now()
 	}
 	before := now.Add(-time.Duration(settings.RequestLogRetentionDays) * 24 * time.Hour)
-	ctx = withAuditIntent(ctx, systemevent.ActionRequestLogCleanupCompleted, "request_log_collection", "", "", map[string]any{"before": before.UTC().Format(time.RFC3339), "retention_days": settings.RequestLogRetentionDays})
-	deleted, err := s.repo.DeleteRequestLogsBefore(ctx, before)
-	if err != nil {
-		return RequestLogCleanupResult{}, err
+	result, runErr := s.RunRequestLogRetention(ctx, settings.RequestLogRetentionDays, before, DefaultRequestLogRetentionBatchSize)
+	s.recordRequestLogCleanupEvent(ctx, started, result, runErr)
+	return result, runErr
+}
+
+func (s *Service) recordRequestLogCleanupEvent(ctx context.Context, started time.Time, result RequestLogCleanupResult, cleanupErr error) {
+	if s.systemEvents == nil {
+		return
 	}
-	return RequestLogCleanupResult{
-		RetentionDays: settings.RequestLogRetentionDays,
-		Deleted:       deleted,
-		Before:        before,
-	}, nil
+	outcome := systemevent.OutcomeSuccess
+	severity := systemevent.SeverityInfo
+	errorCode := ""
+	if cleanupErr != nil {
+		outcome = systemevent.OutcomeFailure
+		severity = systemevent.SeverityError
+		errorCode = "request_log_cleanup_failed"
+		if result.Deleted > 0 {
+			outcome = systemevent.OutcomePartial
+			severity = systemevent.SeverityWarning
+		}
+	}
+	metadata, _ := systemevent.SafeMetadata(map[string]any{
+		"cutoff": result.Before.UTC().Format(time.RFC3339), "retention_days": result.RetentionDays,
+		"deleted_count": result.Deleted, "batch_count": result.Batches,
+	}, "cutoff", "retention_days", "deleted_count", "batch_count")
+	intent := systemevent.EventIntent{
+		Category: systemevent.CategoryAudit, Severity: severity, Action: systemevent.ActionRequestLogCleanupCompleted,
+		Outcome: outcome, ErrorCode: errorCode, Target: systemevent.Target{Type: "request_log_collection"}, Metadata: metadata,
+	}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	now := s.now()
+	event := systemevent.BuildEvent(recordCtx, intent, intent.Target, now.UTC(), now.Sub(started))
+	_ = s.systemEvents.Insert(recordCtx, event)
+}
+
+func (s *Service) RunRequestLogRetention(ctx context.Context, retentionDays int, before time.Time, batchSize int) (result RequestLogCleanupResult, err error) {
+	if retentionDays <= 0 || before.IsZero() || batchSize <= 0 {
+		return RequestLogCleanupResult{}, ErrInvalidInput
+	}
+	result.RetentionDays = retentionDays
+	result.Before = before.UTC()
+	lease, acquired, err := s.repo.TryAcquireRequestLogRetention(ctx)
+	if err != nil {
+		return result, err
+	}
+	if !acquired {
+		return result, ErrConflict
+	}
+	defer func() {
+		if closeErr := lease.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		deleted, err := lease.DeleteBeforeBatch(ctx, result.Before, batchSize)
+		if err != nil {
+			return result, err
+		}
+		result.Deleted += deleted
+		if deleted > 0 {
+			result.Batches++
+		}
+		if deleted < int64(batchSize) {
+			return result, nil
+		}
+	}
+}
+
+func (s *Service) GetRequestLogRetentionStats(ctx context.Context, now time.Time) (RequestLogRetentionStats, error) {
+	settings, err := s.GetGatewaySettings(ctx)
+	if err != nil {
+		return RequestLogRetentionStats{}, err
+	}
+	if now.IsZero() {
+		now = s.now()
+	}
+	cutoff := time.Unix(0, 0).UTC()
+	if settings.RequestLogRetentionDays > 0 {
+		cutoff = now.UTC().Add(-time.Duration(settings.RequestLogRetentionDays) * 24 * time.Hour)
+	}
+	stats, err := s.repo.GetRequestLogRetentionStats(ctx, cutoff)
+	if err != nil {
+		return RequestLogRetentionStats{}, err
+	}
+	if settings.RequestLogRetentionDays > 0 {
+		stats.Cutoff = cutoff
+	}
+	stats.ObservedAt = now.UTC()
+	return stats, nil
 }
 
 func (s *Service) DefaultModel(ctx context.Context) (string, error) {

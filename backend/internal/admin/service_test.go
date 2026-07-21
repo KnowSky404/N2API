@@ -22,11 +22,17 @@ type fakeSystemEventRepository struct {
 	filter systemevent.Filter
 	page   systemevent.Page
 	err    error
+	events []systemevent.Event
 }
 
 func (r *fakeSystemEventRepository) List(_ context.Context, filter systemevent.Filter) (systemevent.Page, error) {
 	r.filter = filter
 	return r.page, r.err
+}
+
+func (r *fakeSystemEventRepository) Insert(_ context.Context, event systemevent.Event) error {
+	r.events = append(r.events, event)
+	return nil
 }
 
 func TestListSystemEventsValidatesAndNormalizesFilter(t *testing.T) {
@@ -1241,6 +1247,59 @@ func TestCleanupRequestLogsUsesRetentionDays(t *testing.T) {
 	}
 }
 
+func TestCleanupRequestLogsRecordsOneSafeSummary(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.gatewaySettings = GatewaySettings{RequestLogRetentionDays: 14}
+	repo.deletedRequestLogCount = 3
+	events := &fakeSystemEventRepository{}
+	service := NewService(repo, Config{SessionTTL: time.Hour, SystemEvents: events})
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	if _, err := service.CleanupRequestLogs(context.Background(), now); err != nil {
+		t.Fatalf("CleanupRequestLogs returned error: %v", err)
+	}
+	if len(events.events) != 1 {
+		t.Fatalf("manual cleanup events = %d, want one", len(events.events))
+	}
+	event := events.events[0]
+	if event.Action != systemevent.ActionRequestLogCleanupCompleted || event.Outcome != systemevent.OutcomeSuccess || event.ErrorCode != "" || event.Metadata["deleted_count"] != int64(3) {
+		t.Fatalf("manual cleanup event = %+v", event)
+	}
+}
+
+func TestRunRequestLogRetentionUsesMultipleBatchesAndRejectsContention(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.deletedRequestLogCount = 2500
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	cutoff := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	result, err := service.RunRequestLogRetention(context.Background(), 30, cutoff, 1000)
+	if err != nil {
+		t.Fatalf("RunRequestLogRetention returned error: %v", err)
+	}
+	if result.Deleted != 2500 || result.Batches != 3 || !result.Before.Equal(cutoff) {
+		t.Fatalf("retention result = %+v", result)
+	}
+	repo.requestLogRetentionBusy = true
+	if _, err := service.RunRequestLogRetention(context.Background(), 30, cutoff, 1000); !errors.Is(err, ErrConflict) {
+		t.Fatalf("contended retention error = %v, want ErrConflict", err)
+	}
+}
+
+func TestGetRequestLogRetentionStatsUsesSavedCutoffAndObservationTime(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.gatewaySettings = GatewaySettings{RequestLogRetentionDays: 7}
+	repo.requestLogRetentionStats = RequestLogRetentionStats{EligibleCount: 12, TotalCountEstimate: 50}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	stats, err := service.GetRequestLogRetentionStats(context.Background(), now)
+	if err != nil {
+		t.Fatalf("GetRequestLogRetentionStats returned error: %v", err)
+	}
+	if !stats.Cutoff.Equal(now.Add(-7*24*time.Hour)) || !stats.ObservedAt.Equal(now) || stats.EligibleCount != 12 || stats.TotalCountEstimate != 50 {
+		t.Fatalf("retention stats = %+v", stats)
+	}
+}
+
 func TestCleanupRequestLogsRejectsDisabledRetention(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1697,6 +1756,9 @@ type memoryRepo struct {
 	gatewaySettings           GatewaySettings
 	deletedRequestLogsBefore  time.Time
 	deletedRequestLogCount    int64
+	requestLogRetentionLease  RequestLogRetentionLease
+	requestLogRetentionStats  RequestLogRetentionStats
+	requestLogRetentionBusy   bool
 	usagePricing              UsagePricing
 	usagePricingSaveCount     int
 	opsAccountHealth          OpsAccountHealth
@@ -2145,9 +2207,38 @@ func (r *memoryRepo) ListRequestLogs(_ context.Context, filter RequestLogFilter)
 	return RequestLogPage{Logs: append([]RequestLog(nil), r.logs[:limit]...)}, nil
 }
 
-func (r *memoryRepo) DeleteRequestLogsBefore(_ context.Context, before time.Time) (int64, error) {
-	r.deletedRequestLogsBefore = before
-	return r.deletedRequestLogCount, nil
+func (r *memoryRepo) TryAcquireRequestLogRetention(_ context.Context) (RequestLogRetentionLease, bool, error) {
+	if r.requestLogRetentionBusy {
+		return nil, false, nil
+	}
+	if r.requestLogRetentionLease == nil {
+		r.requestLogRetentionLease = &memoryRequestLogRetentionLease{repo: r}
+	}
+	return r.requestLogRetentionLease, true, nil
+}
+
+func (r *memoryRepo) GetRequestLogRetentionStats(_ context.Context, _ time.Time) (RequestLogRetentionStats, error) {
+	return r.requestLogRetentionStats, nil
+}
+
+type memoryRequestLogRetentionLease struct {
+	repo   *memoryRepo
+	closed bool
+}
+
+func (l *memoryRequestLogRetentionLease) DeleteBeforeBatch(_ context.Context, before time.Time, batchSize int) (int64, error) {
+	l.repo.deletedRequestLogsBefore = before
+	if l.repo.deletedRequestLogCount <= 0 {
+		return 0, nil
+	}
+	deleted := min(l.repo.deletedRequestLogCount, int64(batchSize))
+	l.repo.deletedRequestLogCount -= deleted
+	return deleted, nil
+}
+
+func (l *memoryRequestLogRetentionLease) Close() error {
+	l.closed = true
+	return nil
 }
 
 func (r *memoryRepo) GetUsageSummary(_ context.Context, since time.Time, groupBy string) (UsageSummary, error) {

@@ -336,6 +336,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} providerAccountAutoTestIntervalSeconds
  * @property {number} requestLogRetentionDays
  * @property {ProviderAccountAutoTestStatus} providerAccountAutoTestStatus
+ * @property {RequestLogRetentionStatus} requestLogRetentionStatus
+ * @property {RequestLogRetentionStats} requestLogRetentionStats
  */
 
 /**
@@ -345,6 +347,29 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string | null} lastFinishedAt
  * @property {number} lastAccountCount
  * @property {string} lastError
+ */
+
+/**
+ * @typedef {object} RequestLogRetentionStatus
+ * @property {boolean} automaticEnabled
+ * @property {boolean} running
+ * @property {string | null} lastStartedAt
+ * @property {string | null} lastSucceededAt
+ * @property {string | null} lastErrorAt
+ * @property {string} lastErrorCode
+ * @property {number} lastDeletedCount
+ * @property {number} lastBatchCount
+ * @property {string | null} lastCutoff
+ */
+
+/**
+ * @typedef {object} RequestLogRetentionStats
+ * @property {string | null} cutoff
+ * @property {string | null} oldestLogAt
+ * @property {string | null} newestLogAt
+ * @property {number} totalCountEstimate
+ * @property {number} eligibleCount
+ * @property {string | null} observedAt
  */
 
 /**
@@ -1057,6 +1082,33 @@ function normalizeProviderAccountAutoTestStatus(status) {
     lastFinishedAt: status?.lastFinishedAt ?? null,
     lastAccountCount: Number(status?.lastAccountCount ?? 0),
     lastError: String(status?.lastError ?? '')
+  };
+}
+
+/** @param {Partial<RequestLogRetentionStatus> | null | undefined} status */
+function normalizeRequestLogRetentionStatus(status) {
+  return {
+    automaticEnabled: Boolean(status?.automaticEnabled),
+    running: Boolean(status?.running),
+    lastStartedAt: status?.lastStartedAt ?? null,
+    lastSucceededAt: status?.lastSucceededAt ?? null,
+    lastErrorAt: status?.lastErrorAt ?? null,
+    lastErrorCode: String(status?.lastErrorCode ?? ''),
+    lastDeletedCount: Number(status?.lastDeletedCount ?? 0),
+    lastBatchCount: Number(status?.lastBatchCount ?? 0),
+    lastCutoff: status?.lastCutoff ?? null
+  };
+}
+
+/** @param {Partial<RequestLogRetentionStats> | null | undefined} stats */
+function normalizeRequestLogRetentionStats(stats) {
+  return {
+    cutoff: stats?.cutoff && !String(stats.cutoff).startsWith('0001-') ? stats.cutoff : null,
+    oldestLogAt: stats?.oldestLogAt ?? null,
+    newestLogAt: stats?.newestLogAt ?? null,
+    totalCountEstimate: Number(stats?.totalCountEstimate ?? 0),
+    eligibleCount: Number(stats?.eligibleCount ?? 0),
+    observedAt: stats?.observedAt ?? null
   };
 }
 
@@ -2901,7 +2953,9 @@ export async function loadGatewaySettings() {
       providerAccountAutoTestEnabled: Boolean(payload.providerAccountAutoTestEnabled),
       providerAccountAutoTestIntervalSeconds: Number(payload.providerAccountAutoTestIntervalSeconds ?? 300),
       requestLogRetentionDays: Number(payload.requestLogRetentionDays ?? 0),
-      providerAccountAutoTestStatus: normalizeProviderAccountAutoTestStatus(payload.providerAccountAutoTestStatus)
+      providerAccountAutoTestStatus: normalizeProviderAccountAutoTestStatus(payload.providerAccountAutoTestStatus),
+      requestLogRetentionStatus: normalizeRequestLogRetentionStatus(payload.requestLogRetentionStatus),
+      requestLogRetentionStats: normalizeRequestLogRetentionStats(payload.requestLogRetentionStats)
     };
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
@@ -2970,8 +3024,16 @@ export async function updateGatewaySettings() {
       requestLogRetentionDays: Number(saved.requestLogRetentionDays ?? 0),
       providerAccountAutoTestStatus: normalizeProviderAccountAutoTestStatus(
         saved.providerAccountAutoTestStatus ?? gatewaySettings.data.providerAccountAutoTestStatus
+      ),
+      requestLogRetentionStatus: normalizeRequestLogRetentionStatus(
+        saved.requestLogRetentionStatus ?? gatewaySettings.data.requestLogRetentionStatus
+      ),
+      requestLogRetentionStats: normalizeRequestLogRetentionStats(
+        saved.requestLogRetentionStats ?? gatewaySettings.data.requestLogRetentionStats
       )
     };
+    await loadGatewaySettings();
+    if (!isCurrentAuthenticated(version) || gatewaySettings.error) return;
     gatewaySettings.saved = true;
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
@@ -3009,7 +3071,7 @@ export async function cleanupRequestLogs() {
       deleted: Number(result.deleted ?? 0),
       before: result.before ?? ''
     };
-    await loadRequestLogs();
+    await Promise.all([loadRequestLogs(), loadGatewaySettings()]);
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     gatewaySettings.error = error instanceof Error ? error.message : 'Failed to clean request logs';

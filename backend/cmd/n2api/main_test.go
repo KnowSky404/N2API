@@ -64,13 +64,15 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"signal.NotifyContext",
 		"provider.NewAutoTestRunnerWithConfigSource",
 		"adminService.GetGatewaySettings",
+		"admin.NewRequestLogRetentionRunner",
+		"requestLogRetentionRunner.Run",
 		"ProviderAccountAutoTestEnabled",
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",
 		"go autoTestRunner.Run(ctx)",
 		"go runAPIKeyCleanup(ctx, adminService, time.Hour)",
 		"service.PurgeExpiredAPIKeys(ctx)",
-		"autoTestRunner, os.DirFS(\"frontend/build\")",
+		"autoTestRunner, requestLogRetentionRunner, os.DirFS(\"frontend/build\")",
 		"server.Shutdown",
 	} {
 		if !strings.Contains(text, want) {

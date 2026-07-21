@@ -375,6 +375,51 @@
               </div>
             </div>
           </div>
+          <div class="mt-5 rounded-md border border-[#ededed] bg-[#fafafa] p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h4 class="text-sm font-semibold text-[#0d0d0d]">Request log retention</h4>
+                <p class="mt-1 text-sm text-[#6e6e6e]">
+                  {gatewaySettings.data.requestLogRetentionStatus.automaticEnabled ? 'Automatic runner enabled' : 'Automatic runner disabled'}
+                </p>
+              </div>
+              <span class={gatewaySettings.data.requestLogRetentionStatus.running ? 'text-sm font-semibold text-[#0a7a5e]' : 'text-sm font-medium text-[#6e6e6e]'}>
+                {gatewaySettings.data.requestLogRetentionStatus.running ? 'Running' : 'Idle'}
+              </span>
+            </div>
+            <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Cutoff</dt>
+                <dd class="mt-2 min-w-0 break-words text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStats.cutoff ? formatDate(gatewaySettings.data.requestLogRetentionStats.cutoff) : 'Disabled'}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Eligible logs</dt>
+                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStats.eligibleCount}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Total estimate</dt>
+                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStats.totalCountEstimate}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Last automatic result</dt>
+                <dd class={gatewaySettings.data.requestLogRetentionStatus.lastErrorCode ? 'mt-2 min-w-0 break-words font-mono text-sm font-semibold text-red-700' : 'mt-2 min-w-0 break-words text-sm font-semibold text-[#0d0d0d]'}>
+                  {gatewaySettings.data.requestLogRetentionStatus.lastErrorCode || (gatewaySettings.data.requestLogRetentionStatus.lastSucceededAt ? `${gatewaySettings.data.requestLogRetentionStatus.lastDeletedCount} deleted` : 'Not run yet')}
+                </dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Oldest log</dt>
+                <dd class="mt-2 min-w-0 break-words text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStats.oldestLogAt ? formatDate(gatewaySettings.data.requestLogRetentionStats.oldestLogAt) : 'None'}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Newest log</dt>
+                <dd class="mt-2 min-w-0 break-words text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStats.newestLogAt ? formatDate(gatewaySettings.data.requestLogRetentionStats.newestLogAt) : 'None'}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3 sm:col-span-2">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Last success</dt>
+                <dd class="mt-2 min-w-0 break-words text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStatus.lastSucceededAt ? formatDate(gatewaySettings.data.requestLogRetentionStatus.lastSucceededAt) : 'Not run yet'}</dd>
+              </div>
+            </dl>
+          </div>
           <div class="mt-4 flex flex-wrap items-center gap-3">
             <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving}>
               {gatewaySettings.saving ? 'Saving' : 'Save runtime limits'}
@@ -382,7 +427,7 @@
             {#if gatewaySettings.saved}
               <span class="text-sm text-[#0a7a5e]">Runtime limits saved.</span>
             {/if}
-            <button type="button" class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
+            <button type="button" class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionStatus.running || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
               {gatewaySettings.cleanupRunning ? 'Cleaning' : 'Clean request logs'}
             </button>
             {#if gatewaySettings.cleanupResult}

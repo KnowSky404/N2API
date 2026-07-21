@@ -121,6 +121,11 @@ const (
 	ActionProviderAccountRecovered           Action = "provider_account.recovered"
 )
 
+const (
+	ActionSchedulerRequestLogRetentionSucceeded Action = "scheduler.request_log_retention.succeeded"
+	ActionSchedulerRequestLogRetentionFailed    Action = "scheduler.request_log_retention.failed"
+)
+
 var (
 	ErrInvalidEvent  = errors.New("invalid system event")
 	ErrInvalidCursor = errors.New("invalid system event cursor")
@@ -419,6 +424,7 @@ var knownActions = map[Action]struct{}{
 	ActionProviderAccountBatchRefreshed: {}, ActionProviderAccountBatchModelsReplaced: {},
 	ActionOAuthConnectStarted: {}, ActionOAuthConnectFailed: {}, ActionOAuthCallbackCompleted: {}, ActionOAuthCallbackFailed: {}, ActionOAuthRefreshManualSucceeded: {}, ActionOAuthRefreshManualFailed: {},
 	ActionOAuthRefreshAutomaticSucceeded: {}, ActionOAuthRefreshAutomaticFailed: {}, ActionSchedulerProviderAutoTestCompleted: {},
-	ActionSchedulerAPIKeyPurgeCompleted: {}, ActionSchedulerEventRetentionCompleted: {}, ActionProviderAccountCircuitOpened: {},
+	ActionSchedulerAPIKeyPurgeCompleted: {}, ActionSchedulerEventRetentionCompleted: {},
+	ActionSchedulerRequestLogRetentionSucceeded: {}, ActionSchedulerRequestLogRetentionFailed: {}, ActionProviderAccountCircuitOpened: {},
 	ActionProviderAccountRateLimited: {}, ActionProviderAccountExpired: {}, ActionProviderAccountRecovered: {},
 }

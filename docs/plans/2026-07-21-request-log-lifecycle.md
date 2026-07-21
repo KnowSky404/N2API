@@ -129,6 +129,9 @@ An operator can reach rows older than the first 200 without losing filters.
 
 ## Task 3: Batch Automatic Retention
 
+Status: completed locally on 2026-07-21; production enablement remains an
+owner-controlled operational action after isolated backup restore verification.
+
 ### Goal
 
 Apply saved retention safely in the background and expose task status.
@@ -162,7 +165,8 @@ surviving/new rows and event counts.
 ### Compatibility And Security
 
 Retention `0` remains disabled. Default behavior does not delete logs unless a
-positive saved policy exists.
+positive saved policy exists and the separate automatic runner environment
+gate is explicitly enabled.
 
 ### Risks And Rollback
 

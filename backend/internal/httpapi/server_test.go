@@ -36,6 +36,14 @@ type fakeAutoTestStatusSource struct {
 	status provider.AutoTestStatus
 }
 
+type fakeRequestLogRetentionStatusSource struct {
+	status admin.RequestLogRetentionStatus
+}
+
+func (s fakeRequestLogRetentionStatusSource) RequestLogRetentionStatus() admin.RequestLogRetentionStatus {
+	return s.status
+}
+
 func (s fakeAutoTestStatusSource) ProviderAccountAutoTestStatus() provider.AutoTestStatus {
 	return s.status
 }
@@ -106,6 +114,8 @@ type fakeAdminService struct {
 	usagePricing         admin.UsagePricing
 	gatewaySettings      admin.GatewaySettings
 	gatewaySettingsErr   error
+	retentionStats       admin.RequestLogRetentionStats
+	retentionStatsErr    error
 	cleanupResult        admin.RequestLogCleanupResult
 	cleanupCalled        bool
 	cleanupErr           error
@@ -619,6 +629,10 @@ func (s *fakeAdminService) GetGatewaySettings(_ context.Context) (admin.GatewayS
 		return admin.GatewaySettings{}, s.gatewaySettingsErr
 	}
 	return s.gatewaySettings, nil
+}
+
+func (s *fakeAdminService) GetRequestLogRetentionStats(_ context.Context, _ time.Time) (admin.RequestLogRetentionStats, error) {
+	return s.retentionStats, s.retentionStatsErr
 }
 
 func (s *fakeAdminService) UpdateGatewaySettings(_ context.Context, settings admin.GatewaySettings) (admin.GatewaySettings, error) {
@@ -1183,6 +1197,35 @@ func TestAdminHealthIncludesBuildIdentityForAuthenticatedSession(t *testing.T) {
 	}
 	if body.Build == nil || *body.Build != build {
 		t.Fatalf("Build = %+v, want %+v", body.Build, build)
+	}
+}
+
+func TestAdminHealthIncludesRequestLogRetentionTaskOnlyForAuthenticatedSession(t *testing.T) {
+	started := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	source := fakeRequestLogRetentionStatusSource{status: admin.RequestLogRetentionStatus{
+		AutomaticEnabled: true, Running: true, LastStartedAt: &started,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, source)
+
+	unauthenticated := httptest.NewRecorder()
+	server.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
+	if strings.Contains(unauthenticated.Body.String(), "requestLogRetention") {
+		t.Fatalf("unauthenticated health leaked task status: %s", unauthenticated.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	var body struct {
+		Tasks map[string]admin.RequestLogRetentionStatus `json:"tasks"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	status := body.Tasks["requestLogRetention"]
+	if !status.AutomaticEnabled || !status.Running || status.LastStartedAt == nil || !status.LastStartedAt.Equal(started) {
+		t.Fatalf("retention task status = %+v", status)
 	}
 }
 
@@ -5286,6 +5329,35 @@ func TestGatewaySettingsIncludesProviderAccountAutoTestStatus(t *testing.T) {
 	}
 }
 
+func TestGatewaySettingsIncludesRequestLogRetentionStatusAndStats(t *testing.T) {
+	admins := newFakeAdminService()
+	cutoff := time.Date(2026, time.June, 21, 12, 0, 0, 0, time.UTC)
+	observed := cutoff.Add(30 * 24 * time.Hour)
+	admins.retentionStats = admin.RequestLogRetentionStats{
+		Cutoff: cutoff, TotalCountEstimate: 5000, EligibleCount: 1250, ObservedAt: observed,
+	}
+	source := fakeRequestLogRetentionStatusSource{status: admin.RequestLogRetentionStatus{
+		AutomaticEnabled: true, LastDeletedCount: 1000, LastBatchCount: 1, LastCutoff: &cutoff,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService(), source)
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/gateway-settings", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body gatewaySettingsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !body.RequestLogRetentionStatus.AutomaticEnabled || body.RequestLogRetentionStatus.LastDeletedCount != 1000 ||
+		body.RequestLogRetentionStats.EligibleCount != 1250 || body.RequestLogRetentionStats.TotalCountEstimate != 5000 ||
+		!body.RequestLogRetentionStats.Cutoff.Equal(cutoff) || !body.RequestLogRetentionStats.ObservedAt.Equal(observed) {
+		t.Fatalf("request log retention response = status %+v stats %+v", body.RequestLogRetentionStatus, body.RequestLogRetentionStats)
+	}
+}
+
 func TestGatewaySettingsPrefersStoredAdminSettings(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.gatewaySettings = admin.GatewaySettings{
@@ -5399,6 +5471,19 @@ func TestCleanupRequestLogsRequiresSessionAndReturnsDeletedCount(t *testing.T) {
 	}
 	if body.RetentionDays != 14 || body.Deleted != 3 || !body.Before.Equal(before) {
 		t.Fatalf("cleanup body = %+v, want retention 14 deleted 3 before %s", body, before)
+	}
+}
+
+func TestCleanupRequestLogsReturnsConflictWhileRetentionRunnerOwnsLock(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.cleanupErr = admin.ErrConflict
+	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/request-logs/cleanup", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "conflict") {
+		t.Fatalf("status = %d body=%s, want 409 conflict", recorder.Code, recorder.Body.String())
 	}
 }
 

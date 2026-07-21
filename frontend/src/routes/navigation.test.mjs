@@ -513,6 +513,11 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(gatewayPage, /bind:value=\{gatewaySettings\.data\.requestLogRetentionDays\}/);
   assert.match(gatewayPage, /cleanupRequestLogs/);
   assert.match(gatewayPage, /gatewaySettings\.data\.providerAccountAutoTestStatus/);
+  assert.match(gatewayPage, /gatewaySettings\.data\.requestLogRetentionStatus/);
+  assert.match(gatewayPage, /gatewaySettings\.data\.requestLogRetentionStats/);
+  assert.match(gatewayPage, /Automatic runner enabled/);
+  assert.match(gatewayPage, /Total estimate/);
+  assert.match(gatewayPage, /requestLogRetentionStatus\.running/);
   assert.match(gatewayPage, /lastFinishedAt/);
   assert.match(gatewayPage, /lastAccountCount/);
   assert.match(gatewayPage, /lastError/);
@@ -524,6 +529,10 @@ test('gateway page manages runtime limits and usage visibility', () => {
   assert.match(adminState, /export async function cleanupRequestLogs/);
   assert.match(adminState, /\/api\/admin\/request-logs\/cleanup/);
   assert.match(adminState, /providerAccountAutoTestStatus/);
+  assert.match(adminState, /normalizeRequestLogRetentionStatus/);
+  assert.match(adminState, /normalizeRequestLogRetentionStats/);
+  assert.match(adminState, /requestLogRetentionStatus/);
+  assert.match(adminState, /requestLogRetentionStats/);
   assert.match(adminState, /lastStartedAt/);
   assert.match(adminState, /lastFinishedAt/);
   assert.match(adminState, /lastAccountCount/);

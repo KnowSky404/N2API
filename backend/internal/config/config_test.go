@@ -186,6 +186,43 @@ func TestLoadSystemEventRetentionDays(t *testing.T) {
 	}
 }
 
+func TestLoadRequestLogRetentionRunnerConfig(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	cfg, err := Load(mapLookup(base))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if cfg.RequestLogRetentionRunnerEnabled || cfg.RequestLogRetentionInterval != 24*time.Hour || cfg.RequestLogRetentionBatchSize != 1000 {
+		t.Fatalf("default request log retention runner config = enabled %v interval %s batch %d", cfg.RequestLogRetentionRunnerEnabled, cfg.RequestLogRetentionInterval, cfg.RequestLogRetentionBatchSize)
+	}
+	values := maps.Clone(base)
+	values["N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED"] = "true"
+	values["N2API_REQUEST_LOG_RETENTION_INTERVAL_SECONDS"] = "300"
+	values["N2API_REQUEST_LOG_RETENTION_BATCH_SIZE"] = "10000"
+	cfg, err = Load(mapLookup(values))
+	if err != nil {
+		t.Fatalf("Load configured returned error: %v", err)
+	}
+	if !cfg.RequestLogRetentionRunnerEnabled || cfg.RequestLogRetentionInterval != 5*time.Minute || cfg.RequestLogRetentionBatchSize != 10000 {
+		t.Fatalf("configured request log retention runner config = enabled %v interval %s batch %d", cfg.RequestLogRetentionRunnerEnabled, cfg.RequestLogRetentionInterval, cfg.RequestLogRetentionBatchSize)
+	}
+	for name, value := range map[string]string{
+		"N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED":   "sometimes",
+		"N2API_REQUEST_LOG_RETENTION_INTERVAL_SECONDS": "299",
+		"N2API_REQUEST_LOG_RETENTION_BATCH_SIZE":       "10001",
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := maps.Clone(base)
+			invalid[name] = value
+			if _, err := Load(mapLookup(invalid)); err == nil {
+				t.Fatal("Load returned nil error")
+			}
+		})
+	}
+}
+
 func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
 	env := map[string]string{
 		"DATABASE_URL":               "postgres://example",

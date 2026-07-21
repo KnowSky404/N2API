@@ -64,6 +64,7 @@ type AdminService interface {
 	ListRequestLogs(ctx context.Context, filter admin.RequestLogFilter) (admin.RequestLogPage, error)
 	ListSystemEvents(ctx context.Context, filter admin.SystemEventFilter) (admin.SystemEventPage, error)
 	CleanupRequestLogs(ctx context.Context, now time.Time) (admin.RequestLogCleanupResult, error)
+	GetRequestLogRetentionStats(ctx context.Context, now time.Time) (admin.RequestLogRetentionStats, error)
 	GetUsageSummary(ctx context.Context, rangeName, groupBy string) (admin.UsageSummary, error)
 	GetUsagePricing(ctx context.Context) (admin.UsagePricing, error)
 	UpdateUsagePricing(ctx context.Context, pricing admin.UsagePricing) (admin.UsagePricing, error)
@@ -119,6 +120,10 @@ type ProviderAccountAutoTestStatusSource interface {
 	ProviderAccountAutoTestStatus() provider.AutoTestStatus
 }
 
+type RequestLogRetentionStatusSource interface {
+	RequestLogRetentionStatus() admin.RequestLogRetentionStatus
+}
+
 type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
@@ -134,7 +139,9 @@ type APIKeyRateSnapshotProvider interface {
 
 type gatewaySettingsResponse struct {
 	admin.GatewaySettings
-	ProviderAccountAutoTestStatus provider.AutoTestStatus `json:"providerAccountAutoTestStatus,omitempty"`
+	ProviderAccountAutoTestStatus provider.AutoTestStatus         `json:"providerAccountAutoTestStatus,omitempty"`
+	RequestLogRetentionStatus     admin.RequestLogRetentionStatus `json:"requestLogRetentionStatus"`
+	RequestLogRetentionStats      admin.RequestLogRetentionStats  `json:"requestLogRetentionStats"`
 }
 
 type apiKeyResponse struct {
@@ -199,6 +206,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	publicURL, _ := url.Parse(cfg.PublicURL)
 	secureCookie := strings.EqualFold(publicURL.Scheme, "https")
 	gateway, webFS, autoTestStatusSource, build := parseServerOptions(options...)
+	requestLogRetentionStatusSource := requestLogRetentionStatusSourceFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -256,6 +264,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				return body
 			}
 			body["build"] = build
+			if requestLogRetentionStatusSource != nil {
+				body["tasks"] = map[string]any{"requestLogRetention": requestLogRetentionStatusSource.RequestLogRetentionStatus()}
+			}
 			return body
 		}
 
@@ -994,6 +1005,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				writeError(w, http.StatusBadRequest, "invalid_input")
 				return
 			}
+			if errors.Is(err, admin.ErrConflict) {
+				writeError(w, http.StatusConflict, "conflict")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
@@ -1005,14 +1020,19 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		if autoTestStatusSource == nil {
-			writeJSON(w, http.StatusOK, settings)
+		stats, err := admins.GetRequestLogRetentionStats(r.Context(), time.Now())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		writeJSON(w, http.StatusOK, gatewaySettingsResponse{
-			GatewaySettings:               settings,
-			ProviderAccountAutoTestStatus: autoTestStatusSource.ProviderAccountAutoTestStatus(),
-		})
+		response := gatewaySettingsResponse{GatewaySettings: settings, RequestLogRetentionStats: stats}
+		if autoTestStatusSource != nil {
+			response.ProviderAccountAutoTestStatus = autoTestStatusSource.ProviderAccountAutoTestStatus()
+		}
+		if requestLogRetentionStatusSource != nil {
+			response.RequestLogRetentionStatus = requestLogRetentionStatusSource.RequestLogRetentionStatus()
+		}
+		writeJSON(w, http.StatusOK, response)
 	}))
 
 	mux.HandleFunc("PUT /api/admin/gateway-settings", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -2994,6 +3014,15 @@ func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAut
 		}
 	}
 	return gateway, webFS, autoTestStatusSource, build
+}
+
+func requestLogRetentionStatusSourceFromOptions(options ...any) RequestLogRetentionStatusSource {
+	for _, option := range options {
+		if source, ok := option.(RequestLogRetentionStatusSource); ok {
+			return source
+		}
+	}
+	return nil
 }
 
 func serveWeb(w http.ResponseWriter, r *http.Request, webFS fs.FS) bool {

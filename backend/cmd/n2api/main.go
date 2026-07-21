@@ -227,6 +227,11 @@ func main() {
 	}, slog.Default())
 	autoTestRunner.SetSystemEventRecorder(systemEventRepo)
 	go autoTestRunner.Run(ctx)
+	requestLogRetentionRunner := admin.NewRequestLogRetentionRunner(adminService, admin.RequestLogRetentionRunnerConfig{
+		Enabled: cfg.RequestLogRetentionRunnerEnabled, Interval: cfg.RequestLogRetentionInterval, BatchSize: cfg.RequestLogRetentionBatchSize,
+	}, slog.Default())
+	requestLogRetentionRunner.SetSystemEventRecorder(systemEventRepo)
+	go requestLogRetentionRunner.Run(ctx)
 
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL:                 cfg.OpenAIAPIBaseURL,
@@ -248,7 +253,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, os.DirFS("frontend/build"), systemEventRepo, build),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
