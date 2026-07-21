@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -31,6 +32,20 @@ func NewSystemEventRepository(pool *pgxpool.Pool, cursorSecret string) *SystemEv
 
 func (r *SystemEventRepository) Insert(ctx context.Context, event systemevent.Event) error {
 	return insertSystemEvent(ctx, r.pool, event)
+}
+
+func (r *SystemEventRepository) GetByID(ctx context.Context, id int64) (systemevent.Event, error) {
+	if id <= 0 {
+		return systemevent.Event{}, systemevent.ErrInvalidEvent
+	}
+	if r == nil || r.pool == nil {
+		return systemevent.Event{}, errors.New("system event repository is not configured")
+	}
+	event, err := scanSystemEvent(r.pool.QueryRow(ctx, systemEventSelectSQL+` WHERE id = $1`, id))
+	if err != nil {
+		return systemevent.Event{}, fmt.Errorf("get system event by ID: %w", err)
+	}
+	return event, nil
 }
 
 func InsertSystemEventTx(ctx context.Context, tx pgx.Tx, event systemevent.Event) error {

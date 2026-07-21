@@ -126,3 +126,14 @@ func TestAlertingCRUDActionsAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestAlertDeliveryActionsAreKnownAndInternal(t *testing.T) {
+	for _, action := range []Action{ActionAlertDeliveryFailed, ActionAlertDeliveryQueueOverflow} {
+		if !IsKnownAction(action) || !IsAlertDeliveryInternalAction(action) {
+			t.Fatalf("alert delivery action %q was not registered as internal", action)
+		}
+	}
+	if IsAlertDeliveryInternalAction(ActionAlertRuleCreated) {
+		t.Fatal("alert rule configuration action was incorrectly classified as delivery-internal")
+	}
+}

@@ -128,6 +128,8 @@ const (
 	ActionAlertRuleCreated                   Action = "alert_rule.created"
 	ActionAlertRuleUpdated                   Action = "alert_rule.updated"
 	ActionAlertRuleDeleted                   Action = "alert_rule.deleted"
+	ActionAlertDeliveryFailed                Action = "alert_delivery.failed"
+	ActionAlertDeliveryQueueOverflow         Action = "alert_delivery.queue_overflow"
 )
 
 const (
@@ -439,4 +441,9 @@ var knownActions = map[Action]struct{}{
 	ActionProviderAccountRateLimited: {}, ActionProviderAccountExpired: {}, ActionProviderAccountRecovered: {},
 	ActionAlertActionCreated: {}, ActionAlertActionUpdated: {}, ActionAlertActionDeleted: {},
 	ActionAlertRuleCreated: {}, ActionAlertRuleUpdated: {}, ActionAlertRuleDeleted: {},
+	ActionAlertDeliveryFailed: {}, ActionAlertDeliveryQueueOverflow: {},
+}
+
+func IsAlertDeliveryInternalAction(action Action) bool {
+	return action == ActionAlertDeliveryFailed || action == ActionAlertDeliveryQueueOverflow
 }

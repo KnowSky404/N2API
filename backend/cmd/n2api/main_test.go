@@ -80,3 +80,30 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		}
 	}
 }
+
+func TestMainWiresAlertDispatcherAfterDatabaseCommitNotifications(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("ReadFile main.go returned error: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"store.NewAlertingRepository",
+		"alerting.NewService",
+		"alerting.NewDispatcher",
+		"cfg.AlertDeliveryEnabled",
+		"systemEventRepo.Subscribe",
+		"systemEventRepo.GetByID",
+		"alertDispatcher.Start()",
+		"build, alertDispatcher",
+		"server.Shutdown",
+		"alertDispatcher.Shutdown",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("main.go missing alert dispatcher wiring %q", want)
+		}
+	}
+	if strings.Index(text, "server.Shutdown") > strings.Index(text, "alertDispatcher.Shutdown") {
+		t.Fatal("alert dispatcher shutdown must follow HTTP shutdown")
+	}
+}

@@ -661,11 +661,31 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 40 {
-		t.Fatalf("migration sources = %d, want 40", len(sources))
+	if len(sources) != 41 {
+		t.Fatalf("migration sources = %d, want 41", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[39].Path != "00040_alerting.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[40].Path != "00041_system_event_notifications.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestSystemEventNotificationsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00041_system_event_notifications.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE OR REPLACE FUNCTION n2api_notify_system_event_inserted()",
+		"PERFORM pg_notify('n2api_system_events', NEW.id::text)",
+		"CREATE TRIGGER system_events_notify_inserted",
+		"AFTER INSERT ON system_events",
+		"FOR EACH ROW",
+		"DROP TRIGGER IF EXISTS system_events_notify_inserted ON system_events",
+		"DROP FUNCTION IF EXISTS n2api_notify_system_event_inserted()",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }
 

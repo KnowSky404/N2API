@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/alerting"
 	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
@@ -188,6 +189,15 @@ func runServer() {
 		os.Exit(1)
 	}
 	systemEventRepo := store.NewSystemEventRepository(pool, cfg.EncryptionSecret)
+	alertingRepo := store.NewAlertingRepository(pool)
+	alertingService := alerting.NewService(alertingRepo, cfg.EncryptionKeyring)
+	alertDispatcher := alerting.NewDispatcher(alerting.DispatcherConfig{
+		Enabled: cfg.AlertDeliveryEnabled, Service: alertingService, Recorder: systemEventRepo,
+		Subscribe: func(ctx context.Context) (alerting.EventSubscription, error) {
+			return systemEventRepo.Subscribe(ctx)
+		},
+		GetEvent: systemEventRepo.GetByID,
+	})
 
 	adminRepo := store.NewAdminRepository(pool, cfg.EncryptionSecret)
 	adminService := admin.NewService(adminRepo, admin.Config{
@@ -209,6 +219,7 @@ func runServer() {
 		slog.Error("admin bootstrap failed", "error", err)
 		os.Exit(1)
 	}
+	alertDispatcher.Start()
 	go runAPIKeyCleanup(ctx, adminService, time.Hour)
 	if cfg.SystemEventRetentionDays > 0 {
 		go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour)
@@ -267,7 +278,7 @@ func runServer() {
 
 	server := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build),
+		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -277,19 +288,31 @@ func runServer() {
 		serverErrors <- server.ListenAndServe()
 	}()
 
+	exitCode := 0
 	select {
 	case err := <-serverErrors:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server stopped", "error", err)
-			os.Exit(1)
+			exitCode = 1
 		}
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			slog.Error("server shutdown failed", "error", err)
-			os.Exit(1)
+			exitCode = 1
 		}
+		cancel()
+	}
+	stop()
+	dispatcherShutdownCtx, cancelDispatcher := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := alertDispatcher.Shutdown(dispatcherShutdownCtx); err != nil {
+		slog.Error("alert delivery shutdown failed", "error_code", "alert_delivery_shutdown_failed")
+		exitCode = 1
+	}
+	cancelDispatcher()
+	if exitCode != 0 {
+		pool.Close()
+		os.Exit(exitCode)
 	}
 }
 

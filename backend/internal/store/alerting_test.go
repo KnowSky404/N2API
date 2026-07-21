@@ -281,6 +281,48 @@ func TestAlertingRepositorySerializesEvaluationAndResetsStateOnRuleUpdate(t *tes
 	}
 }
 
+func TestAlertingRepositoryDeliveryEvaluationUsesLockedRuleAndAction(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	action, err := repo.CreateAction(ctx, alerting.ActionCreate{
+		Name: "disabled webhook", Kind: alerting.ActionKindGenericWebhook,
+		EncryptedDestination: "encrypted-disabled-destination", Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("CreateAction: %v", err)
+	}
+	rule, err := repo.CreateRule(ctx, alerting.RuleCreate{Rule: alerting.Rule{
+		Name: "single failure", ActionID: action.ID, Enabled: true,
+		Category: systemevent.CategoryOAuth, Severity: systemevent.SeverityError,
+		EventAction:      systemevent.ActionOAuthRefreshAutomaticFailed,
+		AggregationCount: 1, CooldownSeconds: 300,
+		DeduplicationScope: alerting.DeduplicationScopeTarget,
+	}})
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	now := time.Date(2026, time.July, 21, 14, 0, 0, 0, time.UTC)
+	event := alertingStoreEvent(systemevent.ActionOAuthRefreshAutomaticFailed, systemevent.SeverityError, systemevent.OutcomeFailure, now)
+	evaluation, err := repo.EvaluateRuleEventForDelivery(ctx, rule.ID, event, now)
+	if err != nil || evaluation.ActionEnabled || evaluation.Decision != alerting.DecisionNone || evaluation.Rule.ID != rule.ID {
+		t.Fatalf("disabled action evaluation = %+v, %v", evaluation, err)
+	}
+	if _, err := repo.GetRuleState(ctx, rule.ID, rule.DeduplicationKeyHash(event)); !errors.Is(err, alerting.ErrNotFound) {
+		t.Fatalf("disabled action advanced rule state: %v", err)
+	}
+
+	if _, err := repo.UpdateAction(ctx, action.ID, alerting.ActionUpdate{
+		Name: action.Name, Kind: action.Kind, Enabled: true,
+	}); err != nil {
+		t.Fatalf("enable action: %v", err)
+	}
+	evaluation, err = repo.EvaluateRuleEventForDelivery(ctx, rule.ID, event, now.Add(time.Second))
+	if err != nil || !evaluation.ActionEnabled || evaluation.Decision != alerting.DecisionNotify ||
+		evaluation.Rule.ActionID != action.ID || evaluation.State.Phase != alerting.StatePhaseFiring {
+		t.Fatalf("enabled action evaluation = %+v, %v", evaluation, err)
+	}
+}
+
 func newTestAlertingRepository(t *testing.T, ctx context.Context) *AlertingRepository {
 	t.Helper()
 	dsn := os.Getenv("N2API_STORE_TEST_DATABASE_URL")

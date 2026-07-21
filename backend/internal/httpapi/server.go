@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/alerting"
 	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
@@ -126,6 +127,10 @@ type RequestLogRetentionStatusSource interface {
 	RequestLogRetentionStatus() admin.RequestLogRetentionStatus
 }
 
+type AlertDeliveryStatusSource interface {
+	AlertDeliveryStatus() alerting.DeliveryStatus
+}
+
 type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
@@ -209,6 +214,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	secureCookie := strings.EqualFold(publicURL.Scheme, "https")
 	gateway, webFS, autoTestStatusSource, build := parseServerOptions(options...)
 	requestLogRetentionStatusSource := requestLogRetentionStatusSourceFromOptions(options...)
+	alertDeliveryStatusSource := alertDeliveryStatusSourceFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -266,8 +272,15 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				return body
 			}
 			body["build"] = build
+			tasks := map[string]any{}
 			if requestLogRetentionStatusSource != nil {
-				body["tasks"] = map[string]any{"requestLogRetention": requestLogRetentionStatusSource.RequestLogRetentionStatus()}
+				tasks["requestLogRetention"] = requestLogRetentionStatusSource.RequestLogRetentionStatus()
+			}
+			if alertDeliveryStatusSource != nil {
+				tasks["alertDelivery"] = alertDeliveryStatusSource.AlertDeliveryStatus()
+			}
+			if len(tasks) > 0 {
+				body["tasks"] = tasks
 			}
 			return body
 		}
@@ -3024,6 +3037,15 @@ func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAut
 func requestLogRetentionStatusSourceFromOptions(options ...any) RequestLogRetentionStatusSource {
 	for _, option := range options {
 		if source, ok := option.(RequestLogRetentionStatusSource); ok {
+			return source
+		}
+	}
+	return nil
+}
+
+func alertDeliveryStatusSourceFromOptions(options ...any) AlertDeliveryStatusSource {
+	for _, option := range options {
+		if source, ok := option.(AlertDeliveryStatusSource); ok {
 			return source
 		}
 	}

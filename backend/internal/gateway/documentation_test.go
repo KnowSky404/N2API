@@ -994,19 +994,30 @@ func TestEncryptionInventoryDocumentationMatchesRuntimeContract(t *testing.T) {
 	}
 }
 
-func TestAlertingStorageDocumentationMatchesRuntimeContract(t *testing.T) {
+func TestAlertingDocumentationMatchesRuntimeContract(t *testing.T) {
 	checks := map[string][]string{
 		"../../../docs/manual.md": {
 			"alert-action-destination",
 			"`generic_webhook` and `ntfy`",
 			"Each rule is limited to 1024 deduplication states",
 			"Event evaluation and state admission are serialized per rule",
-			"not start a dispatcher, send network requests, or expose an Admin API/UI",
+			"`N2API_ALERT_DELIVERY_ENABLED=false`",
+			"rolled-back",
+			"transactions are never sent",
+			"intentionally not a",
+			"durable outbox",
+			"`tasks.alertDelivery`",
+			"no Admin API/UI",
+			"exposed yet",
 		},
 		"../../../docs/plans/2026-07-21-system-event-alerting.md": {
-			"Task status: completed locally on 2026-07-21",
+			"Tasks 1-2 completed locally on 2026-07-21",
 			"oldest idle state at capacity",
 			"No default rules, dispatcher, outbound request",
+			"dedicated pgx listener",
+			"event after commit",
+			"stably shards each rule/deduplication stream",
+			"Persistent delivery is deferred",
 		},
 	}
 

@@ -475,10 +475,10 @@ one or more unreadable rows, and `2` means command usage, configuration,
 database access, query, or output failed. Do not begin re-encryption while any
 row is unreadable or before the backup restore drill succeeds.
 
-### Alert Rule Storage
+### Alert Rules And Delivery
 
-The database stores notification actions and exact-match System Event rules for
-future bounded delivery. Action destinations use the
+The database stores notification actions and exact-match System Event rules.
+Action destinations use the
 dedicated `alert-action-destination` encryption kind; action and rule reads
 return only whether a destination is configured, never its plaintext or
 ciphertext. Supported action records are `generic_webhook` and `ntfy`. Rules can
@@ -491,9 +491,37 @@ only the oldest idle state may be evicted; active firing state is never silently
 discarded. Event evaluation and state admission are serialized per rule so
 concurrent events cannot lose aggregation counts or duplicate a notification
 decision. Updating a rule atomically clears its prior aggregation and firing
-state. The schema creates no action or rule by default. This storage layer does
-not start a dispatcher, send network requests, or expose an Admin API/UI; those
-behaviors remain separate alerting tasks.
+state. The schema creates no action or rule by default, and no Admin API/UI is
+exposed yet.
+
+Bounded delivery is independently gated by
+`N2API_ALERT_DELIVERY_ENABLED=false`. When enabled, PostgreSQL publishes each
+committed System Event ID to a dedicated listener; events in rolled-back
+transactions are never sent. The listener reserves one pool connection, so an
+enabled deployment must configure at least two PostgreSQL pool connections.
+The listener, one ordered evaluator, and two HTTP workers run outside gateway
+request processing. Each rule/deduplication stream is stably assigned to one
+worker so its firing and recovery notifications remain ordered; unrelated
+streams can deliver concurrently. Queue saturation drops the event without
+waiting on the gateway and records one aggregate overflow event per reporting
+window.
+
+Generic Webhook sends a bounded JSON summary. ntfy sends a bounded plain-text
+summary to its configured topic URL. The dedicated delivery client has a short
+timeout, does not use environment proxies, never follows redirects, and never
+stores or logs a destination, query string, response body, or raw network error.
+Any `2xx` response succeeds. Network failures, `408`, `425`, `429`, and `5xx`
+responses receive at most three capped exponential attempts; other responses
+fail permanently. Exhausted delivery and queue-overflow events are excluded from
+all rule matching to prevent recursive notification storms.
+
+Rule state and cooldown are committed before the outbound attempt. Delivery
+failure does not roll them back. The in-process queues are intentionally not a
+durable outbox: a crash, restart, listener disconnect, or sustained queue
+saturation can lose a notification. Authenticated `GET /api/admin/health`
+reports current counters and sanitized last-result state at
+`tasks.alertDelivery`; unauthenticated health responses omit it. Disable the
+startup gate and all rules to stop outbound delivery.
 
 Changing `N2API_ENCRYPTION_SECRET` invalidates existing Request Log and System
 Event cursors because those cursor signatures intentionally use only the current

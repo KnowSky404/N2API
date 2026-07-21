@@ -1,6 +1,6 @@
 # System Event Alerting Plan
 
-Status: in progress; Task 1 completed locally on 2026-07-21
+Status: in progress; Tasks 1-2 completed locally on 2026-07-21
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
@@ -75,6 +75,8 @@ Rules and actions round-trip without exposing encrypted destinations.
 
 ## Task 2: Add A Bounded Asynchronous Dispatcher
 
+Task status: completed locally on 2026-07-21
+
 ### Goal
 
 Deliver notifications without blocking requests or recursively alerting.
@@ -97,6 +99,32 @@ recovery transitions. Alert-delivery failure emits a System Event explicitly
 excluded from notification matching. Queue overflow increments one aggregate
 counter/event. Persistent delivery is deferred until loss on restart proves
 unacceptable.
+
+The local implementation adds an `AFTER INSERT` PostgreSQL notification that
+publishes only the committed System Event ID. A dedicated pgx listener reads the
+event after commit, so transactional audit/runtime events are never dispatched
+before commit and rolled-back events are not dispatched. One evaluator preserves
+commit order and stably shards each rule/deduplication stream to one of two fixed
+HTTP workers, so firing and recovery stay ordered while unrelated streams can run
+in parallel.
+The event and delivery queues are bounded; event saturation never waits on the
+gateway path and produces a periodic aggregate overflow event.
+
+Rule state and its cooldown are committed before an HTTP delivery attempt. A
+failed attempt or process crash does not roll that state back, which prevents a
+retry storm but can lose a notification. Listener disconnects and process
+restarts can also lose notifications; a durable outbox remains deferred. Generic
+Webhook and ntfy use a dedicated client with a five-second timeout, no environment
+proxy, no redirects, bounded response draining, three capped attempts, and fixed
+sanitized error codes. Network failures, `408`, `425`, `429`, and `5xx` retry;
+other non-`2xx` responses do not. `alert_delivery.failed` and
+`alert_delivery.queue_overflow` are rejected by rule validation, event intake,
+and matching to prevent recursion.
+
+`N2API_ALERT_DELIVERY_ENABLED` is an independent startup gate and defaults to
+`false`. Enabling it requires at least two PostgreSQL pool connections because
+the listener reserves one. Authenticated admin health exposes bounded delivery
+status at `tasks.alertDelivery`; public health endpoints do not expose it.
 
 ### Completion Criteria
 

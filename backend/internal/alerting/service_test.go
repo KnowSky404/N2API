@@ -100,6 +100,16 @@ func (r *memoryRepository) GetEncryptedDestination(_ context.Context, id int64) 
 	return destination, nil
 }
 
+func (r *memoryRepository) GetActionForDelivery(_ context.Context, id int64) (ActionForDelivery, error) {
+	action, ok := r.actions[id]
+	if !ok {
+		return ActionForDelivery{}, ErrNotFound
+	}
+	return ActionForDelivery{
+		ID: action.ID, Kind: action.Kind, Enabled: action.Enabled, EncryptedDestination: r.destinations[id],
+	}, nil
+}
+
 func (r *memoryRepository) CreateRule(_ context.Context, input RuleCreate) (Rule, error) {
 	if r.err != nil {
 		return Rule{}, r.err
@@ -195,6 +205,25 @@ func (r *memoryRepository) EvaluateRuleEvent(ctx context.Context, ruleID int64, 
 	return next, decision, nil
 }
 
+func (r *memoryRepository) EvaluateRuleEventForDelivery(ctx context.Context, ruleID int64, event systemevent.Event, now time.Time) (Evaluation, error) {
+	rule, ok := r.rules[ruleID]
+	if !ok {
+		return Evaluation{}, ErrNotFound
+	}
+	action, ok := r.actions[rule.ActionID]
+	if !ok {
+		return Evaluation{}, ErrNotFound
+	}
+	if !action.Enabled {
+		return Evaluation{Rule: rule}, nil
+	}
+	state, decision, err := r.EvaluateRuleEvent(ctx, ruleID, event, now)
+	if err != nil {
+		return Evaluation{}, err
+	}
+	return Evaluation{Rule: rule, ActionEnabled: true, State: state, Decision: decision}, nil
+}
+
 func TestServiceEncryptsAndRedactsActionDestinations(t *testing.T) {
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
@@ -251,6 +280,7 @@ func TestServiceValidatesGenericWebhookAndNtfyDestinations(t *testing.T) {
 
 	invalid := []ActionInput{
 		{Name: "", Kind: ActionKindGenericWebhook, Destination: "https://example.test"},
+		{Name: "bad\tname", Kind: ActionKindGenericWebhook, Destination: "https://example.test/hook"},
 		{Name: "bad kind", Kind: "telegram", Destination: "https://example.test"},
 		{Name: "relative", Kind: ActionKindGenericWebhook, Destination: "/hook"},
 		{Name: "userinfo", Kind: ActionKindGenericWebhook, Destination: "https://user:pass@example.test/hook"},
@@ -338,10 +368,16 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 	invalid := []Rule{
 		{},
 		func() Rule { value := validRule(); value.Name = ""; return value }(),
+		func() Rule { value := validRule(); value.Name = "bad\u0001name"; return value }(),
 		func() Rule { value := validRule(); value.ActionID = 0; return value }(),
 		func() Rule { value := validRule(); value.Category = "unknown"; return value }(),
 		func() Rule { value := validRule(); value.Severity = "critical"; return value }(),
 		func() Rule { value := validRule(); value.EventAction = "unknown.action"; return value }(),
+		func() Rule {
+			value := validRule()
+			value.EventAction = systemevent.ActionAlertDeliveryFailed
+			return value
+		}(),
 		func() Rule {
 			value := validRule()
 			value.Category, value.Severity, value.EventAction = "", "", ""
@@ -363,6 +399,11 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 			return value
 		}(),
 		func() Rule { value := validRule(); value.RecoveryAction = "unknown.action"; return value }(),
+		func() Rule {
+			value := validRule()
+			value.RecoveryAction = systemevent.ActionAlertDeliveryQueueOverflow
+			return value
+		}(),
 		func() Rule { value := validRule(); value.RecoveryAction = value.EventAction; return value }(),
 	}
 	for index, candidate := range invalid {

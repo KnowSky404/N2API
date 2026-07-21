@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
@@ -48,6 +49,23 @@ const (
 	DecisionSuppress Decision = "suppress"
 	DecisionRecover  Decision = "recover"
 )
+
+type DeliveryStatus struct {
+	Enabled         bool       `json:"enabled"`
+	Running         bool       `json:"running"`
+	QueueDepth      int        `json:"queueDepth"`
+	QueueCapacity   int        `json:"queueCapacity"`
+	ActiveWorkers   int        `json:"activeWorkers"`
+	WorkerCount     int        `json:"workerCount"`
+	EnqueuedCount   uint64     `json:"enqueuedCount"`
+	DeliveredCount  uint64     `json:"deliveredCount"`
+	FailedCount     uint64     `json:"failedCount"`
+	DroppedCount    uint64     `json:"droppedCount"`
+	RetriedCount    uint64     `json:"retriedCount"`
+	LastDeliveredAt *time.Time `json:"lastDeliveredAt,omitempty"`
+	LastFailedAt    *time.Time `json:"lastFailedAt,omitempty"`
+	LastErrorCode   string     `json:"lastErrorCode"`
+}
 
 var (
 	ErrInvalidInput  = errors.New("invalid alerting input")
@@ -94,6 +112,20 @@ type ActionUpdate struct {
 	Enabled              bool
 }
 
+type ActionForDelivery struct {
+	ID                   int64
+	Kind                 ActionKind
+	Enabled              bool
+	EncryptedDestination string `json:"-"`
+}
+
+type ResolvedAction struct {
+	ID          int64
+	Kind        ActionKind
+	Enabled     bool
+	Destination string `json:"-"`
+}
+
 type Rule struct {
 	ID                       int64                `json:"id"`
 	Name                     string               `json:"name"`
@@ -133,6 +165,13 @@ type RuleState struct {
 	UpdatedAt            time.Time  `json:"updatedAt"`
 }
 
+type Evaluation struct {
+	Rule          Rule
+	ActionEnabled bool
+	State         RuleState
+	Decision      Decision
+}
+
 type Repository interface {
 	CreateAction(context.Context, ActionCreate) (Action, error)
 	UpdateAction(context.Context, int64, ActionUpdate) (Action, error)
@@ -140,6 +179,7 @@ type Repository interface {
 	GetAction(context.Context, int64) (Action, error)
 	ListActions(context.Context) ([]Action, error)
 	GetEncryptedDestination(context.Context, int64) (string, error)
+	GetActionForDelivery(context.Context, int64) (ActionForDelivery, error)
 
 	CreateRule(context.Context, RuleCreate) (Rule, error)
 	UpdateRule(context.Context, int64, RuleUpdate) (Rule, error)
@@ -150,6 +190,7 @@ type Repository interface {
 	GetRuleState(context.Context, int64, string) (RuleState, error)
 	SaveRuleState(context.Context, RuleState) error
 	EvaluateRuleEvent(context.Context, int64, systemevent.Event, time.Time) (RuleState, Decision, error)
+	EvaluateRuleEventForDelivery(context.Context, int64, systemevent.Event, time.Time) (Evaluation, error)
 }
 
 func (rule Rule) validate() error {
@@ -169,6 +210,9 @@ func (rule Rule) validate() error {
 		return ErrInvalidInput
 	}
 	if rule.RecoveryAction != "" && !systemevent.IsKnownAction(rule.RecoveryAction) {
+		return ErrInvalidInput
+	}
+	if systemevent.IsAlertDeliveryInternalAction(rule.EventAction) || systemevent.IsAlertDeliveryInternalAction(rule.RecoveryAction) {
 		return ErrInvalidInput
 	}
 	if rule.EventAction != "" && rule.RecoveryAction == rule.EventAction {
@@ -196,5 +240,13 @@ func (rule Rule) validate() error {
 }
 
 func invalidName(value string, maxLength int) bool {
-	return strings.TrimSpace(value) == "" || len(value) > maxLength || strings.ContainsAny(value, "\x00\r\n")
+	if strings.TrimSpace(value) == "" || len(value) > maxLength {
+		return true
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return true
+		}
+	}
+	return false
 }

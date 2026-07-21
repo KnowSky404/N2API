@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/alerting"
 	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
@@ -40,7 +41,15 @@ type fakeRequestLogRetentionStatusSource struct {
 	status admin.RequestLogRetentionStatus
 }
 
+type fakeAlertDeliveryStatusSource struct {
+	status alerting.DeliveryStatus
+}
+
 func (s fakeRequestLogRetentionStatusSource) RequestLogRetentionStatus() admin.RequestLogRetentionStatus {
+	return s.status
+}
+
+func (s fakeAlertDeliveryStatusSource) AlertDeliveryStatus() alerting.DeliveryStatus {
 	return s.status
 }
 
@@ -1273,6 +1282,78 @@ func TestAdminHealthIncludesRequestLogRetentionTaskOnlyForAuthenticatedSession(t
 	status := body.Tasks["requestLogRetention"]
 	if !status.AutomaticEnabled || !status.Running || status.LastStartedAt == nil || !status.LastStartedAt.Equal(started) {
 		t.Fatalf("retention task status = %+v", status)
+	}
+}
+
+func TestAdminHealthIncludesAlertDeliveryTaskOnlyForAuthenticatedSession(t *testing.T) {
+	source := fakeAlertDeliveryStatusSource{status: alerting.DeliveryStatus{
+		Enabled: true, Running: true, QueueDepth: 3, DroppedCount: 2,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, source)
+
+	for _, testCase := range []struct {
+		name   string
+		cookie string
+	}{
+		{name: "unauthenticated"},
+		{name: "invalid session", cookie: "expired-session"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+			if testCase.cookie != "" {
+				request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: testCase.cookie})
+			}
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, request)
+			if strings.Contains(recorder.Body.String(), "alertDelivery") {
+				t.Fatalf("health leaked alert delivery task status: %s", recorder.Body.String())
+			}
+		})
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	var body struct {
+		Tasks map[string]json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if _, ok := body.Tasks["alertDelivery"]; !ok {
+		t.Fatalf("authenticated health tasks = %s, want alertDelivery", recorder.Body.String())
+	}
+	var status alerting.DeliveryStatus
+	if err := json.Unmarshal(body.Tasks["alertDelivery"], &status); err != nil {
+		t.Fatalf("decode alert delivery status: %v", err)
+	}
+	if !status.Enabled || !status.Running || status.QueueDepth != 3 || status.DroppedCount != 2 {
+		t.Fatalf("alert delivery status = %+v, want configured status", status)
+	}
+}
+
+func TestAdminHealthMergesBackgroundTaskStatuses(t *testing.T) {
+	server := NewServer(
+		config.Config{}, staticHealth{}, newFakeAdminService(), nil,
+		fakeRequestLogRetentionStatusSource{}, fakeAlertDeliveryStatusSource{},
+	)
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+
+	var body struct {
+		Tasks map[string]json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if _, ok := body.Tasks["requestLogRetention"]; !ok {
+		t.Fatalf("health tasks = %s, want requestLogRetention", recorder.Body.String())
+	}
+	if _, ok := body.Tasks["alertDelivery"]; !ok {
+		t.Fatalf("health tasks = %s, want alertDelivery", recorder.Body.String())
 	}
 }
 

@@ -37,6 +37,25 @@ func TestRuleMatchesExactFiltersAndRejectsOversizedMetadata(t *testing.T) {
 	}
 }
 
+func TestRuleNeverMatchesAlertDeliveryInternalEvents(t *testing.T) {
+	rule := validRule()
+	rule.Category = systemevent.CategoryRuntime
+	rule.Severity = systemevent.SeverityError
+	rule.EventAction = ""
+	for _, action := range []systemevent.Action{
+		systemevent.ActionAlertDeliveryFailed,
+		systemevent.ActionAlertDeliveryQueueOverflow,
+	} {
+		event := triggerEvent()
+		event.Category = systemevent.CategoryRuntime
+		event.Action = action
+		matched, err := rule.MatchesTrigger(event)
+		if err != nil || matched {
+			t.Fatalf("MatchesTrigger(%q) = %v, %v, want false", action, matched, err)
+		}
+	}
+}
+
 func TestEvaluateAggregatesNotifiesSuppressesAndRecoversAtExactBoundaries(t *testing.T) {
 	rule := validRule()
 	rule.ID = 9

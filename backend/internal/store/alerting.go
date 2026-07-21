@@ -98,6 +98,22 @@ func (r *AlertingRepository) GetEncryptedDestination(ctx context.Context, id int
 	return destination, nil
 }
 
+func (r *AlertingRepository) GetActionForDelivery(ctx context.Context, id int64) (alerting.ActionForDelivery, error) {
+	var action alerting.ActionForDelivery
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, kind, enabled, encrypted_destination
+		FROM alert_actions
+		WHERE id = $1
+	`, id).Scan(&action.ID, &action.Kind, &action.Enabled, &action.EncryptedDestination)
+	if err == pgx.ErrNoRows {
+		return alerting.ActionForDelivery{}, alerting.ErrNotFound
+	}
+	if err != nil {
+		return alerting.ActionForDelivery{}, fmt.Errorf("get alert action for delivery: %w", err)
+	}
+	return action, nil
+}
+
 const alertActionSelectSQL = `SELECT
 	id, name, kind, enabled, encrypted_destination <> '', created_at, updated_at
 FROM alert_actions`
@@ -263,9 +279,18 @@ func (r *AlertingRepository) SaveRuleState(ctx context.Context, state alerting.R
 }
 
 func (r *AlertingRepository) EvaluateRuleEvent(ctx context.Context, ruleID int64, event systemevent.Event, now time.Time) (alerting.RuleState, alerting.Decision, error) {
+	evaluation, err := r.evaluateRuleEvent(ctx, ruleID, event, now, false)
+	return evaluation.State, evaluation.Decision, err
+}
+
+func (r *AlertingRepository) EvaluateRuleEventForDelivery(ctx context.Context, ruleID int64, event systemevent.Event, now time.Time) (alerting.Evaluation, error) {
+	return r.evaluateRuleEvent(ctx, ruleID, event, now, true)
+}
+
+func (r *AlertingRepository) evaluateRuleEvent(ctx context.Context, ruleID int64, event systemevent.Event, now time.Time, requireEnabledAction bool) (alerting.Evaluation, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return alerting.RuleState{}, alerting.DecisionNone, fmt.Errorf("begin alert rule evaluation: %w", err)
+		return alerting.Evaluation{}, fmt.Errorf("begin alert rule evaluation: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -276,10 +301,22 @@ func (r *AlertingRepository) EvaluateRuleEvent(ctx context.Context, ruleID int64
 		FOR UPDATE
 	`, ruleID))
 	if err == pgx.ErrNoRows {
-		return alerting.RuleState{}, alerting.DecisionNone, alerting.ErrNotFound
+		return alerting.Evaluation{}, alerting.ErrNotFound
 	}
 	if err != nil {
-		return alerting.RuleState{}, alerting.DecisionNone, fmt.Errorf("lock alert rule for evaluation: %w", err)
+		return alerting.Evaluation{}, fmt.Errorf("lock alert rule for evaluation: %w", err)
+	}
+
+	evaluation := alerting.Evaluation{Rule: rule, ActionEnabled: true, Decision: alerting.DecisionNone}
+	if requireEnabledAction {
+		if err := tx.QueryRow(ctx, `SELECT enabled FROM alert_actions WHERE id = $1 FOR UPDATE`, rule.ActionID).Scan(&evaluation.ActionEnabled); err == pgx.ErrNoRows {
+			return alerting.Evaluation{}, alerting.ErrNotFound
+		} else if err != nil {
+			return alerting.Evaluation{}, fmt.Errorf("lock alert action for evaluation: %w", err)
+		}
+		if !evaluation.ActionEnabled {
+			return evaluation, nil
+		}
 	}
 
 	hash := rule.DeduplicationKeyHash(event)
@@ -293,24 +330,26 @@ func (r *AlertingRepository) EvaluateRuleEvent(ctx context.Context, ruleID int64
 			RuleID: rule.ID, DeduplicationKeyHash: hash, Phase: alerting.StatePhaseIdle,
 		}
 	} else if err != nil {
-		return alerting.RuleState{}, alerting.DecisionNone, fmt.Errorf("get alert rule state for evaluation: %w", err)
+		return alerting.Evaluation{}, fmt.Errorf("get alert rule state for evaluation: %w", err)
 	}
 
 	previous := state
 	evaluated, decision, err := alerting.Evaluate(rule, state, event, now)
 	if err != nil {
-		return alerting.RuleState{}, alerting.DecisionNone, err
+		return alerting.Evaluation{}, err
 	}
+	evaluation.State = evaluated
+	evaluation.Decision = decision
 	if evaluated == previous {
-		return evaluated, decision, nil
+		return evaluation, nil
 	}
 	if err := saveAlertRuleStateTx(ctx, tx, evaluated); err != nil {
-		return alerting.RuleState{}, alerting.DecisionNone, err
+		return alerting.Evaluation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return alerting.RuleState{}, alerting.DecisionNone, fmt.Errorf("commit alert rule evaluation: %w", err)
+		return alerting.Evaluation{}, fmt.Errorf("commit alert rule evaluation: %w", err)
 	}
-	return evaluated, decision, nil
+	return evaluation, nil
 }
 
 func saveAlertRuleStateTx(ctx context.Context, tx pgx.Tx, state alerting.RuleState) error {

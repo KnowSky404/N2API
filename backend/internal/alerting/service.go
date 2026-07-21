@@ -106,25 +106,29 @@ func (service *Service) ListActions(ctx context.Context) ([]Action, error) {
 }
 
 func (service *Service) DestinationForDelivery(ctx context.Context, actionID int64) (string, error) {
+	action, err := service.ResolveActionForDelivery(ctx, actionID)
+	if err != nil {
+		return "", err
+	}
+	return action.Destination, nil
+}
+
+func (service *Service) ResolveActionForDelivery(ctx context.Context, actionID int64) (ResolvedAction, error) {
 	if actionID <= 0 {
-		return "", ErrInvalidInput
+		return ResolvedAction{}, ErrInvalidInput
 	}
-	encrypted, err := service.repository.GetEncryptedDestination(ctx, actionID)
+	stored, err := service.repository.GetActionForDelivery(ctx, actionID)
 	if err != nil {
-		return "", repositoryError(err)
+		return ResolvedAction{}, repositoryError(err)
 	}
-	destination, err := service.keyring.DecryptStringFor(secret.SecretKindAlertActionDestination, encrypted)
+	destination, err := service.keyring.DecryptStringFor(secret.SecretKindAlertActionDestination, stored.EncryptedDestination)
 	if err != nil {
-		return "", ErrRepository
+		return ResolvedAction{}, ErrRepository
 	}
-	action, err := service.repository.GetAction(ctx, actionID)
-	if err != nil {
-		return "", repositoryError(err)
+	if err := validateDestination(stored.Kind, destination); err != nil {
+		return ResolvedAction{}, ErrRepository
 	}
-	if err := validateDestination(action.Kind, destination); err != nil {
-		return "", ErrRepository
-	}
-	return destination, nil
+	return ResolvedAction{ID: stored.ID, Kind: stored.Kind, Enabled: stored.Enabled, Destination: destination}, nil
 }
 
 func (service *Service) CreateRule(ctx context.Context, input Rule) (Rule, error) {
@@ -187,10 +191,7 @@ func (service *Service) ListRules(ctx context.Context) ([]Rule, error) {
 }
 
 func (service *Service) EvaluateRuleEvent(ctx context.Context, ruleID int64, event systemevent.Event, now time.Time) (RuleState, Decision, error) {
-	if ruleID <= 0 || now.IsZero() {
-		return RuleState{}, DecisionNone, ErrInvalidInput
-	}
-	if err := systemevent.ValidateEvent(event); err != nil {
+	if err := validateEvaluationInput(ruleID, event, now); err != nil {
 		return RuleState{}, DecisionNone, ErrInvalidInput
 	}
 	state, decision, err := service.repository.EvaluateRuleEvent(ctx, ruleID, event, now.UTC())
@@ -198,6 +199,24 @@ func (service *Service) EvaluateRuleEvent(ctx context.Context, ruleID int64, eve
 		return RuleState{}, DecisionNone, repositoryError(err)
 	}
 	return state, decision, nil
+}
+
+func (service *Service) EvaluateRuleEventForDelivery(ctx context.Context, ruleID int64, event systemevent.Event, now time.Time) (Evaluation, error) {
+	if err := validateEvaluationInput(ruleID, event, now); err != nil {
+		return Evaluation{}, err
+	}
+	evaluation, err := service.repository.EvaluateRuleEventForDelivery(ctx, ruleID, event, now.UTC())
+	if err != nil {
+		return Evaluation{}, repositoryError(err)
+	}
+	return evaluation, nil
+}
+
+func validateEvaluationInput(ruleID int64, event systemevent.Event, now time.Time) error {
+	if ruleID <= 0 || now.IsZero() || systemevent.ValidateEvent(event) != nil {
+		return ErrInvalidInput
+	}
+	return nil
 }
 
 func validateAction(name string, kind ActionKind, destination string) error {

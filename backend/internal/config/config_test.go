@@ -301,6 +301,45 @@ func TestLoadRequestLogRetentionRunnerConfig(t *testing.T) {
 	}
 }
 
+func TestLoadAlertDeliveryEnabled(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	cfg, err := Load(mapLookup(base))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if cfg.AlertDeliveryEnabled {
+		t.Fatal("AlertDeliveryEnabled = true, want false by default")
+	}
+
+	enabled := maps.Clone(base)
+	enabled["N2API_ALERT_DELIVERY_ENABLED"] = "true"
+	cfg, err = Load(mapLookup(enabled))
+	if err != nil {
+		t.Fatalf("Load enabled returned error: %v", err)
+	}
+	if !cfg.AlertDeliveryEnabled {
+		t.Fatal("AlertDeliveryEnabled = false, want true")
+	}
+
+	invalid := maps.Clone(base)
+	invalid["N2API_ALERT_DELIVERY_ENABLED"] = "sometimes"
+	if _, err := Load(mapLookup(invalid)); err == nil {
+		t.Fatal("Load invalid alert delivery flag returned nil error")
+	}
+
+	limitedPool := maps.Clone(base)
+	limitedPool["DATABASE_URL"] = "postgres://example?pool_max_conns=1"
+	if _, err := Load(mapLookup(limitedPool)); err != nil {
+		t.Fatalf("Load disabled with one pool connection returned error: %v", err)
+	}
+	limitedPool["N2API_ALERT_DELIVERY_ENABLED"] = "true"
+	if _, err := Load(mapLookup(limitedPool)); err == nil || !strings.Contains(err.Error(), "pool_max_conns") {
+		t.Fatalf("Load enabled with one pool connection error = %v, want pool_max_conns validation", err)
+	}
+}
+
 func TestLoadRequestLogExportConfig(t *testing.T) {
 	base := map[string]string{
 		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",

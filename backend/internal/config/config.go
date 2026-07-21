@@ -46,6 +46,7 @@ type Config struct {
 	RequestLogExportMaxRows                int
 	RequestLogExportTimeout                time.Duration
 	SystemEventRetentionDays               int
+	AlertDeliveryEnabled                   bool
 	TrustedProxyCIDRs                      []netip.Prefix
 	AdminLoginThrottleEnabled              bool
 	AdminLoginThrottleFailures             int
@@ -160,6 +161,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.ProviderAccountAutoTestEnabled = autoTestEnabled
+	alertDeliveryEnabled, err := parseBool(lookup("N2API_ALERT_DELIVERY_ENABLED"), "N2API_ALERT_DELIVERY_ENABLED")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AlertDeliveryEnabled = alertDeliveryEnabled
 	requestLogRetentionRunnerEnabled, err := parseBool(lookup("N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED"), "N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED")
 	if err != nil {
 		return Config{}, err
@@ -426,7 +432,7 @@ func validateStartupSecurity(cfg *Config, acceptedRisks map[string]struct{}) err
 	if err := validateSecrets(cfg.AdminPassword, cfg.EncryptionSecret); err != nil {
 		return err
 	}
-	if err := validateDatabaseURL(cfg.DatabaseURL, acceptedRisks); err != nil {
+	if err := validateDatabaseURL(cfg.DatabaseURL, acceptedRisks, cfg.AlertDeliveryEnabled); err != nil {
 		return err
 	}
 	openAIAPIBaseURL, err := validateUpstreamURL("OPENAI_API_BASE_URL", cfg.OpenAIAPIBaseURL, cfg.AllowHTTPAPIUpstreams)
@@ -519,10 +525,13 @@ func validatePreviousEncryptionKeys(adminPassword, currentSecret string, keys []
 	return nil
 }
 
-func validateDatabaseURL(value string, acceptedRisks map[string]struct{}) error {
+func validateDatabaseURL(value string, acceptedRisks map[string]struct{}, alertDeliveryEnabled bool) error {
 	poolConfig, err := pgxpool.ParseConfig(value)
 	if err != nil {
 		return errors.New("DATABASE_URL must be a valid PostgreSQL connection string")
+	}
+	if alertDeliveryEnabled && poolConfig.MaxConns < 2 {
+		return errors.New("DATABASE_URL pool_max_conns must be at least 2 when N2API_ALERT_DELIVERY_ENABLED is true")
 	}
 	if isKnownPlaceholder(poolConfig.ConnConfig.Password) {
 		return errors.New("DATABASE_URL must not contain a placeholder password")

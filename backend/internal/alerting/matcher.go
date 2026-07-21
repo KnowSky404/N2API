@@ -17,6 +17,9 @@ func (rule Rule) MatchesTrigger(event systemevent.Event) (bool, error) {
 	if err := systemevent.ValidateEvent(event); err != nil {
 		return false, ErrInvalidInput
 	}
+	if systemevent.IsAlertDeliveryInternalAction(event.Action) {
+		return false, nil
+	}
 	if !rule.Enabled {
 		return false, nil
 	}
@@ -31,6 +34,9 @@ func (rule Rule) MatchesRecovery(event systemevent.Event) (bool, error) {
 	}
 	if err := systemevent.ValidateEvent(event); err != nil {
 		return false, ErrInvalidInput
+	}
+	if systemevent.IsAlertDeliveryInternalAction(event.Action) {
+		return false, nil
 	}
 	if !rule.Enabled {
 		return false, nil
