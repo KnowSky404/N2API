@@ -9,6 +9,7 @@ path; detailed usage and operations guidance belongs here.
 - [Quick start](../README.md#quick-start)
 - [Basic setup](../README.md#basic-setup)
 - [Complete manual](manual.md)
+- [Development resource lifecycle](development.md)
 
 ## Manual
 

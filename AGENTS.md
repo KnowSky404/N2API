@@ -51,8 +51,14 @@
 - The admin UI is an operational dashboard, not a landing page.
 
 ## Development Commands
-- Prefer `go test ./...` for backend verification.
-- Prefer `bun run check` and `bun run build` for frontend verification.
+- Prefer `make test` for local backend and frontend verification so temporary
+  Go, Bun, and build resources use the managed lifecycle.
+- Use `make test-e2e`, `make test-contracts`, and
+  `make test-request-log-profile` for heavy local verification; these commands
+  run the disk preflight and isolate their resources.
+- Use direct `go test ./...`, `bun run check`, and `bun run build` only when the
+  managed wrapper cannot express the required focused command, and do not
+  create fixed caches under `/tmp`.
 - Prefer Docker Compose for local full-stack verification.
 - Do not introduce Node.js, npm, npx, pnpm, or yarn unless Bun cannot support a required package or workflow.
 

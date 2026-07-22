@@ -1,11 +1,17 @@
 name: n2api-e2e
 
+x-test-labels: &test-labels
+  io.knowsky.n2api.resource: test
+  io.knowsky.n2api.run-id: ${N2API_TEST_RUN_ID:?set N2API_TEST_RUN_ID}
+
 services:
   mock-openai:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.e2e
       target: mock-openai
+      labels: *test-labels
+    labels: *test-labels
     environment:
       N2API_MOCK_ADDR: :8080
       N2API_MOCK_API_KEY: e2e-upstream-fixture-key
@@ -27,6 +33,7 @@ services:
 
   postgres:
     image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
+    labels: *test-labels
     environment:
       POSTGRES_DB: n2api_e2e
       POSTGRES_USER: n2api
@@ -45,6 +52,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      labels: *test-labels
+    labels: *test-labels
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=10001,gid=10001
@@ -84,6 +93,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.e2e
       target: gateway-e2e
+      labels: *test-labels
+    labels: *test-labels
     environment:
       N2API_E2E_BASE_URL: http://n2api:3000
       N2API_E2E_DATABASE_URL: postgres://n2api:e2e-postgres-password@postgres:5432/n2api_e2e?sslmode=disable
@@ -113,6 +124,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.e2e
       target: contracts-javascript
+      labels: *test-labels
+    labels: *test-labels
     environment: &contract-environment
       N2API_CONTRACT_BASE_URL: http://n2api:3000/v1
       N2API_CONTRACT_ADMIN_BASE_URL: http://n2api:3000
@@ -142,6 +155,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.e2e
       target: contracts-python
+      labels: *test-labels
+    labels: *test-labels
     environment: *contract-environment
     networks:
       - e2e
@@ -157,6 +172,8 @@ services:
 networks:
   e2e:
     internal: true
+    labels: *test-labels
 
 volumes:
   postgres-data:
+    labels: *test-labels

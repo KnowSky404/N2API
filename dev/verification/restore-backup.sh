@@ -36,6 +36,8 @@ if [[ ! -f "${dump_path}" || ! -r "${dump_path}" ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+source "${repo_root}/dev/lib/test-resources.sh"
+"${repo_root}/dev/maintenance/disk-check.sh" --heavy
 compose_file="${repo_root}/deploy/compose.restore-test.yaml"
 suffix="$(date -u +%s)-$$-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')"
 project="n2api-restore-${suffix}"
@@ -47,16 +49,25 @@ export N2API_RESTORE_DUMP_PATH="${dump_path}"
 export N2API_RESTORE_API_KEY_ID=""
 export N2API_RESTORE_ENCRYPTION_KEY_ID="${N2API_RESTORE_ENCRYPTION_KEY_ID:-default}"
 export N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS="${N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS:-[]}"
+export N2API_TEST_RUN_ID="${project}"
+n2api_mark_run_active "${N2API_TEST_RUN_ID}"
 
 compose() {
-  docker compose --project-name "${project}" --file "${compose_file}" "$@"
+  n2api_run_command env N2API_TEST_RUN_ID="${N2API_TEST_RUN_ID}" \
+    docker compose --project-name "${project}" --file "${compose_file}" "$@"
 }
 
 cleanup() {
   local status=$?
+  local cleanup_failed=0
   trap - EXIT INT TERM
   if [[ ${cleanup_armed} -eq 1 ]]; then
-    compose down --volumes --remove-orphans --timeout 10 >/dev/null 2>&1 || true
+    compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || cleanup_failed=1
+  fi
+  n2api_remove_run_docker_resources "${N2API_TEST_RUN_ID}" || cleanup_failed=1
+  n2api_unmark_run_active "${N2API_TEST_RUN_ID}"
+  if [[ ${status} -eq 0 && ${cleanup_failed} -ne 0 ]]; then
+    status=1
   fi
   if [[ ${status} -ne 0 ]]; then
     echo "restore_status=failed stage=${stage}" >&2
@@ -65,8 +76,8 @@ cleanup() {
 }
 
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'n2api_signal_exit INT 130' INT
+trap 'n2api_signal_exit TERM 143' TERM
 
 mapfile -t existing_containers < <(docker ps --all --quiet --filter "label=com.docker.compose.project=${project}")
 mapfile -t existing_volumes < <(docker volume ls --quiet --filter "label=com.docker.compose.project=${project}")

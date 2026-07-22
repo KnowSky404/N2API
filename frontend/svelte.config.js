@@ -1,6 +1,8 @@
 import adapter from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
+const buildDir = process.env.N2API_FRONTEND_BUILD_DIR || 'build';
+
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
   preprocess: vitePreprocess(),
@@ -21,8 +23,8 @@ const config = {
       }
     },
     adapter: adapter({
-      pages: 'build',
-      assets: 'build',
+      pages: buildDir,
+      assets: buildDir,
       fallback: '200.html',
       precompress: false,
       strict: true

@@ -1070,21 +1070,10 @@ other than `n2api` before creating a client.
 | Concurrent OAuth refresh single-flight | Deterministic provider component tests verify one refresh and reuse of the rotated token |
 | Real Codex OAuth and Codex CLI | Manual protected acceptance only; it is not a required PR check and must not upload request or response bodies |
 
-Run the SDK contracts locally after starting their isolated dependencies:
+Run the SDK contracts locally through the managed lifecycle wrapper:
 
 ```bash
-docker compose --project-name n2api-sdk-contracts-local \
-  -f deploy/compose.e2e.yaml \
-  up -d --build --wait postgres mock-openai n2api
-docker compose --project-name n2api-sdk-contracts-local \
-  --profile contracts -f deploy/compose.e2e.yaml \
-  run --rm --build --no-deps contracts-javascript
-docker compose --project-name n2api-sdk-contracts-local \
-  --profile contracts -f deploy/compose.e2e.yaml \
-  run --rm --build --no-deps contracts-python
-docker compose --project-name n2api-sdk-contracts-local \
-  -f deploy/compose.e2e.yaml \
-  down --volumes --remove-orphans --timeout 10
+make test-contracts
 ```
 
 Each runner creates its own account, routing pool, and client key through the
@@ -1101,11 +1090,9 @@ synthetic rows, reports `EXPLAIN (ANALYZE, BUFFERS)` and index/write metrics,
 and drops only that schema during cleanup.
 
 ```bash
-cd backend
-GOCACHE=/tmp/n2api-request-log-profile-go-build \
 N2API_REQUEST_LOG_QUERY_PROFILE=1 \
 N2API_STORE_TEST_DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DISPOSABLE_DATABASE?sslmode=require' \
-go test -count=1 -run TestRequestLogQueryProfile -v ./internal/store
+make test-request-log-profile
 ```
 
 Do not treat one profile run as a fixed latency target. Compare plan shape,

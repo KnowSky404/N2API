@@ -1,0 +1,106 @@
+# Development Resource Lifecycle
+
+N2API's local verification commands isolate temporary files and disposable
+Docker resources so repeated development runs cannot silently consume the host
+disk. Use the root `Makefile` instead of creating ad hoc caches under `/tmp`.
+
+## Managed Resources
+
+Each test run creates a unique directory with `mktemp -d` under
+`${N2API_TMP_ROOT:-${TMPDIR:-/tmp}}`. An `EXIT`/`INT`/`TERM` trap removes only
+that directory. Concurrent runs have distinct run IDs and active markers and
+hold a shared lifecycle lock. Maintenance requires the exclusive lock, so one
+run or maintenance command cannot remove another active run.
+
+The lifecycle exports these locations:
+
+- `GOCACHE`, `GOTMPDIR`, `GOPATH`, `TMPDIR`, and `XDG_CACHE_HOME` are unique to
+  the current run and are deleted at exit.
+- `GOMODCACHE` uses `.cache/dev/go-mod` and is deleted after a run if it exceeds
+  `N2API_GO_MOD_CACHE_MAX_MIB` (default `2048`) and no other managed run is
+  active.
+- `BUN_INSTALL_CACHE_DIR` uses `.cache/dev/bun`, capped by
+  `N2API_BUN_CACHE_MAX_MIB` (default `1024`).
+- `PLAYWRIGHT_BROWSERS_PATH` uses `.cache/dev/playwright-browsers`, capped by
+  `N2API_PLAYWRIGHT_CACHE_MAX_MIB` (default `2048`). Playwright output, traces,
+  screenshots, and reports stay inside the current run directory.
+- SvelteKit's bounded `.svelte-kit` workspace remains under `frontend/` so
+  generated server modules can resolve frontend dependencies. The
+  adapter-static `build` output is redirected into the current run directory.
+  Deep cleanup removes the repository-local `.svelte-kit` workspace.
+
+Failed Playwright evidence is deleted by default. Set
+`N2API_KEEP_FAILED_ARTIFACTS=1` to retain it under
+`.cache/dev/artifacts/<run-id>`. Regular cleanup keeps at most five sets for
+seven days by default; override `N2API_ARTIFACT_KEEP_COUNT` or
+`N2API_ARTIFACT_TTL_DAYS` when needed.
+
+Docker E2E and restore resources use a unique Compose project plus both
+`io.knowsky.n2api.resource=test` and `io.knowsky.n2api.run-id=<run-id>` labels.
+The creating process runs `compose down --volumes --remove-orphans --rmi local`
+from its trap. This removes that run's containers, network, test database
+volume, and locally built test images without removing pulled or production
+images.
+
+## Commands
+
+Run the normal unit checks:
+
+```bash
+make test
+```
+
+Run isolated Docker verification:
+
+```bash
+make test-e2e
+make test-contracts
+```
+
+Install the pinned Playwright Chromium build into the controlled browser cache,
+then run Playwright commands through the wrapper:
+
+```bash
+make playwright-install
+make test-playwright PLAYWRIGHT_ARGS='test /tmp/n2api-browser-tests/example.spec.ts'
+```
+
+The project does not add Playwright as a frontend dependency. Temporary browser
+tests and configuration should remain outside the repository.
+
+## Disk Protection
+
+`make disk-check` is read-only. It warns when the checked filesystem is at or
+above `N2API_DISK_WARN_PERCENT` (default `80`). Managed verification commands
+run the strict check automatically and refuse to start when free space is below
+`N2API_DISK_MIN_FREE_GIB` (default `10`). The report separates the protected
+`deploy` Compose volume, labelled test resources, and unknown/shared Docker
+usage.
+
+Run safe, idempotent maintenance with:
+
+```bash
+make clean-dev-artifacts
+```
+
+This removes expired marked run directories, expired retained evidence,
+over-limit controlled caches, and inactive Docker resources carrying the exact
+N2API test label. It never selects the production `deploy` Compose project,
+`deploy_n2api-postgres`, unlabelled resources, global Bun cache, or global
+Playwright browser cache.
+
+Deep cleanup is explicit:
+
+```bash
+make clean-dev-artifacts-deep
+```
+
+It additionally removes legacy N2API Go caches at exact known paths and the
+repository's controlled caches. It still does not remove production resources,
+global user caches, `tmp/imagegen`, backups, bind mounts, or unknown data.
+
+Do not use `docker system prune`, `docker image prune`, or
+`docker volume prune` as routine N2API cleanup. They operate beyond this
+project's ownership boundary. Builder-wide cleanup used by the documented
+no-cache development stack refresh is a separate explicit operation and must
+not run concurrently with another build.

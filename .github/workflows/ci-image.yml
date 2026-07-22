@@ -16,6 +16,9 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      N2API_TEST_RUN_ID: gha-test-${{ github.run_id }}-${{ github.run_attempt }}
+      MOCK_PROJECT: n2api-e2e-mock-${{ github.run_id }}-${{ github.run_attempt }}
     services:
       postgres:
         image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
@@ -36,6 +39,9 @@ jobs:
 
       - name: Verify pinned build dependencies
         run: dev/ci/verify-pinned-dependencies.sh
+
+      - name: Test development artifact lifecycle
+        run: make test-dev-artifacts
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -66,9 +72,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          make disk-check-heavy
           raw_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/raw"
           mkdir -p "$raw_dir"
-          if ! docker compose --project-name n2api-e2e-mock \
+          if ! docker compose --project-name "$MOCK_PROJECT" \
             -f deploy/compose.e2e.yaml up -d --build --wait mock-openai \
             >"$raw_dir/compose-up.log" 2>&1; then
             printf 'stage=compose_start failure=command_failed status=1\n' \
@@ -83,7 +90,7 @@ jobs:
           set -euo pipefail
           raw_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/raw"
           mkdir -p "$raw_dir"
-          if ! docker compose --project-name n2api-e2e-mock \
+          if ! docker compose --project-name "$MOCK_PROJECT" \
             -f deploy/compose.e2e.yaml exec -T mock-openai sh -eu \
             >"$raw_dir/mock-smoke.log" 2>&1 <<'MOCK_SMOKE'
               base=http://mock-openai:8080
@@ -155,7 +162,7 @@ jobs:
           raw_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/raw"
           safe_dir="$RUNNER_TEMP/n2api-diagnostics/mock-smoke/safe"
           dev/ci/collect-e2e-diagnostics.sh \
-            n2api-e2e-mock mock-smoke "$raw_dir" "$safe_dir"
+            "$MOCK_PROJECT" mock-smoke "$raw_dir" "$safe_dir"
           test -f "$safe_dir/safe.marker"
           echo "safe=true" >> "$GITHUB_OUTPUT"
 
@@ -175,9 +182,9 @@ jobs:
         if: always()
         timeout-minutes: 2
         run: >-
-          docker compose --project-name n2api-e2e-mock
+          docker compose --project-name "$MOCK_PROJECT"
           -f deploy/compose.e2e.yaml
-          down --volumes --remove-orphans --timeout 10
+          down --volumes --remove-orphans --rmi local --timeout 10
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -207,6 +214,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          make disk-check-heavy
           raw_dir="$RUNNER_TEMP/n2api-diagnostics/gateway/raw"
           mkdir -p "$raw_dir"
           if ! docker compose --project-name "$E2E_PROJECT" \
@@ -309,7 +317,7 @@ jobs:
         run: >-
           docker compose --project-name "$E2E_PROJECT"
           -f deploy/compose.e2e.yaml
-          down --volumes --remove-orphans --timeout 10
+          down --volumes --remove-orphans --rmi local --timeout 10
 
       - name: Run official OpenAI SDK contracts
         id: sdk_contracts
@@ -318,6 +326,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          make disk-check-heavy
           raw_dir="$RUNNER_TEMP/n2api-diagnostics/sdk-contracts/raw"
           mkdir -p "$raw_dir"
           if ! docker compose --project-name "$CONTRACT_PROJECT" \
@@ -404,12 +413,18 @@ jobs:
         run: >-
           docker compose --project-name "$CONTRACT_PROJECT"
           -f deploy/compose.e2e.yaml
-          down --volumes --remove-orphans --timeout 10
+          down --volumes --remove-orphans --rmi local --timeout 10
 
   image:
     name: Build and smoke test image (${{ matrix.platform }})
     runs-on: ubuntu-latest
     needs: test
+    env:
+      N2API_TEST_RUN_ID: gha-image-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
+      LOCAL_IMAGE: n2api:ci-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
+      SMOKE_NETWORK: n2api-ci-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
+      SMOKE_POSTGRES: n2api-ci-postgres-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
+      SMOKE_APP: n2api-ci-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
     strategy:
       fail-fast: false
       matrix:
@@ -455,6 +470,9 @@ jobs:
             type=raw,value=main
             type=raw,value=sha-${{ env.SHORT_SHA }}
 
+      - name: Disk preflight for image build
+        run: make disk-check-heavy
+
       - name: Build platform image once
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -462,7 +480,7 @@ jobs:
           file: deploy/Dockerfile
           platforms: ${{ matrix.platform }}
           load: true
-          tags: n2api:ci-${{ matrix.suffix }}
+          tags: ${{ env.LOCAL_IMAGE }}
           build-args: |
             N2API_VERSION=${{ env.BUILD_VERSION }}
             N2API_COMMIT=${{ github.sha }}
@@ -481,9 +499,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker network create n2api-ci
-          docker run -d --name n2api-ci-postgres \
-            --network n2api-ci \
+          make disk-check-heavy
+          docker network create \
+            --label io.knowsky.n2api.resource=test \
+            --label "io.knowsky.n2api.run-id=${N2API_TEST_RUN_ID}" \
+            "$SMOKE_NETWORK"
+          docker run -d --name "$SMOKE_POSTGRES" \
+            --label io.knowsky.n2api.resource=test \
+            --label "io.knowsky.n2api.run-id=${N2API_TEST_RUN_ID}" \
+            --network "$SMOKE_NETWORK" \
             -e POSTGRES_DB=n2api \
             -e POSTGRES_USER=n2api \
             -e POSTGRES_PASSWORD=ci-postgres-password \
@@ -493,7 +517,7 @@ jobs:
             --health-retries 10 \
             postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
           for attempt in $(seq 1 30); do
-            if [ "$(docker inspect -f '{{.State.Health.Status}}' n2api-ci-postgres)" = "healthy" ]; then
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' "$SMOKE_POSTGRES")" = "healthy" ]; then
               exit 0
             fi
             if [ "$attempt" = "30" ]; then
@@ -507,26 +531,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker run -d --name n2api-ci \
+          docker run -d --name "$SMOKE_APP" \
+            --label io.knowsky.n2api.resource=test \
+            --label "io.knowsky.n2api.run-id=${N2API_TEST_RUN_ID}" \
             --platform "${{ matrix.platform }}" \
-            --network n2api-ci \
+            --network "$SMOKE_NETWORK" \
             -e N2API_HOST=127.0.0.1 \
             -e N2API_PORT=3000 \
             -e N2API_PUBLIC_URL=http://127.0.0.1:3000 \
             -e N2API_ACCEPT_RISKS=database-plaintext \
-            -e DATABASE_URL=postgres://n2api:ci-postgres-password@n2api-ci-postgres:5432/n2api?sslmode=disable \
+            -e "DATABASE_URL=postgres://n2api:ci-postgres-password@${SMOKE_POSTGRES}:5432/n2api?sslmode=disable" \
             -e N2API_ADMIN_USERNAME=admin \
             -e N2API_ADMIN_PASSWORD=ci-admin-password \
             -e N2API_ENCRYPTION_SECRET=ci-encryption-secret-with-enough-length \
             -e OPENAI_API_BASE_URL=https://api.openai.com \
-            n2api:ci-${{ matrix.suffix }}
+            "$LOCAL_IMAGE"
 
       - name: Smoke test image
         shell: bash
         run: |
           set -euo pipefail
+          smoke_dir="$RUNNER_TEMP/n2api-image-smoke-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          mkdir -p "$smoke_dir"
           for attempt in $(seq 1 30); do
-            if docker exec n2api-ci wget -qO /tmp/readiness.json http://127.0.0.1:3000/readyz; then
+            if docker exec "$SMOKE_APP" wget -qO /tmp/readiness.json http://127.0.0.1:3000/readyz; then
               break
             fi
             if [ "$attempt" = "30" ]; then
@@ -535,32 +563,32 @@ jobs:
             fi
             sleep 1
           done
-          docker cp n2api-ci:/tmp/readiness.json /tmp/readiness.json
-          grep '"status":"ok"' /tmp/readiness.json
-          grep '"database":"ok"' /tmp/readiness.json
-          grep '"staticAssets":"ok"' /tmp/readiness.json
-          docker exec n2api-ci wget -qO /tmp/liveness.json http://127.0.0.1:3000/livez
-          docker cp n2api-ci:/tmp/liveness.json /tmp/liveness.json
-          grep '"status":"ok"' /tmp/liveness.json
-          docker exec n2api-ci wget -qO /tmp/version.json http://127.0.0.1:3000/version
-          docker cp n2api-ci:/tmp/version.json /tmp/version.json
-          grep "\"version\":\"${BUILD_VERSION}\"" /tmp/version.json
-          docker exec n2api-ci wget -qO /tmp/bootstrap.json http://127.0.0.1:3000/api/admin/bootstrap
-          docker cp n2api-ci:/tmp/bootstrap.json /tmp/bootstrap.json
-          grep '"adminUsername":"admin"' /tmp/bootstrap.json
-          docker exec n2api-ci wget -qO /tmp/index.html http://127.0.0.1:3000/
-          docker cp n2api-ci:/tmp/index.html /tmp/index.html
-          grep '<!doctype html>' /tmp/index.html
-          grep '/_app/immutable/entry/app' /tmp/index.html
-          test "$(docker exec n2api-ci id -u)" = "10001"
-          test "$(docker exec n2api-ci id -g)" = "10001"
-          test "$(docker exec n2api-ci stat -c '%u:%g' /app/n2api)" = "0:10001"
-          test "$(docker exec n2api-ci stat -c '%u:%g' /app/frontend/build/200.html)" = "0:10001"
-          docker exec n2api-ci test ! -w /app/n2api
-          docker exec n2api-ci test ! -w /app/frontend/build/200.html
-          docker exec n2api-ci test -s /etc/ssl/certs/ca-certificates.crt
-          docker exec n2api-ci wget -qO /dev/null https://example.com
-          docker exec n2api-ci sh -eu -c '
+          docker cp "$SMOKE_APP:/tmp/readiness.json" "$smoke_dir/readiness.json"
+          grep '"status":"ok"' "$smoke_dir/readiness.json"
+          grep '"database":"ok"' "$smoke_dir/readiness.json"
+          grep '"staticAssets":"ok"' "$smoke_dir/readiness.json"
+          docker exec "$SMOKE_APP" wget -qO /tmp/liveness.json http://127.0.0.1:3000/livez
+          docker cp "$SMOKE_APP:/tmp/liveness.json" "$smoke_dir/liveness.json"
+          grep '"status":"ok"' "$smoke_dir/liveness.json"
+          docker exec "$SMOKE_APP" wget -qO /tmp/version.json http://127.0.0.1:3000/version
+          docker cp "$SMOKE_APP:/tmp/version.json" "$smoke_dir/version.json"
+          grep "\"version\":\"${BUILD_VERSION}\"" "$smoke_dir/version.json"
+          docker exec "$SMOKE_APP" wget -qO /tmp/bootstrap.json http://127.0.0.1:3000/api/admin/bootstrap
+          docker cp "$SMOKE_APP:/tmp/bootstrap.json" "$smoke_dir/bootstrap.json"
+          grep '"adminUsername":"admin"' "$smoke_dir/bootstrap.json"
+          docker exec "$SMOKE_APP" wget -qO /tmp/index.html http://127.0.0.1:3000/
+          docker cp "$SMOKE_APP:/tmp/index.html" "$smoke_dir/index.html"
+          grep '<!doctype html>' "$smoke_dir/index.html"
+          grep '/_app/immutable/entry/app' "$smoke_dir/index.html"
+          test "$(docker exec "$SMOKE_APP" id -u)" = "10001"
+          test "$(docker exec "$SMOKE_APP" id -g)" = "10001"
+          test "$(docker exec "$SMOKE_APP" stat -c '%u:%g' /app/n2api)" = "0:10001"
+          test "$(docker exec "$SMOKE_APP" stat -c '%u:%g' /app/frontend/build/200.html)" = "0:10001"
+          docker exec "$SMOKE_APP" test ! -w /app/n2api
+          docker exec "$SMOKE_APP" test ! -w /app/frontend/build/200.html
+          docker exec "$SMOKE_APP" test -s /etc/ssl/certs/ca-certificates.crt
+          docker exec "$SMOKE_APP" wget -qO /dev/null https://example.com
+          docker exec "$SMOKE_APP" sh -eu -c '
             wget -S -O /tmp/login.json -o /tmp/login.headers \
               --header "Content-Type: application/json" \
               --post-data "{\"username\":\"admin\",\"password\":\"ci-admin-password\"}" \
@@ -571,23 +599,23 @@ jobs:
               http://127.0.0.1:3000/api/admin/health
             rm /tmp/login.json /tmp/login.headers
           '
-          docker cp n2api-ci:/tmp/admin-health.json /tmp/admin-health.json
-          grep "\"version\":\"${BUILD_VERSION}\"" /tmp/admin-health.json
-          grep "\"commit\":\"${GITHUB_SHA}\"" /tmp/admin-health.json
-          grep "\"builtAt\":\"${BUILD_TIME}\"" /tmp/admin-health.json
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' "n2api:ci-${{ matrix.suffix }}")" = "$SOURCE_URL"
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "n2api:ci-${{ matrix.suffix }}")" = "$GITHUB_SHA"
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "n2api:ci-${{ matrix.suffix }}")" = "$BUILD_VERSION"
-          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "n2api:ci-${{ matrix.suffix }}")" = "$BUILD_TIME"
+          docker cp "$SMOKE_APP:/tmp/admin-health.json" "$smoke_dir/admin-health.json"
+          grep "\"version\":\"${BUILD_VERSION}\"" "$smoke_dir/admin-health.json"
+          grep "\"commit\":\"${GITHUB_SHA}\"" "$smoke_dir/admin-health.json"
+          grep "\"builtAt\":\"${BUILD_TIME}\"" "$smoke_dir/admin-health.json"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' "$LOCAL_IMAGE")" = "$SOURCE_URL"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$LOCAL_IMAGE")" = "$GITHUB_SHA"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$LOCAL_IMAGE")" = "$BUILD_VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.created"}}' "$LOCAL_IMAGE")" = "$BUILD_TIME"
 
       - name: Verify graceful shutdown
         shell: bash
         run: |
           set -euo pipefail
           SECONDS=0
-          docker stop --timeout 10 n2api-ci
+          docker stop --timeout 10 "$SMOKE_APP"
           elapsed="$SECONDS"
-          exit_code="$(docker inspect -f '{{.State.ExitCode}}' n2api-ci)"
+          exit_code="$(docker inspect -f '{{.State.ExitCode}}' "$SMOKE_APP")"
           if (( elapsed > 10 )); then
             echo "N2API did not stop within ten seconds" >&2
             exit 1
@@ -602,8 +630,8 @@ jobs:
         timeout-minutes: 2
         shell: bash
         run: |
-          docker rm -f n2api-ci n2api-ci-postgres || true
-          docker network rm n2api-ci || true
+          docker rm -f "$SMOKE_APP" "$SMOKE_POSTGRES" || true
+          docker network rm "$SMOKE_NETWORK" || true
 
       - name: Login to GitHub Container Registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -620,7 +648,7 @@ jobs:
           set -euo pipefail
           image="${REGISTRY}/${IMAGE_NAME}"
           platform_ref="${image}:sha-${SHORT_SHA}-${{ matrix.suffix }}"
-          local_image="n2api:ci-${{ matrix.suffix }}"
+          local_image="${{ env.LOCAL_IMAGE }}"
           local_config_digest="$(docker image inspect --format '{{.Id}}' "$local_image")"
           if [[ ! "$local_config_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Could not resolve the tested local image config digest" >&2
@@ -655,17 +683,27 @@ jobs:
             exit 1
           fi
 
-          mkdir -p /tmp/n2api-digests
-          printf '%s\n' "$platform_digest" > "/tmp/n2api-digests/${{ matrix.suffix }}"
+          mkdir -p "$RUNNER_TEMP/n2api-digests"
+          printf '%s\n' "$platform_digest" > "$RUNNER_TEMP/n2api-digests/${{ matrix.suffix }}"
 
       - name: Upload platform digest
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: image-digest-${{ matrix.suffix }}
-          path: /tmp/n2api-digests/${{ matrix.suffix }}
+          path: ${{ runner.temp }}/n2api-digests/${{ matrix.suffix }}
           if-no-files-found: error
           retention-days: 1
+
+      - name: Remove local smoke image
+        if: always()
+        shell: bash
+        run: |
+          docker image rm "$LOCAL_IMAGE" || true
+          if [ -n "${IMAGE_NAME:-}" ] && [ -n "${SHORT_SHA:-}" ]; then
+            docker image rm "${REGISTRY}/${IMAGE_NAME}:sha-${SHORT_SHA}-${{ matrix.suffix }}" || true
+          fi
+          rm -rf -- "$RUNNER_TEMP/n2api-image-smoke-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}"
 
   manifest:
     name: Publish multi-platform image
@@ -705,7 +743,7 @@ jobs:
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: image-digest-*
-          path: /tmp/n2api-digests
+          path: ${{ runner.temp }}/n2api-digests
           merge-multiple: true
 
       - name: Publish tested multi-platform image
@@ -720,7 +758,7 @@ jobs:
           expected_digests=()
 
           for suffix in amd64 arm64; do
-            digest_file="/tmp/n2api-digests/${suffix}"
+            digest_file="$RUNNER_TEMP/n2api-digests/${suffix}"
             if [ ! -f "$digest_file" ]; then
               echo "Missing platform digest artifact: $suffix" >&2
               exit 1

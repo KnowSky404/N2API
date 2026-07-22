@@ -1,6 +1,11 @@
+x-test-labels: &test-labels
+  io.knowsky.n2api.resource: test
+  io.knowsky.n2api.run-id: ${N2API_TEST_RUN_ID:?set N2API_TEST_RUN_ID}
+
 services:
   postgres:
     image: postgres:18.4-alpine3.23@sha256:996d0920e4ff9df1fc19dacb904492f3c1ec0ec1cc338f0ad7123be7731c5f5e
+    labels: *test-labels
     environment:
       POSTGRES_DB: n2api_restore
       POSTGRES_USER: n2api_restore
@@ -24,6 +29,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.e2e
       target: mock-openai
+      labels: *test-labels
+    labels: *test-labels
     environment:
       N2API_MOCK_ADDR: :8080
       N2API_MOCK_API_KEY: restore-upstream-fixture-key
@@ -44,6 +51,7 @@ services:
 
   n2api:
     image: ${N2API_RESTORE_IMAGE:?set N2API_RESTORE_IMAGE}
+    labels: *test-labels
     environment:
       N2API_HOST: 0.0.0.0
       N2API_PORT: 3000
@@ -85,6 +93,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.e2e
       target: gateway-e2e
+      labels: *test-labels
+    labels: *test-labels
     command:
       - -test.run=^(TestRestoredAPIKeySecretDecrypts|TestGatewayPostgresBackedHappyPath)$$
     environment:
@@ -113,6 +123,8 @@ services:
 networks:
   restore:
     internal: true
+    labels: *test-labels
 
 volumes:
   restore-postgres:
+    labels: *test-labels

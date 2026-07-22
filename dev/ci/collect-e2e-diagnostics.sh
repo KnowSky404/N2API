@@ -16,9 +16,29 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 run_id="${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}"
 canary_file="$raw_dir/sanitization-canary.txt"
+temp_root="${TMPDIR:-/tmp}"
+if [[ ! -d "${temp_root}" || ! -w "${temp_root}" ]]; then
+  echo "E2E diagnostic temporary root is unavailable: ${temp_root}" >&2
+  exit 1
+fi
+if ! go_temp="$(mktemp -d "${temp_root%/}/n2api-diagnostics-go.XXXXXXXX")"; then
+  echo "E2E diagnostic temporary directory creation failed" >&2
+  exit 1
+fi
+
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  rm -rf -- "$go_temp"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 umask 077
 mkdir -p "$raw_dir" "$safe_dir"
+mkdir -p "$go_temp/build" "$go_temp/tmp"
 
 compose=(
   docker compose
@@ -118,7 +138,7 @@ fi
 
 if ! (
   cd "$repo_root/backend"
-  GOCACHE="$raw_dir/go-build-cache" timeout 60s go run ./cmd/e2e-diagnostics \
+  GOCACHE="$go_temp/build" GOTMPDIR="$go_temp/tmp" timeout 60s go run ./cmd/e2e-diagnostics \
     --suite "$suite" \
     --run-id "$run_id" \
     --raw-dir "$raw_dir" \
