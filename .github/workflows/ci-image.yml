@@ -897,7 +897,7 @@ jobs:
           test -s "$TRIVY_FILE"
           jq -e '
             type == "object" and
-            (.SchemaVersion | type == "integer") and
+            (.SchemaVersion == 2) and
             (.ArtifactName | type == "string") and
             (.Results | type == "array") and
             ([.Results[]? | (.Vulnerabilities // [])] | all(.[]; type == "array"))
