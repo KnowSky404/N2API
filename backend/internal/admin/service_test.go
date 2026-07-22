@@ -123,6 +123,29 @@ func TestBootstrapRenamesExistingAdminAndPreservesPasswordHash(t *testing.T) {
 	}
 }
 
+func TestChangePasswordEnforcesMinimumAdminPasswordBytes(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	requireBootstrap(t, service, "admin", "current-password")
+
+	previousHash := repo.admin.PasswordHash
+	tooShort := strings.Repeat("x", secret.MinimumAdminPasswordBytes-1)
+	if err := service.ChangePassword(context.Background(), repo.admin.ID, "current-password", tooShort); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ChangePassword short password error = %v, want ErrInvalidInput", err)
+	}
+	if repo.admin.PasswordHash != previousHash {
+		t.Fatal("ChangePassword updated the password hash for a short password")
+	}
+
+	minimumLength := strings.Repeat("x", secret.MinimumAdminPasswordBytes)
+	if err := service.ChangePassword(context.Background(), repo.admin.ID, "current-password", minimumLength); err != nil {
+		t.Fatalf("ChangePassword minimum-length password returned error: %v", err)
+	}
+	if !secret.VerifyPassword(repo.admin.PasswordHash, minimumLength) {
+		t.Fatal("ChangePassword did not store the accepted minimum-length password")
+	}
+}
+
 func TestLoginCreatesSessionAndValidateSessionReturnsAdmin(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})

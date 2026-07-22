@@ -18,6 +18,7 @@ const {
   login,
   loginForm,
   logout,
+  MINIMUM_ADMIN_PASSWORD_BYTES,
   opsMonitor,
   providerAccountBulkModelsForm,
   providerAccountBulkSchedulingForm,
@@ -61,6 +62,7 @@ beforeEach(() => {
     revokingOthers: false
   });
   Object.assign(loginForm, { username: '', password: '', submitting: false, error: '' });
+  Object.assign(changePasswordForm, { currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
   Object.assign(health, { loading: false, error: '', status: 'ok', database: 'ok', build: null, tasks: null });
   Object.assign(systemEvents, {
     loading: false,
@@ -296,7 +298,7 @@ test('login 401 reports invalid credentials without clearing authenticated state
 test('protected change-password 401 cannot repopulate cleared form state', async () => {
   Object.assign(changePasswordForm, {
     currentPassword: 'old-secret',
-    newPassword: 'new-secret',
+    newPassword: 'new-password',
     submitting: false,
     error: '',
     saved: false
@@ -319,7 +321,7 @@ test('wrong current password remains a form error without clearing the valid ses
   adminSessions.items = [currentSession];
   Object.assign(changePasswordForm, {
     currentPassword: 'wrong',
-    newPassword: 'new-secret',
+    newPassword: 'new-password',
     submitting: false,
     error: '',
     saved: false
@@ -331,6 +333,27 @@ test('wrong current password remains a form error without clearing the valid ses
   assert.equal(session.authenticated, true);
   assert.deepEqual(adminSessions.items, [currentSession]);
   assert.equal(changePasswordForm.error, 'invalid_current_password');
+  assert.equal(changePasswordForm.submitting, false);
+});
+
+test('change password rejects a new password shorter than the shared byte minimum', async () => {
+  let fetchCalls = 0;
+  Object.assign(changePasswordForm, {
+    currentPassword: 'current-password',
+    newPassword: 'x'.repeat(MINIMUM_ADMIN_PASSWORD_BYTES - 1),
+    submitting: false,
+    error: '',
+    saved: false
+  });
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return Response.json({ ok: 'true' });
+  };
+
+  await changePassword({ preventDefault() {} });
+
+  assert.equal(fetchCalls, 0);
+  assert.equal(changePasswordForm.error, `New password must be at least ${MINIMUM_ADMIN_PASSWORD_BYTES} bytes.`);
   assert.equal(changePasswordForm.submitting, false);
 });
 

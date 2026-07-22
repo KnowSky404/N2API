@@ -10,6 +10,7 @@
     initializeAdminState,
     changePassword,
     changePasswordForm,
+    MINIMUM_ADMIN_PASSWORD_BYTES,
     loadAdminSessions,
     logout,
     revokeAdminSession,
@@ -730,7 +731,7 @@
           />
         </label>
         <label class="mt-3 block text-xs font-medium text-[#6e6e6e]">
-          New password (min 8 chars)
+          New password (min {MINIMUM_ADMIN_PASSWORD_BYTES} bytes)
           <input
             class="mt-1.5 block w-full rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
             type="password"

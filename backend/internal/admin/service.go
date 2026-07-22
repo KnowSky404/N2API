@@ -560,7 +560,7 @@ func (s *Service) ChangePassword(ctx context.Context, adminID int64, currentPass
 	if currentPassword == "" || newPassword == "" {
 		return ErrInvalidInput
 	}
-	if len(newPassword) < 8 {
+	if len(newPassword) < secret.MinimumAdminPasswordBytes {
 		return ErrInvalidInput
 	}
 	adminRecord, err := s.repo.FindBootstrapAdmin(ctx)

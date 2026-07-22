@@ -2003,6 +2003,7 @@ export async function revokeOtherAdminSessions() {
   }
 }
 
+export const MINIMUM_ADMIN_PASSWORD_BYTES = 12;
 export const changePasswordForm = $state({ currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
 
 /**
@@ -2021,8 +2022,8 @@ export async function changePassword(event) {
     changePasswordForm.error = 'Both fields are required.';
     return;
   }
-  if (newPassword.length < 8) {
-    changePasswordForm.error = 'New password must be at least 8 characters.';
+  if (new TextEncoder().encode(newPassword).byteLength < MINIMUM_ADMIN_PASSWORD_BYTES) {
+    changePasswordForm.error = `New password must be at least ${MINIMUM_ADMIN_PASSWORD_BYTES} bytes.`;
     return;
   }
 

@@ -27,7 +27,10 @@ const (
 	maxPreviousEncryptionKeys   = 8
 )
 
-const DefaultEncryptionKeyID = "default"
+const (
+	DefaultEncryptionKeyID    = "default"
+	MinimumAdminPasswordBytes = 12
+)
 
 type SecretKind string
 

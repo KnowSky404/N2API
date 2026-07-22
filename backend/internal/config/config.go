@@ -72,7 +72,6 @@ const (
 	defaultAdminLoginThrottleFailures      = 5
 	defaultAdminLoginThrottleMaxEntries    = 4096
 	defaultAdminSessionTTLHours            = 168
-	minimumAdminPasswordBytes              = 12
 	minimumEncryptionSecretBytes           = 32
 )
 
@@ -478,8 +477,8 @@ func validatePublicURL(value string, acceptedRisks map[string]struct{}) (string,
 }
 
 func validateSecrets(adminPassword, encryptionSecret string) error {
-	if len(adminPassword) < minimumAdminPasswordBytes || isKnownPlaceholder(adminPassword) {
-		return fmt.Errorf("N2API_ADMIN_PASSWORD must be at least %d bytes and must not be a known placeholder", minimumAdminPasswordBytes)
+	if len(adminPassword) < secret.MinimumAdminPasswordBytes || isKnownPlaceholder(adminPassword) {
+		return fmt.Errorf("N2API_ADMIN_PASSWORD must be at least %d bytes and must not be a known placeholder", secret.MinimumAdminPasswordBytes)
 	}
 	if len(encryptionSecret) < minimumEncryptionSecretBytes || isKnownPlaceholder(encryptionSecret) {
 		return fmt.Errorf("N2API_ENCRYPTION_SECRET must be at least %d bytes and must not be a known placeholder", minimumEncryptionSecretBytes)

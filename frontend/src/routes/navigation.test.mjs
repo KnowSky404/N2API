@@ -74,7 +74,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readText('src/routes/+layout.svelte');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Alerts', 'Pricing', 'Ops', 'Fingerprints', 'Active sessions', 'Sign out', 'Change password', 'Save', 'Current password', 'New password', 'min 8 chars']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Alerts', 'Pricing', 'Ops', 'Fingerprints', 'Active sessions', 'Sign out', 'Change password', 'Save', 'Current password', 'New password']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -84,6 +84,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   assert.match(layout, /changePassword/);
   assert.match(layout, /changePasswordForm\.currentPassword/);
   assert.match(layout, /changePasswordForm\.newPassword/);
+  assert.match(layout, /New password \(min \{MINIMUM_ADMIN_PASSWORD_BYTES\} bytes\)/);
   assert.match(layout, /onsubmit={handleChangePassword}/);
   assert.match(layout, /aria-label="Close change password modal"/);
   assert.match(layout, /aria-haspopup="menu"/);
