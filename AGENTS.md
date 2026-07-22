@@ -60,7 +60,7 @@
 - When rendered frontend behavior needs verification, use the Browser plugin first when it is available. If it is unavailable, you MUST attempt Playwright through Bunx before falling back to source-level tests or build-only checks.
 - Start the fallback with `bunx playwright --version`. A missing Playwright dependency in `package.json` is not a reason to skip browser verification because Bunx can resolve the CLI on demand.
 - For authenticated flows or interaction checks, create a temporary Playwright config and test files outside the repository, run them with Bun, and keep screenshots, traces, reports, and downloaded packages out of the worktree.
-- If the matching browser binary is missing, report the exact pinned `bunx playwright@<version> install chromium` command and obtain explicit user approval before downloading it.
+- If the matching browser binary is missing, automatically run the exact pinned `bunx playwright@<version> install chromium` command. Add `--with-deps` only when browser launch reports missing system libraries. Keep browser downloads and caches outside the worktree and report the command used.
 - Only report Playwright as unavailable after the Bunx path has actually failed, and include the exact failure and the verification fallback used.
 
 ## Repository Hygiene
