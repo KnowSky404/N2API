@@ -17,7 +17,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
-	"github.com/KnowSky404/N2API/backend/internal/secret"
+	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
 const defaultUpstreamBaseURL = "https://api.openai.com"
@@ -377,6 +377,7 @@ func normalizedUpstreamTimeouts(cfg Config) upstreamTimeouts {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r, requestID := withGatewayCorrelationID(w, r)
 	if !isSupportedRoute(r) {
 		writeOpenAIError(w, http.StatusNotFound, "unsupported_route", "unsupported route")
 		return
@@ -421,7 +422,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.recordAPIKeyUsage(key.ID, observedUsage.TotalTokens, effectiveAPIKeyLimit(key.TokensPerMinute, settings.TokensPerMinutePerKey))
 		costEstimate := p.estimateUsageCost(r.Context(), observedUsage)
 		p.logRequest(r.Context(), RequestLog{
-			RequestID:                newRequestID(),
+			RequestID:                requestID,
 			ClientKeyID:              key.ID,
 			Provider:                 selectedProviderName(loggedAccount),
 			ProviderAccountID:        loggedAccount.AccountID,
@@ -1658,6 +1659,7 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 		return nil, err
 	}
 	copyRequestHeaders(req.Header, r.Header)
+	req.Header.Set("X-Request-ID", gatewayCorrelationID(r))
 	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
 	if useCodexEndpoint {
 		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
@@ -2129,12 +2131,30 @@ func selectedProviderName(account SelectedAccount) string {
 	return "openai"
 }
 
-func newRequestID() string {
-	token, err := secret.GenerateToken("req")
-	if err != nil {
-		return fmt.Sprintf("req_%d", time.Now().UnixNano())
+func withGatewayCorrelationID(w http.ResponseWriter, r *http.Request) (*http.Request, string) {
+	request, ok := systemevent.FromContext(r.Context())
+	requestID := strings.TrimSpace(request.CorrelationID)
+	if !ok || !systemevent.ValidCorrelationID(requestID) {
+		requestID = systemevent.NormalizeCorrelationID(r.Header.Get("X-Request-ID"))
+		if !ok {
+			request = systemevent.RequestContext{Actor: systemevent.Actor{Type: systemevent.ActorSystem}}
+		}
+		request.CorrelationID = requestID
+		r = r.WithContext(systemevent.WithRequestContext(r.Context(), request))
 	}
-	return token
+	r.Header.Set("X-Request-ID", requestID)
+	w.Header().Set("X-Request-ID", requestID)
+	return r, requestID
+}
+
+func gatewayCorrelationID(r *http.Request) string {
+	if r != nil {
+		if request, ok := systemevent.FromContext(r.Context()); ok && systemevent.ValidCorrelationID(request.CorrelationID) {
+			return request.CorrelationID
+		}
+		return systemevent.NormalizeCorrelationID(r.Header.Get("X-Request-ID"))
+	}
+	return systemevent.NewCorrelationID()
 }
 
 type statusRecorder struct {
