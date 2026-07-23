@@ -373,20 +373,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key token rate limit exceeded")
 		return
 	}
-	bodyFactory, maxAttempts, model, sessionID, err := p.requestBodyFactory(r)
-	if err != nil {
-		errorCode = requestBodyErrorCode(err)
-		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
-		return
-	}
-	requestModel = model
-	requestSessionID = sessionID
-	if model != "" && !apiKeyAllowsModel(key, model) {
-		errorCode = "model_not_found"
-		writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
-		return
-	}
-
 	release, ok := p.tryAcquireGatewaySlot(settings.MaxConcurrentGatewayRequests)
 	if !ok {
 		errorCode = "gateway_concurrency_limited"
@@ -402,6 +388,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer releaseKey()
+
+	bodyFactory, maxAttempts, model, sessionID, err := p.requestBodyFactory(r)
+	if err != nil {
+		errorCode = requestBodyErrorCode(err)
+		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
+		return
+	}
+	requestModel = model
+	requestSessionID = sessionID
+	if model != "" && !apiKeyAllowsModel(key, model) {
+		errorCode = "model_not_found"
+		writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
+		return
+	}
 
 	failedAccountIDs := []int64{}
 	accountConcurrencyLimited := false

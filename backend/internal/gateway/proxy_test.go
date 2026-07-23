@@ -3246,6 +3246,77 @@ func TestProxyLogsPreciseGatewayConcurrencyLimitReason(t *testing.T) {
 	assertLastLoggedError(t, logger, "gateway_concurrency_limited")
 }
 
+func TestProxyAcquiresGatewayAndAPIKeySlotsBeforeReadingRequestBody(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     Config
+		occupySlot func(*Proxy) (func(), bool)
+	}{
+		{
+			name:   "gateway",
+			config: Config{MaxConcurrentGatewayRequests: 1},
+			occupySlot: func(proxy *Proxy) (func(), bool) {
+				return proxy.tryAcquireGatewaySlot(1)
+			},
+		},
+		{
+			name:   "api key",
+			config: Config{MaxConcurrentRequestsPerKey: 1},
+			occupySlot: func(proxy *Proxy) (func(), bool) {
+				return proxy.tryAcquireAPIKeySlot(42, 1)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, test.config, http.DefaultClient)
+			release, ok := test.occupySlot(proxy)
+			if !ok {
+				t.Fatal("failed to occupy limiter slot")
+			}
+			defer release()
+			body := &trackingReadCloser{reader: strings.NewReader(`{"model":"gpt-5"}`)}
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			req.Body = body
+			req.ContentLength = -1
+			req.Header.Set("Authorization", "Bearer n2api_client_secret")
+			recorder := httptest.NewRecorder()
+
+			proxy.ServeHTTP(recorder, req)
+
+			if recorder.Code != http.StatusTooManyRequests || body.reads != 0 {
+				t.Fatalf("status=%d reads=%d body=%s, want 429 before body read", recorder.Code, body.reads, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestProxyReleasesAdmissionSlotsAfterInvalidJSONBody(t *testing.T) {
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{
+		MaxConcurrentGatewayRequests: 1,
+		MaxConcurrentRequestsPerKey:  1,
+	}, http.DefaultClient)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s, want invalid JSON rejection", recorder.Code, recorder.Body.String())
+	}
+	releaseGateway, ok := proxy.tryAcquireGatewaySlot(1)
+	if !ok {
+		t.Fatal("gateway slot was not released after invalid JSON")
+	}
+	releaseGateway()
+	releaseKey, ok := proxy.tryAcquireAPIKeySlot(42, 1)
+	if !ok {
+		t.Fatal("API key slot was not released after invalid JSON")
+	}
+	releaseKey()
+}
+
 func TestProxyLogsPreciseAPIKeyConcurrencyLimitReason(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "busy key"}}, &fakeSelectedAccountProvider{}, Config{
@@ -4058,6 +4129,18 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 type brokenReader struct {
 	sent bool
 }
+
+type trackingReadCloser struct {
+	reader io.Reader
+	reads  int
+}
+
+func (body *trackingReadCloser) Read(buffer []byte) (int, error) {
+	body.reads++
+	return body.reader.Read(buffer)
+}
+
+func (body *trackingReadCloser) Close() error { return nil }
 
 func (r *brokenReader) Read(p []byte) (int, error) {
 	if !r.sent {
