@@ -46,6 +46,12 @@
           "not": {"anyOf": [{"required": ["package"]}, {"required": ["cve"]}]}
         }
       ],
+      "allOf": [
+        {"if": {"properties": {"scanner": {"const": "codeql"}}}, "then": {"required": ["rule"]}},
+        {"if": {"properties": {"scanner": {"const": "govulncheck"}}}, "then": {"anyOf": [{"required": ["cve"]}, {"required": ["rule"]}]}},
+        {"if": {"properties": {"scanner": {"const": "bun-audit"}}}, "then": {"required": ["cve"]}},
+        {"if": {"properties": {"scanner": {"const": "trivy"}}}, "then": {"anyOf": [{"required": ["package"]}, {"required": ["cve"]}]}}
+      ],
       "properties": {
         "scanner": {
           "enum": [

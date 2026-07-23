@@ -329,6 +329,9 @@ func validateException(exception securityException, index int, now time.Time, se
 	if exception.CVE != "" && !cvePattern.MatchString(exception.CVE) {
 		return fmt.Errorf("exceptions[%d].cve is invalid", index)
 	}
+	if !scannerAcceptsIdentity(exception) {
+		return fmt.Errorf("exceptions[%d] uses an unsupported identity type for its scanner", index)
+	}
 
 	createdAt, err := time.Parse(time.RFC3339, exception.CreatedAt)
 	if err != nil {
@@ -357,6 +360,21 @@ func validateException(exception securityException, index int, now time.Time, se
 	}
 	seen[identity] = struct{}{}
 	return nil
+}
+
+func scannerAcceptsIdentity(exception securityException) bool {
+	switch exception.Scanner {
+	case "codeql":
+		return exception.Rule != ""
+	case "govulncheck":
+		return exception.Rule != "" || exception.CVE != ""
+	case "bun-audit":
+		return exception.CVE != ""
+	case "trivy":
+		return exception.Package != "" || exception.CVE != ""
+	default:
+		return false
+	}
 }
 
 func isCleanRequiredValue(value string) bool {

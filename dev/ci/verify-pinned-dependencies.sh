@@ -55,6 +55,20 @@ require_digest() {
   esac
 }
 
+while IFS=: read -r workflow line source; do
+  reference="$(sed -n 's/^[[:space:]]*uses:[[:space:]]*\([^[:space:]#]*\).*/\1/p' <<< "$source")"
+  if [[ "$reference" == ./* ]]; then
+    continue
+  fi
+  if [[ "$reference" =~ ^docker://[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+    continue
+  fi
+  if [[ ! "$reference" =~ ^[^@[:space:]]+@[0-9a-f]{40}$ ]]; then
+    echo "$workflow:$line must pin external Action $reference to a full commit SHA" >&2
+    exit 1
+  fi
+done < <(rg -n --no-heading '^[[:space:]]*uses:[[:space:]]*' .github/workflows)
+
 declare -A build_stages=()
 while IFS= read -r stage; do
   build_stages["$stage"]=1

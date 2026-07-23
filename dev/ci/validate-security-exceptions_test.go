@@ -70,6 +70,7 @@ func TestRegistryRejectsInvalidStructureAndSemantics(t *testing.T) {
 		{name: "wildcard package", data: registryWith(overrides(valid, "package", "golang.org/x/*"))},
 		{name: "wildcard owner", data: registryWith(overrides(valid, "owner", "team-*"))},
 		{name: "unsupported scanner", data: registryWith(overrides(valid, "scanner", "unknown"))},
+		{name: "unsupported scanner identity", data: registryWith(overrides(valid, "scanner", "bun-audit"))},
 		{name: "unsupported platform", data: registryWith(overrides(valid, "platform", "all"))},
 		{name: "invalid CVE", data: registryWith(overrides(valid, "package", "", "cve", "cve-any"))},
 		{name: "invalid created timestamp", data: registryWith(overrides(valid, "created_at", "2026-07-22"))},
