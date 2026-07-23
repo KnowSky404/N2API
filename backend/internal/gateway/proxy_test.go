@@ -4093,30 +4093,107 @@ func TestProxyCarriesStickySessionOnFallbackSelection(t *testing.T) {
 }
 
 func TestProxyDoesNotRetryLargePOSTBody(t *testing.T) {
+	requestBody := `{"model":"gpt-5","messages":[{"role":"user","content":"` + strings.Repeat("a", 128) + `"}]}`
 	transportCalls := 0
+	logger := &fakeRequestLogger{}
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
 		return nil, errors.New("upstream unavailable")
 	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(strings.Repeat("a", maxReplayableRequestBody+1)))
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL:             "https://upstream.example.test",
+		MaxAcceptedRequestBodyBytes: 1024,
+		MaxInMemoryReplayBodyBytes:  64,
+		Logger:                      logger,
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
 
 	proxy.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "upstream_unavailable") {
+		t.Fatalf("status/body = %d/%s, want one failed upstream attempt", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), "invalid_request") {
-		t.Fatalf("body = %q, want invalid_request", recorder.Body.String())
+	if tokens.calls != 1 || transportCalls != 1 {
+		t.Fatalf("selection/transport calls = %d/%d, want 1/1", tokens.calls, transportCalls)
 	}
-	if tokens.calls != 0 {
-		t.Fatalf("token calls = %d, want 0", tokens.calls)
+	if len(logger.entries) != 1 || logger.entries[0].GatewayAttemptCount != 1 || logger.entries[0].GatewayFallbackCount != 0 {
+		t.Fatalf("request log = %+v, want attempts 1 fallbacks 0", logger.entries)
 	}
-	if transportCalls != 0 {
-		t.Fatalf("transport calls = %d, want 0", transportCalls)
+}
+
+func TestProxyDoesNotAuthorizationRetryBodyAboveReplayLimit(t *testing.T) {
+	requestBody := `{"model":"gpt-5","messages":[{"role":"user","content":"` + strings.Repeat("a", 128) + `"}]}`
+	transportCalls := 0
+	accounts := &fakeSelectedAccountProvider{
+		accounts:                    []SelectedAccount{{AccountID: 1, AuthorizationToken: "rejected-token"}},
+		refreshedAuthorizationToken: "refreshed-token",
+		refreshAuthorizationRetry:   true,
+	}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		transportCalls++
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"expired"}}`)),
+			Request:    request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		MaxAcceptedRequestBodyBytes: 1024,
+		MaxInMemoryReplayBodyBytes:  64,
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if transportCalls != 1 || len(accounts.authorizationRefreshes) != 0 {
+		t.Fatalf("transport/refresh calls = %d/%d, want 1/0", transportCalls, len(accounts.authorizationRefreshes))
+	}
+}
+
+func TestProxyRejectsContentLengthAboveAcceptedLimitBeforeReadingBody(t *testing.T) {
+	body := &trackingReadCloser{reader: strings.NewReader(`{"model":"gpt-5"}`)}
+	accounts := &fakeSelectedAccountProvider{}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		MaxAcceptedRequestBodyBytes: 16,
+		MaxInMemoryReplayBodyBytes:  8,
+	}, http.DefaultClient)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Body = body
+	req.ContentLength = 17
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge || body.reads != 0 || accounts.calls != 0 {
+		t.Fatalf("status=%d reads=%d accountCalls=%d body=%s", recorder.Code, body.reads, accounts.calls, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"request_too_large"`) {
+		t.Fatalf("body=%s, want stable request_too_large error", recorder.Body.String())
+	}
+}
+
+func TestProxyRejectsChunkedBodyAboveAcceptedLimit(t *testing.T) {
+	accounts := &fakeSelectedAccountProvider{}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		MaxAcceptedRequestBodyBytes: 32,
+		MaxInMemoryReplayBodyBytes:  16,
+	}, http.DefaultClient)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(strings.Repeat("x", 33)))
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge || accounts.calls != 0 || !strings.Contains(recorder.Body.String(), `"code":"request_too_large"`) {
+		t.Fatalf("status=%d accountCalls=%d body=%s", recorder.Code, accounts.calls, recorder.Body.String())
 	}
 }
 

@@ -1136,6 +1136,19 @@ The deployment template includes optional in-process gateway guards:
 
 Set any gateway default value to `0` to disable that guard. These limits are process-local; keep them conservative on a single-node VPS and add shared infrastructure later if you need multi-instance coordination. The API Keys page shows the values loaded by the running service. Per-key values set to `0` inherit the matching gateway default and do not disable that guard for only one key. The API Keys page shows active concurrency for each client key as process-local runtime state; keys at a positive effective cap are marked **Concurrency full**. It also shows **Requests window** and **Tokens window** for each key as process-local fixed one-minute counters with remaining capacity; limited windows at capacity are marked **Request limit full** or **Token limit full**, and the counters reset on the next fixed minute or backend restart. Local per-key request/token 429 responses include `Retry-After`; per-account concurrency skips busy accounts when another eligible account is available and returns 429 only when no eligible account can accept the request.
 
+Gateway request bodies have separate acceptance and in-memory replay limits.
+`N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES` defaults to 4 MiB and is the
+hard limit for both known-length and chunked requests.
+`N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES` defaults to 1 MiB and cannot
+exceed the accepted limit. A body above the accepted limit returns `413` with
+the stable code `request_too_large`; when `Content-Length` proves this before a
+read, N2API rejects it without consuming the body. A valid body above the
+replay limit but within the accepted limit is normalized in bounded memory and
+receives at most one upstream attempt, with no fallback replay. Smaller bodies
+retain pre-stream retry and fallback behavior. Gateway and client-key
+concurrency admission occurs before the complete body read, and every body
+error path releases both slots.
+
 Request Logs keep local gateway rejections diagnosable while client responses stay OpenAI-compatible. Local limit responses still return `rate_limit_exceeded` to clients, but the stored request-log error identifies the guard as `api_key_request_rate_limited`, `api_key_token_rate_limited`, `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, `api_key_cost_budget_exceeded`, `gateway_concurrency_limited`, `api_key_concurrency_limited`, or `provider_account_concurrency_limited`.
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.

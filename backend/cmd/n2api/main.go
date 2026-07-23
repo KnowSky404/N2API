@@ -288,6 +288,8 @@ func runServer() {
 		MaxConcurrentRequestsPerKey:     cfg.GatewayMaxConcurrentRequestsPerKey,
 		MaxRequestsPerMinutePerKey:      cfg.GatewayRequestsPerMinutePerKey,
 		MaxTokensPerMinutePerKey:        cfg.GatewayTokensPerMinutePerKey,
+		MaxAcceptedRequestBodyBytes:     cfg.GatewayMaxAcceptedRequestBodyBytes,
+		MaxInMemoryReplayBodyBytes:      cfg.GatewayMaxInMemoryReplayBodyBytes,
 		SettingsProvider:                adminService,
 		BudgetProvider:                  adminService,
 		ErrorPassthroughRulesProvider:   adminService,

@@ -103,6 +103,32 @@ func TestGatewayDocumentationMentionsAPIKeyLimitInheritance(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationMatchesRequestBodyBoundaryContract(t *testing.T) {
+	checks := map[string][]string{
+		"../../../.env.example": {
+			"N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES=4194304",
+			"N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES=1048576",
+		},
+		"../../../docs/manual.md": {
+			"hard limit for both known-length and chunked requests",
+			"stable code `request_too_large`",
+			"at most one upstream attempt",
+			"admission occurs before the complete body read",
+		},
+	}
+	for path, wants := range checks {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(string(content), want) {
+				t.Fatalf("%s missing %q in request body boundary documentation", path, want)
+			}
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsAPIKeyActiveConcurrency(t *testing.T) {
 	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)

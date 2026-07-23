@@ -23,7 +23,8 @@ const defaultUpstreamBaseURL = "https://api.openai.com"
 const defaultCodexResponsesBaseURL = "https://chatgpt.com/backend-api/codex"
 const defaultCodexUserAgent = provider.DefaultCodexFingerprintUserAgent
 const defaultCodexInstructions = "You are Codex, a coding agent."
-const maxReplayableRequestBody = 1 << 20
+const defaultMaxAcceptedRequestBody = 4 << 20
+const defaultMaxInMemoryReplayBody = 1 << 20
 const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 const requestLogWriteTimeout = 5 * time.Second
@@ -182,6 +183,8 @@ type Config struct {
 	MaxConcurrentRequestsPerKey     int
 	MaxRequestsPerMinutePerKey      int
 	MaxTokensPerMinutePerKey        int
+	MaxAcceptedRequestBodyBytes     int
+	MaxInMemoryReplayBodyBytes      int
 	Logger                          RequestLogger
 	ModelProvider                   ModelProvider
 	UsagePricer                     UsagePricer
@@ -208,6 +211,8 @@ type Proxy struct {
 	usagePricer     UsagePricer
 	budgets         BudgetProvider
 	errorRules      ErrorPassthroughRulesProvider
+	maxAcceptedBody int
+	maxReplayBody   int
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -235,6 +240,17 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	}
 	rateLimiter := newAPIKeyRateLimiter(0, time.Now)
 	tokenLimiter := newAPIKeyTokenLimiter(0, time.Now)
+	maxAcceptedBody := cfg.MaxAcceptedRequestBodyBytes
+	if maxAcceptedBody <= 0 {
+		maxAcceptedBody = defaultMaxAcceptedRequestBody
+	}
+	maxReplayBody := cfg.MaxInMemoryReplayBodyBytes
+	if maxReplayBody <= 0 {
+		maxReplayBody = defaultMaxInMemoryReplayBody
+	}
+	if maxReplayBody > maxAcceptedBody {
+		maxReplayBody = maxAcceptedBody
+	}
 	return &Proxy{
 		auth:            auth,
 		accounts:        accounts,
@@ -253,6 +269,8 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		usagePricer:     cfg.UsagePricer,
 		budgets:         cfg.BudgetProvider,
 		errorRules:      cfg.ErrorPassthroughRulesProvider,
+		maxAcceptedBody: maxAcceptedBody,
+		maxReplayBody:   maxReplayBody,
 	}
 }
 
@@ -476,7 +494,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			upstreamResp, upstreamErr = p.clientForSelectedAccount(selected).Do(upstreamReq)
-			if upstreamErr != nil || authorizationRetried || !authorizationFailureStatus(upstreamResp.StatusCode) {
+			if upstreamErr != nil || authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
 				break
 			}
 
@@ -1421,25 +1439,31 @@ func normalizeCodexResponsesBody(body io.ReadCloser) (io.ReadCloser, error) {
 }
 
 var (
-	errReplayBodyTooLarge = errors.New("request body too large to replay")
-	errInvalidJSONBody    = errors.New("request body must be valid json")
-	errModelNotFound      = errors.New("model not found")
+	errRequestBodyTooLarge = errors.New("request body exceeds accepted limit")
+	errInvalidJSONBody     = errors.New("request body must be valid json")
+	errModelNotFound       = errors.New("model not found")
 )
 
 func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
 		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), nil
 	}
+	defer r.Body.Close()
+	if r.ContentLength > int64(p.maxAcceptedBody) {
+		return nil, 0, "", "", errRequestBodyTooLarge
+	}
 
-	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, maxReplayableRequestBody+1))
+	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, int64(p.maxAcceptedBody)+1))
 	if err != nil {
 		return nil, 0, "", "", err
 	}
-	if len(limitedBody) > maxReplayableRequestBody {
-		_ = r.Body.Close()
-		return nil, 0, "", "", errReplayBodyTooLarge
+	if len(limitedBody) > p.maxAcceptedBody {
+		return nil, 0, "", "", errRequestBodyTooLarge
 	}
-	_ = r.Body.Close()
+	maxAttempts := maxReplayableAttempts
+	if len(limitedBody) > p.maxReplayBody {
+		maxAttempts = 1
+	}
 	model := ""
 	sessionID := ""
 	if routeRequiresModel(r) {
@@ -1455,7 +1479,7 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
-	}, maxReplayableAttempts, model, sessionID, nil
+	}, maxAttempts, model, sessionID, nil
 }
 
 func stickySessionIDFromHeader(header http.Header) string {
@@ -1551,7 +1575,9 @@ func apiKeyAllowsModel(key admin.APIKey, model string) bool {
 
 func requestBodyErrorCode(err error) string {
 	switch {
-	case errors.Is(err, errReplayBodyTooLarge), errors.Is(err, errInvalidJSONBody):
+	case errors.Is(err, errRequestBodyTooLarge):
+		return "request_too_large"
+	case errors.Is(err, errInvalidJSONBody):
 		return "invalid_request"
 	case errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
 		return "model_not_found"
@@ -1562,7 +1588,9 @@ func requestBodyErrorCode(err error) string {
 
 func requestBodyErrorStatus(err error) int {
 	switch {
-	case errors.Is(err, errReplayBodyTooLarge), errors.Is(err, errInvalidJSONBody), errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
+	case errors.Is(err, errRequestBodyTooLarge):
+		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, errInvalidJSONBody), errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
 		return http.StatusBadRequest
 	default:
 		return http.StatusBadGateway
@@ -1571,8 +1599,8 @@ func requestBodyErrorStatus(err error) int {
 
 func requestBodyErrorMessage(err error) string {
 	switch {
-	case errors.Is(err, errReplayBodyTooLarge):
-		return "request body is too large to replay"
+	case errors.Is(err, errRequestBodyTooLarge):
+		return "request body is too large"
 	case errors.Is(err, errInvalidJSONBody):
 		return "request body must be valid JSON"
 	case errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
