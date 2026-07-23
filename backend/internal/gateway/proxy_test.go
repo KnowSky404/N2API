@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -632,6 +633,122 @@ func TestProxyDoesNotApplyTotalBodyLimitToSSE(t *testing.T) {
 
 	if recorder.status != http.StatusOK || recorder.body.String() != streamBody {
 		t.Fatalf("status/body=%d/%q, want complete SSE", recorder.status, recorder.body.String())
+	}
+}
+
+func TestProxyReturnsStableUpstreamTimeoutWithoutNetworkDetails(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, timeoutCanaryError{}
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		UpstreamBaseURL:             "https://upstream.example.test",
+		MaxAcceptedRequestBodyBytes: 1024,
+		MaxInMemoryReplayBodyBytes:  1,
+		Logger:                      logger,
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), `"code":"upstream_timeout"`) || strings.Contains(recorder.Body.String(), "timeout-address-canary") {
+		t.Fatalf("status/body=%d/%s", recorder.Code, recorder.Body.String())
+	}
+	if len(accounts.failures) != 1 || accounts.failures[0].message != "upstream request timed out" {
+		t.Fatalf("account failures = %+v", accounts.failures)
+	}
+	if len(logger.entries) != 1 || logger.entries[0].Error != "upstream_timeout" {
+		t.Fatalf("request logs = %+v", logger.entries)
+	}
+}
+
+func TestProxyEnforcesResponseHeaderTimeout(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		UpstreamBaseURL:               upstream.URL,
+		MaxAcceptedRequestBodyBytes:   1024,
+		MaxInMemoryReplayBodyBytes:    1,
+		UpstreamResponseHeaderTimeout: 20 * time.Millisecond,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), `"code":"upstream_timeout"`) {
+		t.Fatalf("status/body=%d/%s", recorder.Code, recorder.Body.String())
+	}
+	if len(accounts.failures) != 1 || accounts.failures[0].message != "upstream request timed out" {
+		t.Fatalf("account failures = %+v", accounts.failures)
+	}
+}
+
+func TestProxyClosesStalledSSEWithoutAppendingJSONError(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	body := newBlockingReadCloser()
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       body,
+			Request:    request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}, Config{
+		UpstreamBaseURL:        "https://upstream.example.test",
+		UpstreamSSEIdleTimeout: 25 * time.Millisecond,
+		Logger:                 logger,
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","stream":true}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK || recorder.Body.Len() != 0 || !body.isClosed() {
+		t.Fatalf("status/body/closed=%d/%q/%v", recorder.Code, recorder.Body.String(), body.isClosed())
+	}
+	if len(logger.entries) != 1 || logger.entries[0].Error != "upstream_sse_idle_timeout" {
+		t.Fatalf("request logs = %+v", logger.entries)
+	}
+}
+
+func TestCopyStreamingResponseResetsIdleTimeoutAndClosesOnCancellation(t *testing.T) {
+	periodicBody := &delayedChunkReadCloser{
+		chunks: [][]byte{[]byte("data: one\n\n"), []byte("data: two\n\n")},
+		delay:  5 * time.Millisecond,
+	}
+	periodicRecorder := httptest.NewRecorder()
+	_, err := copyStreamingResponse(context.Background(), periodicRecorder, periodicBody, "/v1/responses", 25*time.Millisecond)
+	if err != nil || periodicRecorder.Body.String() != "data: one\n\ndata: two\n\n" {
+		t.Fatalf("periodic stream body/error = %q/%v", periodicRecorder.Body.String(), err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stalledBody := newBlockingReadCloser()
+	done := make(chan error, 1)
+	go func() {
+		_, streamErr := copyStreamingResponse(ctx, httptest.NewRecorder(), stalledBody, "/v1/responses", time.Second)
+		done <- streamErr
+	}()
+	cancel()
+	select {
+	case streamErr := <-done:
+		if streamErr != nil || !stalledBody.isClosed() {
+			t.Fatalf("cancelled stream error/closed = %v/%v", streamErr, stalledBody.isClosed())
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("cancelled stream did not stop promptly")
 	}
 }
 
@@ -4421,6 +4538,52 @@ type timeoutCanaryError struct{}
 func (timeoutCanaryError) Error() string   { return "read tcp timeout-address-canary" }
 func (timeoutCanaryError) Timeout() bool   { return true }
 func (timeoutCanaryError) Temporary() bool { return true }
+
+type blockingReadCloser struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func newBlockingReadCloser() *blockingReadCloser {
+	return &blockingReadCloser{closed: make(chan struct{})}
+}
+
+func (body *blockingReadCloser) Read([]byte) (int, error) {
+	<-body.closed
+	return 0, errors.New("stream closed")
+}
+
+func (body *blockingReadCloser) Close() error {
+	body.once.Do(func() { close(body.closed) })
+	return nil
+}
+
+func (body *blockingReadCloser) isClosed() bool {
+	select {
+	case <-body.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+type delayedChunkReadCloser struct {
+	chunks [][]byte
+	delay  time.Duration
+	index  int
+}
+
+func (body *delayedChunkReadCloser) Read(buffer []byte) (int, error) {
+	if body.index >= len(body.chunks) {
+		return 0, io.EOF
+	}
+	time.Sleep(body.delay)
+	n := copy(buffer, body.chunks[body.index])
+	body.index++
+	return n, nil
+}
+
+func (*delayedChunkReadCloser) Close() error { return nil }
 
 func (r *brokenReader) Read(p []byte) (int, error) {
 	if !r.sent {

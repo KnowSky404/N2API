@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -13,18 +14,39 @@ import (
 )
 
 type tlsFingerprintTransport struct {
-	base   http.RoundTripper
-	dialer *net.Dialer
+	base                  http.RoundTripper
+	dialer                *net.Dialer
+	tlsHandshakeTimeout   time.Duration
+	responseHeaderTimeout time.Duration
 }
 
-func newTLSFingerprintTransport(base http.RoundTripper) http.RoundTripper {
+type upstreamTimeouts struct {
+	connect        time.Duration
+	tlsHandshake   time.Duration
+	responseHeader time.Duration
+}
+
+func newUpstreamTransport(timeouts upstreamTimeouts) *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   timeouts.connect,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.TLSHandshakeTimeout = timeouts.tlsHandshake
+	transport.ResponseHeaderTimeout = timeouts.responseHeader
+	return transport
+}
+
+func newTLSFingerprintTransport(base http.RoundTripper, timeouts upstreamTimeouts) http.RoundTripper {
 	if base == nil {
-		base = http.DefaultTransport
+		base = newUpstreamTransport(timeouts)
 	}
 	return &tlsFingerprintTransport{
-		base: base,
+		base:                  base,
+		tlsHandshakeTimeout:   timeouts.tlsHandshake,
+		responseHeaderTimeout: timeouts.responseHeader,
 		dialer: &net.Dialer{
-			Timeout:   30 * time.Second,
+			Timeout:   timeouts.connect,
 			KeepAlive: 30 * time.Second,
 		},
 	}
@@ -59,10 +81,17 @@ func (t *tlsFingerprintTransport) roundTripWithUTLS(req *http.Request, fingerpri
 		ServerName: host,
 		NextProtos: []string{"http/1.1"},
 	}, clientHelloIDForFingerprint(fingerprint))
-	if err := uconn.HandshakeContext(req.Context()); err != nil {
+	handshakeCtx := req.Context()
+	cancelHandshake := func() {}
+	if t.tlsHandshakeTimeout > 0 {
+		handshakeCtx, cancelHandshake = context.WithTimeout(handshakeCtx, t.tlsHandshakeTimeout)
+	}
+	if err := uconn.HandshakeContext(handshakeCtx); err != nil {
+		cancelHandshake()
 		_ = uconn.Close()
 		return nil, err
 	}
+	cancelHandshake()
 	if negotiated := uconn.ConnectionState().NegotiatedProtocol; negotiated != "" && negotiated != "http/1.1" {
 		_ = uconn.Close()
 		return nil, fmt.Errorf("unsupported negotiated protocol %q for fingerprint transport", negotiated)
@@ -72,10 +101,23 @@ func (t *tlsFingerprintTransport) roundTripWithUTLS(req *http.Request, fingerpri
 		_ = uconn.Close()
 		return nil, err
 	}
+	if t.responseHeaderTimeout > 0 {
+		if err := uconn.SetReadDeadline(time.Now().Add(t.responseHeaderTimeout)); err != nil {
+			_ = uconn.Close()
+			return nil, err
+		}
+	}
 	resp, err := http.ReadResponse(bufio.NewReader(uconn), req)
 	if err != nil {
 		_ = uconn.Close()
 		return nil, err
+	}
+	if t.responseHeaderTimeout > 0 {
+		if err := uconn.SetReadDeadline(time.Time{}); err != nil {
+			_ = resp.Body.Close()
+			_ = uconn.Close()
+			return nil, err
+		}
 	}
 	resp.Body = &closeWithConn{ReadCloser: resp.Body, conn: uconn}
 	return resp, nil

@@ -27,6 +27,10 @@ const defaultMaxAcceptedRequestBody = 4 << 20
 const defaultMaxInMemoryReplayBody = 1 << 20
 const defaultMaxUpstreamResponseBody = 8 << 20
 const defaultRequestBodyTimeout = 30 * time.Second
+const defaultUpstreamResponseHeaderTimeout = 30 * time.Second
+const defaultUpstreamConnectTimeout = 10 * time.Second
+const defaultUpstreamTLSHandshakeTimeout = 10 * time.Second
+const defaultUpstreamSSEIdleTimeout = 60 * time.Second
 const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 const requestLogWriteTimeout = 5 * time.Second
@@ -189,6 +193,10 @@ type Config struct {
 	MaxInMemoryReplayBodyBytes      int
 	MaxUpstreamResponseBodyBytes    int
 	RequestBodyTimeout              time.Duration
+	UpstreamResponseHeaderTimeout   time.Duration
+	UpstreamConnectTimeout          time.Duration
+	UpstreamTLSHandshakeTimeout     time.Duration
+	UpstreamSSEIdleTimeout          time.Duration
 	Logger                          RequestLogger
 	ModelProvider                   ModelProvider
 	UsagePricer                     UsagePricer
@@ -219,11 +227,15 @@ type Proxy struct {
 	maxReplayBody      int
 	maxResponseBody    int
 	requestBodyTimeout time.Duration
+	upstreamTimeouts   upstreamTimeouts
+	sseIdleTimeout     time.Duration
 	setReadDeadline    func(http.ResponseWriter, time.Time) error
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
-	return NewProxyWithClient(auth, accounts, cfg, &http.Client{Transport: newTLSFingerprintTransport(http.DefaultTransport)})
+	timeouts := normalizedUpstreamTimeouts(cfg)
+	transport := newUpstreamTransport(timeouts)
+	return NewProxyWithClient(auth, accounts, cfg, &http.Client{Transport: newTLSFingerprintTransport(transport, timeouts)})
 }
 
 func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config, client *http.Client) *Proxy {
@@ -266,6 +278,11 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if requestBodyTimeout <= 0 {
 		requestBodyTimeout = defaultRequestBodyTimeout
 	}
+	upstreamTimeouts := normalizedUpstreamTimeouts(cfg)
+	sseIdleTimeout := cfg.UpstreamSSEIdleTimeout
+	if sseIdleTimeout <= 0 {
+		sseIdleTimeout = defaultUpstreamSSEIdleTimeout
+	}
 	return &Proxy{
 		auth:               auth,
 		accounts:           accounts,
@@ -288,9 +305,31 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		maxReplayBody:      maxReplayBody,
 		maxResponseBody:    maxResponseBody,
 		requestBodyTimeout: requestBodyTimeout,
+		upstreamTimeouts:   upstreamTimeouts,
+		sseIdleTimeout:     sseIdleTimeout,
 		setReadDeadline: func(writer http.ResponseWriter, deadline time.Time) error {
 			return http.NewResponseController(writer).SetReadDeadline(deadline)
 		},
+	}
+}
+
+func normalizedUpstreamTimeouts(cfg Config) upstreamTimeouts {
+	responseHeaderTimeout := cfg.UpstreamResponseHeaderTimeout
+	if responseHeaderTimeout <= 0 {
+		responseHeaderTimeout = defaultUpstreamResponseHeaderTimeout
+	}
+	connectTimeout := cfg.UpstreamConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = defaultUpstreamConnectTimeout
+	}
+	tlsHandshakeTimeout := cfg.UpstreamTLSHandshakeTimeout
+	if tlsHandshakeTimeout <= 0 {
+		tlsHandshakeTimeout = defaultUpstreamTLSHandshakeTimeout
+	}
+	return upstreamTimeouts{
+		connect:        connectTimeout,
+		tlsHandshake:   tlsHandshakeTimeout,
+		responseHeader: responseHeaderTimeout,
 	}
 }
 
@@ -548,14 +587,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if upstreamErr != nil {
 			releaseAccount()
-			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", upstreamErr.Error())
+			upstreamErrCode := upstreamRequestErrorCode(upstreamErr)
+			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", upstreamRequestErrorMessage(upstreamErrCode))
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				gatewayFallbackCount++
 				continue
 			}
-			errorCode = "upstream_unavailable"
-			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
+			errorCode = upstreamErrCode
+			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamRequestErrorMessage(errorCode))
 			return
 		}
 
@@ -567,10 +607,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer upstreamResp.Body.Close()
 
 				streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
-				observedUsage, err = p.writeUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
+				observedUsage, err = p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
 				if err != nil {
 					errorCode = upstreamResponseErrorCode(err)
-					writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
+					if !recorder.committed() {
+						writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
+					}
 				}
 				return
 			}
@@ -593,10 +635,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer upstreamResp.Body.Close()
 
 		streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
-		observedUsage, err = p.writeUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
+		observedUsage, err = p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
 		if err != nil {
 			errorCode = upstreamResponseErrorCode(err)
-			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
+			if !recorder.committed() {
+				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
+			}
 		}
 		return
 	}
@@ -622,7 +666,7 @@ func (p *Proxy) clientForSelectedAccount(selected SelectedAccount) *http.Client 
 	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
 		return p.client
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := newUpstreamTransport(p.upstreamTimeouts)
 	transport.Proxy = http.ProxyURL(parsed)
 	client := &http.Client{Transport: transport}
 	if p.client != nil {
@@ -1109,9 +1153,10 @@ func secondsUntilNextMinute(now time.Time) int {
 var (
 	errUpstreamResponseTooLarge = errors.New("upstream response exceeds configured limit")
 	errUpstreamResponseRead     = errors.New("upstream response read failed")
+	errUpstreamSSEIdleTimeout   = errors.New("upstream SSE stream idle timeout")
 )
 
-func (p *Proxy) writeUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string, stream bool) (Usage, error) {
+func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (Usage, error) {
 	if resp == nil || resp.Body == nil {
 		return Usage{Source: "missing"}, errUpstreamResponseRead
 	}
@@ -1119,7 +1164,7 @@ func (p *Proxy) writeUpstreamResponse(w http.ResponseWriter, resp *http.Response
 		copyResponseHeaders(w.Header(), resp.Header)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(resp.StatusCode)
-		return copyStreamingResponse(w, resp.Body, route), nil
+		return copyStreamingResponse(ctx, w, resp.Body, route, p.sseIdleTimeout)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(p.maxResponseBody)+1))
 	if err != nil {
@@ -1135,37 +1180,76 @@ func (p *Proxy) writeUpstreamResponse(w http.ResponseWriter, resp *http.Response
 }
 
 func upstreamResponseErrorCode(err error) string {
-	if errors.Is(err, errUpstreamResponseTooLarge) {
+	switch {
+	case errors.Is(err, errUpstreamResponseTooLarge):
 		return "upstream_response_too_large"
+	case errors.Is(err, errUpstreamSSEIdleTimeout):
+		return "upstream_sse_idle_timeout"
 	}
 	return "upstream_response_error"
 }
 
 func upstreamResponseErrorMessage(err error) string {
-	if errors.Is(err, errUpstreamResponseTooLarge) {
+	switch {
+	case errors.Is(err, errUpstreamResponseTooLarge):
 		return "upstream response is too large"
+	case errors.Is(err, errUpstreamSSEIdleTimeout):
+		return "upstream stream timed out"
 	}
 	return "could not read upstream response"
 }
 
-func copyStreamingResponse(w http.ResponseWriter, body io.Reader, route string) Usage {
+func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration) (Usage, error) {
 	observer := NewSSEUsageObserver(route)
 	buffer := make([]byte, 32*1024)
 	writer := flushWriter{ResponseWriter: w}
+	stopContextClose := context.AfterFunc(ctx, func() {
+		_ = body.Close()
+	})
+	defer stopContextClose()
 	for {
+		idleExpired := make(chan struct{})
+		idleTimer := time.AfterFunc(idleTimeout, func() {
+			close(idleExpired)
+			_ = body.Close()
+		})
 		n, readErr := body.Read(buffer)
+		if !idleTimer.Stop() {
+			<-idleExpired
+		}
 		if n > 0 {
 			chunk := buffer[:n]
 			observer.Observe(chunk)
 			if _, writeErr := writer.Write(chunk); writeErr != nil {
-				return observer.Usage()
+				return observer.Usage(), nil
 			}
 		}
+		select {
+		case <-idleExpired:
+			return observer.Usage(), errUpstreamSSEIdleTimeout
+		default:
+		}
 		if readErr != nil {
-			break
+			if errors.Is(readErr, io.EOF) || ctx.Err() != nil {
+				return observer.Usage(), nil
+			}
+			return observer.Usage(), errUpstreamResponseRead
 		}
 	}
-	return observer.Usage()
+}
+
+func upstreamRequestErrorCode(err error) string {
+	if isTimeoutError(err) || errors.Is(err, context.DeadlineExceeded) {
+		return "upstream_timeout"
+	}
+	return "upstream_unavailable"
+}
+
+func upstreamRequestErrorMessage(code string) string {
+	if code == "upstream_timeout" {
+		return "upstream request timed out"
+	}
+	return "upstream request failed"
 }
 
 func (p *Proxy) estimateUsageCost(ctx context.Context, usage Usage) UsageCostEstimate {
@@ -1881,6 +1965,10 @@ func (r *statusRecorder) statusCode() int {
 		return http.StatusOK
 	}
 	return r.status
+}
+
+func (r *statusRecorder) committed() bool {
+	return r.status != 0
 }
 
 func (r *statusRecorder) Flush() {

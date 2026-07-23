@@ -1,10 +1,32 @@
 package gateway
 
 import (
+	"net/http"
 	"testing"
+	"time"
 
 	utls "github.com/refraction-networking/utls"
 )
+
+func TestUpstreamTransportsApplyConfiguredTimeouts(t *testing.T) {
+	timeouts := upstreamTimeouts{
+		connect:        7 * time.Second,
+		tlsHandshake:   8 * time.Second,
+		responseHeader: 9 * time.Second,
+	}
+	base := newUpstreamTransport(timeouts)
+	if base.DialContext == nil || base.TLSHandshakeTimeout != timeouts.tlsHandshake || base.ResponseHeaderTimeout != timeouts.responseHeader {
+		t.Fatalf("base transport timeouts = dial:%v tls:%s header:%s", base.DialContext != nil, base.TLSHandshakeTimeout, base.ResponseHeaderTimeout)
+	}
+
+	wrapped, ok := newTLSFingerprintTransport(base, timeouts).(*tlsFingerprintTransport)
+	if !ok {
+		t.Fatal("fingerprint transport has unexpected type")
+	}
+	if wrapped.base != http.RoundTripper(base) || wrapped.dialer.Timeout != timeouts.connect || wrapped.tlsHandshakeTimeout != timeouts.tlsHandshake || wrapped.responseHeaderTimeout != timeouts.responseHeader {
+		t.Fatalf("fingerprint transport timeouts = connect:%s tls:%s header:%s", wrapped.dialer.Timeout, wrapped.tlsHandshakeTimeout, wrapped.responseHeaderTimeout)
+	}
+}
 
 func TestClientHelloIDForFingerprint(t *testing.T) {
 	tests := []struct {

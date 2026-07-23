@@ -120,6 +120,9 @@ func TestGatewayDocumentationMatchesRequestBodyBoundaryContract(t *testing.T) {
 			"per-request read deadline",
 			"`408` with `request_body_timeout`",
 			"global HTTP `WriteTimeout`",
+			"stable code `upstream_timeout`",
+			"continuous no-data limit",
+			"`upstream_sse_idle_timeout`",
 		},
 	}
 	for path, wants := range checks {

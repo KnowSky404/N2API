@@ -1169,6 +1169,19 @@ on success and error paths. A slow upload that reaches the deadline returns
 not set a global HTTP `WriteTimeout`, because that would truncate healthy long
 SSE responses.
 
+Outbound gateway connections use
+`N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS` (10 seconds by default),
+`N2API_UPSTREAM_TLS_HANDSHAKE_TIMEOUT_SECONDS` (10 seconds), and
+`N2API_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS` (30 seconds). A timeout before
+response headers returns `502` with the stable code `upstream_timeout`; neither
+the client response nor the provider-account failure summary includes the
+underlying network address or error. Streaming responses use
+`N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS` (60 seconds by default) as a
+continuous no-data limit. Each received chunk resets the limit. When it expires,
+N2API closes the upstream body and records `upstream_sse_idle_timeout`; because
+the SSE headers are already committed, the stream closes without appending a
+JSON error object. Client disconnects also close the upstream body immediately.
+
 Request Logs keep local gateway rejections diagnosable while client responses stay OpenAI-compatible. Local limit responses still return `rate_limit_exceeded` to clients, but the stored request-log error identifies the guard as `api_key_request_rate_limited`, `api_key_token_rate_limited`, `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, `api_key_cost_budget_exceeded`, `gateway_concurrency_limited`, `api_key_concurrency_limited`, or `provider_account_concurrency_limited`.
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.
