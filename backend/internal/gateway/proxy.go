@@ -551,12 +551,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer releaseKey()
 
-	deadlineArmed, deadlineErr := p.armRequestBodyDeadline(recorder, r)
+	bodyReadDeadline, deadlineErr := p.armRequestBodyDeadline(recorder, r)
 	if deadlineErr != nil {
 		errorCode = "request_body_deadline_error"
 		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not set request body deadline")
 		return
 	}
+	deadlineArmed := !bodyReadDeadline.IsZero()
 	bodyReadInterruptDone := make(chan struct{})
 	stopBodyReadInterrupt := context.AfterFunc(r.Context(), func() {
 		defer close(bodyReadInterruptDone)
@@ -567,6 +568,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		<-bodyReadInterruptDone
 	}
 	requestCanceled := r.Context().Err() != nil
+	requestBodyTimedOut := err != nil && deadlineArmed && isTimeoutError(err) && !time.Now().Before(bodyReadDeadline)
 	if deadlineArmed && !requestCanceled {
 		if clearErr := p.setReadDeadline(recorder, time.Time{}); err == nil && clearErr != nil {
 			err = errRequestBodyDeadline
@@ -576,7 +578,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		err = r.Context().Err()
 	}
 	if err != nil {
-		if requestCanceled {
+		if requestCanceled && !requestBodyTimedOut {
 			errorCode = "request_canceled"
 			return
 		}
@@ -809,15 +811,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (p *Proxy) armRequestBodyDeadline(w http.ResponseWriter, r *http.Request) (bool, error) {
+func (p *Proxy) armRequestBodyDeadline(w http.ResponseWriter, r *http.Request) (time.Time, error) {
 	if p == nil || p.setReadDeadline == nil || p.requestBodyTimeout <= 0 || r == nil || r.Method != http.MethodPost || r.Body == nil {
-		return false, nil
+		return time.Time{}, nil
 	}
-	err := p.setReadDeadline(w, time.Now().Add(p.requestBodyTimeout))
+	deadline := time.Now().Add(p.requestBodyTimeout)
+	err := p.setReadDeadline(w, deadline)
 	if errors.Is(err, http.ErrNotSupported) {
-		return false, nil
+		return time.Time{}, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return time.Time{}, err
+	}
+	return deadline, nil
 }
 
 func (p *Proxy) clientForSelectedAccount(selected SelectedAccount) (*http.Client, error) {
@@ -1941,6 +1947,9 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, int64(p.maxAcceptedBody)+1))
 	if err != nil {
+		if isTimeoutError(err) {
+			return nil, 0, "", "", "", err
+		}
 		if contextErr := r.Context().Err(); contextErr != nil {
 			return nil, 0, "", "", "", contextErr
 		}

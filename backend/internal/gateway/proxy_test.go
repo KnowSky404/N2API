@@ -3913,6 +3913,52 @@ func TestProxyReturnsStableRequestBodyTimeoutAndReleasesSlots(t *testing.T) {
 	}
 }
 
+func TestProxyDistinguishesBodyDeadlineFromEarlyCancellation(t *testing.T) {
+	tests := []struct {
+		name           string
+		bodyTimeout    time.Duration
+		readDelay      time.Duration
+		wantStatus     int
+		wantErrorCode  string
+		wantEmptyReply bool
+	}{
+		{name: "body deadline", bodyTimeout: 5 * time.Millisecond, readDelay: 20 * time.Millisecond, wantStatus: http.StatusRequestTimeout, wantErrorCode: "request_body_timeout"},
+		{name: "early cancellation", bodyTimeout: time.Second, wantStatus: http.StatusOK, wantErrorCode: "request_canceled", wantEmptyReply: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logger := &fakeRequestLogger{}
+			proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{
+				RequestBodyTimeout: test.bodyTimeout,
+				Logger:             logger,
+			}, http.DefaultClient)
+			proxy.setReadDeadline = func(http.ResponseWriter, time.Time) error { return nil }
+			ctx, cancel := context.WithCancel(context.Background())
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+			req.Body = &cancelingErrorReadCloser{cancel: cancel, delay: test.readDelay, err: timeoutCanaryError{}}
+			req.ContentLength = -1
+			req.Header.Set("Authorization", "Bearer n2api_client_secret")
+			recorder := httptest.NewRecorder()
+
+			proxy.ServeHTTP(recorder, req)
+
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status=%d body=%s, want %d", recorder.Code, recorder.Body.String(), test.wantStatus)
+			}
+			if test.wantEmptyReply {
+				if recorder.Body.Len() != 0 {
+					t.Fatalf("body=%q, want no response after client cancellation", recorder.Body.String())
+				}
+			} else if !strings.Contains(recorder.Body.String(), `"code":"request_body_timeout"`) {
+				t.Fatalf("body=%q, want stable timeout error", recorder.Body.String())
+			}
+			if len(logger.entries) != 1 || logger.entries[0].Error != test.wantErrorCode {
+				t.Fatalf("request logs=%+v, want error %q", logger.entries, test.wantErrorCode)
+			}
+		})
+	}
+}
+
 func TestProxyClosesBlockingRequestBodyOnCancellation(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{
@@ -4963,6 +5009,20 @@ type errorReadCloser struct{ err error }
 
 func (body *errorReadCloser) Read([]byte) (int, error) { return 0, body.err }
 func (body *errorReadCloser) Close() error             { return nil }
+
+type cancelingErrorReadCloser struct {
+	cancel context.CancelFunc
+	delay  time.Duration
+	err    error
+}
+
+func (body *cancelingErrorReadCloser) Read([]byte) (int, error) {
+	time.Sleep(body.delay)
+	body.cancel()
+	return 0, body.err
+}
+
+func (body *cancelingErrorReadCloser) Close() error { return nil }
 
 type timeoutCanaryError struct{}
 
