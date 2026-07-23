@@ -66,6 +66,27 @@ make test-e2e
 make test-contracts
 ```
 
+## Local Database Backups
+
+The development Compose stack starts `postgres-backup` after PostgreSQL is
+healthy. It creates a custom-format dump immediately and every six hours by
+default, validates each archive with `pg_restore --list`, then atomically moves
+it into the ignored `backups/` directory with mode `0600`. Files older than
+seven days are removed. Override the bounded interval and retention with
+`N2API_BACKUP_INTERVAL_SECONDS` and `N2API_BACKUP_RETENTION_DAYS` in `.env`.
+
+Create and validate an additional backup immediately:
+
+```bash
+make backup-dev
+```
+
+Inspect the sidecar with `docker compose -f deploy/compose.yaml logs
+postgres-backup`. A healthy sidecar proves that its latest local archive passed
+the archive-list check; it does not prove a full restore. Continue running the
+isolated restore drill documented in the operator manual, and copy important
+backups to encrypted off-host storage. Local dumps are lost with the VPS disk.
+
 Install the pinned Playwright Chromium build into the controlled browser cache,
 then run Playwright commands through the wrapper:
 

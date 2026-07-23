@@ -2,7 +2,7 @@ SHELL := /usr/bin/env bash
 
 .PHONY: test test-request-log-profile test-e2e test-contracts test-playwright playwright-install \
 	disk-check disk-check-heavy clean-dev-artifacts clean-dev-artifacts-deep \
-	test-dev-artifacts
+	test-dev-artifacts backup-dev
 
 test:
 	dev/testing/run.sh unit
@@ -36,3 +36,8 @@ clean-dev-artifacts-deep:
 
 test-dev-artifacts:
 	dev/ci/test-dev-artifacts.sh
+	dev/ci/test-postgres-backup.sh
+
+backup-dev:
+	docker compose -f deploy/compose.yaml exec --no-TTY postgres-backup \
+		/usr/local/bin/n2api-postgres-backup once
