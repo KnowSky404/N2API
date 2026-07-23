@@ -269,7 +269,6 @@ peers are trusted, and the edge overwrites forwarding headers.
 ```bash
 set -euo pipefail
 read -rp 'Public HTTPS origin (for example https://n2api.example): ' N2API_PUBLIC_ORIGIN
-read -rp 'Direct private N2API origin (for example http://127.0.0.1:3000): ' N2API_DIRECT_ORIGIN
 
 curl -fsS -D - -o /dev/null "$N2API_PUBLIC_ORIGIN/readyz" \
   | awk 'BEGIN { IGNORECASE=1 } /^strict-transport-security:/ { found=1 } END { exit !found }'
@@ -280,10 +279,35 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
 test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
   -H 'Origin: https://attacker.invalid' -H 'Sec-Fetch-Site: same-origin' \
   "$N2API_PUBLIC_ORIGIN/api/admin/logout")" = 403
+```
 
+Run the negative direct-listener check from a second client, not from the proxy
+host or proxy container. First obtain the source address exactly as N2API sees
+it from a controlled private log/System Event and prove that it is outside every
+configured trusted proxy CIDR. Abort instead of guessing when either value is
+unknown:
+
+```bash
+set -euo pipefail
+read -rp 'Direct private N2API origin: ' N2API_UNTRUSTED_DIRECT_ORIGIN
+read -rp 'Test source IP as seen by N2API: ' N2API_UNTRUSTED_SOURCE_IP
+read -rp 'Configured trusted proxy CIDRs (comma-separated): ' N2API_TRUSTED_PROXY_CIDRS
+python3 - "$N2API_UNTRUSTED_SOURCE_IP" "$N2API_TRUSTED_PROXY_CIDRS" <<'PY'
+import ipaddress
+import sys
+
+source = ipaddress.ip_address(sys.argv[1].strip())
+trusted = [
+    ipaddress.ip_network(raw.strip(), strict=False)
+    for raw in sys.argv[2].split(",")
+    if raw.strip()
+]
+if any(source in network for network in trusted):
+    raise SystemExit("test source is trusted; use a different client")
+PY
 curl -fsS -D - -o /dev/null \
   -H 'X-Forwarded-Proto: http' -H 'X-Forwarded-Host: attacker.invalid' \
-  "$N2API_DIRECT_ORIGIN/readyz" \
+  "$N2API_UNTRUSTED_DIRECT_ORIGIN/readyz" \
   | awk 'BEGIN { IGNORECASE=1 } /^strict-transport-security:/ { found=1 } END { exit !found }'
 ```
 
@@ -405,12 +429,33 @@ rules first and compare them with the live state:
 set -euo pipefail
 gh auth status
 gh ruleset list --repo KnowSky404/N2API
-gh api repos/KnowSky404/N2API/rulesets --jq '.[] | {id,name,enforcement,target}'
+mapfile -t RULESET_IDS < <(
+  gh api repos/KnowSky404/N2API/rulesets --paginate \
+    --jq '.[] | select(.target == "branch") | .id'
+)
+test "${#RULESET_IDS[@]}" -gt 0
+for ruleset_id in "${RULESET_IDS[@]}"; do
+  gh api "repos/KnowSky404/N2API/rulesets/$ruleset_id" \
+    | jq -e '{
+        id,
+        name,
+        enforcement,
+        target,
+        conditions,
+        bypass_actors: [.bypass_actors[]? | {actor_id, actor_type, bypass_mode}],
+        rules: [.rules[]? | {type, parameters}]
+      }'
+done
 gh api repos/KnowSky404/N2API/environments/release \
   --jq '{name,protection_rules,deployment_branch_policy}'
 ```
 
-The owner-authorized configuration must match
+The detailed output must show branch conditions that target only `main`, active
+enforcement, `deletion` and `non_fast_forward` protection, a `pull_request` rule
+with conversation resolution, the exact required status-check contexts, and a
+`code_scanning` rule whose CodeQL parameters block new HIGH/CRITICAL alerts.
+Review every returned bypass actor and mode; a summary-only ruleset listing is
+not acceptance evidence. The owner-authorized configuration must match
 `docs/repository-protections.md`: PR-only `main`, conversation resolution,
 required Test/AMD64/ARM64/Security/CodeQL/dependency checks, no force push,
 HIGH/CRITICAL CodeQL merge protection, recorded emergency bypass, and a
