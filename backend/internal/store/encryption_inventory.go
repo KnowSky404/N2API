@@ -6,6 +6,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/encryptioninventory"
 	"github.com/KnowSky404/N2API/backend/internal/secret"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -84,7 +85,15 @@ func (r *EncryptionInventoryRepository) ListEncryptedValues(ctx context.Context)
 	if r == nil || r.pool == nil {
 		return nil, fmt.Errorf("encryption inventory repository is not configured")
 	}
-	rows, err := r.pool.Query(ctx, encryptionInventoryQuery)
+	return listEncryptedValues(ctx, r.pool)
+}
+
+type encryptionInventoryQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+func listEncryptedValues(ctx context.Context, querier encryptionInventoryQuerier) ([]encryptioninventory.EncryptedValue, error) {
+	rows, err := querier.Query(ctx, encryptionInventoryQuery)
 	if err != nil {
 		return nil, fmt.Errorf("query encryption inventory: %w", err)
 	}

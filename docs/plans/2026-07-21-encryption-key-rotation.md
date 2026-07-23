@@ -174,10 +174,55 @@ repeated deletion; advisory-lock contention/reacquisition; and cancellation.
 
 `feat(ops): clean expired OAuth state secrets`
 
+## Task 2B: Gate Re-encryption Preconditions
+
+Task status: completed locally on 2026-07-23; a real operator restore record
+and the correct historical keyring remain operational inputs, and no database
+secret has been rewritten.
+
+### Goal
+
+Refuse any future re-encryption run until every safety prerequisite is true.
+
+### Implementation
+
+`n2api admin check-encryption-rotation` is an always-dry-run preflight. It
+requires an explicitly configured current key ID, at least one configured
+previous key, and a non-sensitive real-backup restore record whose backup
+creation and successful isolated restore timestamps are no more than 24 hours
+old. Identifiers containing a URL or unsafe characters are rejected and are
+not echoed.
+
+The repository obtains one exclusive PostgreSQL session advisory lock through
+a dedicated connection and reruns the full encrypted credential inventory on
+that same connection. `ready` requires no required or unknown unreadable value.
+Explicitly purgeable OAuth state records remain visible but do not make a
+required secret unreadable. Contention and every failed check block the gate.
+Connection cancellation or unlock failure destroys the session rather than
+returning a possibly locked connection to the pool.
+
+The output is deterministic JSON containing only check names, stable reason
+codes, aggregate unreadable counts, UTC confirmation times, and the validated
+non-sensitive record ID. The command never migrates, re-encrypts, checkpoints,
+writes an event, or mutates business data.
+
+### Tests And Verification
+
+Unit tests cover every missing or stale confirmation, required and
+unknown-lifecycle unreadable secrets, contention, cancellation, stable redacted
+errors, invalid identifier redaction, and unlock failure. PostgreSQL store
+coverage proves that the session lock serializes checks, inventory uses the
+locked connection, repeated close is safe, and the lock can be reacquired.
+
+### Commit
+
+`feat(ops): gate encryption rotation preconditions`
+
 ## Task 3: Add Resumable Re-encryption
 
-Task status: blocked locally on the correct historical keyring and successful
-operator-backup restore acceptance. The 2026-07-21 pre-lifecycle development
+Task status: preflight gate implemented locally; re-encryption remains blocked
+on the correct historical keyring and successful operator-backup restore
+acceptance. The 2026-07-21 pre-lifecycle development
 inventory found 14 unreadable values with the then-configured keyring: eight OAuth
 code verifiers, one access token, one refresh token, one ID token, one provider
 API key, and two reusable client-key secrets. No proxy value was present and no

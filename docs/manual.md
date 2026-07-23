@@ -507,6 +507,40 @@ means command usage, configuration, database access, query, or output
 failed. Do not begin re-encryption while a blocking unreadable value exists or
 before the backup restore drill succeeds.
 
+Before any future re-encryption implementation can run, perform the read-only
+rotation preflight. The current key ID must be explicitly configured, the
+previous keyring must contain at least one key, and the real backup must have
+been both created and successfully restored in isolation within the previous
+24 hours. Use the non-sensitive identifier from the
+[operator restore drill record](restore-drill-record.md), never a dump path,
+public or signed URL, credential, or storage secret:
+
+```bash
+BACKUP_RECORD_ID=restore-record-YYYYMMDD-NN
+BACKUP_CREATED_AT=YYYY-MM-DDTHH:MM:SSZ
+BACKUP_RESTORED_AT=YYYY-MM-DDTHH:MM:SSZ
+docker compose -f deploy/compose.yaml exec -T n2api \
+  /app/n2api admin check-encryption-rotation \
+  --backup-id "$BACKUP_RECORD_ID" \
+  --backup-created-at "$BACKUP_CREATED_AT" \
+  --backup-restored-at "$BACKUP_RESTORED_AT"
+unset BACKUP_RECORD_ID BACKUP_CREATED_AT BACKUP_RESTORED_AT
+```
+
+The preflight obtains a dedicated exclusive PostgreSQL session advisory lock
+and reruns the complete inventory through that same connection. It reports a
+fixed ordered list of checks, stable reason codes, unreadable counts, the
+non-sensitive backup record identifier, and the confirmation timestamps. An
+invalid identifier is not echoed. Status `ready` and exit code `0` require
+every gate to pass. Status `blocked` or `contended` returns exit code `1`;
+usage, configuration, database, cancellation, unlock, or output failure returns
+exit code `2` with only a stable error code.
+
+This command is always a dry run. It does not run migrations, rewrite a secret,
+change a checkpoint, insert a System Event, or otherwise mutate business data.
+It is the mandatory gate for a future resumable re-encryption implementation,
+not that implementation and not evidence that key rotation has completed.
+
 Expired OAuth authorization records contain short-lived encrypted PKCE code
 verifiers. Review them with an explicit UTC cutoff; the command is a dry run
 unless `--execute` is present:
