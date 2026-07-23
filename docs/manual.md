@@ -507,6 +507,42 @@ means command usage, configuration, database access, query, or output
 failed. Do not begin re-encryption while a blocking unreadable value exists or
 before the backup restore drill succeeds.
 
+Expired OAuth authorization records contain short-lived encrypted PKCE code
+verifiers. Review them with an explicit UTC cutoff; the command is a dry run
+unless `--execute` is present:
+
+```bash
+OAUTH_STATE_CUTOFF="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+docker compose -f deploy/compose.yaml exec -T n2api \
+  /app/n2api admin cleanup-expired-oauth-states \
+  --cutoff "$OAUTH_STATE_CUTOFF" --batch-size 1000
+```
+
+The JSON report contains only the cutoff, batch size, eligible count, deleted
+count, batch count, and `dry_run`, `completed`, or `contended` status. Inspect
+the eligible count, then repeat the same immutable cutoff with `--execute`:
+
+```bash
+docker compose -f deploy/compose.yaml exec -T n2api \
+  /app/n2api admin cleanup-expired-oauth-states \
+  --cutoff "$OAUTH_STATE_CUTOFF" --batch-size 1000 --execute
+unset OAUTH_STATE_CUTOFF
+```
+
+The cutoff cannot be in the future. A row is eligible only when its
+`expires_at` is earlier than the cutoff or its non-null `consumed_at` is earlier
+than the cutoff. Active authorization states remain untouched. Deletes commit
+in bounded transactions under a dedicated PostgreSQL session advisory lock;
+another concurrent worker returns `contended` without deleting. Repeating a
+completed command is safe and reports zero deleted rows. A real run records the
+sanitized `oauth.state_cleanup.completed` System Event. PostgreSQL, event-write,
+lock-release, and cancellation failures emit only a structured stable error
+code; database details and encrypted verifier values are never logged.
+
+Exit code `0` means the dry run or cleanup completed, `1` means another cleanup
+worker holds the advisory lock, and `2` means invalid arguments, cancellation,
+database access, cleanup, event recording, lock release, or output failed.
+
 ### Alert Rules And Delivery
 
 The database stores notification actions and exact-match System Event rules.

@@ -163,7 +163,10 @@ func main() {
 	if len(os.Args) > 1 {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if exitCode := runAdminCommand(ctx, os.Args[1:], os.Stdout, os.Stderr, newVerifyEncryptionFunc(os.Getenv)); exitCode != 0 {
+		if exitCode := runAdminCommandWithCleanup(
+			ctx, os.Args[1:], os.Stdout, os.Stderr,
+			newVerifyEncryptionFunc(os.Getenv), newCleanupOAuthStatesFunc(os.Getenv),
+		); exitCode != 0 {
 			os.Exit(exitCode)
 		}
 		return

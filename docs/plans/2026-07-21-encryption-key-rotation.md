@@ -134,6 +134,46 @@ No migration or data rewrite is part of this task.
 
 `feat(admin): verify encrypted credential inventory`
 
+## Task 2A: Clean Expired OAuth State Secrets Safely
+
+Task status: completed locally on 2026-07-23; operator execution against a real
+deployment remains explicit and is not performed by tests.
+
+### Goal
+
+Remove only short-lived OAuth state records whose lifecycle proves they can no
+longer complete an authorization flow.
+
+### Implementation
+
+Add `n2api admin cleanup-expired-oauth-states` with an explicit non-future UTC
+cutoff, dry-run default, explicit `--execute`, and a bounded batch size. A row is
+eligible only when `expires_at < cutoff` or a non-null
+`consumed_at < cutoff`. The repository holds a dedicated session-level advisory
+lock for the complete operation, deletes deterministic ID batches with
+`FOR UPDATE SKIP LOCKED`, honors cancellation, and releases or destroys the
+dedicated connection safely. Migration 46 adds a partial `consumed_at` index;
+rollback drops only that index.
+
+A successful real run records one sanitized
+`oauth.state_cleanup.completed` System Event with cutoff, batch size, batch
+count, and deleted count. Dry runs do not write an event or mutate data. A
+concurrent worker returns a stable `contended` result, and repeated runs are
+idempotent. PostgreSQL and event failures are returned through a fixed error and
+the CLI writes only a structured stable error code.
+
+### Tests And Verification
+
+Unit tests cover dry-run, batch deletion, zero-row repeat, cancellation,
+contention, future-cutoff rejection, stable event fields, event failure,
+lock-release failure, and secret-safe errors. Isolated PostgreSQL tests cover
+active, expired, consumed, and cutoff-boundary behavior; bounded batches;
+repeated deletion; advisory-lock contention/reacquisition; and cancellation.
+
+### Commit
+
+`feat(ops): clean expired OAuth state secrets`
+
 ## Task 3: Add Resumable Re-encryption
 
 Task status: blocked locally on the correct historical keyring and successful

@@ -1003,6 +1003,9 @@ func TestEncryptionInventoryDocumentationMatchesRuntimeContract(t *testing.T) {
 			"Exit code `1`",
 			"Exit code `2`",
 			"Do not begin re-encryption",
+			"cleanup-expired-oauth-states",
+			"oauth.state_cleanup.completed",
+			"another concurrent worker returns `contended`",
 		},
 		"../../../docs/plans/2026-07-21-encryption-key-rotation.md": {
 			"Tasks 1-2 completed locally on 2026-07-21",
@@ -1011,6 +1014,8 @@ func TestEncryptionInventoryDocumentationMatchesRuntimeContract(t *testing.T) {
 			"all eight non-empty secret columns",
 			"all six lifecycle states",
 			"No migration or data rewrite is part of this task",
+			"Task 2A: Clean Expired OAuth State Secrets Safely",
+			"Migration 46 adds a partial `consumed_at` index",
 			"Task status: blocked locally on the correct historical keyring",
 			"found 14 unreadable values",
 			"No proxy value was present and no",

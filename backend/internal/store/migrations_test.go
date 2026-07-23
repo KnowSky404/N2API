@@ -100,6 +100,23 @@ func TestOAuthStatesMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestOAuthStateCleanupMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00046_oauth_state_cleanup.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE INDEX IF NOT EXISTS oauth_states_consumed_at_idx",
+		"ON oauth_states (consumed_at)",
+		"WHERE consumed_at IS NOT NULL",
+		"DROP INDEX IF EXISTS oauth_states_consumed_at_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAuthorizationMetadataMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00005_oauth_authorization_metadata.sql")
 	if err != nil {
@@ -663,10 +680,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 45 {
-		t.Fatalf("migration sources = %d, want 45", len(sources))
+	if len(sources) != 46 {
+		t.Fatalf("migration sources = %d, want 46", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[44].Path != "00045_routing_exhaustion_projector.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[45].Path != "00046_oauth_state_cleanup.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }

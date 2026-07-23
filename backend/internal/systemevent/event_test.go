@@ -176,3 +176,9 @@ func TestSystemEventRetentionFailureActionIsKnown(t *testing.T) {
 		t.Fatalf("action %q is not registered", ActionSchedulerEventRetentionFailed)
 	}
 }
+
+func TestOAuthStateCleanupActionIsKnown(t *testing.T) {
+	if !IsKnownAction(ActionOAuthStateCleanupCompleted) {
+		t.Fatalf("action %q is not registered", ActionOAuthStateCleanupCompleted)
+	}
+}
