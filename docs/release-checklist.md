@@ -21,7 +21,7 @@ record.
 - [ ] Both platform SBOMs were generated from the tested parent manifest digest without rebuilding:
 - [ ] The release prepare job verified an SPDX attestation for the exact tested digest, repository workflow, and source commit:
 - [ ] Both 14-day evidence artifacts contain a non-empty SPDX JSON SBOM, Trivy JSON, and non-sensitive metadata naming the same parent digest:
-- [ ] UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL counts were reviewed for both platforms:
+- [ ] The report-only counts for UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL findings were reviewed for both platforms:
 - [ ] No unexcepted HIGH or CRITICAL finding with a non-empty Trivy `FixedVersion` remains on either platform:
 - [ ] Every active image exception is exact, platform-scoped, owner-assigned, justified, and expires within 30 days:
 
