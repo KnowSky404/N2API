@@ -1130,26 +1130,35 @@ not restart or mark the entire gateway unavailable.
 ## Downstream Codex CLI
 
 After connecting and testing a Codex OAuth provider account, enable the models
-that account can serve and create a client key on the API Keys page. Configure
-the downstream Codex CLI with an environment-backed key:
-
-```bash
-export N2API_API_KEY="the client key created by N2API"
-```
+that account can serve and create a client key on the API Keys page. Save the
+following as `~/.codex/n2api.config.toml`:
 
 ```toml
+model_provider = "n2api"
+model = "gpt-5.4-mini"
+
 [model_providers.n2api]
 name = "N2API"
 base_url = "http://127.0.0.1:3000/v1"
 env_key = "N2API_API_KEY"
 wire_api = "responses"
-
-[profiles.n2api]
-model_provider = "n2api"
-model = "gpt-5.4-mini"
 ```
 
-Use `codex -p n2api`. Replace the base URL when Codex runs on another machine.
+Codex 0.134.0 and later load `--profile n2api` from that separate file; do not
+place these settings under a legacy `[profiles.n2api]` table in
+`~/.codex/config.toml`. Start Codex without putting the client key in shell
+history, and keep the key scoped to the child shell:
+
+```bash
+(
+  trap 'unset N2API_API_KEY' EXIT INT TERM
+  read -rsp 'N2API client key: ' N2API_API_KEY; echo
+  export N2API_API_KEY
+  codex --profile n2api
+)
+```
+
+Replace the base URL when Codex runs on another machine.
 Verify `GET /v1/models` with the client key before troubleshooting model
 requests; the list reflects the key's routing-pool scope and model policy,
 account model capability, enabled state, and account health. A key without a
