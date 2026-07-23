@@ -9,9 +9,9 @@ Data migration: none
 | Dimension | Status | Evidence and remaining gate |
 | --- | --- | --- |
 | `design` | complete | Tasks 1-5 define PostgreSQL-backed gateway, protocol/client, mock-upstream, and sanitized failure-evidence contracts. |
-| `implementation` | complete | Local commits `e67600a`, `db02f13`, `3dd65df`, `f22c678`, and `9fcf9d6` implement the planned harness; later boundary, transport, affinity, cancellation, correlation, and slow-upload timeout fixes culminate in `b35089f`. |
+| `implementation` | complete | Local commits `e67600a`, `db02f13`, `3dd65df`, `f22c678`, and `9fcf9d6` implement the planned harness; later boundary, transport, affinity, cancellation, correlation, and slow-upload timeout fixes include `b35089f` and `05c5083`. |
 | `merged` | partial | The five planned harness commits are on GitHub `main` at `3664abe`; `b35089f` and later gateway fixes remain local. |
-| `local_tests` | partial | Mock PostgreSQL/upstream, raw HTTP, SDK, streaming, fallback, affinity, proxy, response-bound, cancellation, and artifact-redaction coverage exists. Real OAuth/Codex and reverse-proxy acceptance remain external. |
+| `local_tests` | partial | Mock PostgreSQL/upstream, raw HTTP, SDK, streaming, fallback, affinity, proxy, response-bound, cancellation, and artifact-redaction coverage exists. Commits `6da9ec0`, `3046c49`, `06da041`, `49363aa`, and `226951f` add real socket, transport, process, persisted-affinity, and failure-recovery acceptance tests. Real OAuth/Codex and reverse-proxy acceptance remain external. |
 | `ci` | pending | No GitHub Actions run contains the local commits or later gateway fixes. |
 | `release_artifact` | pending | No tested or published image digest contains the local commits. |
 | `operator_acceptance` | pending | Exercise a real OpenAI OAuth account, Codex CLI, reverse proxy, streaming, and request-log attribution without exposing credentials. |

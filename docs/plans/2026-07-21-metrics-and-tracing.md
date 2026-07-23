@@ -11,7 +11,7 @@ Data migration: none
 | `design` | complete | Commit `20b42e6` defines the bounded metrics contract. The current iteration explicitly excludes OpenTelemetry tracing. |
 | `implementation` | complete | Local commits `39389e6` and `57029b9` implement the selected optional Prometheus scope, including alerting, readiness, and background-task state. |
 | `merged` | partial | The contract commit `20b42e6` is on GitHub `main` at `3664abe`; the two implementation commits remain local. |
-| `local_tests` | complete | Focused tests cover disabled mode, bind/auth policy, loopback listener, bind failure, concurrency, SSE lifetime, cancellation, shutdown, labels, secret canaries, readiness, alert queue/delivery, histogram output, and a measured 1,516-series owned budget below 1,600. |
+| `local_tests` | complete | Focused tests cover disabled mode, bind/auth policy, loopback listener, bind failure, concurrency, SSE lifetime, cancellation, shutdown, labels, secret canaries, readiness, alert queue/delivery, histogram output, and a measured 1,516-series owned budget below 1,600. Commits `ada47b4` and `bbb1a39` add real scrape behavior for SSE cancellation and unavailable PostgreSQL pools plus process-level disabled-listener and bind-failure exit tests. |
 | `ci` | pending | No GitHub Actions run contains the metrics commits. |
 | `release_artifact` | pending | No published image digest contains the metrics listener. |
 | `operator_acceptance` | pending | Scrape the deployed loopback/private listener, verify bearer handling where applicable, and connect an external readiness monitor without exposing the listener publicly. |
