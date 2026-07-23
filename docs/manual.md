@@ -273,6 +273,14 @@ publish runs verify that the tested parent digest has an SPDX attestation issued
 by this repository's `CI Image` workflow for the selected source commit; stable
 tags continue to promote that same digest without rebuilding it.
 
+The read-only `Stable Image Security` workflow runs weekly and on manual
+dispatch. It resolves the latest non-draft, non-prerelease GitHub Release,
+requires its ten-digit CalVer tag and `latest` image tag to resolve to the same
+two-platform manifest, then scans that exact `IMAGE@digest` for both platforms.
+It does not build, retag, or publish an image and does not create issues.
+Platform SBOM, Trivy, and relationship metadata artifacts are retained for 14
+days; the same fixed HIGH/CRITICAL and expiring-exception policy applies.
+
 Release `2026071401` predates multi-platform publishing and supports only
 `linux/amd64`. ARM64 hosts must use a later release. Inspect any tag before
 deployment with:

@@ -1,0 +1,253 @@
+name: Stable Image Security
+
+on:
+  schedule:
+    - cron: "41 4 * * 4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  resolve:
+    name: Resolve latest stable image
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.resolve.outputs.digest }}
+      image: ${{ steps.resolve.outputs.image }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve immutable release digest
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest")"
+          jq -e '
+            type == "object" and
+            .draft == false and
+            .prerelease == false and
+            (.tag_name | type == "string")
+          ' <<< "$release" >/dev/null
+
+          version="$(jq -r '.tag_name' <<< "$release")"
+          if [[ ! "$version" =~ ^[0-9]{10}$ ]]; then
+            echo "Latest GitHub Release tag is not an N2API CalVer" >&2
+            exit 1
+          fi
+
+          image="${REGISTRY}/${GITHUB_REPOSITORY,,}"
+          release_ref="${image}:${version}"
+          latest_ref="${image}:latest"
+
+          digest_for() {
+            docker buildx imagetools inspect "$1" \
+              | sed -n 's/^Digest:[[:space:]]*//p' \
+              | head -n 1
+          }
+
+          digest="$(digest_for "$release_ref")"
+          latest_digest="$(digest_for "$latest_ref")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve the stable release manifest digest" >&2
+            exit 1
+          fi
+          if [ "$latest_digest" != "$digest" ]; then
+            echo "The latest tag does not match the latest GitHub Release digest" >&2
+            exit 1
+          fi
+
+          raw="$(docker buildx imagetools inspect --raw "${image}@${digest}")"
+          platforms="$(
+            jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)"' \
+              <<< "$raw" | sort
+          )"
+          if [ "$platforms" != $'linux/amd64\nlinux/arm64' ]; then
+            echo "Stable release does not contain exactly the supported platforms" >&2
+            exit 1
+          fi
+
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          {
+            printf '### Stable image resolution\n\n'
+            printf -- '- Release: `%s`\n' "$version"
+            printf -- '- Image: `%s@%s`\n' "$image" "$digest"
+            printf -- '- Platforms: `linux/amd64`, `linux/arm64`\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  scan:
+    name: Stable image evidence (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+          - platform: linux/arm64
+            suffix: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare evidence paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/n2api-stable-image-evidence/${{ matrix.suffix }}"
+          mkdir -p "$evidence_dir"
+          echo "EVIDENCE_DIR=$evidence_dir" >> "$GITHUB_ENV"
+          echo "SBOM_FILE=$evidence_dir/n2api-stable-sbom-${{ matrix.suffix }}.spdx.json" >> "$GITHUB_ENV"
+          echo "TRIVY_FILE=$evidence_dir/n2api-stable-trivy-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
+          echo "METADATA_FILE=$evidence_dir/n2api-stable-evidence-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
+
+      - name: Generate platform SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        env:
+          SYFT_PLATFORM: ${{ matrix.platform }}
+        with:
+          image: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ env.SBOM_FILE }}
+          upload-artifact: false
+          dependency-snapshot: false
+          upload-release-assets: false
+
+      - name: Validate platform SPDX SBOM
+        run: |
+          test -s "$SBOM_FILE"
+          jq -e '
+            type == "object" and
+            (.spdxVersion | type == "string") and
+            (.SPDXID | type == "string") and
+            (.packages | type == "array")
+          ' "$SBOM_FILE" >/dev/null
+
+      - name: Scan platform image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          image-ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}
+          scanners: vuln
+          format: json
+          output: ${{ env.TRIVY_FILE }}
+          exit-code: '0'
+          ignore-unfixed: false
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+
+      - name: Validate and summarize stable image evidence
+        env:
+          PARENT_DIGEST: ${{ needs.resolve.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+          RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$TRIVY_FILE"
+          jq -e '
+            type == "object" and
+            (.SchemaVersion == 2) and
+            (.ArtifactName | type == "string") and
+            (.Results | type == "array") and
+            ([.Results[]? | (.Vulnerabilities // [])] | all(.[]; type == "array"))
+          ' "$TRIVY_FILE" >/dev/null
+
+          sbom_name="${SBOM_FILE##*/}"
+          trivy_name="${TRIVY_FILE##*/}"
+          jq -n \
+            --arg releaseVersion "$RELEASE_VERSION" \
+            --arg parentDigest "$PARENT_DIGEST" \
+            --arg platform "$PLATFORM" \
+            --arg sbom "$sbom_name" \
+            --arg vulnerabilityReport "$trivy_name" \
+            '{
+              releaseVersion: $releaseVersion,
+              parentDigest: $parentDigest,
+              platform: $platform,
+              files: {
+                sbom: $sbom,
+                vulnerabilityReport: $vulnerabilityReport
+              }
+            }' > "$METADATA_FILE"
+          jq -e \
+            --arg releaseVersion "$RELEASE_VERSION" \
+            --arg parentDigest "$PARENT_DIGEST" \
+            --arg platform "$PLATFORM" \
+            --arg sbom "$sbom_name" \
+            --arg trivy "$trivy_name" \
+            '.releaseVersion == $releaseVersion and
+             .parentDigest == $parentDigest and
+             .platform == $platform and
+             .files.sbom == $sbom and
+             .files.vulnerabilityReport == $trivy' \
+            "$METADATA_FILE" >/dev/null
+
+          {
+            printf '### Stable image vulnerability evidence (%s)\n\n' "$PLATFORM"
+            printf -- '- Release: `%s`\n' "$RELEASE_VERSION"
+            printf -- '- Digest: `%s`\n\n' "$PARENT_DIGEST"
+            printf '| Severity | Findings |\n'
+            printf '| --- | ---: |\n'
+            for severity in UNKNOWN LOW MEDIUM HIGH CRITICAL; do
+              count="$(
+                jq --arg severity "$severity" \
+                  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "UNKNOWN") == $severity)] | length' \
+                  "$TRIVY_FILE"
+              )"
+              printf '| %s | %s |\n' "$severity" "$count"
+            done
+            printf '\nPolicy: unexcepted HIGH/CRITICAL findings with a non-empty fixed version block this job.\n'
+            printf 'Unfixed findings remain report-only. Scanner, schema, registry, and report-generation errors fail closed.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload stable image evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: stable-image-evidence-${{ needs.resolve.outputs.version }}-${{ matrix.suffix }}
+          path: |
+            ${{ env.SBOM_FILE }}
+            ${{ env.TRIVY_FILE }}
+            ${{ env.METADATA_FILE }}
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
+
+      - name: Enforce fixed vulnerability policy
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: dev/ci/evaluate-trivy-report.sh "$TRIVY_FILE" "$PLATFORM" security/exceptions.json

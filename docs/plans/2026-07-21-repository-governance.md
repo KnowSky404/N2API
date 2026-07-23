@@ -200,6 +200,12 @@ the platform job. Unfixed findings remain report-only. Exact CVE or package
 exceptions are platform-scoped and expire within 30 days. Scanner, report,
 registry, schema, attestation, and artifact failures fail closed.
 
+A separate weekly/manual read-only workflow resolves the latest stable GitHub
+Release CalVer and requires its CalVer and `latest` GHCR tags to match. It scans
+the existing parent digest for both platforms, uploads 14-day evidence, and
+applies the same gate without building, retagging, publishing, or creating an
+issue.
+
 ### Completion Criteria
 
 Each release digest has provenance, SBOM, and scan results tied to the same

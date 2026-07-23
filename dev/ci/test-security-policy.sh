@@ -114,6 +114,19 @@ grep -Fq '      - name: Download tested platform image' <<< "$publish_job"
 grep -Fq '      - name: Validate and load tested platform image' <<< "$publish_job"
 grep -Fq '    needs: publish-platform' <<< "$manifest_job"
 
+stable_workflow="$repo_root/.github/workflows/stable-image-security.yml"
+grep -Fq '  schedule:' "$stable_workflow"
+grep -Fq '  workflow_dispatch:' "$stable_workflow"
+grep -Fq '  contents: read' "$stable_workflow"
+grep -Fq '  packages: read' "$stable_workflow"
+grep -Fq 'repos/${GITHUB_REPOSITORY}/releases/latest' "$stable_workflow"
+grep -Fq 'image-ref: ${{ needs.resolve.outputs.image }}@${{ needs.resolve.outputs.digest }}' "$stable_workflow"
+grep -Fq 'dev/ci/evaluate-trivy-report.sh' "$stable_workflow"
+if rg -n '(^|[[:space:]])(packages|issues): write|docker (build|push|tag)([[:space:]]|$)|imagetools create|gh issue' "$stable_workflow" >/dev/null; then
+  echo "stable image security workflow unexpectedly contains a write path" >&2
+  exit 1
+fi
+
 write_trivy_report() {
   local severity="$1"
   local fixed_version="$2"

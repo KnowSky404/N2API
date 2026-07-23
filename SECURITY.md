@@ -70,6 +70,9 @@ dependency checks:
 - Trivy blocks HIGH and CRITICAL image vulnerabilities when the report names a
   non-empty fixed version. Unfixed findings remain visible in retained evidence
   but do not block publication.
+- `Stable Image Security` re-scans the latest GitHub Release digest for both
+  supported platforms every week and on manual dispatch without rebuilding,
+  retagging, publishing packages, or creating issues.
 - `actionlint` and the pinned-dependency policy reject malformed workflows and
   external Actions that are not pinned to complete commit SHAs.
 
