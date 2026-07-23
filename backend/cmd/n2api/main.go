@@ -258,6 +258,27 @@ func runServer() {
 		slog.Error("admin bootstrap failed", "error", err)
 		os.Exit(1)
 	}
+	var instanceLock *store.InstanceLock
+	if cfg.AllowUnsafeMultiInstance {
+		slog.Warn("unsafe multi-instance operation enabled", "error_code", "unsafe_multi_instance_enabled")
+	} else {
+		var acquired bool
+		var lockErr error
+		instanceLock, acquired, lockErr = store.TryAcquireInstanceLock(ctx, pool)
+		if lockErr != nil {
+			slog.Error("instance lock unavailable", "error_code", "instance_lock_unavailable")
+			os.Exit(1)
+		}
+		if !acquired {
+			slog.Error("another n2api instance is active", "error_code", "instance_already_running")
+			os.Exit(1)
+		}
+		defer func() {
+			if err := instanceLock.Close(); err != nil {
+				slog.Error("instance lock release failed", "error_code", "instance_lock_release_failed")
+			}
+		}()
+	}
 	alertDispatcher.Start()
 	go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour)
 	if cfg.SystemEventRetentionDays > 0 {
@@ -377,6 +398,11 @@ func runServer() {
 	}
 	cancelDispatcher()
 	if exitCode != 0 {
+		if instanceLock != nil {
+			if err := instanceLock.Close(); err != nil {
+				slog.Error("instance lock release failed", "error_code", "instance_lock_release_failed")
+			}
+		}
 		pool.Close()
 		os.Exit(exitCode)
 	}

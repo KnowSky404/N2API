@@ -33,6 +33,7 @@ type Config struct {
 	OpenAIOAuthTokenURL                    string
 	OpenAIAPIBaseURL                       string
 	AllowHTTPAPIUpstreams                  bool
+	AllowUnsafeMultiInstance               bool
 	GatewayMaxConcurrentRequests           int
 	GatewayMaxConcurrentRequestsPerAccount int
 	GatewayMaxConcurrentRequestsPerKey     int
@@ -139,6 +140,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.AllowHTTPAPIUpstreams = allowHTTPAPIUpstreams
+	allowUnsafeMultiInstance, err := parseBool(lookup("N2API_ALLOW_UNSAFE_MULTI_INSTANCE"), "N2API_ALLOW_UNSAFE_MULTI_INSTANCE")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AllowUnsafeMultiInstance = allowUnsafeMultiInstance
 	adminLoginThrottleEnabled, err := parseBool(valueOrDefault(lookup("N2API_ADMIN_LOGIN_THROTTLE_ENABLED"), "true"), "N2API_ADMIN_LOGIN_THROTTLE_ENABLED")
 	if err != nil {
 		return Config{}, err

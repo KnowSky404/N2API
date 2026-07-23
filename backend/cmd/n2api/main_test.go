@@ -145,6 +145,9 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 	text := string(source)
 	for _, want := range []string{
 		"signal.NotifyContext",
+		"store.TryAcquireInstanceLock",
+		"instance_already_running",
+		"unsafe_multi_instance_enabled",
 		"provider.NewAutoTestRunnerWithConfigSource",
 		"adminService.GetGatewaySettings",
 		"admin.NewRequestLogRetentionRunner",

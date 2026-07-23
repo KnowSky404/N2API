@@ -340,6 +340,30 @@ func TestLoadResponseAffinityLifecycleConfig(t *testing.T) {
 	}
 }
 
+func TestLoadUnsafeMultiInstanceOverride(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	cfg, err := Load(mapLookup(base))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if cfg.AllowUnsafeMultiInstance {
+		t.Fatal("AllowUnsafeMultiInstance = true by default")
+	}
+	enabled := maps.Clone(base)
+	enabled["N2API_ALLOW_UNSAFE_MULTI_INSTANCE"] = "true"
+	cfg, err = Load(mapLookup(enabled))
+	if err != nil || !cfg.AllowUnsafeMultiInstance {
+		t.Fatalf("configured unsafe override = %v err:%v", cfg.AllowUnsafeMultiInstance, err)
+	}
+	invalid := maps.Clone(base)
+	invalid["N2API_ALLOW_UNSAFE_MULTI_INSTANCE"] = "sometimes"
+	if _, err := Load(mapLookup(invalid)); err == nil {
+		t.Fatal("Load invalid unsafe override returned nil error")
+	}
+}
+
 func TestLoadAlertDeliveryEnabled(t *testing.T) {
 	base := map[string]string{
 		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",

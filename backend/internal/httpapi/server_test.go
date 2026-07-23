@@ -1265,6 +1265,23 @@ func TestAdminHealthIncludesBuildIdentityForAuthenticatedSession(t *testing.T) {
 	}
 }
 
+func TestAdminHealthShowsUnsafeMultiInstanceWarningOnlyWhenAuthenticated(t *testing.T) {
+	server := NewServer(config.Config{AllowUnsafeMultiInstance: true}, staticHealth{}, newFakeAdminService(), nil)
+	unauthenticated := httptest.NewRecorder()
+	server.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
+	if strings.Contains(unauthenticated.Body.String(), "unsafe_multi_instance_enabled") {
+		t.Fatalf("unauthenticated health leaked warning: %s", unauthenticated.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if !strings.Contains(recorder.Body.String(), "unsafe_multi_instance_enabled") {
+		t.Fatalf("authenticated health missing warning: %s", recorder.Body.String())
+	}
+}
+
 func TestAdminHealthIncludesRequestLogRetentionTaskOnlyForAuthenticatedSession(t *testing.T) {
 	started := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
 	source := fakeRequestLogRetentionStatusSource{status: admin.RequestLogRetentionStatus{

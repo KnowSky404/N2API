@@ -280,6 +280,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 				return body
 			}
 			body["build"] = build
+			if cfg.AllowUnsafeMultiInstance {
+				body["warnings"] = []string{"unsafe_multi_instance_enabled"}
+			}
 			tasks := map[string]any{}
 			if requestLogRetentionStatusSource != nil {
 				tasks["requestLogRetention"] = requestLogRetentionStatusSource.RequestLogRetentionStatus()
