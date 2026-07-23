@@ -13,8 +13,8 @@ fixture_admin_username="admin"
 fixture_admin_password="e2e-admin-password"
 fixture_encryption_secret="e2e-encryption-secret-with-enough-length"
 wrong_encryption_secret="wrong-restore-encryption-secret-with-enough-length"
-historical_schema_version=46
-current_schema_version=47
+historical_schema_version=47
+current_schema_version=48
 active_scenario="setup"
 
 fail() {
@@ -181,7 +181,7 @@ run_compose exec --no-TTY postgres pg_dump \
 run_compose stop n2api >/dev/null
 run_compose exec --no-TTY postgres psql \
   --username n2api --dbname n2api_e2e --set ON_ERROR_STOP=1 \
-  --command "DROP TABLE response_affinities; DELETE FROM schema_migrations WHERE version_id = ${current_schema_version};" >/dev/null
+  --command "ALTER TABLE request_logs DROP CONSTRAINT IF EXISTS request_logs_upstream_request_id_length_check, DROP COLUMN IF EXISTS upstream_request_id; DELETE FROM schema_migrations WHERE version_id = ${current_schema_version};" >/dev/null
 fixture_schema="$(run_compose exec --no-TTY postgres psql \
   --username n2api --dbname n2api_e2e --tuples-only --no-align \
   --command 'SELECT COALESCE(max(version_id), 0) FROM schema_migrations' | tr -d '[:space:]')"

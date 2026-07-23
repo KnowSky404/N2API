@@ -75,8 +75,8 @@ resources, invokes the production restore verifier for every scenario, and
 fails if the existing `deploy` containers, volumes, networks, or running state
 change:
 
-- current schema 47 dump restores with secret and gateway checks;
-- schema 46 dump migrates to schema 47 and passes the same checks;
+- current schema 48 dump restores with secret and gateway checks;
+- schema 47 dump migrates to schema 48 and passes the same checks;
 - corrupt archive failed at `archive_list`;
 - wrong encryption key failed at the restored-secret check;
 - `TERM` during archive startup returned failure and left no generated
