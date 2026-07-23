@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/KnowSky404/N2API/security/advisories/new
+    about: Use a private Security Advisory and never open a public issue for a vulnerability.
+  - name: Read the N2API documentation
+    url: https://github.com/KnowSky404/N2API/blob/main/docs/README.md
+    about: Review setup, operation, recovery, and gateway guidance before filing an issue.

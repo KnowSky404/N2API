@@ -1,0 +1,93 @@
+name: Bug report
+description: Report a reproducible N2API defect using sanitized test data
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. Use [private vulnerability reporting](https://github.com/KnowSky404/N2API/security/advisories/new).
+
+        Never include secrets, API keys, OAuth tokens, cookies, callback codes or complete callback URLs, encryption keys, database dumps, production records, or complete request/response bodies. Use synthetic data and review every attachment before submitting.
+
+  - type: input
+    id: version
+    attributes:
+      label: N2API version
+      description: Provide an image tag, release version, or commit SHA.
+      placeholder: "Example: 2026072301 or sha-0123456789ab"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment mode
+      options:
+        - Development Docker Compose
+        - Published-image Docker Compose
+        - Local source build
+        - Other self-hosted deployment
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      options:
+        - Gateway API
+        - Provider accounts and OAuth
+        - Admin UI or admin API
+        - PostgreSQL or migrations
+        - Docker Compose or image
+        - Backup, restore, or operations
+        - CI, release, or documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Sanitized reproduction
+      description: Provide minimal deterministic steps using synthetic accounts, identifiers, and payloads.
+      placeholder: |
+        1. Configure a synthetic fixture...
+        2. Send a minimal sanitized request...
+        3. Observe the stable status or error code...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include stable error codes and statuses, not raw internal errors or complete bodies.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Optional minimal log lines or configuration key names. Remove values and review attachments for sensitive data.
+      render: text
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Submission checks
+      options:
+        - label: This is not a security vulnerability requiring private reporting.
+          required: true
+        - label: I reproduced the issue on the version named above and searched existing issues.
+          required: true
+        - label: I removed secrets, cookies, callback codes and URLs, dumps, production data, and complete request/response bodies from this issue and its attachments.
+          required: true
