@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 common="${repo_root}/dev/lib/test-resources.sh"
 cleaner="${repo_root}/dev/maintenance/clean-dev-artifacts.sh"
 disk_check="${repo_root}/dev/maintenance/disk-check.sh"
+restore_driver="${repo_root}/dev/verification/test-restore-backup.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/n2api-dev-artifact-test.XXXXXXXX")"
 
 cleanup_fixture() {
@@ -324,6 +325,17 @@ grep -Fq -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore cleanup does not remove local test images"
 grep -Fq 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore verification lacks the disk preflight"
+bash -n "${restore_driver}" || fail "restore scenario driver has invalid shell syntax"
+grep -Fq 'n2api_run_init restore-backup' "${restore_driver}" ||
+  fail "restore scenario driver does not use managed run lifecycle"
+grep -Fq 'n2api_register_compose' "${restore_driver}" ||
+  fail "restore scenario driver does not register its isolated Compose project"
+grep -Fq 'label=io.knowsky.n2api.run-id=${run_id}' "${restore_driver}" ||
+  fail "restore scenario cleanup assertion is not run-label scoped"
+grep -Fq 'snapshot_development_stack' "${restore_driver}" ||
+  fail "restore scenario driver does not protect the development stack"
+grep -Fq 'test-restore-backup:' "${repo_root}/Makefile" ||
+  fail "managed restore scenario Make target is missing"
 image_build_block="$(sed -n '/name: Build platform image once/,/name: Start PostgreSQL for smoke test/p' "${repo_root}/.github/workflows/ci-image.yml")"
 if grep -Fq 'io.knowsky.n2api.resource=test' <<<"${image_build_block}"; then
   fail "publishable image config contains a test resource label"

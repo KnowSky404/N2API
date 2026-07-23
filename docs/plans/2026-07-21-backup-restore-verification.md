@@ -56,16 +56,20 @@ matches before the mock gateway exercise runs.
 Run with a valid dump, corrupt dump, older schema dump, wrong encryption key,
 and interrupted cleanup. Confirm production containers and volumes are unchanged.
 
-Local generated-fixture evidence:
+Repeatable local generated-fixture evidence is available through
+`make test-restore-backup`. The managed driver creates only run-labeled test
+resources, invokes the production restore verifier for every scenario, and
+fails if the existing `deploy` containers, volumes, networks, or running state
+change:
 
-- current schema dump restored at schema 39 with secret and gateway checks;
-- schema 38 dump migrated to schema 39 and passed the same checks;
+- current schema 47 dump restores with secret and gateway checks;
+- schema 46 dump migrates to schema 47 and passes the same checks;
 - corrupt archive failed at `archive_list`;
 - wrong encryption key failed at the restored-secret check;
 - `TERM` during archive startup returned failure and left no generated
-  container, volume, or network; and
-- the existing `deploy` development stack remained healthy and was not
-  recreated by any drill.
+  container, volume, network, or build image; and
+- the existing `deploy` resource identities and running state were unchanged
+  and no container was recreated by any drill.
 
 ### Compatibility And Security
 

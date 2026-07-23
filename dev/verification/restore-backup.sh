@@ -45,6 +45,8 @@ volume="${project}_restore-postgres"
 stage="config"
 cleanup_armed=0
 
+echo "restore_run_id=${project}"
+
 export N2API_RESTORE_DUMP_PATH="${dump_path}"
 export N2API_RESTORE_API_KEY_ID=""
 export N2API_RESTORE_ENCRYPTION_KEY_ID="${N2API_RESTORE_ENCRYPTION_KEY_ID:-default}"
