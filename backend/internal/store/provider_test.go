@@ -1998,6 +1998,7 @@ func newProviderRepositoryForTest(t *testing.T) (*ProviderRepository, func()) {
 	if err != nil {
 		t.Fatalf("pgxpool.New returned error: %v", err)
 	}
+	requireStoreTestDatabase(t, ctx, pool)
 	if err := RunMigrations(ctx, pool); err != nil {
 		pool.Close()
 		t.Fatalf("RunMigrations returned error: %v", err)

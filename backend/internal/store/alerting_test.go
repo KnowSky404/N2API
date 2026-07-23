@@ -946,6 +946,7 @@ func newTestAlertingRepository(t *testing.T, ctx context.Context) *AlertingRepos
 		t.Fatalf("connect alerting test database: %v", err)
 	}
 	t.Cleanup(adminPool.Close)
+	requireStoreTestDatabase(t, ctx, adminPool)
 	schema := fmt.Sprintf("alerting_store_%d", time.Now().UnixNano())
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	if _, err := adminPool.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {

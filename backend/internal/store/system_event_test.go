@@ -188,6 +188,7 @@ func newTestSystemEventRepository(t *testing.T, ctx context.Context) *SystemEven
 		t.Fatalf("connect system event test database: %v", err)
 	}
 	t.Cleanup(adminPool.Close)
+	requireStoreTestDatabase(t, ctx, adminPool)
 	schema := fmt.Sprintf("system_event_store_%d", time.Now().UnixNano())
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	if _, err := adminPool.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {

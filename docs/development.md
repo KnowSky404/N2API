@@ -50,6 +50,15 @@ Run the normal unit checks:
 make test
 ```
 
+PostgreSQL store tests that create schemas or truncate fixtures require both
+`N2API_STORE_TEST_DATABASE_URL` and
+`N2API_STORE_TEST_ALLOW_DESTRUCTIVE=1`. The connected database name must contain
+a separate `test`, `e2e`, or `restore` segment. The suite checks
+`current_database()` before migrations or cleanup and refuses the development
+database `n2api` even when a database URL is supplied accidentally. Create a
+dedicated disposable database such as `n2api_store_test`; never point store
+tests at the `deploy` Compose database.
+
 Run isolated Docker verification:
 
 ```bash

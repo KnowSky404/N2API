@@ -61,6 +61,7 @@ jobs:
         working-directory: backend
         env:
           N2API_STORE_TEST_DATABASE_URL: postgres://n2api:ci-store-test-password@127.0.0.1:5432/n2api_store_test?sslmode=disable
+          N2API_STORE_TEST_ALLOW_DESTRUCTIVE: "1"
         shell: bash
         run: |
           set -euo pipefail

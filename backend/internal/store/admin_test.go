@@ -912,6 +912,7 @@ func newTestAdminRepository(t *testing.T) *AdminRepository {
 		t.Fatalf("pgxpool.New returned error: %v", err)
 	}
 	t.Cleanup(pool.Close)
+	requireStoreTestDatabase(t, context.Background(), pool)
 	if err := RunMigrations(context.Background(), pool); err != nil {
 		t.Fatalf("RunMigrations returned error: %v", err)
 	}

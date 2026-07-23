@@ -56,6 +56,7 @@ func newRequestLogProfilePool(t *testing.T, ctx context.Context, dsn string) *pg
 		t.Fatalf("connect profile database: %v", err)
 	}
 	t.Cleanup(adminPool.Close)
+	requireStoreTestDatabase(t, ctx, adminPool)
 
 	schema := fmt.Sprintf("request_log_profile_%d", time.Now().UnixNano())
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
