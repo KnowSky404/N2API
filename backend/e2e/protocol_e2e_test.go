@@ -376,7 +376,7 @@ func TestGatewayPropagatesCancellationWhileUpstreamWaitsForHeaders(t *testing.T)
 		t.Fatal("stage=timeout_cancel failure=request_did_not_cancel")
 	}
 	logs := waitForRequestLogCount(t, fixture.database, keyID, []string{sessionID}, 1)
-	if logs[0].statusCode != http.StatusServiceUnavailable || logs[0].errorCode != "upstream_token_error" || logs[0].gatewayAttemptCount != 1 || logs[0].gatewayFallbackCount != 1 {
+	if logs[0].statusCode != http.StatusOK || logs[0].errorCode != "request_canceled" || logs[0].gatewayAttemptCount != 1 || logs[0].gatewayFallbackCount != 0 {
 		t.Fatal("stage=timeout_cancel field=request_log")
 	}
 }

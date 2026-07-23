@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/metrics"
@@ -29,6 +31,57 @@ func (m *captureMainTaskMetrics) ObserveBackgroundTaskRun(task, outcome string, 
 type fakeProviderAccountMetricsSource struct {
 	accounts []provider.Account
 	err      error
+}
+
+type slowUploadAuthenticator struct {
+	authenticated chan struct{}
+	once          sync.Once
+}
+
+func (a *slowUploadAuthenticator) AuthenticateAPIKey(context.Context, string) (admin.APIKey, error) {
+	a.once.Do(func() { close(a.authenticated) })
+	routingPoolID := int64(1)
+	return admin.APIKey{ID: 1, RoutingPoolID: &routingPoolID}, nil
+}
+
+type unusedSlowUploadAccountProvider struct{}
+
+func (unusedSlowUploadAccountProvider) SelectAccountForModel(context.Context, string, ...int64) (gateway.SelectedAccount, error) {
+	return gateway.SelectedAccount{}, errors.New("account selection should not run while request body is blocked")
+}
+
+type postAuthenticationReadListener struct {
+	net.Listener
+	authenticated <-chan struct{}
+	bodyRead      chan struct{}
+}
+
+func (l *postAuthenticationReadListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &postAuthenticationReadConn{
+		Conn:          conn,
+		authenticated: l.authenticated,
+		bodyRead:      l.bodyRead,
+	}, nil
+}
+
+type postAuthenticationReadConn struct {
+	net.Conn
+	authenticated <-chan struct{}
+	bodyRead      chan struct{}
+	once          sync.Once
+}
+
+func (c *postAuthenticationReadConn) Read(buffer []byte) (int, error) {
+	select {
+	case <-c.authenticated:
+		c.once.Do(func() { close(c.bodyRead) })
+	default:
+	}
+	return c.Conn.Read(buffer)
 }
 
 func (s *fakeProviderAccountMetricsSource) ListAccounts(context.Context) ([]provider.Account, error) {
@@ -107,6 +160,85 @@ func TestHTTPServerCancelsActiveRequestsWhenBaseContextEnds(t *testing.T) {
 	case <-clientDone:
 	case <-time.After(time.Second):
 		t.Fatal("client request did not stop")
+	}
+}
+
+func TestHTTPServerCancellationUnblocksProxyReadingSlowUpload(t *testing.T) {
+	baseContext, cancelBase := context.WithCancel(context.Background())
+	authenticated := make(chan struct{})
+	bodyRead := make(chan struct{})
+	authenticator := &slowUploadAuthenticator{authenticated: authenticated}
+	proxy := gateway.NewProxyWithClient(authenticator, unusedSlowUploadAccountProvider{}, gateway.Config{
+		MaxAcceptedRequestBodyBytes: 1024,
+	}, http.DefaultClient)
+	handlerDone := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxy.ServeHTTP(w, r)
+		close(handlerDone)
+	})
+	server := newHTTPServer(config.Config{}, handler, baseContext)
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	listener := &postAuthenticationReadListener{
+		Listener:      tcpListener,
+		authenticated: authenticated,
+		bodyRead:      bodyRead,
+	}
+	serveErrors := make(chan error, 1)
+	go func() { serveErrors <- server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	clientConn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = clientConn.Close() })
+	requestHeaders := "POST /v1/chat/completions HTTP/1.1\r\n" +
+		"Host: " + listener.Addr().String() + "\r\n" +
+		"Authorization: Bearer slow-upload-test\r\n" +
+		"Content-Type: application/json\r\n" +
+		"Content-Length: 1024\r\n" +
+		"Connection: close\r\n\r\n"
+	if _, err := io.WriteString(clientConn, requestHeaders); err != nil {
+		t.Fatalf("WriteString returned error: %v", err)
+	}
+	clientDone := make(chan error, 1)
+	go func() {
+		_, readErr := io.Copy(io.Discard, clientConn)
+		clientDone <- readErr
+	}()
+
+	select {
+	case <-bodyRead:
+	case <-time.After(time.Second):
+		t.Fatal("proxy did not block reading the incomplete request body")
+	}
+	cancelBase()
+
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("proxy request body read did not stop after base context cancellation")
+	}
+	select {
+	case <-clientDone:
+	case <-time.After(time.Second):
+		t.Fatal("slow upload client did not stop after base context cancellation")
+	}
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		t.Fatalf("Shutdown returned error: %v", err)
+	}
+	select {
+	case err := <-serveErrors:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("Serve returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
 	}
 }
 

@@ -557,13 +557,29 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not set request body deadline")
 		return
 	}
+	bodyReadInterruptDone := make(chan struct{})
+	stopBodyReadInterrupt := context.AfterFunc(r.Context(), func() {
+		defer close(bodyReadInterruptDone)
+		_ = p.setReadDeadline(recorder, time.Now())
+	})
 	bodyFactory, maxAttempts, model, sessionID, previousResponseID, err := p.requestBodyFactory(r)
-	if deadlineArmed {
+	if !stopBodyReadInterrupt() {
+		<-bodyReadInterruptDone
+	}
+	requestCanceled := r.Context().Err() != nil
+	if deadlineArmed && !requestCanceled {
 		if clearErr := p.setReadDeadline(recorder, time.Time{}); err == nil && clearErr != nil {
 			err = errRequestBodyDeadline
 		}
 	}
+	if err == nil && requestCanceled {
+		err = r.Context().Err()
+	}
 	if err != nil {
+		if requestCanceled {
+			errorCode = "request_canceled"
+			return
+		}
 		errorCode = requestBodyErrorCode(err)
 		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
 		return
@@ -639,8 +655,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			accountConcurrencyLimited = true
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
-			gatewayFallbackCount++
 			if attempt+1 < maxAttempts {
+				gatewayFallbackCount++
 				p.observeFallback("account_concurrency")
 				continue
 			}
@@ -712,6 +728,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if upstreamErr != nil {
 			releaseAccount()
+			if r.Context().Err() != nil {
+				errorCode = "request_canceled"
+				return
+			}
 			upstreamErrCode := upstreamRequestErrorCode(upstreamErr)
 			p.recordAccountFailure(r.Context(), selected.AccountID, http.StatusBadGateway, "", upstreamRequestErrorMessage(upstreamErrCode))
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
@@ -1736,12 +1756,20 @@ func captureFailure(resp *http.Response) (string, string) {
 	if resp == nil || resp.Body == nil {
 		return "", ""
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFailureBody+1))
+	originalBody := resp.Body
+	body, err := io.ReadAll(io.LimitReader(originalBody, maxFailureBody+1))
+	resp.Body = &prefixedReadCloser{
+		Reader: io.MultiReader(bytes.NewReader(body), originalBody),
+		closer: originalBody,
+	}
 	if err != nil {
 		return "", ""
 	}
-	resp.Body = io.NopCloser(bytes.NewReader(body))
-	failureBody := string(bytes.TrimSpace(body))
+	summary := body
+	if len(summary) > maxFailureBody {
+		summary = summary[:maxFailureBody]
+	}
+	failureBody := string(bytes.TrimSpace(summary))
 	message := http.StatusText(resp.StatusCode)
 	if strings.TrimSpace(failureBody) == "" {
 		return message, failureBody
@@ -1752,13 +1780,19 @@ func captureFailure(resp *http.Response) (string, string) {
 			Code    string `json:"code"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &payload); err == nil && strings.TrimSpace(payload.Error.Message) != "" {
+	if err := json.Unmarshal(summary, &payload); err == nil && strings.TrimSpace(payload.Error.Message) != "" {
 		return strings.TrimSpace(payload.Error.Message), failureBody
 	}
-	if len(body) > maxFailureBody {
-		body = body[:maxFailureBody]
-	}
-	return string(bytes.TrimSpace(body)), failureBody
+	return string(bytes.TrimSpace(summary)), failureBody
+}
+
+type prefixedReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *prefixedReadCloser) Close() error {
+	return r.closer.Close()
 }
 
 func captureFailureMessage(resp *http.Response) string {
@@ -1897,12 +1931,19 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), "", nil
 	}
 	defer r.Body.Close()
+	stopContextClose := context.AfterFunc(r.Context(), func() {
+		_ = r.Body.Close()
+	})
+	defer stopContextClose()
 	if r.ContentLength > int64(p.maxAcceptedBody) {
 		return nil, 0, "", "", "", errRequestBodyTooLarge
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, int64(p.maxAcceptedBody)+1))
 	if err != nil {
+		if contextErr := r.Context().Err(); contextErr != nil {
+			return nil, 0, "", "", "", contextErr
+		}
 		return nil, 0, "", "", "", err
 	}
 	if len(limitedBody) > p.maxAcceptedBody {

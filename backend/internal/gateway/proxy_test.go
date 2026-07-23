@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -758,6 +759,88 @@ func TestProxyAllowsNonStreamingUpstreamResponseAtExactLimit(t *testing.T) {
 	}
 }
 
+func TestProxyBoundsFinalRetryableUpstreamResponseAfterFailureCapture(t *testing.T) {
+	const responseLimit = maxFailureBody + 128
+	upstreamPayload := `{"error":{"message":"temporary failure"},"padding":"` + strings.Repeat("x", responseLimit) + `"}`
+	upstreamBody := &countingReadCloser{reader: strings.NewReader(upstreamPayload)}
+	logger := &fakeRequestLogger{}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header: http.Header{
+				"Content-Type":      []string{"application/json"},
+				"Content-Length":    []string{strconv.Itoa(len(upstreamPayload))},
+				"X-Upstream-Canary": []string{"must-not-be-copied"},
+			},
+			Body:    upstreamBody,
+			Request: request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}, Config{
+		MaxAcceptedRequestBodyBytes:  1024,
+		MaxInMemoryReplayBodyBytes:   1,
+		MaxUpstreamResponseBodyBytes: responseLimit,
+		Logger:                       logger,
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), `"code":"upstream_response_too_large"`) {
+		t.Fatalf("status/body-length=%d/%d, want bounded upstream response error", recorder.Code, recorder.Body.Len())
+	}
+	if recorder.Header().Get("Content-Length") != "" || recorder.Header().Get("X-Upstream-Canary") != "" || strings.Contains(recorder.Body.String(), "temporary failure") {
+		t.Fatalf("upstream response leaked: headers=%v body=%s", recorder.Header(), recorder.Body.String())
+	}
+	if !upstreamBody.closed {
+		t.Fatal("original upstream response body was not closed")
+	}
+	if len(logger.entries) != 1 || logger.entries[0].GatewayAttemptCount != 1 || logger.entries[0].GatewayFallbackCount != 0 || logger.entries[0].Error != "upstream_response_too_large" {
+		t.Fatalf("request log=%+v, want attempts/fallbacks/error 1/0/upstream_response_too_large", logger.entries)
+	}
+}
+
+func TestProxyBoundsMatchingPassThroughResponseAfterFailureCapture(t *testing.T) {
+	const responseLimit = maxFailureBody + 128
+	upstreamPayload := `{"error":{"code":"insufficient_quota","message":"quota exceeded"},"padding":"` + strings.Repeat("x", responseLimit) + `"}`
+	rules := &fakeErrorPassthroughRuleProvider{rules: []admin.ErrorPassthroughRule{{
+		Pattern:   "429",
+		MatchType: "status_code",
+		Enabled:   true,
+		Priority:  1,
+	}}}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Header: http.Header{
+				"Content-Type":      []string{"application/json"},
+				"Content-Length":    []string{strconv.Itoa(len(upstreamPayload))},
+				"X-Upstream-Canary": []string{"must-not-be-copied"},
+			},
+			Body:    io.NopCloser(strings.NewReader(upstreamPayload)),
+			Request: request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}, Config{
+		ErrorPassthroughRulesProvider: rules,
+		MaxUpstreamResponseBodyBytes:  responseLimit,
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), `"code":"upstream_response_too_large"`) {
+		t.Fatalf("status/body-length=%d/%d, want bounded pass-through error", recorder.Code, recorder.Body.Len())
+	}
+	if recorder.Header().Get("Content-Length") != "" || recorder.Header().Get("X-Upstream-Canary") != "" || strings.Contains(recorder.Body.String(), "insufficient_quota") {
+		t.Fatalf("upstream response leaked: headers=%v body=%s", recorder.Header(), recorder.Body.String())
+	}
+}
+
 func TestProxyRedactsNonStreamingUpstreamReadFailure(t *testing.T) {
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -862,6 +945,55 @@ func TestProxyEnforcesResponseHeaderTimeout(t *testing.T) {
 	}
 	if len(accounts.failures) != 1 || accounts.failures[0].message != "upstream request timed out" {
 		t.Fatalf("account failures = %+v", accounts.failures)
+	}
+}
+
+func TestProxyStopsWithoutFallbackWhenClientCancelsBeforeUpstreamHeaders(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
+		{AccountID: 1, AuthorizationToken: "first-token"},
+		{AccountID: 2, AuthorizationToken: "second-token"},
+	}}
+	transportStarted := make(chan struct{})
+	var transportStartedOnce sync.Once
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		transportStartedOnce.Do(func() { close(transportStarted) })
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		MaxConcurrentRequestsPerAccount: 1,
+		Logger:                          logger,
+	}, client)
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		proxy.ServeHTTP(recorder, req)
+		close(done)
+	}()
+
+	<-transportStarted
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("canceled request did not stop promptly")
+	}
+
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("canceled client received response body %q", recorder.Body.String())
+	}
+	if len(accounts.failures) != 0 || accounts.calls != 1 {
+		t.Fatalf("account failures/selections=%+v/%d, want none/one", accounts.failures, accounts.calls)
+	}
+	if len(logger.entries) != 1 || logger.entries[0].Error != "request_canceled" || logger.entries[0].GatewayAttemptCount != 1 || logger.entries[0].GatewayFallbackCount != 0 {
+		t.Fatalf("request log=%+v, want request_canceled with attempts/fallbacks 1/0", logger.entries)
+	}
+	if snapshot := proxy.AccountConcurrencySnapshot(); len(snapshot) != 0 {
+		t.Fatalf("account slots not released after cancellation: %+v", snapshot)
 	}
 }
 
@@ -3781,6 +3913,61 @@ func TestProxyReturnsStableRequestBodyTimeoutAndReleasesSlots(t *testing.T) {
 	}
 }
 
+func TestProxyClosesBlockingRequestBodyOnCancellation(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{
+		MaxConcurrentGatewayRequests: 1,
+		MaxConcurrentRequestsPerKey:  1,
+		Logger:                       logger,
+	}, http.DefaultClient)
+	var readDeadlines []time.Time
+	proxy.setReadDeadline = func(_ http.ResponseWriter, deadline time.Time) error {
+		readDeadlines = append(readDeadlines, deadline)
+		return nil
+	}
+	body := newBlockingRequestBody()
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	req.Body = body
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		proxy.ServeHTTP(recorder, req)
+		close(done)
+	}()
+
+	<-body.started
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("blocking request body did not stop after cancellation")
+	}
+
+	if !body.isClosed() || recorder.Body.Len() != 0 {
+		t.Fatalf("closed/body=%v/%q, want closed body and no canceled-client response", body.isClosed(), recorder.Body.String())
+	}
+	if len(logger.entries) != 1 || logger.entries[0].Error != "request_canceled" || logger.entries[0].GatewayAttemptCount != 0 || logger.entries[0].GatewayFallbackCount != 0 {
+		t.Fatalf("request log=%+v, want request_canceled before upstream attempt", logger.entries)
+	}
+	if len(readDeadlines) != 2 || readDeadlines[0].IsZero() || readDeadlines[1].IsZero() {
+		t.Fatalf("read deadlines=%v, want initial and cancellation deadlines without clearing canceled connection", readDeadlines)
+	}
+	releaseGateway, gatewayOK := proxy.tryAcquireGatewaySlot(1)
+	if gatewayOK {
+		releaseGateway()
+	}
+	releaseKey, keyOK := proxy.tryAcquireAPIKeySlot(42, 1)
+	if keyOK {
+		releaseKey()
+	}
+	if !gatewayOK || !keyOK {
+		t.Fatalf("slots not released after cancellation: gateway=%v key=%v", gatewayOK, keyOK)
+	}
+}
+
 func TestProxyLogsPreciseAPIKeyConcurrencyLimitReason(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "busy key"}}, &fakeSelectedAccountProvider{}, Config{
@@ -3832,6 +4019,38 @@ func TestProxyLogsPreciseProviderAccountConcurrencyLimitReason(t *testing.T) {
 		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
 	}
 	assertLastLoggedError(t, logger, "provider_account_concurrency_limited")
+}
+
+func TestProxyDoesNotCountFallbackForTerminalAccountConcurrencyLimit(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AuthorizationToken: "busy-token"}}},
+		Config{
+			MaxAcceptedRequestBodyBytes:     1024,
+			MaxInMemoryReplayBodyBytes:      1,
+			MaxConcurrentRequestsPerAccount: 1,
+			Logger:                          logger,
+		},
+		http.DefaultClient,
+	)
+	release, ok := proxy.tryAcquireAccountSlot(7, 1)
+	if !ok {
+		t.Fatal("failed to occupy account slot")
+	}
+	defer release()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5"}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status/body=%d/%s, want provider account concurrency rejection", recorder.Code, recorder.Body.String())
+	}
+	if len(logger.entries) != 1 || logger.entries[0].GatewayAttemptCount != 1 || logger.entries[0].GatewayFallbackCount != 0 {
+		t.Fatalf("request log=%+v, want attempts/fallbacks 1/0", logger.entries)
+	}
 }
 
 func TestProxyLogsGatewayFallbackCountsForRetryableUpstreamFailure(t *testing.T) {
@@ -4726,6 +4945,7 @@ func (body *trackingReadCloser) Close() error { return nil }
 type countingReadCloser struct {
 	reader    io.Reader
 	bytesRead int
+	closed    bool
 }
 
 func (body *countingReadCloser) Read(buffer []byte) (int, error) {
@@ -4734,7 +4954,10 @@ func (body *countingReadCloser) Read(buffer []byte) (int, error) {
 	return count, err
 }
 
-func (body *countingReadCloser) Close() error { return nil }
+func (body *countingReadCloser) Close() error {
+	body.closed = true
+	return nil
+}
 
 type errorReadCloser struct{ err error }
 
@@ -4750,6 +4973,37 @@ func (timeoutCanaryError) Temporary() bool { return true }
 type blockingReadCloser struct {
 	closed chan struct{}
 	once   sync.Once
+}
+
+type blockingRequestBody struct {
+	started   chan struct{}
+	closed    chan struct{}
+	startOnce sync.Once
+	closeOnce sync.Once
+}
+
+func newBlockingRequestBody() *blockingRequestBody {
+	return &blockingRequestBody{started: make(chan struct{}), closed: make(chan struct{})}
+}
+
+func (body *blockingRequestBody) Read([]byte) (int, error) {
+	body.startOnce.Do(func() { close(body.started) })
+	<-body.closed
+	return 0, errors.New("request body closed")
+}
+
+func (body *blockingRequestBody) Close() error {
+	body.closeOnce.Do(func() { close(body.closed) })
+	return nil
+}
+
+func (body *blockingRequestBody) isClosed() bool {
+	select {
+	case <-body.closed:
+		return true
+	default:
+		return false
+	}
 }
 
 func newBlockingReadCloser() *blockingReadCloser {
