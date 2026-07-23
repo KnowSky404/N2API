@@ -20,6 +20,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/alerting"
 	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
+	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
 
@@ -41,11 +42,19 @@ type fakeRequestLogRetentionStatusSource struct {
 	status admin.RequestLogRetentionStatus
 }
 
+type fakeResponseAffinityRetentionStatusSource struct {
+	status gateway.ResponseAffinityRetentionStatus
+}
+
 type fakeAlertDeliveryStatusSource struct {
 	status alerting.DeliveryStatus
 }
 
 func (s fakeRequestLogRetentionStatusSource) RequestLogRetentionStatus() admin.RequestLogRetentionStatus {
+	return s.status
+}
+
+func (s fakeResponseAffinityRetentionStatusSource) ResponseAffinityRetentionStatus() gateway.ResponseAffinityRetentionStatus {
 	return s.status
 }
 
@@ -1282,6 +1291,38 @@ func TestAdminHealthIncludesRequestLogRetentionTaskOnlyForAuthenticatedSession(t
 	status := body.Tasks["requestLogRetention"]
 	if !status.AutomaticEnabled || !status.Running || status.LastStartedAt == nil || !status.LastStartedAt.Equal(started) {
 		t.Fatalf("retention task status = %+v", status)
+	}
+}
+
+func TestAdminHealthIncludesResponseAffinityRetentionOnlyForAuthenticatedSession(t *testing.T) {
+	started := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+	source := fakeResponseAffinityRetentionStatusSource{status: gateway.ResponseAffinityRetentionStatus{
+		AutomaticEnabled: true, Running: true, LastStartedAt: &started,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, source)
+
+	unauthenticated := httptest.NewRecorder()
+	server.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
+	if strings.Contains(unauthenticated.Body.String(), "responseAffinityRetention") {
+		t.Fatalf("unauthenticated health leaked response affinity status: %s", unauthenticated.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	var body struct {
+		Tasks map[string]json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	var status gateway.ResponseAffinityRetentionStatus
+	if err := json.Unmarshal(body.Tasks["responseAffinityRetention"], &status); err != nil {
+		t.Fatalf("decode response affinity status: %v", err)
+	}
+	if !status.AutomaticEnabled || !status.Running || status.LastStartedAt == nil || !status.LastStartedAt.Equal(started) {
+		t.Fatalf("response affinity retention status = %+v", status)
 	}
 }
 

@@ -117,6 +117,30 @@ func TestOAuthStateCleanupMigrationIsEmbedded(t *testing.T) {
 	}
 }
 
+func TestResponseAffinitiesMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00047_response_affinities.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"CREATE TABLE response_affinities",
+		"response_id_hash BYTEA NOT NULL",
+		"routing_pool_id BIGINT NOT NULL REFERENCES routing_pools(id) ON DELETE CASCADE",
+		"provider_account_id BIGINT NOT NULL REFERENCES provider_accounts(id) ON DELETE CASCADE",
+		"CHECK (octet_length(response_id_hash) = 32)",
+		"CHECK (expires_at > created_at)",
+		"PRIMARY KEY (response_id_hash, routing_pool_id)",
+		"response_affinities_expires_at_idx",
+		"response_affinities_provider_account_idx",
+		"response_affinities_routing_pool_idx",
+		"DROP TABLE IF EXISTS response_affinities",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
 func TestOAuthAuthorizationMetadataMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00005_oauth_authorization_metadata.sql")
 	if err != nil {
@@ -680,10 +704,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 46 {
-		t.Fatalf("migration sources = %d, want 46", len(sources))
+	if len(sources) != 47 {
+		t.Fatalf("migration sources = %d, want 47", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[45].Path != "00046_oauth_state_cleanup.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[46].Path != "00047_response_affinities.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
@@ -791,26 +815,14 @@ func TestAlertRuleTemplateKeyMigrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create migration provider: %v", err)
 	}
-	result, err := provider.Down(ctx)
-	if err != nil {
-		t.Fatalf("roll back routing exhaustion projector migration: %v", err)
-	}
-	if result == nil || result.Source.Version != 45 {
-		t.Fatalf("migration down result = %+v, want version 45", result)
-	}
-	result, err = provider.Down(ctx)
-	if err != nil {
-		t.Fatalf("roll back API key budget threshold migration: %v", err)
-	}
-	if result == nil || result.Source.Version != 44 {
-		t.Fatalf("migration down result = %+v, want version 44", result)
-	}
-	result, err = provider.Down(ctx)
-	if err != nil {
-		t.Fatalf("roll back alert rule template migration: %v", err)
-	}
-	if result == nil || result.Source.Version != 43 {
-		t.Fatalf("migration down result = %+v, want version 43", result)
+	for _, wantVersion := range []int64{47, 46, 45, 44, 43} {
+		result, err := provider.Down(ctx)
+		if err != nil {
+			t.Fatalf("roll back migration %d: %v", wantVersion, err)
+		}
+		if result == nil || result.Source.Version != wantVersion {
+			t.Fatalf("migration down result = %+v, want version %d", result, wantVersion)
+		}
 	}
 	if columnExists() {
 		t.Fatal("template_key column remains after migration down")

@@ -68,9 +68,10 @@ func ParseUsageFromJSON(route string, raw []byte) Usage {
 }
 
 type SSEUsageObserver struct {
-	route string
-	buf   []byte
-	usage Usage
+	route      string
+	buf        []byte
+	usage      Usage
+	responseID string
 }
 
 func NewSSEUsageObserver(route string) *SSEUsageObserver {
@@ -83,14 +84,26 @@ func (o *SSEUsageObserver) Observe(chunk []byte) {
 	}
 	o.buf = append(o.buf, chunk...)
 	for {
-		index := bytes.Index(o.buf, []byte("\n\n"))
+		index, delimiterLength := nextSSEEventDelimiter(o.buf)
 		if index < 0 {
 			return
 		}
 		event := append([]byte(nil), o.buf[:index]...)
-		o.buf = o.buf[index+2:]
+		o.buf = o.buf[index+delimiterLength:]
 		o.observeEvent(event)
 	}
+}
+
+func nextSSEEventDelimiter(buf []byte) (int, int) {
+	lfIndex := bytes.Index(buf, []byte("\n\n"))
+	crlfIndex := bytes.Index(buf, []byte("\r\n\r\n"))
+	if crlfIndex >= 0 && (lfIndex < 0 || crlfIndex < lfIndex) {
+		return crlfIndex, 4
+	}
+	if lfIndex >= 0 {
+		return lfIndex, 2
+	}
+	return -1, 0
 }
 
 func (o *SSEUsageObserver) Usage() Usage {
@@ -100,9 +113,22 @@ func (o *SSEUsageObserver) Usage() Usage {
 	return o.usage
 }
 
+func (o *SSEUsageObserver) ResponseID() string {
+	if o == nil {
+		return ""
+	}
+	return o.responseID
+}
+
 func (o *SSEUsageObserver) observeEvent(event []byte) {
+	eventName := ""
+	dataLines := make([][]byte, 0, 1)
 	for _, line := range bytes.Split(event, []byte("\n")) {
 		line = bytes.TrimSpace(line)
+		if bytes.HasPrefix(line, []byte("event:")) {
+			eventName = string(bytes.TrimSpace(bytes.TrimPrefix(line, []byte("event:"))))
+			continue
+		}
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
 		}
@@ -110,11 +136,50 @@ func (o *SSEUsageObserver) observeEvent(event []byte) {
 		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
 			continue
 		}
+		dataLines = append(dataLines, append([]byte(nil), data...))
+	}
+	for _, data := range dataLines {
 		usage := ParseUsageFromSSEData(o.route, data)
 		if usage.Source != "missing" {
 			o.usage = usage
 		}
+		if responseID := responseIDFromSSEData(eventName, data); responseID != "" {
+			o.responseID = responseID
+		}
 	}
+}
+
+func responseIDFromJSON(route string, raw []byte) string {
+	if route != "/v1/responses" && !strings.HasPrefix(route, "/v1/responses/") {
+		return ""
+	}
+	var payload struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.ID)
+}
+
+func responseIDFromSSEData(eventName string, raw []byte) string {
+	var payload struct {
+		Type     string `json:"type"`
+		Response struct {
+			ID string `json:"id"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	eventType := strings.TrimSpace(payload.Type)
+	if eventType == "" {
+		eventType = strings.TrimSpace(eventName)
+	}
+	if eventType != "response.created" && eventType != "response.completed" {
+		return ""
+	}
+	return strings.TrimSpace(payload.Response.ID)
 }
 
 func ParseUsageFromSSEData(route string, raw []byte) Usage {

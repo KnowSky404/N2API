@@ -20,6 +20,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/alerting"
 	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
+	gatewaypkg "github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
@@ -127,6 +128,10 @@ type RequestLogRetentionStatusSource interface {
 	RequestLogRetentionStatus() admin.RequestLogRetentionStatus
 }
 
+type ResponseAffinityRetentionStatusSource interface {
+	ResponseAffinityRetentionStatus() gatewaypkg.ResponseAffinityRetentionStatus
+}
+
 type AlertDeliveryStatusSource interface {
 	AlertDeliveryStatus() alerting.DeliveryStatus
 }
@@ -214,6 +219,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	secureCookie := strings.EqualFold(publicURL.Scheme, "https")
 	gateway, webFS, autoTestStatusSource, build := parseServerOptions(options...)
 	requestLogRetentionStatusSource := requestLogRetentionStatusSourceFromOptions(options...)
+	responseAffinityRetentionStatusSource := responseAffinityRetentionStatusSourceFromOptions(options...)
 	alertDeliveryStatusSource := alertDeliveryStatusSourceFromOptions(options...)
 	alertingAdminService := alertingAdminServiceFromOptions(options...)
 	alertActionTester := alertActionTesterFromOptions(options...)
@@ -277,6 +283,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			tasks := map[string]any{}
 			if requestLogRetentionStatusSource != nil {
 				tasks["requestLogRetention"] = requestLogRetentionStatusSource.RequestLogRetentionStatus()
+			}
+			if responseAffinityRetentionStatusSource != nil {
+				tasks["responseAffinityRetention"] = responseAffinityRetentionStatusSource.ResponseAffinityRetentionStatus()
 			}
 			if alertDeliveryStatusSource != nil {
 				tasks["alertDelivery"] = alertDeliveryStatusSource.AlertDeliveryStatus()
@@ -3040,6 +3049,15 @@ func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAut
 func requestLogRetentionStatusSourceFromOptions(options ...any) RequestLogRetentionStatusSource {
 	for _, option := range options {
 		if source, ok := option.(RequestLogRetentionStatusSource); ok {
+			return source
+		}
+	}
+	return nil
+}
+
+func responseAffinityRetentionStatusSourceFromOptions(options ...any) ResponseAffinityRetentionStatusSource {
+	for _, option := range options {
+		if source, ok := option.(ResponseAffinityRetentionStatusSource); ok {
 			return source
 		}
 	}

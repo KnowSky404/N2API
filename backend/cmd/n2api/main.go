@@ -26,6 +26,14 @@ type gatewayAccountProvider struct {
 	service *provider.Service
 }
 
+type responseAffinityRetentionStore struct {
+	repository *store.ResponseAffinityRepository
+}
+
+func (s responseAffinityRetentionStore) TryAcquireResponseAffinityRetention(ctx context.Context) (gateway.ResponseAffinityRetentionLease, bool, error) {
+	return s.repository.TryAcquireRetention(ctx)
+}
+
 var _ gateway.AccountProvider = gatewayAccountProvider{}
 var _ gateway.StickyAccountProvider = gatewayAccountProvider{}
 var _ gateway.RoutingPoolAccountProvider = gatewayAccountProvider{}
@@ -60,6 +68,17 @@ func (p gatewayAccountProvider) SelectAccountForModelInRoutingPoolChain(ctx cont
 func (p gatewayAccountProvider) SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (gateway.SelectedAccount, error) {
 	selected, err := p.service.SelectAccountForModelAndSessionInRoutingPoolChain(ctx, routingPoolID, model, sessionID, excludedAccountIDs...)
 	return selectedGatewayAccount(selected, err)
+}
+
+func (p gatewayAccountProvider) SelectAccountByIDInRoutingPoolChain(ctx context.Context, routingPoolID, accountID int64, model string) (gateway.SelectedAccount, error) {
+	selected, err := p.service.SelectAccountByIDInRoutingPoolChain(ctx, routingPoolID, accountID, model)
+	return selectedGatewayAccount(selected, err)
+}
+
+func (p gatewayAccountProvider) SelectSingleAccountInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string) (gateway.SelectedAccount, bool, error) {
+	selected, unique, err := p.service.SelectSingleAccountInRoutingPoolChain(ctx, routingPoolID, model)
+	mapped, mappedErr := selectedGatewayAccount(selected, err)
+	return mapped, unique, mappedErr
 }
 
 func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gateway.SelectedAccount, error) {
@@ -247,6 +266,7 @@ func runServer() {
 
 	providerRepo := store.NewProviderRepository(pool)
 	requestLogRepo := store.NewGatewayRepository(pool)
+	responseAffinityRepo := store.NewResponseAffinityRepository(pool, cfg.EncryptionSecret)
 	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
 		Provider:              "openai",
 		ClientID:              cfg.OpenAIOAuthClientID,
@@ -277,6 +297,15 @@ func runServer() {
 	}, slog.Default())
 	requestLogRetentionRunner.SetSystemEventRecorder(systemEventRepo)
 	go requestLogRetentionRunner.Run(ctx)
+	responseAffinityRetentionRunner := gateway.NewResponseAffinityRetentionRunner(
+		responseAffinityRetentionStore{repository: responseAffinityRepo},
+		gateway.ResponseAffinityRetentionRunnerConfig{
+			Enabled: cfg.ResponseAffinityRetentionRunnerEnabled, Interval: cfg.ResponseAffinityRetentionInterval, BatchSize: cfg.ResponseAffinityRetentionBatchSize,
+		},
+		slog.Default(),
+	)
+	responseAffinityRetentionRunner.SetSystemEventRecorder(systemEventRepo)
+	go responseAffinityRetentionRunner.Run(ctx)
 	apiKeyBudgetMonitor := admin.NewAPIKeyBudgetMonitor(adminRepo, admin.APIKeyBudgetMonitorConfig{}, slog.Default())
 	go apiKeyBudgetMonitor.Run(ctx)
 	routingExhaustionProjector := admin.NewRoutingExhaustionProjector(adminRepo, admin.RoutingExhaustionProjectorConfig{}, slog.Default())
@@ -300,6 +329,9 @@ func runServer() {
 		SettingsProvider:                adminService,
 		BudgetProvider:                  adminService,
 		ErrorPassthroughRulesProvider:   adminService,
+		ResponseAffinityStore:           responseAffinityRepo,
+		ResponseAffinityTTL:             cfg.ResponseAffinityTTL,
+		ProcessLogger:                   slog.Default(),
 		Logger:                          requestLogRepo,
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,
@@ -312,7 +344,7 @@ func runServer() {
 
 	server := newHTTPServer(
 		cfg,
-		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
+		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
 		ctx,
 	)
 

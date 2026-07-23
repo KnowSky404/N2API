@@ -2684,6 +2684,58 @@ func TestSelectAccountForModelInRoutingPoolChainFallsBackByModel(t *testing.T) {
 	}
 }
 
+func TestSelectResponseAffinityAccountByIDAcrossRoutingPoolChain(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+	repo.accounts = []Account{
+		testAccount(t, 10, true, 1, "primary-token"),
+		testAccount(t, 20, true, 1, "secondary-token"),
+	}
+	repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10}}
+	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20}}
+	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
+	service := newConfiguredService(repo, fakeOAuthClient{})
+
+	selected, err := service.SelectAccountByIDInRoutingPoolChain(context.Background(), 1, 20, "gpt-5")
+	if err != nil {
+		t.Fatalf("SelectAccountByIDInRoutingPoolChain returned error: %v", err)
+	}
+	if selected.AccountID != 20 || selected.AuthorizationToken != "secondary-token" || selected.RoutingPoolID != 2 || selected.RoutingPoolFallbackDepth != 1 || selected.RoutingPoolFallbackChain != "primary -> secondary" {
+		t.Fatalf("selected affinity account = %+v", selected)
+	}
+	if _, err := service.SelectAccountByIDInRoutingPoolChain(context.Background(), 1, 99, "gpt-5"); !errors.Is(err, ErrAccountsUnavailable) {
+		t.Fatalf("missing affinity account error = %v, want ErrAccountsUnavailable", err)
+	}
+}
+
+func TestSelectSingleResponseAffinityAccountRequiresUniqueScope(t *testing.T) {
+	newService := func(includeSecond bool) *Service {
+		repo := newMemoryRepo()
+		repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
+		repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+		repo.accounts = []Account{testAccount(t, 10, true, 1, "primary-token")}
+		repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10}}
+		repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-5", Enabled: true}}
+		if includeSecond {
+			repo.accounts = append(repo.accounts, testAccount(t, 20, true, 1, "secondary-token"))
+			repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20}}
+			repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
+		}
+		return newConfiguredService(repo, fakeOAuthClient{})
+	}
+
+	selected, unique, err := newService(false).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if err != nil || !unique || selected.AccountID != 10 {
+		t.Fatalf("single account selection = %+v/%v/%v", selected, unique, err)
+	}
+	selected, unique, err = newService(true).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if err != nil || unique || selected.AccountID != 0 {
+		t.Fatalf("multi-account selection = %+v/%v/%v, want empty/false/nil", selected, unique, err)
+	}
+}
+
 func TestSelectAccountForModelInRoutingPoolChainSkipsDisabledFallbackPool(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}

@@ -301,6 +301,45 @@ func TestLoadRequestLogRetentionRunnerConfig(t *testing.T) {
 	}
 }
 
+func TestLoadResponseAffinityLifecycleConfig(t *testing.T) {
+	base := map[string]string{
+		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",
+	}
+	cfg, err := Load(mapLookup(base))
+	if err != nil {
+		t.Fatalf("Load default returned error: %v", err)
+	}
+	if cfg.ResponseAffinityTTL != 30*24*time.Hour || cfg.ResponseAffinityRetentionRunnerEnabled || cfg.ResponseAffinityRetentionInterval != 24*time.Hour || cfg.ResponseAffinityRetentionBatchSize != 1000 {
+		t.Fatalf("default response affinity config = ttl:%s enabled:%v interval:%s batch:%d", cfg.ResponseAffinityTTL, cfg.ResponseAffinityRetentionRunnerEnabled, cfg.ResponseAffinityRetentionInterval, cfg.ResponseAffinityRetentionBatchSize)
+	}
+	values := maps.Clone(base)
+	values["N2API_RESPONSE_AFFINITY_TTL_DAYS"] = "90"
+	values["N2API_RESPONSE_AFFINITY_RETENTION_RUNNER_ENABLED"] = "true"
+	values["N2API_RESPONSE_AFFINITY_RETENTION_INTERVAL_SECONDS"] = "300"
+	values["N2API_RESPONSE_AFFINITY_RETENTION_BATCH_SIZE"] = "10000"
+	cfg, err = Load(mapLookup(values))
+	if err != nil {
+		t.Fatalf("Load configured returned error: %v", err)
+	}
+	if cfg.ResponseAffinityTTL != 90*24*time.Hour || !cfg.ResponseAffinityRetentionRunnerEnabled || cfg.ResponseAffinityRetentionInterval != 5*time.Minute || cfg.ResponseAffinityRetentionBatchSize != 10000 {
+		t.Fatalf("configured response affinity config = ttl:%s enabled:%v interval:%s batch:%d", cfg.ResponseAffinityTTL, cfg.ResponseAffinityRetentionRunnerEnabled, cfg.ResponseAffinityRetentionInterval, cfg.ResponseAffinityRetentionBatchSize)
+	}
+	for name, value := range map[string]string{
+		"N2API_RESPONSE_AFFINITY_TTL_DAYS":                   "0",
+		"N2API_RESPONSE_AFFINITY_RETENTION_RUNNER_ENABLED":   "sometimes",
+		"N2API_RESPONSE_AFFINITY_RETENTION_INTERVAL_SECONDS": "299",
+		"N2API_RESPONSE_AFFINITY_RETENTION_BATCH_SIZE":       "10001",
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := maps.Clone(base)
+			invalid[name] = value
+			if _, err := Load(mapLookup(invalid)); err == nil {
+				t.Fatal("Load returned nil error")
+			}
+		})
+	}
+}
+
 func TestLoadAlertDeliveryEnabled(t *testing.T) {
 	base := map[string]string{
 		"DATABASE_URL": "postgres://example", "N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes", "N2API_ADMIN_PASSWORD": "admin-password",

@@ -145,8 +145,10 @@ const (
 )
 
 const (
-	ActionSchedulerRequestLogRetentionSucceeded Action = "scheduler.request_log_retention.succeeded"
-	ActionSchedulerRequestLogRetentionFailed    Action = "scheduler.request_log_retention.failed"
+	ActionSchedulerRequestLogRetentionSucceeded       Action = "scheduler.request_log_retention.succeeded"
+	ActionSchedulerRequestLogRetentionFailed          Action = "scheduler.request_log_retention.failed"
+	ActionSchedulerResponseAffinityRetentionSucceeded Action = "scheduler.response_affinity_retention.succeeded"
+	ActionSchedulerResponseAffinityRetentionFailed    Action = "scheduler.response_affinity_retention.failed"
 )
 
 var (
@@ -452,7 +454,8 @@ var knownActions = map[Action]struct{}{
 	ActionOAuthConnectStarted: {}, ActionOAuthConnectFailed: {}, ActionOAuthCallbackCompleted: {}, ActionOAuthCallbackFailed: {}, ActionOAuthStateCleanupCompleted: {}, ActionOAuthRefreshManualSucceeded: {}, ActionOAuthRefreshManualFailed: {},
 	ActionOAuthRefreshAutomaticSucceeded: {}, ActionOAuthRefreshAutomaticFailed: {}, ActionOAuthRefreshDiagnosticFailed: {}, ActionSchedulerProviderAutoTestCompleted: {}, ActionSchedulerProviderAutoTestFailed: {},
 	ActionSchedulerAPIKeyPurgeCompleted: {}, ActionSchedulerAPIKeyPurgeFailed: {}, ActionSchedulerEventRetentionCompleted: {}, ActionSchedulerEventRetentionFailed: {},
-	ActionSchedulerRequestLogRetentionSucceeded: {}, ActionSchedulerRequestLogRetentionFailed: {}, ActionProviderAccountCircuitOpened: {},
+	ActionSchedulerRequestLogRetentionSucceeded: {}, ActionSchedulerRequestLogRetentionFailed: {},
+	ActionSchedulerResponseAffinityRetentionSucceeded: {}, ActionSchedulerResponseAffinityRetentionFailed: {}, ActionProviderAccountCircuitOpened: {},
 	ActionProviderAccountRateLimited: {}, ActionProviderAccountExpired: {}, ActionProviderAccountRecovered: {},
 	ActionAlertActionCreated: {}, ActionAlertActionUpdated: {}, ActionAlertActionDeleted: {},
 	ActionAlertRuleCreated: {}, ActionAlertRuleUpdated: {}, ActionAlertRuleDeleted: {},

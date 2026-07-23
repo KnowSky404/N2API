@@ -53,6 +53,10 @@ type Config struct {
 	RequestLogRetentionRunnerEnabled       bool
 	RequestLogRetentionInterval            time.Duration
 	RequestLogRetentionBatchSize           int
+	ResponseAffinityTTL                    time.Duration
+	ResponseAffinityRetentionRunnerEnabled bool
+	ResponseAffinityRetentionInterval      time.Duration
+	ResponseAffinityRetentionBatchSize     int
 	RequestLogExportMaxRows                int
 	RequestLogExportTimeout                time.Duration
 	SystemEventRetentionDays               int
@@ -70,30 +74,33 @@ const (
 	defaultOpenAIOAuthAuthURL  = "https://auth.openai.com/oauth/authorize"
 	defaultOpenAIOAuthTokenURL = "https://auth.openai.com/oauth/token"
 
-	defaultProviderAccountAutoTestInterval = 5 * time.Minute
-	minProviderAccountAutoTestInterval     = time.Minute
-	defaultRequestLogRetentionInterval     = 24 * time.Hour
-	minRequestLogRetentionInterval         = 5 * time.Minute
-	maxRequestLogRetentionInterval         = 7 * 24 * time.Hour
-	defaultRequestLogRetentionBatchSize    = 1000
-	defaultRequestLogExportMaxRows         = 100000
-	defaultRequestLogExportTimeout         = 60 * time.Second
-	defaultSystemEventRetentionDays        = 365
-	defaultAdminLoginThrottleFailures      = 5
-	defaultAdminLoginThrottleMaxEntries    = 4096
-	defaultAdminSessionTTLHours            = 168
-	minimumEncryptionSecretBytes           = 32
-	defaultGatewayMaxAcceptedRequestBody   = 4 << 20
-	defaultGatewayMaxInMemoryReplayBody    = 1 << 20
-	defaultGatewayMaxUpstreamResponseBody  = 8 << 20
-	maximumGatewayBodyBytes                = 64 << 20
-	defaultHTTPIdleTimeoutSeconds          = 60
-	defaultHTTPMaxHeaderBytes              = 1 << 20
-	defaultHTTPRequestBodyTimeoutSeconds   = 30
-	defaultUpstreamResponseHeaderSeconds   = 30
-	defaultUpstreamConnectTimeoutSeconds   = 10
-	defaultUpstreamTLSHandshakeSeconds     = 10
-	defaultUpstreamSSEIdleTimeoutSeconds   = 60
+	defaultProviderAccountAutoTestInterval    = 5 * time.Minute
+	minProviderAccountAutoTestInterval        = time.Minute
+	defaultRequestLogRetentionInterval        = 24 * time.Hour
+	minRequestLogRetentionInterval            = 5 * time.Minute
+	maxRequestLogRetentionInterval            = 7 * 24 * time.Hour
+	defaultRequestLogRetentionBatchSize       = 1000
+	defaultResponseAffinityTTLDays            = 30
+	defaultResponseAffinityRetentionInterval  = 24 * time.Hour
+	defaultResponseAffinityRetentionBatchSize = 1000
+	defaultRequestLogExportMaxRows            = 100000
+	defaultRequestLogExportTimeout            = 60 * time.Second
+	defaultSystemEventRetentionDays           = 365
+	defaultAdminLoginThrottleFailures         = 5
+	defaultAdminLoginThrottleMaxEntries       = 4096
+	defaultAdminSessionTTLHours               = 168
+	minimumEncryptionSecretBytes              = 32
+	defaultGatewayMaxAcceptedRequestBody      = 4 << 20
+	defaultGatewayMaxInMemoryReplayBody       = 1 << 20
+	defaultGatewayMaxUpstreamResponseBody     = 8 << 20
+	maximumGatewayBodyBytes                   = 64 << 20
+	defaultHTTPIdleTimeoutSeconds             = 60
+	defaultHTTPMaxHeaderBytes                 = 1 << 20
+	defaultHTTPRequestBodyTimeoutSeconds      = 30
+	defaultUpstreamResponseHeaderSeconds      = 30
+	defaultUpstreamConnectTimeoutSeconds      = 10
+	defaultUpstreamTLSHandshakeSeconds        = 10
+	defaultUpstreamSSEIdleTimeoutSeconds      = 60
 )
 
 const (
@@ -213,6 +220,44 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.RequestLogRetentionBatchSize = requestLogRetentionBatchSize
+	responseAffinityTTLDays, err := parsePositiveIntWithDefault(
+		lookup("N2API_RESPONSE_AFFINITY_TTL_DAYS"),
+		"N2API_RESPONSE_AFFINITY_TTL_DAYS",
+		defaultResponseAffinityTTLDays,
+		1,
+		3650,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ResponseAffinityTTL = time.Duration(responseAffinityTTLDays) * 24 * time.Hour
+	responseAffinityRetentionEnabled, err := parseBool(lookup("N2API_RESPONSE_AFFINITY_RETENTION_RUNNER_ENABLED"), "N2API_RESPONSE_AFFINITY_RETENTION_RUNNER_ENABLED")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ResponseAffinityRetentionRunnerEnabled = responseAffinityRetentionEnabled
+	responseAffinityRetentionIntervalSeconds, err := parsePositiveIntWithDefault(
+		lookup("N2API_RESPONSE_AFFINITY_RETENTION_INTERVAL_SECONDS"),
+		"N2API_RESPONSE_AFFINITY_RETENTION_INTERVAL_SECONDS",
+		int(defaultResponseAffinityRetentionInterval/time.Second),
+		int(minRequestLogRetentionInterval/time.Second),
+		int(maxRequestLogRetentionInterval/time.Second),
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ResponseAffinityRetentionInterval = time.Duration(responseAffinityRetentionIntervalSeconds) * time.Second
+	responseAffinityRetentionBatchSize, err := parsePositiveIntWithDefault(
+		lookup("N2API_RESPONSE_AFFINITY_RETENTION_BATCH_SIZE"),
+		"N2API_RESPONSE_AFFINITY_RETENTION_BATCH_SIZE",
+		defaultResponseAffinityRetentionBatchSize,
+		100,
+		10000,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ResponseAffinityRetentionBatchSize = responseAffinityRetentionBatchSize
 	requestLogExportMaxRows, err := parsePositiveIntWithDefault(
 		lookup("N2API_REQUEST_LOG_EXPORT_MAX_ROWS"),
 		"N2API_REQUEST_LOG_EXPORT_MAX_ROWS",

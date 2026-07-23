@@ -177,6 +177,14 @@ func TestSystemEventRetentionFailureActionIsKnown(t *testing.T) {
 	}
 }
 
+func TestResponseAffinityRetentionActionsAreKnown(t *testing.T) {
+	for _, action := range []Action{ActionSchedulerResponseAffinityRetentionSucceeded, ActionSchedulerResponseAffinityRetentionFailed} {
+		if !IsKnownAction(action) {
+			t.Fatalf("action %q is not registered", action)
+		}
+	}
+}
+
 func TestOAuthStateCleanupActionIsKnown(t *testing.T) {
 	if !IsKnownAction(ActionOAuthStateCleanupCompleted) {
 		t.Fatalf("action %q is not registered", ActionOAuthStateCleanupCompleted)

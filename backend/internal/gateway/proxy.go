@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,6 +36,8 @@ const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 const requestLogWriteTimeout = 5 * time.Second
 const accountRecoveryWriteTimeout = 2 * time.Second
+const responseAffinityWriteTimeout = 2 * time.Second
+const defaultResponseAffinityTTL = 30 * 24 * time.Hour
 
 type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (admin.APIKey, error)
@@ -88,6 +91,20 @@ type AccountAuthorizationRefresher interface {
 
 type AccountUsageRecorder interface {
 	RecordAccountUsed(ctx context.Context, accountID int64) error
+}
+
+type ResponseAffinity struct {
+	ProviderAccountID int64
+}
+
+type ResponseAffinityStore interface {
+	FindResponseAffinity(ctx context.Context, responseID string, routingPoolID int64, now time.Time) (ResponseAffinity, bool, error)
+	UpsertResponseAffinity(ctx context.Context, responseID string, providerAccountID, routingPoolID int64, expiresAt time.Time) error
+}
+
+type ResponseAffinityAccountProvider interface {
+	SelectAccountByIDInRoutingPoolChain(ctx context.Context, routingPoolID, accountID int64, model string) (SelectedAccount, error)
+	SelectSingleAccountInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string) (SelectedAccount, bool, error)
 }
 
 type AccountRecoveryRecorder interface {
@@ -203,6 +220,9 @@ type Config struct {
 	SettingsProvider                GatewaySettingsProvider
 	BudgetProvider                  BudgetProvider
 	ErrorPassthroughRulesProvider   ErrorPassthroughRulesProvider
+	ResponseAffinityStore           ResponseAffinityStore
+	ResponseAffinityTTL             time.Duration
+	ProcessLogger                   *slog.Logger
 }
 
 type Proxy struct {
@@ -231,6 +251,9 @@ type Proxy struct {
 	sseIdleTimeout     time.Duration
 	setReadDeadline    func(http.ResponseWriter, time.Time) error
 	transports         *transportRegistry
+	affinities         ResponseAffinityStore
+	affinityTTL        time.Duration
+	processLogger      *slog.Logger
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -313,7 +336,24 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		setReadDeadline: func(writer http.ResponseWriter, deadline time.Time) error {
 			return http.NewResponseController(writer).SetReadDeadline(deadline)
 		},
+		affinities:    cfg.ResponseAffinityStore,
+		affinityTTL:   normalizedResponseAffinityTTL(cfg.ResponseAffinityTTL),
+		processLogger: normalizedProcessLogger(cfg.ProcessLogger),
 	}
+}
+
+func normalizedResponseAffinityTTL(ttl time.Duration) time.Duration {
+	if ttl <= 0 {
+		return defaultResponseAffinityTTL
+	}
+	return ttl
+}
+
+func normalizedProcessLogger(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.Default()
+	}
+	return logger
 }
 
 func normalizedUpstreamTimeouts(cfg Config) upstreamTimeouts {
@@ -475,7 +515,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not set request body deadline")
 		return
 	}
-	bodyFactory, maxAttempts, model, sessionID, err := p.requestBodyFactory(r)
+	bodyFactory, maxAttempts, model, sessionID, previousResponseID, err := p.requestBodyFactory(r)
 	if deadlineArmed {
 		if clearErr := p.setReadDeadline(recorder, time.Time{}); err == nil && clearErr != nil {
 			err = errRequestBodyDeadline
@@ -493,12 +533,21 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(recorder, http.StatusNotFound, errorCode, "requested model is not available")
 		return
 	}
+	affinitySelection, err := p.responseAffinitySelection(r.Context(), r, previousResponseID, *key.RoutingPoolID, startedAt)
+	if err != nil {
+		errorCode = "response_affinity_lookup_failed"
+		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not resolve response account affinity")
+		return
+	}
+	if affinitySelection.enabled() {
+		maxAttempts = 1
+	}
 
 	failedAccountIDs := []int64{}
 	accountConcurrencyLimited := false
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		selected, err := p.selectAccountForKey(r.Context(), key, model, sessionID, failedAccountIDs...)
+		selected, err := p.selectAccountForRequest(r.Context(), key, model, sessionID, affinitySelection, failedAccountIDs...)
 		if err != nil {
 			loggedRoutingPoolID, loggedRoutingPoolName, loggedRoutingPoolFallbackDepth, loggedRoutingPoolFallbackChain, loggedRoutingPoolError = selectedRoutingPoolLogFields(
 				selected,
@@ -512,6 +561,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if accountConcurrencyLimited && errors.Is(err, provider.ErrAccountsUnavailable) {
 				errorCode = "provider_account_concurrency_limited"
 				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
+				return
+			}
+			if errors.Is(err, errResponseAffinityUnknown) {
+				errorCode = "response_affinity_unknown"
+				writeOpenAIError(recorder, http.StatusConflict, errorCode, "response account affinity is unknown in this routing scope")
+				return
+			}
+			if errors.Is(err, errResponseAffinityAccountUnavailable) {
+				errorCode = "response_affinity_account_unavailable"
+				writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "response account is unavailable")
 				return
 			}
 			errorCode = providerErrorCodeForSelection(err, selected)
@@ -615,12 +674,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer upstreamResp.Body.Close()
 
 				streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
-				observedUsage, err = p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+				observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+				observedUsage, err = observation.Usage, writeErr
 				if err != nil {
 					errorCode = upstreamResponseErrorCode(err)
 					if !recorder.committed() {
 						writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 					}
+				}
+				if err == nil && upstreamResp.StatusCode >= http.StatusOK && upstreamResp.StatusCode < http.StatusMultipleChoices {
+					p.persistResponseAffinity(r.Context(), observation.ResponseID, selected.AccountID, *key.RoutingPoolID, startedAt)
 				}
 				return
 			}
@@ -643,12 +706,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer upstreamResp.Body.Close()
 
 		streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
-		observedUsage, err = p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+		observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+		observedUsage, err = observation.Usage, writeErr
 		if err != nil {
 			errorCode = upstreamResponseErrorCode(err)
 			if !recorder.committed() {
 				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 			}
+		}
+		if err == nil && upstreamResp.StatusCode >= http.StatusOK && upstreamResp.StatusCode < http.StatusMultipleChoices {
+			p.persistResponseAffinity(r.Context(), observation.ResponseID, selected.AccountID, *key.RoutingPoolID, startedAt)
 		}
 		return
 	}
@@ -829,6 +896,64 @@ func (p *Proxy) gatewaySettings(ctx context.Context) admin.GatewaySettings {
 		return p.staticSettings
 	}
 	return settings
+}
+
+var (
+	errResponseAffinityUnknown            = errors.New("response affinity is unknown")
+	errResponseAffinityAccountUnavailable = errors.New("response affinity account is unavailable")
+)
+
+type responseAffinityRoute struct {
+	accountID     int64
+	requireSingle bool
+}
+
+func (r responseAffinityRoute) enabled() bool {
+	return r.accountID > 0 || r.requireSingle
+}
+
+func (p *Proxy) responseAffinitySelection(ctx context.Context, r *http.Request, previousResponseID string, routingPoolID int64, now time.Time) (responseAffinityRoute, error) {
+	responseID := responseIDForAffinityLookup(r, previousResponseID)
+	if responseID == "" || p.affinities == nil {
+		return responseAffinityRoute{}, nil
+	}
+	affinity, found, err := p.affinities.FindResponseAffinity(ctx, responseID, routingPoolID, now)
+	if err != nil {
+		return responseAffinityRoute{}, err
+	}
+	if found {
+		if affinity.ProviderAccountID <= 0 {
+			return responseAffinityRoute{}, errors.New("response affinity has invalid account")
+		}
+		return responseAffinityRoute{accountID: affinity.ProviderAccountID}, nil
+	}
+	return responseAffinityRoute{requireSingle: true}, nil
+}
+
+func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, model, sessionID string, affinity responseAffinityRoute, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	if !affinity.enabled() {
+		return p.selectAccountForKey(ctx, key, model, sessionID, excludedAccountIDs...)
+	}
+	provider, ok := p.accounts.(ResponseAffinityAccountProvider)
+	if !ok {
+		return SelectedAccount{}, errResponseAffinityAccountUnavailable
+	}
+	routingPoolID, _ := apiKeyRoutingPool(key)
+	if affinity.accountID > 0 {
+		selected, err := provider.SelectAccountByIDInRoutingPoolChain(ctx, routingPoolID, affinity.accountID, model)
+		if err != nil {
+			return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+		}
+		return selected, nil
+	}
+	selected, unique, err := provider.SelectSingleAccountInRoutingPoolChain(ctx, routingPoolID, model)
+	if err != nil {
+		return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+	}
+	if !unique {
+		return SelectedAccount{}, errResponseAffinityUnknown
+	}
+	return selected, nil
 }
 
 func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
@@ -1185,9 +1310,14 @@ var (
 	errUpstreamSSEIdleTimeout   = errors.New("upstream SSE stream idle timeout")
 )
 
-func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (Usage, error) {
+type upstreamResponseObservation struct {
+	Usage      Usage
+	ResponseID string
+}
+
+func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (upstreamResponseObservation, error) {
 	if resp == nil || resp.Body == nil {
-		return Usage{Source: "missing"}, errUpstreamResponseRead
+		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseRead
 	}
 	if stream {
 		copyResponseHeaders(w.Header(), resp.Header)
@@ -1197,15 +1327,18 @@ func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(p.maxResponseBody)+1))
 	if err != nil {
-		return Usage{Source: "missing"}, errUpstreamResponseRead
+		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseRead
 	}
 	if len(body) > p.maxResponseBody {
-		return Usage{Source: "missing"}, errUpstreamResponseTooLarge
+		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseTooLarge
 	}
 	copyResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
-	return ParseUsageFromJSON(route, body), nil
+	return upstreamResponseObservation{
+		Usage:      ParseUsageFromJSON(route, body),
+		ResponseID: responseIDFromJSON(route, body),
+	}, nil
 }
 
 func upstreamResponseErrorCode(err error) string {
@@ -1228,7 +1361,7 @@ func upstreamResponseErrorMessage(err error) string {
 	return "could not read upstream response"
 }
 
-func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration) (Usage, error) {
+func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration) (upstreamResponseObservation, error) {
 	observer := NewSSEUsageObserver(route)
 	buffer := make([]byte, 32*1024)
 	writer := flushWriter{ResponseWriter: w}
@@ -1250,19 +1383,19 @@ func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.R
 			chunk := buffer[:n]
 			observer.Observe(chunk)
 			if _, writeErr := writer.Write(chunk); writeErr != nil {
-				return observer.Usage(), nil
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, nil
 			}
 		}
 		select {
 		case <-idleExpired:
-			return observer.Usage(), errUpstreamSSEIdleTimeout
+			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, errUpstreamSSEIdleTimeout
 		default:
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) || ctx.Err() != nil {
-				return observer.Usage(), nil
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, nil
 			}
-			return observer.Usage(), errUpstreamResponseRead
+			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, errUpstreamResponseRead
 		}
 	}
 }
@@ -1625,21 +1758,21 @@ var (
 	errRequestBodyDeadline = errors.New("request body deadline failed")
 )
 
-func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, error) {
+func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, string, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), nil
+		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), "", nil
 	}
 	defer r.Body.Close()
 	if r.ContentLength > int64(p.maxAcceptedBody) {
-		return nil, 0, "", "", errRequestBodyTooLarge
+		return nil, 0, "", "", "", errRequestBodyTooLarge
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, int64(p.maxAcceptedBody)+1))
 	if err != nil {
-		return nil, 0, "", "", err
+		return nil, 0, "", "", "", err
 	}
 	if len(limitedBody) > p.maxAcceptedBody {
-		return nil, 0, "", "", errRequestBodyTooLarge
+		return nil, 0, "", "", "", errRequestBodyTooLarge
 	}
 	maxAttempts := maxReplayableAttempts
 	if len(limitedBody) > p.maxReplayBody {
@@ -1647,11 +1780,12 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	}
 	model := ""
 	sessionID := ""
+	previousResponseID := ""
 	if routeRequiresModel(r) {
 		var body []byte
-		body, model, sessionID, err = p.normalizeModelRequestBody(r.Context(), limitedBody)
+		body, model, sessionID, previousResponseID, err = p.normalizeModelRequestBody(r.Context(), limitedBody)
 		if err != nil {
-			return nil, 0, "", "", err
+			return nil, 0, "", "", "", err
 		}
 		limitedBody = body
 	}
@@ -1660,7 +1794,7 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
-	}, maxAttempts, model, sessionID, nil
+	}, maxAttempts, model, sessionID, previousResponseID, nil
 }
 
 func stickySessionIDFromHeader(header http.Header) string {
@@ -1674,11 +1808,11 @@ func routeRequiresModel(r *http.Request) bool {
 	return r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/responses")
 }
 
-func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, string, error) {
+func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, string, string, error) {
 	payload := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, "", "", errInvalidJSONBody
+			return nil, "", "", "", errInvalidJSONBody
 		}
 	}
 
@@ -1687,7 +1821,7 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if hasModel {
 		modelValue, ok := rawModel.(string)
 		if !ok {
-			return nil, "", "", errInvalidJSONBody
+			return nil, "", "", "", errInvalidJSONBody
 		}
 		model = strings.TrimSpace(modelValue)
 	}
@@ -1695,31 +1829,39 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if rawSessionID, ok := payload["session_id"]; ok {
 		sessionValue, ok := rawSessionID.(string)
 		if !ok {
-			return nil, "", "", errInvalidJSONBody
+			return nil, "", "", "", errInvalidJSONBody
 		}
 		sessionID = strings.TrimSpace(sessionValue)
+	}
+	previousResponseID := ""
+	if rawPreviousResponseID, ok := payload["previous_response_id"]; ok {
+		previousResponseValue, ok := rawPreviousResponseID.(string)
+		if !ok {
+			return nil, "", "", "", errInvalidJSONBody
+		}
+		previousResponseID = strings.TrimSpace(previousResponseValue)
 	}
 	if model == "" {
 		defaultModel, err := p.defaultModel(ctx)
 		if err != nil {
-			return nil, "", "", err
+			return nil, "", "", "", err
 		}
 		model = defaultModel
 		payload["model"] = model
 		raw, err = json.Marshal(payload)
 		if err != nil {
-			return nil, "", "", err
+			return nil, "", "", "", err
 		}
 	} else if rawModel != model {
 		payload["model"] = model
 		normalized, err := json.Marshal(payload)
 		if err != nil {
-			return nil, "", "", err
+			return nil, "", "", "", err
 		}
 		raw = normalized
 	}
 
-	return raw, model, sessionID, nil
+	return raw, model, sessionID, previousResponseID, nil
 }
 
 func (p *Proxy) defaultModel(ctx context.Context) (string, error) {
@@ -1825,6 +1967,33 @@ func isResponsesSubroute(path string) bool {
 	}
 	parts := strings.Split(rest, "/")
 	return len(parts) == 1 || (len(parts) == 2 && parts[1] == "input_items")
+}
+
+func responseIDForAffinityLookup(r *http.Request, previousResponseID string) string {
+	if r == nil {
+		return ""
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/v1/responses" {
+		return strings.TrimSpace(previousResponseID)
+	}
+	if r.Method != http.MethodGet || !isResponsesSubroute(r.URL.Path) {
+		return ""
+	}
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/responses/")
+	responseID, _, _ := strings.Cut(rest, "/")
+	return strings.TrimSpace(responseID)
+}
+
+func (p *Proxy) persistResponseAffinity(ctx context.Context, responseID string, providerAccountID, routingPoolID int64, now time.Time) {
+	if p.affinities == nil || strings.TrimSpace(responseID) == "" || providerAccountID <= 0 || routingPoolID <= 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), responseAffinityWriteTimeout)
+	err := p.affinities.UpsertResponseAffinity(writeCtx, responseID, providerAccountID, routingPoolID, now.Add(p.affinityTTL))
+	cancel()
+	if err != nil {
+		p.processLogger.Error("response affinity write failed", "error_code", "response_affinity_write_failed")
+	}
 }
 
 func bearerToken(header string) (string, bool) {

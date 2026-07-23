@@ -36,12 +36,14 @@ func TestRoutingExhaustionProjectorMigrationBaselinesExistingLogs(t *testing.T) 
 	if err != nil {
 		t.Fatalf("create migration provider: %v", err)
 	}
-	result, err := provider.Down(ctx)
-	if err != nil {
-		t.Fatalf("roll back routing exhaustion projector migration: %v", err)
-	}
-	if result == nil || result.Source.Version != 45 {
-		t.Fatalf("migration down result = %+v, want version 45", result)
+	for _, wantVersion := range []int64{47, 46, 45} {
+		result, err := provider.Down(ctx)
+		if err != nil {
+			t.Fatalf("roll back migration %d: %v", wantVersion, err)
+		}
+		if result == nil || result.Source.Version != wantVersion {
+			t.Fatalf("migration down result = %+v, want version %d", result, wantVersion)
+		}
 	}
 
 	historicalID := insertRoutingProjectorLog(t, repo, routingProjectorLog{

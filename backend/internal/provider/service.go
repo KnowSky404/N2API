@@ -2504,6 +2504,95 @@ func (s *Service) SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.
 	return s.selectAccountForRoutingPoolChain(ctx, primaryPoolID, model, sessionID, excludedAccountIDs...)
 }
 
+func (s *Service) SelectAccountByIDInRoutingPoolChain(ctx context.Context, primaryPoolID, accountID int64, model string) (SelectedAccount, error) {
+	if primaryPoolID <= 0 || accountID <= 0 {
+		return SelectedAccount{}, ErrInvalidInput
+	}
+	candidates, chainLabel, err := s.responseAffinityCandidates(ctx, primaryPoolID, model)
+	if err != nil {
+		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, err
+	}
+	for _, candidate := range candidates {
+		if candidate.account.ID != accountID {
+			continue
+		}
+		return s.selectedResponseAffinityAccount(ctx, candidate, chainLabel)
+	}
+	return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, ErrAccountsUnavailable
+}
+
+func (s *Service) SelectSingleAccountInRoutingPoolChain(ctx context.Context, primaryPoolID int64, model string) (SelectedAccount, bool, error) {
+	if primaryPoolID <= 0 {
+		return SelectedAccount{}, false, ErrInvalidInput
+	}
+	candidates, chainLabel, err := s.responseAffinityCandidates(ctx, primaryPoolID, model)
+	if err != nil {
+		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, false, err
+	}
+	unique := make(map[int64]responseAffinityCandidate, len(candidates))
+	for _, candidate := range candidates {
+		if _, exists := unique[candidate.account.ID]; !exists {
+			unique[candidate.account.ID] = candidate
+		}
+		if len(unique) > 1 {
+			return SelectedAccount{RoutingPoolFallbackChain: chainLabel}, false, nil
+		}
+	}
+	if len(unique) == 0 {
+		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, false, ErrAccountsUnavailable
+	}
+	for _, candidate := range unique {
+		selected, err := s.selectedResponseAffinityAccount(ctx, candidate, chainLabel)
+		return selected, err == nil, err
+	}
+	return SelectedAccount{}, false, ErrAccountsUnavailable
+}
+
+type responseAffinityCandidate struct {
+	account Account
+	pool    RoutingPool
+	depth   int
+}
+
+func (s *Service) responseAffinityCandidates(ctx context.Context, primaryPoolID int64, model string) ([]responseAffinityCandidate, string, error) {
+	if !s.Configured() {
+		return nil, "", ErrNotConfigured
+	}
+	pools, chainLabel, err := s.routingPoolChain(ctx, primaryPoolID)
+	if err != nil {
+		return nil, chainLabel, err
+	}
+	candidates := make([]responseAffinityCandidate, 0)
+	for depth, pool := range pools {
+		if !pool.Enabled {
+			if depth == 0 {
+				return nil, chainLabel, ErrAccountsDisabled
+			}
+			continue
+		}
+		accounts, _, _, err := s.selectionCandidatesForRoutingPool(ctx, pool.ID, model, nil)
+		if err != nil {
+			return nil, chainLabel, err
+		}
+		for _, account := range accounts {
+			candidates = append(candidates, responseAffinityCandidate{account: account, pool: pool, depth: depth})
+		}
+	}
+	return candidates, chainLabel, nil
+}
+
+func (s *Service) selectedResponseAffinityAccount(ctx context.Context, candidate responseAffinityCandidate, chainLabel string) (SelectedAccount, error) {
+	selected, err := s.selectedAccount(ctx, candidate.account)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
+	selected.RoutingPoolID = candidate.pool.ID
+	selected.RoutingPoolName = candidate.pool.Name
+	selected.RoutingPoolFallbackDepth = candidate.depth
+	selected.RoutingPoolFallbackChain = chainLabel
+	return selected, nil
+}
+
 func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
 	if !s.Configured() {
 		return SelectionPreview{}, ErrNotConfigured
