@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +19,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/KnowSky404/N2API/backend/internal/secret"
 	"github.com/KnowSky404/N2API/backend/internal/store"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -132,6 +136,38 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		}
 		waitForProcessListenerClosed(t, port)
 		waitForInstanceLockAvailable(t, pool)
+	})
+
+	t.Run("allows two processes with the unsafe override", func(t *testing.T) {
+		firstPort := reserveProcessTestPort(t)
+		first := startN2APIProcess(t, binaryPath, databaseURL, adminUsername, adminPassword, encryptionSecret, firstPort,
+			"N2API_ALLOW_UNSAFE_MULTI_INSTANCE=true",
+		)
+		waitForProcessListener(t, first, firstPort, databaseURL, adminPassword, encryptionSecret)
+
+		secondPort := reserveProcessTestPort(t)
+		second := startN2APIProcess(t, binaryPath, databaseURL, adminUsername, adminPassword, encryptionSecret, secondPort,
+			"N2API_ALLOW_UNSAFE_MULTI_INSTANCE=true",
+		)
+		waitForProcessListener(t, second, secondPort, databaseURL, adminPassword, encryptionSecret)
+
+		for name, process := range map[string]*n2apiTestProcess{"first": first, "second": second} {
+			if !strings.Contains(process.logs.String(), "unsafe_multi_instance_enabled") {
+				t.Fatalf("%s unsafe process did not report unsafe_multi_instance_enabled; logs: %s", name, processLogs(process, databaseURL, adminPassword, encryptionSecret))
+			}
+		}
+		assertProcessListenerOpen(t, firstPort)
+		assertProcessListenerOpen(t, secondPort)
+
+		sessionToken := createProcessTestAdminSession(t, pool)
+		assertUnsafeMultiInstanceHealthWarning(t, firstPort, sessionToken)
+		assertUnsafeMultiInstanceHealthWarning(t, secondPort, sessionToken)
+
+		stopN2APIProcess(t, first, databaseURL, adminPassword, encryptionSecret, sessionToken)
+		waitForProcessListenerClosed(t, firstPort)
+		assertProcessListenerOpen(t, secondPort)
+		stopN2APIProcess(t, second, databaseURL, adminPassword, encryptionSecret, sessionToken)
+		waitForProcessListenerClosed(t, secondPort)
 	})
 
 	t.Run("does not start a metrics listener when disabled", func(t *testing.T) {
@@ -436,6 +472,79 @@ func waitForInstanceLockAvailable(t *testing.T, pool *pgxpool.Pool) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatal("instance lock remained held after process exit")
+}
+
+func createProcessTestAdminSession(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var adminID int64
+	if err := pool.QueryRow(ctx, `SELECT id FROM admins ORDER BY id ASC LIMIT 1`).Scan(&adminID); err != nil {
+		t.Fatalf("find process test admin for authenticated health: %v", err)
+	}
+	sessionToken, err := secret.GenerateToken("instance_lock_process_test")
+	if err != nil {
+		t.Fatal("generate process test admin session")
+	}
+	sessionHash := secret.HashAPIKey(sessionToken)
+	now := time.Now().UTC()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO admin_sessions (
+			admin_id, token_hash, expires_at, created_at, last_used_at,
+			created_ip_summary, user_agent_summary
+		)
+		VALUES ($1, $2, $3, $4, $4, '', 'instance-lock-process-test')
+	`, adminID, sessionHash, now.Add(time.Hour), now); err != nil {
+		t.Fatalf("create process test admin session: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		if _, err := pool.Exec(cleanupCtx, `DELETE FROM admin_sessions WHERE token_hash = $1`, sessionHash); err != nil {
+			t.Errorf("clean up process test admin session: %v", err)
+		}
+	})
+	return sessionToken
+}
+
+func assertUnsafeMultiInstanceHealthWarning(t *testing.T, port int, sessionToken string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/admin/health", port), nil)
+	if err != nil {
+		t.Fatal("create authenticated process health request")
+	}
+	request.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: sessionToken})
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("request authenticated process health on port %d: %v", port, err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		t.Fatalf("read authenticated process health on port %d: %v", port, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated process health on port %d returned status %d", port, response.StatusCode)
+	}
+	var health struct {
+		Status   string   `json:"status"`
+		Database string   `json:"database"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(body, &health); err != nil {
+		t.Fatalf("decode authenticated process health on port %d", port)
+	}
+	if health.Status != "ok" || health.Database != "ok" {
+		t.Fatalf("authenticated process health on port %d = %q/%q, want ok/ok", port, health.Status, health.Database)
+	}
+	for _, warning := range health.Warnings {
+		if warning == "unsafe_multi_instance_enabled" {
+			return
+		}
+	}
+	t.Fatalf("authenticated process health on port %d missing unsafe_multi_instance_enabled", port)
 }
 
 func processLogs(process *n2apiTestProcess, secrets ...string) string {
