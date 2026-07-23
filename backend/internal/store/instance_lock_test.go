@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestInstanceLockSerializesProcessesAndReleases(t *testing.T) {
@@ -33,12 +34,17 @@ func TestInstanceLockSerializesProcessesAndReleases(t *testing.T) {
 func TestInstanceLockConnectionLossReleasesPostgresLock(t *testing.T) {
 	repository := newTestAdminRepository(t)
 	ctx := context.Background()
-	first, acquired, err := TryAcquireInstanceLock(ctx, repository.pool)
+	first, acquired, err := tryAcquireInstanceLock(ctx, repository.pool, 10*time.Millisecond)
 	if err != nil || !acquired {
 		t.Fatalf("first acquire = acquired:%v err:%v", acquired, err)
 	}
 	if err := first.conn.Conn().PgConn().Close(ctx); err != nil {
 		t.Fatalf("close lock connection: %v", err)
+	}
+	select {
+	case <-first.Lost():
+	case <-time.After(2 * time.Second):
+		t.Fatal("lock connection loss was not reported")
 	}
 	_ = first.Close()
 
@@ -48,5 +54,21 @@ func TestInstanceLockConnectionLossReleasesPostgresLock(t *testing.T) {
 	}
 	if err := second.Close(); err != nil {
 		t.Fatalf("close second lock: %v", err)
+	}
+}
+
+func TestInstanceLockCloseDoesNotReportConnectionLoss(t *testing.T) {
+	repository := newTestAdminRepository(t)
+	lock, acquired, err := tryAcquireInstanceLock(context.Background(), repository.pool, 10*time.Millisecond)
+	if err != nil || !acquired {
+		t.Fatalf("acquire = acquired:%v err:%v", acquired, err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatalf("close lock: %v", err)
+	}
+	select {
+	case <-lock.Lost():
+		t.Fatal("normal close reported connection loss")
+	default:
 	}
 }

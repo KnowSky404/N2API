@@ -275,6 +275,7 @@ func runServer() {
 		os.Exit(1)
 	}
 	var instanceLock *store.InstanceLock
+	var instanceLockLost <-chan struct{}
 	if cfg.AllowUnsafeMultiInstance {
 		slog.Warn("unsafe multi-instance operation enabled", "error_code", "unsafe_multi_instance_enabled")
 	} else {
@@ -289,6 +290,7 @@ func runServer() {
 			slog.Error("another n2api instance is active", "error_code", "instance_already_running")
 			os.Exit(1)
 		}
+		instanceLockLost = instanceLock.Lost()
 		defer func() {
 			if err := instanceLock.Close(); err != nil {
 				slog.Error("instance lock release failed", "error_code", "instance_lock_release_failed")
@@ -441,6 +443,9 @@ func runServer() {
 			slog.Error("metrics server stopped", "error_code", "metrics_server_stopped")
 			exitCode = 1
 		}
+	case <-instanceLockLost:
+		slog.Error("instance lock connection lost", "error_code", "instance_lock_lost")
+		exitCode = 1
 	case <-ctx.Done():
 	}
 	stop()
