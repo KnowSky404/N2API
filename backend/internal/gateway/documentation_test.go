@@ -237,6 +237,33 @@ func TestGatewayDocumentationMentionsAPIKeyDisable(t *testing.T) {
 	}
 }
 
+func TestGatewayDocumentationUsesCurrentCodexProfileAndSecretHandling(t *testing.T) {
+	content, err := os.ReadFile("../../../docs/manual.md")
+	if err != nil {
+		t.Fatalf("ReadFile(%q) returned error: %v", "../../../docs/manual.md", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"~/.codex/n2api.config.toml",
+		`model_provider = "n2api"`,
+		`env_key = "N2API_API_KEY"`,
+		"read -rsp 'N2API client key: ' N2API_API_KEY",
+		"codex --profile n2api",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("manual missing %q in downstream Codex profile documentation", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"[profiles.n2api]",
+		`export N2API_API_KEY="`,
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("manual contains obsolete or unsafe downstream Codex example %q", forbidden)
+		}
+	}
+}
+
 func TestGatewayDocumentationMentionsAPIKeyBudgets(t *testing.T) {
 	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
