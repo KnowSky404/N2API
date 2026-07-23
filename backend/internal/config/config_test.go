@@ -499,6 +499,72 @@ func TestLoadGatewayConcurrencyLimitConfig(t *testing.T) {
 	}
 }
 
+func TestLoadGatewayResourceBoundaryDefaultsAndOverrides(t *testing.T) {
+	defaultCfg, err := Load(strictConfigLookup(nil))
+	if err != nil {
+		t.Fatalf("Load defaults returned error: %v", err)
+	}
+	if defaultCfg.GatewayMaxAcceptedRequestBodyBytes != 4<<20 ||
+		defaultCfg.GatewayMaxInMemoryReplayBodyBytes != 1<<20 ||
+		defaultCfg.GatewayMaxUpstreamResponseBodyBytes != 8<<20 {
+		t.Fatalf("body defaults = accepted:%d replay:%d response:%d", defaultCfg.GatewayMaxAcceptedRequestBodyBytes, defaultCfg.GatewayMaxInMemoryReplayBodyBytes, defaultCfg.GatewayMaxUpstreamResponseBodyBytes)
+	}
+	if defaultCfg.HTTPIdleTimeout != 60*time.Second || defaultCfg.HTTPMaxHeaderBytes != 1<<20 ||
+		defaultCfg.HTTPRequestBodyTimeout != 30*time.Second || defaultCfg.UpstreamResponseHeaderTimeout != 30*time.Second ||
+		defaultCfg.UpstreamConnectTimeout != 10*time.Second || defaultCfg.UpstreamTLSHandshakeTimeout != 10*time.Second ||
+		defaultCfg.UpstreamSSEIdleTimeout != 60*time.Second {
+		t.Fatalf("timeout defaults = %+v", defaultCfg)
+	}
+
+	cfg, err := Load(strictConfigLookup(map[string]string{
+		"N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES":  "8388608",
+		"N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES":  "2097152",
+		"N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES": "16777216",
+		"N2API_HTTP_IDLE_TIMEOUT_SECONDS":                "90",
+		"N2API_HTTP_MAX_HEADER_BYTES":                    "524288",
+		"N2API_HTTP_REQUEST_BODY_TIMEOUT_SECONDS":        "45",
+		"N2API_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS": "20",
+		"N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS":         "8",
+		"N2API_UPSTREAM_TLS_HANDSHAKE_TIMEOUT_SECONDS":   "9",
+		"N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS":        "120",
+	}))
+	if err != nil {
+		t.Fatalf("Load overrides returned error: %v", err)
+	}
+	if cfg.GatewayMaxAcceptedRequestBodyBytes != 8388608 || cfg.GatewayMaxInMemoryReplayBodyBytes != 2097152 || cfg.GatewayMaxUpstreamResponseBodyBytes != 16777216 ||
+		cfg.HTTPIdleTimeout != 90*time.Second || cfg.HTTPMaxHeaderBytes != 524288 || cfg.HTTPRequestBodyTimeout != 45*time.Second ||
+		cfg.UpstreamResponseHeaderTimeout != 20*time.Second || cfg.UpstreamConnectTimeout != 8*time.Second || cfg.UpstreamTLSHandshakeTimeout != 9*time.Second || cfg.UpstreamSSEIdleTimeout != 120*time.Second {
+		t.Fatalf("resource overrides = %+v", cfg)
+	}
+}
+
+func TestLoadRejectsUnsafeGatewayResourceBoundariesWithoutEchoingValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides map[string]string
+		wantName  string
+		forbidden string
+	}{
+		{name: "zero accepted", overrides: map[string]string{"N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES": "0"}, wantName: "N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES", forbidden: "0"},
+		{name: "negative replay", overrides: map[string]string{"N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES": "-9"}, wantName: "N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES", forbidden: "-9"},
+		{name: "oversized response", overrides: map[string]string{"N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES": "999999999"}, wantName: "N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES", forbidden: "999999999"},
+		{name: "invalid header", overrides: map[string]string{"N2API_HTTP_MAX_HEADER_BYTES": "header-canary"}, wantName: "N2API_HTTP_MAX_HEADER_BYTES", forbidden: "header-canary"},
+		{name: "zero timeout", overrides: map[string]string{"N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS": "0"}, wantName: "N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS", forbidden: "0"},
+		{name: "replay exceeds accepted", overrides: map[string]string{"N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES": "1048576", "N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES": "2097152"}, wantName: "N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES", forbidden: "2097152"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Load(strictConfigLookup(test.overrides))
+			if err == nil || !strings.Contains(err.Error(), test.wantName) {
+				t.Fatalf("Load error = %v, want name %s", err, test.wantName)
+			}
+			if strings.Contains(err.Error(), test.forbidden) {
+				t.Fatalf("Load error echoed unsafe value: %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadGatewayAccountConcurrencyLimitConfig(t *testing.T) {
 	defaultCfg, err := Load(mapLookup(map[string]string{
 		"DATABASE_URL":            "postgres://example",

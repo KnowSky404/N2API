@@ -38,6 +38,16 @@ type Config struct {
 	GatewayMaxConcurrentRequestsPerKey     int
 	GatewayRequestsPerMinutePerKey         int
 	GatewayTokensPerMinutePerKey           int
+	GatewayMaxAcceptedRequestBodyBytes     int
+	GatewayMaxInMemoryReplayBodyBytes      int
+	GatewayMaxUpstreamResponseBodyBytes    int
+	HTTPIdleTimeout                        time.Duration
+	HTTPMaxHeaderBytes                     int
+	HTTPRequestBodyTimeout                 time.Duration
+	UpstreamResponseHeaderTimeout          time.Duration
+	UpstreamConnectTimeout                 time.Duration
+	UpstreamTLSHandshakeTimeout            time.Duration
+	UpstreamSSEIdleTimeout                 time.Duration
 	ProviderAccountAutoTestEnabled         bool
 	ProviderAccountAutoTestInterval        time.Duration
 	RequestLogRetentionRunnerEnabled       bool
@@ -73,6 +83,17 @@ const (
 	defaultAdminLoginThrottleMaxEntries    = 4096
 	defaultAdminSessionTTLHours            = 168
 	minimumEncryptionSecretBytes           = 32
+	defaultGatewayMaxAcceptedRequestBody   = 4 << 20
+	defaultGatewayMaxInMemoryReplayBody    = 1 << 20
+	defaultGatewayMaxUpstreamResponseBody  = 8 << 20
+	maximumGatewayBodyBytes                = 64 << 20
+	defaultHTTPIdleTimeoutSeconds          = 60
+	defaultHTTPMaxHeaderBytes              = 1 << 20
+	defaultHTTPRequestBodyTimeoutSeconds   = 30
+	defaultUpstreamResponseHeaderSeconds   = 30
+	defaultUpstreamConnectTimeoutSeconds   = 10
+	defaultUpstreamTLSHandshakeSeconds     = 10
+	defaultUpstreamSSEIdleTimeoutSeconds   = 60
 )
 
 const (
@@ -265,6 +286,77 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.GatewayTokensPerMinutePerKey = tokensPerMinute
+	maxAcceptedBody, err := parseStrictPositiveInt(
+		lookup("N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES"),
+		"N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES",
+		defaultGatewayMaxAcceptedRequestBody,
+		1024,
+		maximumGatewayBodyBytes,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GatewayMaxAcceptedRequestBodyBytes = maxAcceptedBody
+	maxReplayBody, err := parseStrictPositiveInt(
+		lookup("N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES"),
+		"N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES",
+		defaultGatewayMaxInMemoryReplayBody,
+		1024,
+		maximumGatewayBodyBytes,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	if maxReplayBody > maxAcceptedBody {
+		return Config{}, errors.New("N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES must not exceed N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES")
+	}
+	cfg.GatewayMaxInMemoryReplayBodyBytes = maxReplayBody
+	maxResponseBody, err := parseStrictPositiveInt(
+		lookup("N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES"),
+		"N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES",
+		defaultGatewayMaxUpstreamResponseBody,
+		1024,
+		maximumGatewayBodyBytes,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.GatewayMaxUpstreamResponseBodyBytes = maxResponseBody
+	httpIdleSeconds, err := parseStrictPositiveInt(lookup("N2API_HTTP_IDLE_TIMEOUT_SECONDS"), "N2API_HTTP_IDLE_TIMEOUT_SECONDS", defaultHTTPIdleTimeoutSeconds, 1, 3600)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.HTTPIdleTimeout = time.Duration(httpIdleSeconds) * time.Second
+	httpMaxHeaderBytes, err := parseStrictPositiveInt(lookup("N2API_HTTP_MAX_HEADER_BYTES"), "N2API_HTTP_MAX_HEADER_BYTES", defaultHTTPMaxHeaderBytes, 8192, 4<<20)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.HTTPMaxHeaderBytes = httpMaxHeaderBytes
+	requestBodySeconds, err := parseStrictPositiveInt(lookup("N2API_HTTP_REQUEST_BODY_TIMEOUT_SECONDS"), "N2API_HTTP_REQUEST_BODY_TIMEOUT_SECONDS", defaultHTTPRequestBodyTimeoutSeconds, 1, 300)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.HTTPRequestBodyTimeout = time.Duration(requestBodySeconds) * time.Second
+	responseHeaderSeconds, err := parseStrictPositiveInt(lookup("N2API_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS"), "N2API_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS", defaultUpstreamResponseHeaderSeconds, 1, 300)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.UpstreamResponseHeaderTimeout = time.Duration(responseHeaderSeconds) * time.Second
+	connectSeconds, err := parseStrictPositiveInt(lookup("N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS"), "N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS", defaultUpstreamConnectTimeoutSeconds, 1, 120)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.UpstreamConnectTimeout = time.Duration(connectSeconds) * time.Second
+	tlsHandshakeSeconds, err := parseStrictPositiveInt(lookup("N2API_UPSTREAM_TLS_HANDSHAKE_TIMEOUT_SECONDS"), "N2API_UPSTREAM_TLS_HANDSHAKE_TIMEOUT_SECONDS", defaultUpstreamTLSHandshakeSeconds, 1, 120)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.UpstreamTLSHandshakeTimeout = time.Duration(tlsHandshakeSeconds) * time.Second
+	sseIdleSeconds, err := parseStrictPositiveInt(lookup("N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS"), "N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS", defaultUpstreamSSEIdleTimeoutSeconds, 1, 3600)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.UpstreamSSEIdleTimeout = time.Duration(sseIdleSeconds) * time.Second
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -339,6 +431,17 @@ func parsePositiveIntWithDefault(value, name string, fallback, minimum, maximum 
 	}
 	if parsed < minimum || parsed > maximum {
 		return 0, fmt.Errorf("%s must be between %d and %d", name, minimum, maximum)
+	}
+	return parsed, nil
+}
+
+func parseStrictPositiveInt(value, name string, fallback, minimum, maximum int) (int, error) {
+	if strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < minimum || parsed > maximum {
+		return 0, fmt.Errorf("%s is invalid", name)
 	}
 	return parsed, nil
 }
