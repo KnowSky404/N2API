@@ -37,6 +37,12 @@ jobs:
           go test dev/ci/validate-security-exceptions.go dev/ci/validate-security-exceptions_test.go
           dev/ci/test-security-policy.sh
 
+      - name: Validate issue forms
+        working-directory: backend
+        run: |
+          go test ./cmd/validate-issue-forms
+          go run ./cmd/validate-issue-forms ../.github/ISSUE_TEMPLATE
+
       - name: Install actionlint
         env:
           GOBIN: ${{ runner.temp }}/n2api-security-bin

@@ -7,6 +7,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/prometheus/client_golang v1.24.0
 	github.com/refraction-networking/utls v1.8.2
+	go.yaml.in/yaml/v3 v3.0.4
 )
 
 require (
