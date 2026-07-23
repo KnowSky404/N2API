@@ -1,6 +1,7 @@
 # Repository Governance Plan
 
-Status: in progress; Tasks 1, 3, 4, and 5 completed locally; owner decisions remain
+Status: in progress; Tasks 1, 3, 4, and 5 completed locally; Task 6 documented
+but not applied; owner decisions remain
 Public API changes: none
 Data migration: none
 
@@ -223,6 +224,9 @@ evidence rather than a local completion claim.
 
 ## Task 6: Configure Repository Protections
 
+Task status: documented locally on 2026-07-23; ruleset and environment changes
+remain pending explicit owner authorization and remote acceptance
+
 ### Goal
 
 Apply governance settings after checks and names are stable.
@@ -233,13 +237,15 @@ Tasks 1, 4, and 5; explicit owner authorization for GitHub changes.
 
 ### Implementation
 
-Require PRs or documented owner bypass, required `Test` and both platform image
-checks, conversation resolution, and protected release environment approval.
-Do not modify repository settings automatically without authorization.
+Require PRs or documented owner bypass, exact CI and Security checks that run on
+both pull requests and merge groups, conversation resolution, and protected
+release environment approval. Exclude main-only and scheduled jobs from required
+PR checks. Do not modify repository settings automatically without authorization.
 
 ### Completion Criteria
 
-The documented branch/release policy matches actual GitHub settings.
+The intended branch/release policy is documented. Matching it to actual GitHub
+settings remains an owner-authorized remote acceptance check.
 
 ### Commit
 
