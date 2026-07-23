@@ -3408,9 +3408,9 @@ func TestPreviewAccountSelectionIncludesScheduleReasons(t *testing.T) {
 	}
 
 	want := map[int64]string{
-		2: "reused sticky session binding for account priority 1, load factor 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 2",
-		1: "ordered after sticky FNV hash, which only changes order within the highest exactly equal scheduling tier: account priority 1, load factor 1, recent-error tier clean; base tie-breakers least-recently-used then account ID 1",
-		3: "ordered after sticky FNV hash, which only changes order within the highest exactly equal scheduling tier: account priority 2, load factor 1, recent-error tier clean; base tie-breakers least-recently-used then account ID 3",
+		2: "reused sticky session binding for account priority 1, scheduling preference tier 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 2",
+		1: "ordered after sticky FNV hash, which only changes order within the highest exactly equal scheduling tier: account priority 1, scheduling preference tier 1, recent-error tier clean; base tie-breakers least-recently-used then account ID 1",
+		3: "ordered after sticky FNV hash, which only changes order within the highest exactly equal scheduling tier: account priority 2, scheduling preference tier 1, recent-error tier clean; base tie-breakers least-recently-used then account ID 3",
 	}
 	for _, candidate := range preview.Candidates {
 		if candidate.ScheduleReason != want[candidate.ID] {
@@ -3496,7 +3496,7 @@ func TestPreviewAccountSelectionReportsStoredStickyBindingForSingleCandidate(t *
 	if preview.StickyBoundAccountID != 7 {
 		t.Fatalf("StickyBoundAccountID = %d, want 7", preview.StickyBoundAccountID)
 	}
-	if len(preview.Candidates) != 1 || !preview.Candidates[0].StickyBound || preview.Candidates[0].ScheduleReason != "reused sticky session binding for account priority 1, load factor 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 7" {
+	if len(preview.Candidates) != 1 || !preview.Candidates[0].StickyBound || preview.Candidates[0].ScheduleReason != "reused sticky session binding for account priority 1, scheduling preference tier 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 7" {
 		t.Fatalf("candidate = %+v, want single sticky-bound candidate", preview.Candidates)
 	}
 	if got := repo.sessionBindings[sessionBindingKey("openai", "gpt-5", "workspace-123")]; !got.UpdatedAt.Equal(createdAt) {
@@ -3649,7 +3649,7 @@ func TestPreviewAccountSelectionInRoutingPoolScopesCandidatesAndStickyBinding(t 
 		if candidate.Schedulable != expected.schedulable || candidate.Selected != expected.selected || candidate.Priority != expected.priority || candidate.UnschedulableReason != expected.reason {
 			t.Fatalf("candidate %d = schedulable:%v selected:%v priority:%d reason:%q, want schedulable:%v selected:%v priority:%d reason:%q", candidate.ID, candidate.Schedulable, candidate.Selected, candidate.Priority, candidate.UnschedulableReason, expected.schedulable, expected.selected, expected.priority, expected.reason)
 		}
-		if candidate.ID == 2 && candidate.ScheduleReason != "reused sticky session binding for pool priority 20, global account priority 10, load factor 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 2" {
+		if candidate.ID == 2 && candidate.ScheduleReason != "reused sticky session binding for pool priority 20, global account priority 10, scheduling preference tier 1, recent-error tier clean; new sticky FNV hashes stay within the highest exactly equal scheduling tier; base tie-breakers least-recently-used then account ID 2" {
 			t.Fatalf("pool candidate ScheduleReason = %q, want pool and global account tiers", candidate.ScheduleReason)
 		}
 		delete(want, candidate.ID)

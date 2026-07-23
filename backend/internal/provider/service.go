@@ -2950,7 +2950,7 @@ func scheduleTier(account Account) string {
 	}
 	if account.RoutingPoolPriority != nil {
 		return fmt.Sprintf(
-			"pool priority %d, global account priority %d, load factor %d, recent-error tier %s",
+			"pool priority %d, global account priority %d, scheduling preference tier %d, recent-error tier %s",
 			selectionPriority(account),
 			globalAccountPriority(account),
 			normalizedLoadFactor(account.LoadFactor),
@@ -2958,7 +2958,7 @@ func scheduleTier(account Account) string {
 		)
 	}
 	return fmt.Sprintf(
-		"account priority %d, load factor %d, recent-error tier %s",
+		"account priority %d, scheduling preference tier %d, recent-error tier %s",
 		account.Priority,
 		normalizedLoadFactor(account.LoadFactor),
 		recentErrorTier,
