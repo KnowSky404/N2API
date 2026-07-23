@@ -230,12 +230,15 @@ type Proxy struct {
 	upstreamTimeouts   upstreamTimeouts
 	sseIdleTimeout     time.Duration
 	setReadDeadline    func(http.ResponseWriter, time.Time) error
+	transports         *transportRegistry
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
 	timeouts := normalizedUpstreamTimeouts(cfg)
-	transport := newUpstreamTransport(timeouts)
-	return NewProxyWithClient(auth, accounts, cfg, &http.Client{Transport: newTLSFingerprintTransport(transport, timeouts)})
+	client := &http.Client{Transport: newUpstreamTransport(timeouts)}
+	proxy := NewProxyWithClient(auth, accounts, cfg, client)
+	proxy.transports = newTransportRegistry(client, timeouts, defaultTransportRegistryCapacity)
+	return proxy
 }
 
 func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config, client *http.Client) *Proxy {
@@ -563,7 +566,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
 				return
 			}
-			upstreamResp, upstreamErr = p.clientForSelectedAccount(selected).Do(upstreamReq)
+			client, clientErr := p.clientForSelectedAccount(selected)
+			if clientErr != nil {
+				upstreamErr = clientErr
+				break
+			}
+			upstreamResp, upstreamErr = client.Do(upstreamReq)
 			if upstreamErr != nil || authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
 				break
 			}
@@ -657,14 +665,17 @@ func (p *Proxy) armRequestBodyDeadline(w http.ResponseWriter, r *http.Request) (
 	return err == nil, err
 }
 
-func (p *Proxy) clientForSelectedAccount(selected SelectedAccount) *http.Client {
+func (p *Proxy) clientForSelectedAccount(selected SelectedAccount) (*http.Client, error) {
+	if p.transports != nil {
+		return p.transports.ClientFor(selected)
+	}
 	proxyURL := strings.TrimSpace(selected.ProxyURL)
 	if proxyURL == "" {
-		return p.client
+		return p.client, nil
 	}
 	parsed, err := url.Parse(proxyURL)
 	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
-		return p.client
+		return nil, errors.New("invalid upstream proxy configuration")
 	}
 	transport := newUpstreamTransport(p.upstreamTimeouts)
 	transport.Proxy = http.ProxyURL(parsed)
@@ -674,7 +685,25 @@ func (p *Proxy) clientForSelectedAccount(selected SelectedAccount) *http.Client 
 		client.CheckRedirect = p.client.CheckRedirect
 		client.Jar = p.client.Jar
 	}
-	return client
+	return client, nil
+}
+
+func (p *Proxy) InvalidateAccountTransport(accountID int64) {
+	if p != nil {
+		p.transports.InvalidateAccountTransport(accountID)
+	}
+}
+
+func (p *Proxy) InvalidateAllAccountTransports() {
+	if p != nil {
+		p.transports.InvalidateAllAccountTransports()
+	}
+}
+
+func (p *Proxy) Close() {
+	if p != nil {
+		p.transports.Close()
+	}
 }
 
 func (p *Proxy) tryAcquireAccountSlot(accountID int64, limit int) (func(), bool) {

@@ -4190,6 +4190,53 @@ func TestStartConnectAttachesOAuthIntentWithoutAuthorizationMaterial(t *testing.
 	}
 }
 
+func TestAccountMutationsInvalidateGatewayTransportsAfterSuccess(t *testing.T) {
+	repo := &memoryRepo{accounts: []Account{
+		{ID: 7, Provider: "openai", AccountType: AccountTypeAPIUpstream, Name: "first"},
+		{ID: 8, Provider: "openai", AccountType: AccountTypeAPIUpstream, Name: "second"},
+	}}
+	service := NewService(repo, &fakeOAuthClient{}, Config{Provider: "openai", Secret: "encryption-secret"})
+	invalidator := &recordingTransportInvalidator{}
+	service.SetAccountTransportInvalidator(invalidator)
+
+	enabled := false
+	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{Enabled: &enabled}); err != nil {
+		t.Fatalf("UpdateAccount returned error: %v", err)
+	}
+	if err := service.DisconnectAccount(context.Background(), 8); err != nil {
+		t.Fatalf("DisconnectAccount returned error: %v", err)
+	}
+	if _, err := service.UpdateAccount(context.Background(), 999, AccountUpdate{Enabled: &enabled}); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("failed UpdateAccount error = %v, want ErrNotConnected", err)
+	}
+	if err := service.DisconnectAccount(context.Background(), 999); !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("failed DisconnectAccount error = %v, want ErrNotConnected", err)
+	}
+	if err := service.Disconnect(context.Background()); err != nil {
+		t.Fatalf("Disconnect returned error: %v", err)
+	}
+
+	if got, want := invalidator.accountIDs, []int64{7, 8}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("invalidated account IDs = %v, want %v", got, want)
+	}
+	if invalidator.allCalls != 1 {
+		t.Fatalf("invalidate all calls = %d, want 1", invalidator.allCalls)
+	}
+}
+
+type recordingTransportInvalidator struct {
+	accountIDs []int64
+	allCalls   int
+}
+
+func (i *recordingTransportInvalidator) InvalidateAccountTransport(accountID int64) {
+	i.accountIDs = append(i.accountIDs, accountID)
+}
+
+func (i *recordingTransportInvalidator) InvalidateAllAccountTransports() {
+	i.allCalls++
+}
+
 type memoryRepo struct {
 	accounts            []Account
 	accountModels       map[int64][]AccountModel

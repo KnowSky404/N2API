@@ -307,6 +307,8 @@ func runServer() {
 		},
 		UsagePricer: gatewayUsagePricer{admins: adminService},
 	})
+	providerService.SetAccountTransportInvalidator(gatewayProxy)
+	defer gatewayProxy.Close()
 
 	server := newHTTPServer(
 		cfg,

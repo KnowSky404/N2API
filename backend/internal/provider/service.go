@@ -644,6 +644,11 @@ type HTTPClient struct {
 	modelProbeProxyTLSConfig *tls.Config
 }
 
+type AccountTransportInvalidator interface {
+	InvalidateAccountTransport(accountID int64)
+	InvalidateAllAccountTransports()
+}
+
 type Service struct {
 	repo                     Repository
 	client                   OAuthClient
@@ -655,6 +660,8 @@ type Service struct {
 	refreshMu                sync.Mutex
 	refreshLocks             map[int64]*sync.Mutex
 	httpClient               *HTTPClient
+	transportInvalidatorMu   sync.RWMutex
+	transportInvalidator     AccountTransportInvalidator
 }
 
 func NewHTTPClient(client *http.Client) *HTTPClient {
@@ -731,6 +738,30 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		encryptionKeyring:        cfg.EncryptionKeyring,
 		httpClient:               httpClient,
 		refreshLocks:             make(map[int64]*sync.Mutex),
+	}
+}
+
+func (s *Service) SetAccountTransportInvalidator(invalidator AccountTransportInvalidator) {
+	s.transportInvalidatorMu.Lock()
+	s.transportInvalidator = invalidator
+	s.transportInvalidatorMu.Unlock()
+}
+
+func (s *Service) invalidateAccountTransport(accountID int64) {
+	s.transportInvalidatorMu.RLock()
+	invalidator := s.transportInvalidator
+	s.transportInvalidatorMu.RUnlock()
+	if invalidator != nil {
+		invalidator.InvalidateAccountTransport(accountID)
+	}
+}
+
+func (s *Service) invalidateAllAccountTransports() {
+	s.transportInvalidatorMu.RLock()
+	invalidator := s.transportInvalidator
+	s.transportInvalidatorMu.RUnlock()
+	if invalidator != nil {
+		invalidator.InvalidateAllAccountTransports()
 	}
 }
 
@@ -1487,6 +1518,7 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if err != nil {
 		return Account{}, err
 	}
+	s.invalidateAccountTransport(id)
 	return s.withProxySummary(account), nil
 }
 
@@ -1590,7 +1622,11 @@ func (s *Service) DisconnectAccount(ctx context.Context, id int64) error {
 		return ErrInvalidInput
 	}
 	ctx = withProviderEventIntent(ctx, providerAuditIntent(systemevent.ActionProviderAccountDisconnected, id, ""))
-	return s.repo.DeleteAccount(ctx, s.cfg.Provider, id)
+	if err := s.repo.DeleteAccount(ctx, s.cfg.Provider, id); err != nil {
+		return err
+	}
+	s.invalidateAccountTransport(id)
+	return nil
 }
 
 func (s *Service) Disconnect(ctx context.Context) error {
@@ -1601,7 +1637,11 @@ func (s *Service) Disconnect(ctx context.Context) error {
 		Outcome:  systemevent.OutcomeSuccess,
 		Target:   systemevent.Target{Type: "provider", ID: s.cfg.Provider, Name: s.cfg.Provider},
 	})
-	return s.repo.DeleteAccounts(ctx, s.cfg.Provider)
+	if err := s.repo.DeleteAccounts(ctx, s.cfg.Provider); err != nil {
+		return err
+	}
+	s.invalidateAllAccountTransports()
+	return nil
 }
 
 func normalizeAccountModelInputs(inputs []AccountModelInput) ([]AccountModelInput, error) {
