@@ -194,6 +194,30 @@ func TestResponseAffinityExtractsStreamingResponseID(t *testing.T) {
 	}
 }
 
+func TestResponseAffinityPersistsStreamingResponseIDAfterReadError(t *testing.T) {
+	store := newMemoryResponseAffinityStore()
+	accounts := newAffinityTestAccountProvider()
+	accounts.fakeSelectedAccountProvider.accounts = []SelectedAccount{{AccountID: 11, AccountType: "api_upstream", AuthorizationToken: "token-a"}}
+	proxy := newAffinityTestProxy(store, accounts, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: &responseCreatedThenErrorReader{payload: []byte(
+				"event: response.created\n" +
+					"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_stream_error\"}}\n\n"),
+				err: errors.New("stream failed after response creation")},
+		}, nil
+	}), nil)
+
+	recorder := performAffinityRequest(proxy, http.MethodPost, "/v1/responses", `{"model":"gpt-test","input":"hello","stream":true}`)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "resp_stream_error") {
+		t.Fatalf("stream response = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if len(store.writes) != 1 || store.writes[0].responseID != "resp_stream_error" || store.writes[0].providerAccountID != 11 {
+		t.Fatalf("stream error affinity writes = %+v", store.writes)
+	}
+}
+
 func TestResponseAffinityExtractsChunkedCRLFStreamingResponseID(t *testing.T) {
 	observer := NewSSEUsageObserver("/v1/responses")
 	chunks := []string{
@@ -258,6 +282,22 @@ type affinityTestAccountProvider struct {
 	unique     bool
 	singleErr  error
 }
+
+type responseCreatedThenErrorReader struct {
+	payload []byte
+	err     error
+	sent    bool
+}
+
+func (r *responseCreatedThenErrorReader) Read(buffer []byte) (int, error) {
+	if !r.sent {
+		r.sent = true
+		return copy(buffer, r.payload), nil
+	}
+	return 0, r.err
+}
+
+func (*responseCreatedThenErrorReader) Close() error { return nil }
 
 type affinityExactCall struct {
 	routingPoolID int64

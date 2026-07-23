@@ -857,12 +857,18 @@ reports current counters and sanitized last-result state at
 startup gate and all rules to stop outbound delivery.
 
 Changing `N2API_ENCRYPTION_SECRET` invalidates existing Request Log and System
-Event cursors because those cursor signatures intentionally use only the current
-secret. Previous encryption keys do not keep old cursors valid. This task does
-not bulk-rewrite stored values. Once the upgraded application creates or refreshes
-a credential, an older image cannot read that new envelope; rollback then requires
-the upgraded image with the prior keyring or a database backup taken before new
-envelope writes.
+Event cursors and Stateful Responses affinity lookups because those signatures
+and response-ID HMACs intentionally use only the current secret.
+Previous encryption keys do not keep old cursors valid. They also do not keep
+affinity rows valid. After rotation, an existing response ID in a multi-account
+routing scope fails closed with
+`response_affinity_unknown`; only a routing scope whose complete fallback-chain
+topology contains one account can use the single-account compatibility path.
+Treat secret rotation as a stateful-session cutover and plan for existing response
+IDs to stop chaining or loading. This task does not bulk-rewrite stored values.
+Once the upgraded application creates or refreshes a credential,
+an older image cannot read that new envelope; rollback then requires the upgraded
+image with the prior keyring or a database backup taken before new envelope writes.
 
 The release Compose file requires `.env` and an explicit `N2API_IMAGE`; it has
 no `latest` fallback. Use the immutable CalVer matching the checked-out release

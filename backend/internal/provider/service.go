@@ -2567,15 +2567,13 @@ func (s *Service) SelectSingleAccountInRoutingPoolChain(ctx context.Context, pri
 	if primaryPoolID <= 0 {
 		return SelectedAccount{}, false, ErrInvalidInput
 	}
-	candidates, chainLabel, err := s.responseAffinityCandidates(ctx, primaryPoolID, model)
+	topology, chainLabel, err := s.responseAffinityTopology(ctx, primaryPoolID)
 	if err != nil {
 		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, false, err
 	}
-	unique := make(map[int64]responseAffinityCandidate, len(candidates))
-	for _, candidate := range candidates {
-		if _, exists := unique[candidate.account.ID]; !exists {
-			unique[candidate.account.ID] = candidate
-		}
+	unique := make(map[int64]struct{}, len(topology))
+	for _, candidate := range topology {
+		unique[candidate.account.ID] = struct{}{}
 		if len(unique) > 1 {
 			return SelectedAccount{RoutingPoolFallbackChain: chainLabel}, false, nil
 		}
@@ -2583,17 +2581,42 @@ func (s *Service) SelectSingleAccountInRoutingPoolChain(ctx context.Context, pri
 	if len(unique) == 0 {
 		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, false, ErrAccountsUnavailable
 	}
-	for _, candidate := range unique {
+	now := time.Now()
+	for _, candidate := range topology {
+		if !candidate.pool.Enabled || s.selectionUnschedulableReason(ctx, candidate.account, model, nil, now) != "" {
+			continue
+		}
 		selected, err := s.selectedResponseAffinityAccount(ctx, candidate, chainLabel)
 		return selected, err == nil, err
 	}
-	return SelectedAccount{}, false, ErrAccountsUnavailable
+	return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, false, ErrAccountsUnavailable
 }
 
 type responseAffinityCandidate struct {
 	account Account
 	pool    RoutingPool
 	depth   int
+}
+
+func (s *Service) responseAffinityTopology(ctx context.Context, primaryPoolID int64) ([]responseAffinityCandidate, string, error) {
+	if !s.Configured() {
+		return nil, "", ErrNotConfigured
+	}
+	pools, chainLabel, err := s.routingPoolChain(ctx, primaryPoolID)
+	if err != nil {
+		return nil, chainLabel, err
+	}
+	topology := make([]responseAffinityCandidate, 0)
+	for depth, pool := range pools {
+		accounts, err := s.repo.ListRoutingPoolAccounts(ctx, s.cfg.Provider, pool.ID)
+		if err != nil {
+			return nil, chainLabel, err
+		}
+		for _, account := range accounts {
+			topology = append(topology, responseAffinityCandidate{account: account, pool: pool, depth: depth})
+		}
+	}
+	return topology, chainLabel, nil
 }
 
 func (s *Service) responseAffinityCandidates(ctx context.Context, primaryPoolID int64, model string) ([]responseAffinityCandidate, string, error) {

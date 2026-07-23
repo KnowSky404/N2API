@@ -745,7 +745,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 					}
 				}
-				if err == nil && upstreamResp.StatusCode >= http.StatusOK && upstreamResp.StatusCode < http.StatusMultipleChoices {
+				if shouldPersistResponseAffinity(upstreamResp.StatusCode, streamResponse, observation, err) {
 					p.persistResponseAffinity(r.Context(), observation.ResponseID, selected.AccountID, *key.RoutingPoolID, startedAt)
 				}
 				return
@@ -782,7 +782,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 			}
 		}
-		if err == nil && upstreamResp.StatusCode >= http.StatusOK && upstreamResp.StatusCode < http.StatusMultipleChoices {
+		if shouldPersistResponseAffinity(upstreamResp.StatusCode, streamResponse, observation, err) {
 			p.persistResponseAffinity(r.Context(), observation.ResponseID, selected.AccountID, *key.RoutingPoolID, startedAt)
 		}
 		return
@@ -2116,6 +2116,13 @@ func responseIDForAffinityLookup(r *http.Request, previousResponseID string) str
 	rest := strings.TrimPrefix(r.URL.Path, "/v1/responses/")
 	responseID, _, _ := strings.Cut(rest, "/")
 	return strings.TrimSpace(responseID)
+}
+
+func shouldPersistResponseAffinity(statusCode int, stream bool, observation upstreamResponseObservation, writeErr error) bool {
+	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
+		return false
+	}
+	return writeErr == nil || (stream && strings.TrimSpace(observation.ResponseID) != "")
 }
 
 func (p *Proxy) persistResponseAffinity(ctx context.Context, responseID string, providerAccountID, routingPoolID int64, now time.Time) {

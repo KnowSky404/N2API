@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -17,6 +18,13 @@ func TestResponseAffinityHashIsDomainSeparatedAndOpaque(t *testing.T) {
 	responseID := "resp_private-canary-value"
 
 	digest := repository.hashResponseID(responseID)
+	wantDigest, err := hex.DecodeString("4ad5002fb9a96ceccaf37d1fd5a7da9f18146c9ee3499a867105f5b451b1baaa")
+	if err != nil {
+		t.Fatalf("decode response affinity golden digest: %v", err)
+	}
+	if !bytes.Equal(digest, wantDigest) {
+		t.Fatalf("response affinity digest = %x, want stable golden digest %x", digest, wantDigest)
+	}
 	if len(digest) != 32 {
 		t.Fatalf("response affinity digest length = %d, want 32", len(digest))
 	}
