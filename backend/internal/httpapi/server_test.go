@@ -35,6 +35,17 @@ func (h staticHealth) Ping(ctx context.Context) error {
 	return h.err
 }
 
+type captureReadinessMetrics struct {
+	values map[string]bool
+}
+
+func (m *captureReadinessMetrics) SetReadiness(component string, ready bool) {
+	if m.values == nil {
+		m.values = make(map[string]bool)
+	}
+	m.values[component] = ready
+}
+
 type fakeAutoTestStatusSource struct {
 	status provider.AutoTestStatus
 }
@@ -1155,7 +1166,8 @@ func TestVersionReturnsOnlyPublicBuildVersion(t *testing.T) {
 
 func TestReadyzReturnsComponentStatus(t *testing.T) {
 	webFS := fstest.MapFS{"200.html": {Data: []byte("ready")}}
-	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil, webFS)
+	metrics := &captureReadinessMetrics{}
+	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil, webFS, metrics)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -1174,11 +1186,15 @@ func TestReadyzReturnsComponentStatus(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", field, body[field], want)
 		}
 	}
+	if !metrics.values["overall"] || !metrics.values["database"] || !metrics.values["static_assets"] {
+		t.Fatalf("readiness metrics = %+v", metrics.values)
+	}
 }
 
 func TestReadyzReportsDatabaseError(t *testing.T) {
 	webFS := fstest.MapFS{"index.html": {Data: []byte("ready")}}
-	server := NewServer(config.Config{}, staticHealth{err: errHealth}, nil, nil, webFS)
+	metrics := &captureReadinessMetrics{}
+	server := NewServer(config.Config{}, staticHealth{err: errHealth}, nil, nil, webFS, metrics)
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -1192,6 +1208,9 @@ func TestReadyzReportsDatabaseError(t *testing.T) {
 	}
 	if body["status"] != "not_ready" || body["database"] != "error" || body["staticAssets"] != "ok" {
 		t.Fatalf("body = %+v, want database error only", body)
+	}
+	if metrics.values["overall"] || metrics.values["database"] || !metrics.values["static_assets"] {
+		t.Fatalf("readiness metrics = %+v", metrics.values)
 	}
 }
 

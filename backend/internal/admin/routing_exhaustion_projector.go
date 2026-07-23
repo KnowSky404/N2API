@@ -50,6 +50,7 @@ type RoutingExhaustionProjector struct {
 	statusMu sync.Mutex
 	status   RoutingExhaustionProjectorStatus
 	now      func() time.Time
+	metrics  BackgroundTaskObserver
 }
 
 func NewRoutingExhaustionProjector(store routingExhaustionProjectorStore, cfg RoutingExhaustionProjectorConfig, logger *slog.Logger) *RoutingExhaustionProjector {
@@ -77,6 +78,12 @@ func (p *RoutingExhaustionProjector) Status() RoutingExhaustionProjectorStatus {
 	return p.status
 }
 
+func (p *RoutingExhaustionProjector) SetMetricsObserver(observer BackgroundTaskObserver) {
+	if p != nil {
+		p.metrics = observer
+	}
+}
+
 func (p *RoutingExhaustionProjector) Run(ctx context.Context) {
 	if p == nil || p.store == nil {
 		return
@@ -95,9 +102,18 @@ func (p *RoutingExhaustionProjector) Run(ctx context.Context) {
 
 func (p *RoutingExhaustionProjector) runCycle(ctx context.Context) {
 	if !p.running.CompareAndSwap(false, true) {
+		if p.metrics != nil {
+			p.metrics.ObserveBackgroundTaskRun("routing_exhaustion_projector", "skipped", 0)
+		}
 		return
 	}
 	defer p.running.Store(false)
+	outcome := "failure"
+	finishMetrics := func(string) {}
+	if p.metrics != nil {
+		finishMetrics = p.metrics.BeginBackgroundTask("routing_exhaustion_projector")
+	}
+	defer func() { finishMetrics(outcome) }()
 
 	started := p.now().UTC()
 	p.statusMu.Lock()
@@ -111,9 +127,11 @@ func (p *RoutingExhaustionProjector) runCycle(ctx context.Context) {
 	p.status.Running = false
 	if err == nil {
 		if result.Contended {
+			outcome = "skipped"
 			p.statusMu.Unlock()
 			return
 		}
+		outcome = "success"
 		p.status.LastSucceededAt = &finished
 		p.status.LastErrorAt = nil
 		p.status.LastErrorCode = ""
@@ -126,7 +144,10 @@ func (p *RoutingExhaustionProjector) runCycle(ctx context.Context) {
 	p.status.LastErrorAt = &finished
 	p.status.LastErrorCode = "routing_exhaustion_projector_failed"
 	if ctx.Err() != nil {
+		outcome = "canceled"
 		p.status.LastErrorCode = "routing_exhaustion_projector_canceled"
+	} else if result.Processed > 0 || result.Transitions > 0 {
+		outcome = "partial"
 	}
 	p.statusMu.Unlock()
 	if ctx.Err() == nil {

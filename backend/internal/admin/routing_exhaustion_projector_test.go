@@ -63,6 +63,16 @@ func TestRoutingExhaustionProjectorDefaultsAndStatus(t *testing.T) {
 	}
 }
 
+func TestRoutingExhaustionProjectorReportsTaskMetrics(t *testing.T) {
+	metrics := &captureAdminTaskMetrics{}
+	projector := NewRoutingExhaustionProjector(&fakeRoutingExhaustionProjectorStore{}, RoutingExhaustionProjectorConfig{}, slog.Default())
+	projector.SetMetricsObserver(metrics)
+	projector.runCycle(context.Background())
+	if len(metrics.runs) != 1 || metrics.runs[0] != [2]string{"routing_exhaustion_projector", "success"} {
+		t.Fatalf("task metrics = %+v", metrics.runs)
+	}
+}
+
 func TestRoutingExhaustionProjectorTreatsContentionAsSkip(t *testing.T) {
 	store := &fakeRoutingExhaustionProjectorStore{results: []RoutingExhaustionProjectorCycleResult{{Contended: true}}}
 	projector := NewRoutingExhaustionProjector(store, RoutingExhaustionProjectorConfig{}, slog.Default())

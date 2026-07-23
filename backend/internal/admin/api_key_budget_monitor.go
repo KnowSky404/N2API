@@ -47,6 +47,7 @@ type APIKeyBudgetMonitor struct {
 	statusMu sync.Mutex
 	status   APIKeyBudgetMonitorStatus
 	now      func() time.Time
+	metrics  BackgroundTaskObserver
 }
 
 func NewAPIKeyBudgetMonitor(store apiKeyBudgetMonitorStore, cfg APIKeyBudgetMonitorConfig, logger *slog.Logger) *APIKeyBudgetMonitor {
@@ -71,6 +72,12 @@ func (m *APIKeyBudgetMonitor) Status() APIKeyBudgetMonitorStatus {
 	return m.status
 }
 
+func (m *APIKeyBudgetMonitor) SetMetricsObserver(observer BackgroundTaskObserver) {
+	if m != nil {
+		m.metrics = observer
+	}
+}
+
 func (m *APIKeyBudgetMonitor) Run(ctx context.Context) {
 	if m == nil || m.store == nil {
 		return
@@ -89,9 +96,18 @@ func (m *APIKeyBudgetMonitor) Run(ctx context.Context) {
 
 func (m *APIKeyBudgetMonitor) runCycle(ctx context.Context) {
 	if !m.running.CompareAndSwap(false, true) {
+		if m.metrics != nil {
+			m.metrics.ObserveBackgroundTaskRun("api_key_budget_monitor", "skipped", 0)
+		}
 		return
 	}
 	defer m.running.Store(false)
+	outcome := "failure"
+	finishMetrics := func(string) {}
+	if m.metrics != nil {
+		finishMetrics = m.metrics.BeginBackgroundTask("api_key_budget_monitor")
+	}
+	defer func() { finishMetrics(outcome) }()
 
 	started := m.now().UTC()
 	m.statusMu.Lock()
@@ -105,6 +121,7 @@ func (m *APIKeyBudgetMonitor) runCycle(ctx context.Context) {
 	m.statusMu.Lock()
 	m.status.Running = false
 	if err == nil {
+		outcome = "success"
 		m.status.LastSucceededAt = &finished
 		m.status.LastErrorAt = nil
 		m.status.LastErrorCode = ""
@@ -117,7 +134,10 @@ func (m *APIKeyBudgetMonitor) runCycle(ctx context.Context) {
 	m.status.LastErrorAt = &finished
 	m.status.LastErrorCode = "api_key_budget_monitor_failed"
 	if ctx.Err() != nil {
+		outcome = "canceled"
 		m.status.LastErrorCode = "api_key_budget_monitor_canceled"
+	} else if result.Processed > 0 || result.Transitions > 0 {
+		outcome = "partial"
 	}
 	m.statusMu.Unlock()
 	if ctx.Err() == nil {

@@ -247,7 +247,7 @@ func runServer() {
 	}
 	alertDispatcher := alerting.NewDispatcher(alerting.DispatcherConfig{
 		Enabled: cfg.AlertDeliveryEnabled, Service: alertingService, Recorder: systemEventRepo,
-		Adapter: alertHTTPAdapter, InitialSubscription: initialAlertSubscription,
+		Adapter: alertHTTPAdapter, Metrics: metricsRegistry, InitialSubscription: initialAlertSubscription,
 		Subscribe: func(ctx context.Context) (alerting.EventSubscription, error) {
 			return systemEventRepo.Subscribe(ctx)
 		},
@@ -354,10 +354,19 @@ func runServer() {
 		slog.Default(),
 	)
 	responseAffinityRetentionRunner.SetSystemEventRecorder(systemEventRepo)
+	if metricsRegistry != nil {
+		responseAffinityRetentionRunner.SetMetricsObserver(metricsRegistry)
+	}
 	go responseAffinityRetentionRunner.Run(ctx)
 	apiKeyBudgetMonitor := admin.NewAPIKeyBudgetMonitor(adminRepo, admin.APIKeyBudgetMonitorConfig{}, slog.Default())
+	if metricsRegistry != nil {
+		apiKeyBudgetMonitor.SetMetricsObserver(metricsRegistry)
+	}
 	go apiKeyBudgetMonitor.Run(ctx)
 	routingExhaustionProjector := admin.NewRoutingExhaustionProjector(adminRepo, admin.RoutingExhaustionProjectorConfig{}, slog.Default())
+	if metricsRegistry != nil {
+		routingExhaustionProjector.SetMetricsObserver(metricsRegistry)
+	}
 	go routingExhaustionProjector.Run(ctx)
 
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
@@ -399,7 +408,7 @@ func runServer() {
 
 	server := newHTTPServer(
 		cfg,
-		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
+		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry),
 		ctx,
 	)
 

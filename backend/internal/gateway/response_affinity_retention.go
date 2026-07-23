@@ -46,11 +46,17 @@ type responseAffinityRetentionEventRecorder interface {
 	Insert(ctx context.Context, event systemevent.Event) error
 }
 
+type ResponseAffinityBackgroundTaskObserver interface {
+	BeginBackgroundTask(task string) func(outcome string)
+	ObserveBackgroundTaskRun(task, outcome string, duration time.Duration)
+}
+
 type ResponseAffinityRetentionRunner struct {
 	store         ResponseAffinityRetentionStore
 	cfg           ResponseAffinityRetentionRunnerConfig
 	logger        *slog.Logger
 	eventRecorder responseAffinityRetentionEventRecorder
+	metrics       ResponseAffinityBackgroundTaskObserver
 	running       atomic.Bool
 	statusMu      sync.Mutex
 	status        ResponseAffinityRetentionStatus
@@ -76,6 +82,12 @@ func NewResponseAffinityRetentionRunner(store ResponseAffinityRetentionStore, cf
 func (r *ResponseAffinityRetentionRunner) SetSystemEventRecorder(recorder responseAffinityRetentionEventRecorder) {
 	if r != nil {
 		r.eventRecorder = recorder
+	}
+}
+
+func (r *ResponseAffinityRetentionRunner) SetMetricsObserver(observer ResponseAffinityBackgroundTaskObserver) {
+	if r != nil {
+		r.metrics = observer
 	}
 }
 
@@ -106,18 +118,31 @@ func (r *ResponseAffinityRetentionRunner) Run(ctx context.Context) {
 
 func (r *ResponseAffinityRetentionRunner) runCycle(ctx context.Context) {
 	if !r.running.CompareAndSwap(false, true) {
+		if r.metrics != nil {
+			r.metrics.ObserveBackgroundTaskRun("response_affinity_retention", "skipped", 0)
+		}
 		return
 	}
 	defer r.running.Store(false)
+	outcome := "failure"
+	finishMetrics := func(string) {}
+	if r.metrics != nil {
+		finishMetrics = r.metrics.BeginBackgroundTask("response_affinity_retention")
+	}
+	defer func() { finishMetrics(outcome) }()
 
 	started := r.now().UTC()
 	r.start(started)
 	lease, acquired, err := r.store.TryAcquireResponseAffinityRetention(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			outcome = "canceled"
+		}
 		r.fail(ctx, started, 0, "response_affinity_retention_acquire_failed")
 		return
 	}
 	if !acquired {
+		outcome = "skipped"
 		r.skip(started)
 		return
 	}
@@ -126,18 +151,26 @@ func (r *ResponseAffinityRetentionRunner) runCycle(ctx context.Context) {
 	closeErr := lease.Close()
 	if deleteErr != nil {
 		if errors.Is(deleteErr, context.Canceled) || ctx.Err() != nil {
+			outcome = "canceled"
 			r.finishFailure(r.now().UTC(), deleted, "response_affinity_retention_canceled")
 			return
+		}
+		if deleted > 0 {
+			outcome = "partial"
 		}
 		r.fail(ctx, started, deleted, "response_affinity_retention_failed")
 		return
 	}
 	if closeErr != nil {
+		if deleted > 0 {
+			outcome = "partial"
+		}
 		r.fail(ctx, started, deleted, "response_affinity_retention_release_failed")
 		return
 	}
 
 	finished := r.now().UTC()
+	outcome = "success"
 	r.finishSuccess(finished, deleted)
 	r.recordEvent(ctx, started, deleted, true, "")
 	r.logger.Info("response affinity retention completed", "deleted_count", deleted)

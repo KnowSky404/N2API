@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	MaxOwnedSeries  = 1600
-	MaxScrapeSeries = 2000
+	MaxOwnedSeries            = 1600
+	MaxScrapeSeries           = 2000
+	MaxInitializedOwnedSeries = 1516
 )
 
 var (
@@ -25,7 +26,7 @@ var (
 	usageSources      = []string{"responses", "chat_completions", "stream", "gemini_usage_metadata", "anthropic_usage", "json", "missing", "other"}
 	tokenTypes        = []string{"input", "output", "cached_input", "reasoning"}
 	providerStates    = []string{"active", "disabled", "rate_limited", "circuit_open", "expired", "other"}
-	tasks             = []string{"provider_auto_test", "request_log_retention", "system_event_retention", "api_key_purge", "other"}
+	tasks             = []string{"provider_auto_test", "request_log_retention", "system_event_retention", "api_key_purge", "response_affinity_retention", "api_key_budget_monitor", "routing_exhaustion_projector", "other"}
 	taskOutcomes      = []string{"success", "failure", "partial", "skipped", "canceled", "other"}
 	upstreamOutcomes  = []string{"success", "http_error", "transport_error", "refresh_retry", "canceled", "other"}
 	fallbackReasons   = []string{"account_concurrency", "transport_error", "retryable_status", "other"}
@@ -36,6 +37,9 @@ var (
 	refreshModes      = []string{"manual", "automatic", "rejected_token", "other"}
 	refreshOutcomes   = []string{"success", "failure", "skipped", "other"}
 	persistenceStates = []string{"success", "failure"}
+	alertAdapters     = []string{"generic_webhook", "ntfy", "gotify", "other"}
+	alertOutcomes     = []string{"delivered", "failed", "dropped", "deduplicated", "recovery", "other"}
+	readinessParts    = []string{"overall", "database", "static_assets", "other"}
 )
 
 type Registry struct {
@@ -61,6 +65,10 @@ type Registry struct {
 	taskRunning        *prometheus.GaugeVec
 	taskLastSuccess    *prometheus.GaugeVec
 	taskLastFailure    *prometheus.GaugeVec
+	alertQueueDepth    prometheus.Gauge
+	alertNotifications *prometheus.CounterVec
+	alertDuration      *prometheus.HistogramVec
+	readiness          *prometheus.GaugeVec
 	providerAccountsMu sync.Mutex
 }
 
@@ -91,6 +99,10 @@ func New(pool *pgxpool.Pool) *Registry {
 	r.taskRunning = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "n2api_background_task_running", Help: "Whether a bounded background task is running."}, []string{"task"})
 	r.taskLastSuccess = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "n2api_background_task_last_success_timestamp_seconds", Help: "Unix timestamp of the last successful task run."}, []string{"task"})
 	r.taskLastFailure = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "n2api_background_task_last_failure_timestamp_seconds", Help: "Unix timestamp of the last failed task run."}, []string{"task"})
+	r.alertQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{Name: "n2api_alert_queue_depth", Help: "Current in-process alert notification queue depth."})
+	r.alertNotifications = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "n2api_alert_notifications_total", Help: "Total bounded alert notification outcomes."}, []string{"adapter", "outcome"})
+	r.alertDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "n2api_alert_delivery_duration_seconds", Help: "Alert destination delivery duration.", Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30}}, []string{"adapter"})
+	r.readiness = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "n2api_readiness", Help: "Last observed readiness result by fixed component."}, []string{"component"})
 
 	r.registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -101,6 +113,7 @@ func New(pool *pgxpool.Pool) *Registry {
 		r.usageObservations, r.tokens, r.estimatedCost, r.providerAccounts,
 		r.providerRefreshes, r.requestLogWrites, r.systemEventWrites, r.taskRuns,
 		r.taskDuration, r.taskRunning, r.taskLastSuccess, r.taskLastFailure,
+		r.alertQueueDepth, r.alertNotifications, r.alertDuration, r.readiness,
 		newPoolCollector(pool),
 	)
 	r.initializeBoundedSeries()
@@ -165,6 +178,16 @@ func (r *Registry) initializeBoundedSeries() {
 		r.taskRunning.WithLabelValues(task).Set(0)
 		r.taskLastSuccess.WithLabelValues(task).Set(0)
 		r.taskLastFailure.WithLabelValues(task).Set(0)
+	}
+	r.alertQueueDepth.Set(0)
+	for _, adapter := range alertAdapters {
+		for _, outcome := range alertOutcomes {
+			r.alertNotifications.WithLabelValues(adapter, outcome)
+		}
+		r.alertDuration.WithLabelValues(adapter)
+	}
+	for _, component := range readinessParts {
+		r.readiness.WithLabelValues(component).Set(0)
 	}
 }
 
@@ -311,6 +334,45 @@ func (r *Registry) UpdateProviderAccounts(accounts []ProviderAccount) {
 	for labels, count := range counts {
 		r.providerAccounts.WithLabelValues(labels[0], labels[1]).Set(count)
 	}
+}
+
+func (r *Registry) SetAlertQueueDepth(depth int) {
+	if r == nil {
+		return
+	}
+	r.alertQueueDepth.Set(float64(max(0, depth)))
+}
+
+func (r *Registry) AddAlertQueueDepth(delta int) {
+	if r == nil {
+		return
+	}
+	r.alertQueueDepth.Add(float64(delta))
+}
+
+func (r *Registry) ObserveAlertNotification(adapter, outcome string) {
+	if r == nil {
+		return
+	}
+	r.alertNotifications.WithLabelValues(normalize(adapter, alertAdapters), normalize(outcome, alertOutcomes)).Inc()
+}
+
+func (r *Registry) ObserveAlertDeliveryDuration(adapter string, duration time.Duration) {
+	if r == nil {
+		return
+	}
+	r.alertDuration.WithLabelValues(normalize(adapter, alertAdapters)).Observe(max(0, duration.Seconds()))
+}
+
+func (r *Registry) SetReadiness(component string, ready bool) {
+	if r == nil {
+		return
+	}
+	value := 0.0
+	if ready {
+		value = 1
+	}
+	r.readiness.WithLabelValues(normalize(component, readinessParts)).Set(value)
 }
 
 func persistenceOutcome(err error) string {

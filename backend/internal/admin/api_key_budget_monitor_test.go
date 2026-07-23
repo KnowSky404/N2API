@@ -72,6 +72,16 @@ func TestAPIKeyBudgetMonitorDefaultsAndCursorLifecycle(t *testing.T) {
 	}
 }
 
+func TestAPIKeyBudgetMonitorReportsTaskMetrics(t *testing.T) {
+	metrics := &captureAdminTaskMetrics{}
+	monitor := NewAPIKeyBudgetMonitor(&fakeAPIKeyBudgetMonitorStore{}, APIKeyBudgetMonitorConfig{}, slog.Default())
+	monitor.SetMetricsObserver(metrics)
+	monitor.runCycle(context.Background())
+	if len(metrics.runs) != 1 || metrics.runs[0] != [2]string{"api_key_budget_monitor", "success"} {
+		t.Fatalf("task metrics = %+v", metrics.runs)
+	}
+}
+
 func TestAPIKeyBudgetMonitorFailurePreservesCursorAndSanitizesLog(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))

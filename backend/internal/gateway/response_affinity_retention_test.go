@@ -48,6 +48,18 @@ type captureResponseAffinityRetentionEvents struct {
 	events []systemevent.Event
 }
 
+type captureResponseAffinityTaskMetrics struct {
+	runs [][2]string
+}
+
+func (m *captureResponseAffinityTaskMetrics) BeginBackgroundTask(task string) func(string) {
+	return func(outcome string) { m.runs = append(m.runs, [2]string{task, outcome}) }
+}
+
+func (m *captureResponseAffinityTaskMetrics) ObserveBackgroundTaskRun(task, outcome string, _ time.Duration) {
+	m.runs = append(m.runs, [2]string{task, outcome})
+}
+
 func (r *captureResponseAffinityRetentionEvents) Insert(_ context.Context, event systemevent.Event) error {
 	r.events = append(r.events, event)
 	return nil
@@ -79,6 +91,8 @@ func TestResponseAffinityRetentionRunnerRecordsSuccess(t *testing.T) {
 		return value
 	}
 	runner.SetSystemEventRecorder(recorder)
+	metrics := &captureResponseAffinityTaskMetrics{}
+	runner.SetMetricsObserver(metrics)
 
 	runner.runCycle(context.Background())
 
@@ -91,6 +105,9 @@ func TestResponseAffinityRetentionRunnerRecordsSuccess(t *testing.T) {
 	}
 	if len(recorder.events) != 1 || recorder.events[0].Action != systemevent.ActionSchedulerResponseAffinityRetentionSucceeded || recorder.events[0].Outcome != systemevent.OutcomeSuccess {
 		t.Fatalf("success events = %+v", recorder.events)
+	}
+	if len(metrics.runs) != 1 || metrics.runs[0] != [2]string{"response_affinity_retention", "success"} {
+		t.Fatalf("task metrics = %+v", metrics.runs)
 	}
 }
 

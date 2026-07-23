@@ -141,6 +141,10 @@ type RequestLogWriteStatusSource interface {
 	RequestLogWriteStatus() requestlog.WriteStatus
 }
 
+type ReadinessMetricsObserver interface {
+	SetReadiness(component string, ready bool)
+}
+
 type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
@@ -229,6 +233,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	requestLogWriteStatusSource := requestLogWriteStatusSourceFromOptions(options...)
 	alertingAdminService := alertingAdminServiceFromOptions(options...)
 	alertActionTester := alertActionTesterFromOptions(options...)
+	readinessMetrics := readinessMetricsObserverFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -260,6 +265,11 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 		if webAssetsAvailable(webFS) {
 			response["staticAssets"] = "ok"
+		}
+		if readinessMetrics != nil {
+			readinessMetrics.SetReadiness("database", response["database"] == "ok")
+			readinessMetrics.SetReadiness("static_assets", response["staticAssets"] == "ok")
+			readinessMetrics.SetReadiness("overall", response["database"] == "ok" && response["staticAssets"] == "ok")
 		}
 		if response["database"] == "ok" && response["staticAssets"] == "ok" {
 			response["status"] = "ok"
@@ -3091,6 +3101,15 @@ func requestLogWriteStatusSourceFromOptions(options ...any) RequestLogWriteStatu
 	for _, option := range options {
 		if source, ok := option.(RequestLogWriteStatusSource); ok {
 			return source
+		}
+	}
+	return nil
+}
+
+func readinessMetricsObserverFromOptions(options ...any) ReadinessMetricsObserver {
+	for _, option := range options {
+		if observer, ok := option.(ReadinessMetricsObserver); ok {
+			return observer
 		}
 	}
 	return nil

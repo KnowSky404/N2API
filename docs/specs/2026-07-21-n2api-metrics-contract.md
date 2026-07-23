@@ -25,7 +25,8 @@ are prohibited.
   must stay below 2,000 active series per process.
 - A new label or label value requires this document to be updated with a new
   worst-case estimate before implementation.
-- Histograms count every bucket plus `_sum` and `_count` for each label set.
+- Histograms count every configured bucket, the implicit `+Inf` bucket, `_sum`,
+  and `_count` for each label set.
 - Unknown enum values map to the fixed value `other`; runtime strings never
   become new label values.
 - Metrics reset on process restart. PromQL computes rates and increases across
@@ -60,11 +61,12 @@ request identifiers are explicitly prohibited.
 | `usage_source` | `responses`, `chat_completions`, `stream`, `gemini_usage_metadata`, `anthropic_usage`, `json`, `missing`, `other` | Normalize the fixed values emitted by `gateway.Usage.Source`. |
 | `token_type` | `input`, `output`, `cached_input`, `reasoning` | Fixed counter dimension; total tokens are derived from input and output. |
 | `provider_state` | `active`, `disabled`, `rate_limited`, `circuit_open`, `expired`, `other` | Normalize the fixed provider account states. |
-| `task` | `provider_auto_test`, `request_log_retention`, `system_event_retention`, `api_key_purge`, `other` | Fixed background task registry; adding a task requires a contract update. |
+| `task` | `provider_auto_test`, `request_log_retention`, `system_event_retention`, `api_key_purge`, `response_affinity_retention`, `api_key_budget_monitor`, `routing_exhaustion_projector`, `other` | Fixed background task registry; adding a task requires a contract update. |
 | `scope` | `gateway`, `api_key`, `provider_account`, `other` | Fixed enforcement scope; never derived from an object name or ID. |
 | `outcome` | Metric-specific fixed allowlist documented below | Never use raw errors. Unexpected values become `other`. |
 | `reason` | Metric-specific fixed allowlist documented below | Never use raw gateway, provider, or task error strings. |
-| `adapter` | `generic_webhook`, `ntfy`, `gotify`, `other` | Reserved for the future alerting plan; no adapter metric is emitted yet. |
+| `adapter` | `generic_webhook`, `ntfy`, `gotify`, `other` | Normalize the fixed alert delivery adapter kind; failures before action resolution use `other`. |
+| `component` | `overall`, `database`, `static_assets`, `other` | Fixed readiness components; no dependency, host, or database name is exposed. |
 
 ## Gateway Metrics
 
@@ -75,7 +77,7 @@ cannot recursively modify these counters.
 | Metric | Type and unit | Labels | Max series | Operator use case |
 | --- | --- | --- | ---: | --- |
 | `n2api_gateway_requests_total` | Counter, requests | `route`, `status_class`, `stream`, `account_type` | 192 | Traffic, error-rate, streaming, and upstream-type trends. |
-| `n2api_gateway_request_duration_seconds` | Histogram, seconds | `route`, `status_class`, `stream` | 816 | End-to-end downstream latency including completed stream lifetime. |
+| `n2api_gateway_request_duration_seconds` | Histogram, seconds | `route`, `status_class`, `stream` | 864 | End-to-end downstream latency including completed stream lifetime. |
 | `n2api_gateway_active_requests` | Gauge, requests | none | 1 | Process-wide concurrency pressure. |
 | `n2api_gateway_upstream_attempts_total` | Counter, attempts | `account_type`, `outcome` | 24 | Upstream retry and transport health without account IDs. |
 | `n2api_gateway_fallbacks_total` | Counter, fallbacks | `reason` | 4 | Frequency of explicit account fallback. |
@@ -131,11 +133,11 @@ names, System Event categories/actions, and raw database errors are omitted.
 
 | Metric | Type and unit | Labels | Max series | Operator use case |
 | --- | --- | --- | ---: | --- |
-| `n2api_background_task_runs_total` | Counter, runs | `task`, `outcome` | 30 | Success/failure/partial/skip/cancel rates per fixed task. |
-| `n2api_background_task_duration_seconds` | Histogram, seconds | `task` | 60 | Runtime and stuck-task diagnosis without raw error labels. |
-| `n2api_background_task_running` | Gauge, boolean `0` or `1` | `task` | 5 | Current in-process task activity. |
-| `n2api_background_task_last_success_timestamp_seconds` | Gauge, Unix seconds | `task` | 5 | Alert on stale successful execution. |
-| `n2api_background_task_last_failure_timestamp_seconds` | Gauge, Unix seconds | `task` | 5 | Correlate recent failures with System Events. |
+| `n2api_background_task_runs_total` | Counter, runs | `task`, `outcome` | 48 | Success/failure/partial/skip/cancel rates per fixed task. |
+| `n2api_background_task_duration_seconds` | Histogram, seconds | `task` | 104 | Runtime and stuck-task diagnosis without raw error labels. |
+| `n2api_background_task_running` | Gauge, boolean `0` or `1` | `task` | 8 | Current in-process task activity. |
+| `n2api_background_task_last_success_timestamp_seconds` | Gauge, Unix seconds | `task` | 8 | Alert on stale successful execution. |
+| `n2api_background_task_last_failure_timestamp_seconds` | Gauge, Unix seconds | `task` | 8 | Correlate recent failures with System Events. |
 
 Task `outcome` is `success`, `failure`, `partial`, `skipped`, `canceled`, or
 `other`. The duration histogram uses buckets `0.1`, `0.5`, `1`, `5`, `10`,
@@ -161,36 +163,51 @@ query or expose the database URL, SQL, database/user name, or query text.
 The connection `state` allowlist is `total`, `acquired`, `idle`, `max`.
 Destroyed-connection `reason` is `max_lifetime`, `max_idle`, or `other`.
 
-## Reserved Alert Metrics
+## Alert Metrics
 
-Alerting does not exist yet. The following names and labels are reserved but
-must not be registered until the System Event Alerting plan supplies a bounded
-dispatcher and exact adapter outcomes:
+The bounded in-process System Event alert dispatcher emits queue and final
+notification outcomes. Failures or drops that occur before an action is resolved
+use the fixed `other` adapter; no destination or rule identifier is exposed.
 
 | Metric | Type and unit | Labels | Max series | Operator use case |
 | --- | --- | --- | ---: | --- |
 | `n2api_alert_queue_depth` | Gauge, notifications | none | 1 | Queue saturation. |
 | `n2api_alert_notifications_total` | Counter, notifications | `adapter`, `outcome` | 24 | Delivered, failed, dropped, deduplicated, and recovery outcomes. |
-| `n2api_alert_delivery_duration_seconds` | Histogram, seconds | `adapter` | 48 | Destination latency independent of gateway requests. |
+| `n2api_alert_delivery_duration_seconds` | Histogram, seconds | `adapter` | 52 | Destination latency independent of gateway requests. |
 
-Alert `outcome` is reserved as `delivered`, `failed`, `dropped`,
+Alert `outcome` is `delivered`, `failed`, `dropped`,
 `deduplicated`, `recovery`, or `other`. Delivery duration buckets are `0.05`,
 `0.1`, `0.25`, `0.5`, `1`, `2.5`, `5`, `10`, `20`, and `30` seconds.
 
+## Readiness Metrics
+
+| Metric | Type and unit | Labels | Max series | Operator use case |
+| --- | --- | --- | ---: | --- |
+| `n2api_readiness` | Gauge, boolean `0` or `1` | `component` | 4 | Last observed overall, database, and static-asset readiness. |
+
+Readiness gauges initialize to `0` and are updated from the existing `/readyz`
+result. A metrics scrape reads only the gauges; it never performs a PostgreSQL
+probe or filesystem check. Operators should continue scraping `/readyz` directly
+when they require an independently timed active probe.
+
 ## Budget Accounting
 
-The worst-case active N2API-owned series in the implemented sections is 1,316:
+Every histogram label set includes its configured finite buckets, the implicit
+`+Inf` bucket, `_sum`, and `_count`. The worst-case active N2API-owned series is
+1,516:
 
-- gateway: 1,155;
+- gateway: 1,203;
 - provider and persistence: 44;
-- background tasks: 105; and
+- background tasks: 176;
+- alerting: 77;
+- readiness: 4; and
 - PostgreSQL pool: 12.
 
-Reserved alert metrics add at most 73 series after their own plan is complete,
-keeping the contract below the 1,600 owned-series cap. Standard Go runtime and
+This leaves 84 N2API-owned series below the 1,600 cap. Standard Go runtime and
 process collectors must fit inside the separate 2,000-series complete-scrape
-cap. Tests must gather the registry after exercising every allowed label value
-and fail when either cap is exceeded.
+cap. Tests must gather the registry after exercising every allowed label value,
+expand histograms to their actual exposition series, and fail when the exact
+initialized budget changes or either cap is exceeded.
 
 ## Exposure And Implementation Gate
 

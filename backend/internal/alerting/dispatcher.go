@@ -38,6 +38,13 @@ type DeliveryEventRecorder interface {
 	Insert(context.Context, systemevent.Event) error
 }
 
+type MetricsObserver interface {
+	SetAlertQueueDepth(depth int)
+	AddAlertQueueDepth(delta int)
+	ObserveAlertNotification(adapter, outcome string)
+	ObserveAlertDeliveryDuration(adapter string, duration time.Duration)
+}
+
 type DispatcherConfig struct {
 	Enabled                bool
 	Service                DispatcherService
@@ -46,6 +53,7 @@ type DispatcherConfig struct {
 	GetEvent               func(context.Context, int64) (systemevent.Event, error)
 	Recorder               DeliveryEventRecorder
 	Adapter                DeliveryAdapter
+	Metrics                MetricsObserver
 	EventQueueCapacity     int
 	DeliveryQueueCapacity  int
 	WorkerCount            int
@@ -142,6 +150,7 @@ func (dispatcher *Dispatcher) Start() {
 	}
 	dispatcher.startOnce.Do(func() {
 		if !dispatcher.cfg.Enabled || dispatcher.cfg.Service == nil {
+			dispatcher.observeQueueDepth()
 			if dispatcher.cfg.InitialSubscription != nil {
 				dispatcher.cfg.InitialSubscription.Close()
 			}
@@ -158,6 +167,7 @@ func (dispatcher *Dispatcher) Start() {
 		dispatcher.workCancel = workCancel
 		dispatcher.accepting.Store(true)
 		dispatcher.running.Store(true)
+		dispatcher.observeQueueDepth()
 		go dispatcher.runListener(listenCtx)
 		go dispatcher.runEvaluator(workCtx)
 		go dispatcher.runWorkers(workCtx)
@@ -224,6 +234,7 @@ func (dispatcher *Dispatcher) finishShutdown() {
 	}
 	<-dispatcher.reporterDone
 	dispatcher.running.Store(false)
+	dispatcher.observeQueueDepth()
 	close(dispatcher.done)
 }
 
@@ -284,13 +295,16 @@ func (dispatcher *Dispatcher) tryEnqueue(event systemevent.Event) bool {
 	if !dispatcher.accepting.Load() {
 		return false
 	}
+	dispatcher.addAlertQueueDepth(1)
 	select {
 	case dispatcher.eventQueue <- event:
 		dispatcher.enqueued.Add(1)
 		return true
 	default:
+		dispatcher.addAlertQueueDepth(-1)
 		dispatcher.dropped.Add(1)
 		dispatcher.droppedPending.Add(1)
+		dispatcher.observeAlertNotification("other", "dropped")
 		return false
 	}
 }
@@ -310,6 +324,7 @@ func (dispatcher *Dispatcher) runEvaluator(ctx context.Context) {
 			if !ok {
 				return
 			}
+			dispatcher.addAlertQueueDepth(-1)
 			dispatcher.evaluateEvent(ctx, event)
 		}
 	}
@@ -334,12 +349,17 @@ func (dispatcher *Dispatcher) evaluateEvent(ctx context.Context, event systemeve
 			continue
 		}
 		if !evaluation.ActionEnabled || (evaluation.Decision != DecisionNotify && evaluation.Decision != DecisionRecover) {
+			if evaluation.Decision == DecisionSuppress {
+				dispatcher.observeAlertNotification("other", "deduplicated")
+			}
 			continue
 		}
 		queue := dispatcher.deliveryQueues[deliveryWorkerIndex(evaluation.Rule, event, len(dispatcher.deliveryQueues))]
+		dispatcher.addAlertQueueDepth(1)
 		select {
 		case queue <- deliveryJob{rule: evaluation.Rule, actionUpdatedAt: evaluation.ActionUpdatedAt, decision: evaluation.Decision, event: event}:
 		case <-ctx.Done():
+			dispatcher.addAlertQueueDepth(-1)
 			return
 		}
 	}
@@ -359,6 +379,7 @@ func (dispatcher *Dispatcher) runWorkers(ctx context.Context) {
 					if !ok {
 						return
 					}
+					dispatcher.addAlertQueueDepth(-1)
 					dispatcher.deliver(ctx, job)
 				}
 			}
@@ -407,6 +428,7 @@ func (dispatcher *Dispatcher) deliver(ctx context.Context, job deliveryJob) {
 		return
 	}
 	notification := notificationFor(rule, job.decision, job.event)
+	deliveryStarted := time.Now()
 	var result DeliveryAttempt
 	for attempt := 1; attempt <= dispatcher.cfg.MaxAttempts; attempt++ {
 		action, err := dispatcher.cfg.Service.ResolveActionForDelivery(ctx, rule.ActionID)
@@ -423,11 +445,17 @@ func (dispatcher *Dispatcher) deliver(ctx context.Context, job deliveryJob) {
 		if result.Success {
 			dispatcher.delivered.Add(1)
 			dispatcher.markDelivered()
+			outcome := "delivered"
+			if job.decision == DecisionRecover {
+				outcome = "recovery"
+			}
+			dispatcher.observeAlertNotification(string(action.Kind), outcome)
+			dispatcher.observeAlertDeliveryDuration(string(action.Kind), time.Since(deliveryStarted))
 			return
 		}
 		if !result.Retryable || attempt == dispatcher.cfg.MaxAttempts || ctx.Err() != nil {
 			if ctx.Err() == nil {
-				dispatcher.recordFailureEvent(rule.ID, action.ID, attempt, result.StatusCode, result.ErrorCode)
+				dispatcher.recordDeliveryFailureEvent(rule.ID, action.ID, attempt, result.StatusCode, result.ErrorCode, string(action.Kind), time.Since(deliveryStarted))
 			}
 			return
 		}
@@ -473,11 +501,23 @@ func (dispatcher *Dispatcher) reportOverflow() {
 }
 
 func (dispatcher *Dispatcher) recordFailureEvent(ruleID, actionID int64, attempts, statusCode int, errorCode string) {
+	dispatcher.recordFailureEventWithMetrics(ruleID, actionID, attempts, statusCode, errorCode, "other", 0, false)
+}
+
+func (dispatcher *Dispatcher) recordDeliveryFailureEvent(ruleID, actionID int64, attempts, statusCode int, errorCode string, adapter string, duration time.Duration) {
+	dispatcher.recordFailureEventWithMetrics(ruleID, actionID, attempts, statusCode, errorCode, adapter, duration, true)
+}
+
+func (dispatcher *Dispatcher) recordFailureEventWithMetrics(ruleID, actionID int64, attempts, statusCode int, errorCode, adapter string, duration time.Duration, observeDuration bool) {
 	if errorCode == "" {
 		errorCode = "alert_delivery_failed"
 	}
 	dispatcher.failed.Add(1)
 	dispatcher.markFailure(errorCode)
+	dispatcher.observeAlertNotification(adapter, "failed")
+	if observeDuration {
+		dispatcher.observeAlertDeliveryDuration(adapter, duration)
+	}
 	if dispatcher.cfg.Recorder == nil {
 		return
 	}
@@ -493,6 +533,35 @@ func (dispatcher *Dispatcher) recordFailureEvent(ruleID, actionID int64, attempt
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = dispatcher.cfg.Recorder.Insert(ctx, event)
+}
+
+func (dispatcher *Dispatcher) observeQueueDepth() {
+	if dispatcher == nil || dispatcher.cfg.Metrics == nil {
+		return
+	}
+	depth := len(dispatcher.eventQueue)
+	for _, queue := range dispatcher.deliveryQueues {
+		depth += len(queue)
+	}
+	dispatcher.cfg.Metrics.SetAlertQueueDepth(depth)
+}
+
+func (dispatcher *Dispatcher) addAlertQueueDepth(delta int) {
+	if dispatcher != nil && dispatcher.cfg.Metrics != nil {
+		dispatcher.cfg.Metrics.AddAlertQueueDepth(delta)
+	}
+}
+
+func (dispatcher *Dispatcher) observeAlertNotification(adapter, outcome string) {
+	if dispatcher != nil && dispatcher.cfg.Metrics != nil {
+		dispatcher.cfg.Metrics.ObserveAlertNotification(adapter, outcome)
+	}
+}
+
+func (dispatcher *Dispatcher) observeAlertDeliveryDuration(adapter string, duration time.Duration) {
+	if dispatcher != nil && dispatcher.cfg.Metrics != nil {
+		dispatcher.cfg.Metrics.ObserveAlertDeliveryDuration(adapter, duration)
+	}
 }
 
 func (dispatcher *Dispatcher) deliveryEvent(action systemevent.Action, severity systemevent.Severity, errorCode string, target systemevent.Target, metadata map[string]any) systemevent.Event {

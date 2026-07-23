@@ -19,6 +19,43 @@ type recordingDeliveryAdapter struct {
 	block         bool
 }
 
+type captureAlertMetrics struct {
+	mu            sync.Mutex
+	depth         int
+	notifications [][2]string
+	durations     []string
+}
+
+func (m *captureAlertMetrics) SetAlertQueueDepth(depth int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.depth = depth
+}
+
+func (m *captureAlertMetrics) AddAlertQueueDepth(delta int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.depth += delta
+}
+
+func (m *captureAlertMetrics) ObserveAlertNotification(adapter, outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notifications = append(m.notifications, [2]string{adapter, outcome})
+}
+
+func (m *captureAlertMetrics) ObserveAlertDeliveryDuration(adapter string, _ time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.durations = append(m.durations, adapter)
+}
+
+func (m *captureAlertMetrics) snapshot() (int, [][2]string, []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.depth, append([][2]string(nil), m.notifications...), append([]string(nil), m.durations...)
+}
+
 func (adapter *recordingDeliveryAdapter) Deliver(ctx context.Context, action ResolvedAction, notification Notification) DeliveryAttempt {
 	adapter.mu.Lock()
 	adapter.notifications = append(adapter.notifications, notification)
@@ -119,8 +156,9 @@ func (recorder *memoryDeliveryRecorder) snapshot() []systemevent.Event {
 func TestDispatcherEvaluatesInOrderAndDeliversRecovery(t *testing.T) {
 	service, rule := dispatcherService(t, 1)
 	adapter := &recordingDeliveryAdapter{}
+	metrics := &captureAlertMetrics{}
 	dispatcher := NewDispatcher(DispatcherConfig{
-		Enabled: true, Service: service, Adapter: adapter,
+		Enabled: true, Service: service, Adapter: adapter, Metrics: metrics,
 		EventQueueCapacity: 4, DeliveryQueueCapacity: 4, WorkerCount: 1,
 		InitialBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond,
 	})
@@ -148,6 +186,10 @@ func TestDispatcherEvaluatesInOrderAndDeliversRecovery(t *testing.T) {
 	status := dispatcher.AlertDeliveryStatus()
 	if status.Running || status.EnqueuedCount != 2 || status.DeliveredCount != 2 || status.FailedCount != 0 {
 		t.Fatalf("delivery status = %+v", status)
+	}
+	depth, metricNotifications, durations := metrics.snapshot()
+	if depth != 0 || len(durations) != 2 || len(metricNotifications) != 2 || metricNotifications[0] != [2]string{"generic_webhook", "delivered"} || metricNotifications[1] != [2]string{"generic_webhook", "recovery"} {
+		t.Fatalf("metrics = depth:%d notifications:%v durations:%v", depth, metricNotifications, durations)
 	}
 }
 
@@ -391,13 +433,14 @@ func TestDispatcherDistinguishesDeliveryConfigDeletionFromRepositoryFailure(t *t
 func TestDispatcherRetriesBoundedlyAndRecordsSanitizedFailure(t *testing.T) {
 	service, _ := dispatcherService(t, 1)
 	recorder := &memoryDeliveryRecorder{}
+	metrics := &captureAlertMetrics{}
 	adapter := &recordingDeliveryAdapter{results: []DeliveryAttempt{
 		{Retryable: true, StatusCode: 503, ErrorCode: "alert_delivery_http_status"},
 		{Retryable: true, StatusCode: 503, ErrorCode: "alert_delivery_http_status"},
 		{StatusCode: 503, ErrorCode: "alert_delivery_http_status"},
 	}}
 	dispatcher := NewDispatcher(DispatcherConfig{
-		Enabled: true, Service: service, Recorder: recorder, Adapter: adapter,
+		Enabled: true, Service: service, Recorder: recorder, Adapter: adapter, Metrics: metrics,
 		EventQueueCapacity: 2, DeliveryQueueCapacity: 2, WorkerCount: 1, MaxAttempts: 3,
 		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
 	})
@@ -423,6 +466,10 @@ func TestDispatcherRetriesBoundedlyAndRecordsSanitizedFailure(t *testing.T) {
 	status := dispatcher.AlertDeliveryStatus()
 	if status.RetriedCount != 2 || status.LastErrorCode != "alert_delivery_http_status" {
 		t.Fatalf("delivery status = %+v", status)
+	}
+	_, notifications, durations := metrics.snapshot()
+	if len(notifications) != 1 || notifications[0] != [2]string{"generic_webhook", "failed"} || len(durations) != 1 || durations[0] != "generic_webhook" {
+		t.Fatalf("failure metrics = notifications:%v durations:%v", notifications, durations)
 	}
 	shutdownDispatcher(t, dispatcher)
 }
@@ -479,9 +526,10 @@ func TestDispatcherStopsRetryWhenActionChangesDuringBackoff(t *testing.T) {
 
 func TestDispatcherQueueSaturationIsNonBlockingAndAggregatesOverflow(t *testing.T) {
 	recorder := &memoryDeliveryRecorder{}
+	metrics := &captureAlertMetrics{}
 	dispatcher := NewDispatcher(DispatcherConfig{
 		Enabled: true, Service: &Service{}, Recorder: recorder, EventQueueCapacity: 1,
-		DeliveryQueueCapacity: 1, WorkerCount: 1,
+		DeliveryQueueCapacity: 1, WorkerCount: 1, Metrics: metrics,
 	})
 	dispatcher.accepting.Store(true)
 	first := triggerEvent()
@@ -510,6 +558,10 @@ func TestDispatcherQueueSaturationIsNonBlockingAndAggregatesOverflow(t *testing.
 	status := dispatcher.AlertDeliveryStatus()
 	if status.DroppedCount != 1 || status.QueueDepth != 1 {
 		t.Fatalf("overflow status = %+v", status)
+	}
+	depth, notifications, _ := metrics.snapshot()
+	if depth != 1 || len(notifications) != 1 || notifications[0] != [2]string{"other", "dropped"} {
+		t.Fatalf("overflow metrics = depth:%d notifications:%v", depth, notifications)
 	}
 }
 
