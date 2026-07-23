@@ -1103,7 +1103,19 @@ N2API exposes separate process and dependency probes:
   example `{"version":"sha-0123456789ab"}`.
 - `GET /api/admin/health` remains publicly usable for its existing
   `status`/`database` response. With a valid administrator session cookie, it
-  also includes the complete commit SHA and UTC build time under `build`.
+  also includes the complete commit SHA and UTC build time under `build`, plus
+  operational task details such as `tasks.requestLogWrite`.
+
+`tasks.requestLogWrite` is in-memory status for durable Request Log writes.
+`lastSucceededAt` and `lastFailedAt` are the UTC times of the latest successful
+and failed writes and are omitted until the corresponding outcome occurs.
+`lastErrorCode` is the latest stable write error code, currently
+`request_log_write_failed`. `consecutiveFailures` increments for each failed
+write and resets to `0` on the next successful write; `totalFailures` counts all
+failures since the current process started and does not decrease after recovery.
+A successful write updates `lastSucceededAt` but retains the latest failure time,
+error code, and total count as diagnostic history. All of these values reset when
+the process restarts, and unauthenticated health responses do not expose them.
 
 After sign-in, the Dashboard shows the short build version in its compact
 system status. Hover over the value, or focus and activate it, to inspect the
@@ -1264,6 +1276,28 @@ JSON error object. Client disconnects also close the upstream body immediately.
 The HTTP server derives every request context from the process lifecycle context,
 so graceful shutdown cancels active uploads and SSE streams before waiting for
 connections to drain.
+
+### Gateway Request Correlation
+
+Gateway clients may send `X-Request-ID`. N2API trims and accepts an incoming
+value only when it is 1-100 ASCII characters, begins with an alphanumeric
+character, and otherwise contains only alphanumeric characters, `.`, `_`, `:`,
+or `-`. A missing or invalid value is replaced with a newly generated correlation
+ID. The accepted or generated value is returned as `X-Request-ID` and remains the
+same across every upstream attempt, the Request Log `requestId`, related System
+Event `correlationId`, and request-scoped process-log field `correlation_id`.
+An ID assigned or returned by the upstream provider is separate provider data.
+N2API does not currently persist that value; any integration that captures it
+must use a distinct field such as `upstream_request_id` and must never replace
+N2API's correlation ID.
+
+Request Log persistence is best effort. A write failure does not replace or
+otherwise change the gateway response, including an already successful upstream
+response. N2API records the stable process-log `error_code`
+`request_log_write_failed` with the same `correlation_id`, without logging the
+database error detail. Use authenticated `GET /api/admin/health` and inspect
+`tasks.requestLogWrite` to distinguish an isolated failure from consecutive
+failures and a later recovery.
 
 Request Logs keep local gateway rejections diagnosable while client responses stay OpenAI-compatible. Local limit responses still return `rate_limit_exceeded` to clients, but the stored request-log error identifies the guard as `api_key_request_rate_limited`, `api_key_token_rate_limited`, `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, `api_key_cost_budget_exceeded`, `gateway_concurrency_limited`, `api_key_concurrency_limited`, or `provider_account_concurrency_limited`.
 
