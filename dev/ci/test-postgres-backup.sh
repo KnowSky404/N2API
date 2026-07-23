@@ -41,7 +41,13 @@ set -euo pipefail
 printf 'archive list fixture\n'
 PG_RESTORE
 
-chmod +x "${fake_bin}/pg_dump" "${fake_bin}/pg_restore"
+cat >"${fake_bin}/chown" <<'CHOWN'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${N2API_TEST_CHOWN_LOG}"
+CHOWN
+
+chmod +x "${fake_bin}/pg_dump" "${fake_bin}/pg_restore" "${fake_bin}/chown"
 
 run_backup() {
   PATH="${fake_bin}:${PATH}" \
@@ -53,6 +59,8 @@ run_backup() {
   N2API_BACKUP_LAST_SUCCESS_FILE="${fixture}/last-success" \
   N2API_BACKUP_INTERVAL_SECONDS=300 \
   N2API_BACKUP_RETENTION_DAYS=1 \
+  N2API_BACKUP_GID=1234 \
+  N2API_TEST_CHOWN_LOG="${fixture}/chown.log" \
     "${backup_script}" once
 }
 
@@ -66,6 +74,8 @@ run_healthcheck() {
   N2API_BACKUP_LAST_SUCCESS_FILE="${fixture}/last-success" \
   N2API_BACKUP_INTERVAL_SECONDS=300 \
   N2API_BACKUP_RETENTION_DAYS=1 \
+  N2API_BACKUP_GID=1234 \
+  N2API_TEST_CHOWN_LOG="${fixture}/chown.log" \
     "${backup_script}" healthcheck
 }
 
@@ -73,16 +83,32 @@ first_output="$(run_backup)"
 grep -Fq 'backup_status=passed' <<<"${first_output}" || fail "successful backup lacked status"
 mapfile -t dumps < <(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.dump')
 [[ ${#dumps[@]} -eq 1 ]] || fail "first backup created ${#dumps[@]} dumps"
-[[ "$(stat -c '%a' "${dumps[0]}")" == "600" ]] || fail "backup permissions are not 600"
+[[ "$(stat -c '%a' "${backup_dir}")" == "750" ]] || fail "backup directory permissions are not 750"
+[[ "$(stat -c '%a' "${dumps[0]}")" == "640" ]] || fail "backup permissions are not 640"
+grep -Fq '0:1234' "${fixture}/chown.log" || fail "backup group ownership was not applied"
 [[ -s "${fixture}/last-success" ]] || fail "backup did not record last success"
+chown_calls_before_healthcheck="$(wc -l <"${fixture}/chown.log")"
 run_healthcheck || fail "fresh backup failed its health check"
-printf '0\n' >"${fixture}/last-success"
+chown_calls_after_healthcheck="$(wc -l <"${fixture}/chown.log")"
+[[ "${chown_calls_before_healthcheck}" == "${chown_calls_after_healthcheck}" ]] || \
+  fail "health check changed backup ownership"
+last_archive="$(sed -n '2p' "${fixture}/last-success")"
+rm -f -- "${last_archive}"
+set +e
+run_healthcheck
+missing_archive_health_status=$?
+set -e
+[[ ${missing_archive_health_status} -ne 0 ]] || fail "missing archive passed its health check"
+
+run_backup >/dev/null
+last_archive="$(sed -n '2p' "${fixture}/last-success")"
+printf '0\n%s\n' "${last_archive}" >"${fixture}/last-success"
 set +e
 run_healthcheck
 stale_health_status=$?
 set -e
 [[ ${stale_health_status} -ne 0 ]] || fail "stale backup passed its health check"
-date -u +%s >"${fixture}/last-success"
+run_backup >/dev/null
 
 old_dump="${backup_dir}/n2api-20000101T000000Z-old.dump"
 printf 'old archive\n' >"${old_dump}"

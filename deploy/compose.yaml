@@ -62,6 +62,7 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-n2api-local-postgres-password}
       N2API_BACKUP_INTERVAL_SECONDS: ${N2API_BACKUP_INTERVAL_SECONDS:-21600}
       N2API_BACKUP_RETENTION_DAYS: ${N2API_BACKUP_RETENTION_DAYS:-7}
+      N2API_BACKUP_GID: ${N2API_BACKUP_GID:-1000}
     volumes:
       - ./postgres-backup.sh:/usr/local/bin/n2api-postgres-backup:ro
       - ../backups:/backups
@@ -75,6 +76,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
     healthcheck:
       test: ["CMD", "/usr/local/bin/n2api-postgres-backup", "healthcheck"]
       interval: 30s

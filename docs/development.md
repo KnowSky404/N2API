@@ -71,8 +71,12 @@ make test-contracts
 The development Compose stack starts `postgres-backup` after PostgreSQL is
 healthy. It creates a custom-format dump immediately and every six hours by
 default, validates each archive with `pg_restore --list`, then atomically moves
-it into the ignored `backups/` directory with mode `0600`. Files older than
-seven days are removed. Override the bounded interval and retention with
+it into the ignored `backups/` directory. The directory is `0750` and archives
+are `0640`, owned by root and the configured host operator group. Set
+`N2API_BACKUP_GID` in `.env` to the numeric result of `id -g` for the operator
+who copies or restores backups; it defaults to `1000`. Existing matching dumps
+are normalized when the sidecar starts. Files older than seven days are
+removed. Override the bounded interval and retention with
 `N2API_BACKUP_INTERVAL_SECONDS` and `N2API_BACKUP_RETENTION_DAYS` in `.env`.
 
 Create and validate an additional backup immediately:
@@ -83,7 +87,8 @@ make backup-dev
 
 Inspect the sidecar with `docker compose -f deploy/compose.yaml logs
 postgres-backup`. A healthy sidecar proves that its latest local archive passed
-the archive-list check; it does not prove a full restore. Continue running the
+the archive-list check, is recent, and still exists as a non-empty readable
+file; it does not prove a full restore. Continue running the
 isolated restore drill documented in the operator manual, and copy important
 backups to encrypted off-host storage. Local dumps are lost with the VPS disk.
 
