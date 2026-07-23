@@ -451,6 +451,11 @@ test('provider account state can bulk update selected scheduling fields', () => 
   assert.match(adminStateSource, /currentConcurrentRequests/);
   assert.match(adminStateSource, /effectiveMaxConcurrentRequests/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-update/);
+  assert.match(adminStateSource, /Bulk scheduling preference must be a whole number from 1 to 100/);
+  assert.match(adminStateSource, /Enter a bulk priority, scheduling preference, or max concurrency/);
+  assert.match(adminStateSource, /Scheduling preference must be a whole number from 1 to 100/);
+  assert.doesNotMatch(adminStateSource, /'Bulk load factor must be/);
+  assert.doesNotMatch(adminStateSource, /'Load factor must be/);
 });
 
 test('provider account state can test selected accounts', () => {
@@ -888,7 +893,10 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /bg-black\/30/);
   assert.doesNotMatch(source, /absolute right-0 top-10 z-30 w-56/);
   assert.match(source, /role="switch"/);
-  assert.match(source, /Load factor/);
+  assert.match(source, /Scheduling preference/);
+  assert.match(source, /Within the same priority, higher values form a strict preference tier and are considered first; this is not a proportional weight\./);
+  assert.doesNotMatch(source, />\s*Load factor\s*</);
+  assert.doesNotMatch(source, /'Load factor must be/);
   assert.match(source, /Max concurrency/);
   assert.match(source, /concurrencyLimitLabel/);
   assert.match(source, /Active/);
@@ -1138,7 +1146,10 @@ test('models page surfaces model routing candidates', () => {
   assert.match(modelsSource, /model\.accounts/);
   assert.match(modelsSource, /account\.displayName/);
   assert.match(modelsSource, /Priority \{account\.priority\}/);
-  assert.match(modelsSource, /Load \{account\.loadFactor/);
+  assert.match(modelsSource, /Scheduling preference \{account\.loadFactor/);
+  assert.match(modelsSource, /Strict tier within the same priority; not a proportional weight/);
+  assert.match(modelsSource, /schedulingReasonLabel\(account\.scheduleReason\)/);
+  assert.doesNotMatch(modelsSource, />Load \{account\.loadFactor/);
   assert.match(modelsSource, /account\.accountType/);
   assert.match(modelsSource, /account\.status/);
   assert.match(modelsSource, /routingAccountHoverDetail/);

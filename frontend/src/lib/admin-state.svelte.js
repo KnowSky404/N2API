@@ -2574,7 +2574,7 @@ export async function bulkUpdateSelectedProviderAccountScheduling() {
   if (loadFactorText) {
     const loadFactor = Number(loadFactorText);
     if (!/^\d+$/.test(loadFactorText) || !Number.isInteger(loadFactor) || loadFactor < 1 || loadFactor > 100) {
-      providerAccounts.error = 'Bulk load factor must be a whole number from 1 to 100';
+      providerAccounts.error = 'Bulk scheduling preference must be a whole number from 1 to 100';
       return;
     }
     payload.loadFactor = loadFactor;
@@ -2588,7 +2588,7 @@ export async function bulkUpdateSelectedProviderAccountScheduling() {
     payload.maxConcurrentRequests = maxConcurrentRequests;
   }
   if (payload.priority === undefined && payload.loadFactor === undefined && payload.maxConcurrentRequests === undefined) {
-    providerAccounts.error = 'Enter a bulk priority, load factor, or max concurrency';
+    providerAccounts.error = 'Enter a bulk priority, scheduling preference, or max concurrency';
     return;
   }
 
@@ -2851,7 +2851,7 @@ export async function updateProviderAccountLoadFactor(account, event) {
   const loadFactor = Number(rawValue);
 
   if (!/^\d+$/.test(rawValue) || loadFactor < 1 || loadFactor > 100) {
-    providerAccounts.error = 'Load factor must be a whole number from 1 to 100';
+    providerAccounts.error = 'Scheduling preference must be a whole number from 1 to 100';
     event.currentTarget.value = String(account.loadFactor || 1);
     return;
   }

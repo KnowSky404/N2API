@@ -487,7 +487,7 @@
       return;
     }
     if (!Number.isInteger(Number(draft.loadFactor)) || Number(draft.loadFactor) < 1 || Number(draft.loadFactor) > 100) {
-      editingProviderAccountError = 'Load factor must be a whole number from 1 to 100';
+      editingProviderAccountError = 'Scheduling preference must be a whole number from 1 to 100';
       return;
     }
     if (!Number.isInteger(Number(draft.maxConcurrentRequests)) || Number(draft.maxConcurrentRequests) < 0) {
@@ -1065,7 +1065,7 @@ class={[
                   />
                 </label>
                 <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-                  Load factor
+                  Scheduling preference
                   <input
                     class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                     type="number"
@@ -1076,6 +1076,7 @@ class={[
                   />
                 </label>
               </div>
+              <p class="text-xs text-[#6e6e6e] -mt-2">Within the same priority, higher values form a strict preference tier and are considered first; this is not a proportional weight.</p>
 
               <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
                 Fingerprint profile
@@ -1694,7 +1695,7 @@ Enabled
               />
             </label>
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-load-factor-${account.id}`}>
-              Load factor
+              Scheduling preference
               <input
                 id={`provider-account-load-factor-${account.id}`}
                 class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
@@ -1706,6 +1707,7 @@ Enabled
                 disabled={providerAccounts.saving}
               />
             </label>
+            <p class="text-xs text-[#6e6e6e] sm:col-span-3">Within the same priority, higher values form a strict preference tier and are considered first; this is not a proportional weight.</p>
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]" for={`provider-account-max-concurrency-${account.id}`}>

@@ -177,7 +177,7 @@
       account.displayName || `Account ${account.id}`,
       accountTypeLabel(account.accountType),
       `Priority ${account.priority}`,
-      `Load ${account.loadFactor || 1}`,
+      `Scheduling preference ${account.loadFactor || 1} (strict tier within the same priority, not a proportional weight)`,
       account.schedulable ? statusLabel(account.status) : account.unschedulableReason,
       lastTest,
       account.statusReason,
@@ -185,6 +185,13 @@
     ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  /** @param {string | null | undefined} reason */
+  function schedulingReasonLabel(reason) {
+    return String(reason || '')
+      .replace(/\bload-factor tier\b/gi, 'scheduling preference tier')
+      .replace(/\bload factor\b/gi, 'scheduling preference');
   }
 
   const blockedModels = $derived(modelRouting.models.filter((model) => model.enabledCount === 0));
@@ -246,7 +253,7 @@
         account.displayName,
         `account ${account.id}`,
         accountTypeLabel(account.accountType),
-        account.scheduleReason,
+        schedulingReasonLabel(account.scheduleReason),
         account.unschedulableReason,
         account.status,
         account.statusReason,
@@ -281,7 +288,7 @@
         account.displayName,
         `account ${account.id}`,
         accountTypeLabel(account.accountType),
-        account.scheduleReason,
+        schedulingReasonLabel(account.scheduleReason),
         account.unschedulableReason,
         account.status,
         account.statusReason,
@@ -570,10 +577,10 @@
                 </a>
                 <span>{accountTypeLabel(account.accountType)}</span>
                 <span>Priority {account.priority}</span>
-                <span>Load {account.loadFactor || 1}</span>
+                <span title="Strict tier within the same priority; not a proportional weight">Scheduling preference {account.loadFactor || 1}</span>
                 <span>Active {account.currentConcurrentRequests || 0} / {previewConcurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}</span>
                 {#if account.scheduleReason}
-                  <span>Schedule reason {account.scheduleReason}</span>
+                  <span>Schedule reason {schedulingReasonLabel(account.scheduleReason)}</span>
                 {/if}
                 <span>Used {formatDate(account.lastUsedAt)}</span>
                 {#if account.lastTestAt}
@@ -702,7 +709,7 @@
                                 <a class="truncate font-medium text-[#0d0d0d] underline-offset-2 hover:underline" href={providerAccountHref(account)} aria-label="View provider account">
                                   #{account.scheduleRank} {account.displayName || `Account ${account.id}`}
                                 </a>
-                                <p class="mt-1 text-[#6e6e6e]">{accountTypeLabel(account.accountType)} · priority {account.priority} · load {account.loadFactor || 1}</p>
+                                <p class="mt-1 text-[#6e6e6e]" title="Strict tier within the same priority; not a proportional weight">{accountTypeLabel(account.accountType)} · priority {account.priority} · scheduling preference {account.loadFactor || 1}</p>
                               </div>
                               <span class={account.schedulable ? 'text-[#0a7a5e]' : 'font-medium text-amber-800'}>
                                 {account.schedulable ? statusLabel(account.status) : account.unschedulableReason}
