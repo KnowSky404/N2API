@@ -1020,9 +1020,6 @@ jobs:
             ([.Results[]? | (.Vulnerabilities // [])] | all(.[]; type == "array"))
           ' "$TRIVY_FILE" >/dev/null
 
-          dev/ci/evaluate-trivy-report.sh \
-            "$TRIVY_FILE" "$PLATFORM" security/exceptions.json
-
           sbom_name="${SBOM_FILE##*/}"
           trivy_name="${TRIVY_FILE##*/}"
           jq -n \
@@ -1076,3 +1073,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           include-hidden-files: false
+
+      - name: Enforce fixed vulnerability policy
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: dev/ci/evaluate-trivy-report.sh "$TRIVY_FILE" "$PLATFORM" security/exceptions.json
