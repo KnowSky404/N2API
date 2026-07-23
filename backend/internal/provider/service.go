@@ -238,6 +238,7 @@ type Config struct {
 	CodeVerifier          string
 	AllowHTTPAPIUpstreams bool
 	AccountTestLogger     AccountTestRequestLogger
+	RequestLogObserver    RequestLogWriteObserver
 }
 
 type Status struct {
@@ -655,6 +656,7 @@ type Service struct {
 	prober                   accountStatusProber
 	modelProber              accountModelProber
 	accountTestRequestLogger AccountTestRequestLogger
+	requestLogWriteObserver  RequestLogWriteObserver
 	cfg                      Config
 	encryptionKeyring        *secret.Keyring
 	refreshMu                sync.Mutex
@@ -662,6 +664,10 @@ type Service struct {
 	httpClient               *HTTPClient
 	transportInvalidatorMu   sync.RWMutex
 	transportInvalidator     AccountTransportInvalidator
+}
+
+type RequestLogWriteObserver interface {
+	Observe(correlationID string, err error)
 }
 
 func NewHTTPClient(client *http.Client) *HTTPClient {
@@ -734,6 +740,7 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		prober:                   prober,
 		modelProber:              httpClient,
 		accountTestRequestLogger: cfg.AccountTestLogger,
+		requestLogWriteObserver:  cfg.RequestLogObserver,
 		cfg:                      cfg,
 		encryptionKeyring:        cfg.EncryptionKeyring,
 		httpClient:               httpClient,
@@ -2070,9 +2077,9 @@ func (s *Service) logAccountTestRequest(ctx context.Context, selected SelectedAc
 	if providerName == "" {
 		providerName = s.cfg.Provider
 	}
-	requestID, err := secret.GenerateToken("req")
-	if err != nil {
-		requestID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+	requestID := systemevent.NewCorrelationID()
+	if request, ok := systemevent.FromContext(ctx); ok && systemevent.ValidCorrelationID(request.CorrelationID) {
+		requestID = request.CorrelationID
 	}
 	entry := AccountTestRequestLog{
 		RequestID:           requestID,
@@ -2090,7 +2097,10 @@ func (s *Service) logAccountTestRequest(ctx context.Context, selected SelectedAc
 	}
 	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), accountTestRequestLogTimeout)
 	defer cancel()
-	_ = s.accountTestRequestLogger.CreateAccountTestRequestLog(logCtx, entry)
+	err := s.accountTestRequestLogger.CreateAccountTestRequestLog(logCtx, entry)
+	if s.requestLogWriteObserver != nil {
+		s.requestLogWriteObserver.Observe(requestID, err)
+	}
 }
 
 func accountStatusTestRoute(cfg Config) string {

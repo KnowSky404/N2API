@@ -22,6 +22,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 )
 
 var errHealth = errors.New("database unavailable")
@@ -50,6 +51,10 @@ type fakeAlertDeliveryStatusSource struct {
 	status alerting.DeliveryStatus
 }
 
+type fakeRequestLogWriteStatusSource struct {
+	status requestlog.WriteStatus
+}
+
 func (s fakeRequestLogRetentionStatusSource) RequestLogRetentionStatus() admin.RequestLogRetentionStatus {
 	return s.status
 }
@@ -59,6 +64,10 @@ func (s fakeResponseAffinityRetentionStatusSource) ResponseAffinityRetentionStat
 }
 
 func (s fakeAlertDeliveryStatusSource) AlertDeliveryStatus() alerting.DeliveryStatus {
+	return s.status
+}
+
+func (s fakeRequestLogWriteStatusSource) RequestLogWriteStatus() requestlog.WriteStatus {
 	return s.status
 }
 
@@ -1340,6 +1349,45 @@ func TestAdminHealthIncludesResponseAffinityRetentionOnlyForAuthenticatedSession
 	}
 	if !status.AutomaticEnabled || !status.Running || status.LastStartedAt == nil || !status.LastStartedAt.Equal(started) {
 		t.Fatalf("response affinity retention status = %+v", status)
+	}
+}
+
+func TestAdminHealthIncludesRequestLogWriteStatusOnlyForAuthenticatedSession(t *testing.T) {
+	failedAt := time.Date(2026, time.July, 23, 15, 0, 0, 0, time.UTC)
+	source := fakeRequestLogWriteStatusSource{status: requestlog.WriteStatus{
+		LastFailedAt: &failedAt, LastErrorCode: requestlog.WriteFailedErrorCode,
+		ConsecutiveFailures: 3, TotalFailures: 5,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, source)
+
+	for _, cookie := range []string{"", "expired-session"} {
+		request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+		if cookie != "" {
+			request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: cookie})
+		}
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, request)
+		if strings.Contains(recorder.Body.String(), "requestLogWrite") || strings.Contains(recorder.Body.String(), requestlog.WriteFailedErrorCode) {
+			t.Fatalf("unauthenticated health leaked request log status: %s", recorder.Body.String())
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	var body struct {
+		Tasks map[string]json.RawMessage `json:"tasks"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	var status requestlog.WriteStatus
+	if err := json.Unmarshal(body.Tasks["requestLogWrite"], &status); err != nil {
+		t.Fatalf("decode request log write status: %v", err)
+	}
+	if status.LastFailedAt == nil || !status.LastFailedAt.Equal(failedAt) || status.LastErrorCode != requestlog.WriteFailedErrorCode || status.ConsecutiveFailures != 3 || status.TotalFailures != 5 {
+		t.Fatalf("request log write status = %+v", status)
 	}
 }
 

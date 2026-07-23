@@ -16,6 +16,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 )
 
 type fakeAPIKeyAuthenticator struct {
@@ -182,11 +183,12 @@ func (p *fakeModelProvider) ListExposedModelsForRoutingPoolChain(_ context.Conte
 
 type fakeRequestLogger struct {
 	entries []RequestLog
+	err     error
 }
 
 func (l *fakeRequestLogger) CreateRequestLog(_ context.Context, entry RequestLog) error {
 	l.entries = append(l.entries, entry)
-	return nil
+	return l.err
 }
 
 type contextRecordingRequestLogger struct {
@@ -3702,6 +3704,42 @@ func TestProxyLogsGatewayFallbackCountsForRetryableUpstreamFailure(t *testing.T)
 	entry := logger.entries[0]
 	if entry.GatewayAttemptCount != 2 || entry.GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", entry.GatewayAttemptCount, entry.GatewayFallbackCount)
+	}
+}
+
+func TestProxyRequestLogWriteFailureDoesNotChangeSuccessfulResponse(t *testing.T) {
+	logger := &fakeRequestLogger{err: errors.New("database unavailable")}
+	monitor := requestlog.NewWriteMonitor(nil)
+	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "token",
+	}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_123","object":"response"}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{
+		UpstreamBaseURL:        "https://upstream.example.test",
+		Logger:                 logger,
+		RequestLogWriteMonitor: monitor,
+	}, client)
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5"}`))
+	request.Header.Set("Authorization", "Bearer n2api_client_secret")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Request-ID", "request-log-failure-42")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"id":"resp_123"`) {
+		t.Fatalf("response = %d %s, want unchanged success", recorder.Code, recorder.Body.String())
+	}
+	status := monitor.RequestLogWriteStatus()
+	if status.LastFailedAt == nil || status.LastErrorCode != requestlog.WriteFailedErrorCode || status.ConsecutiveFailures != 1 || status.TotalFailures != 1 {
+		t.Fatalf("request log write status = %+v", status)
 	}
 }
 

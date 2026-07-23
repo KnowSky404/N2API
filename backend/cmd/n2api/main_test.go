@@ -153,6 +153,8 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"admin.NewRequestLogRetentionRunner",
 		"requestLogRetentionRunner.Run",
 		"store.NewResponseAffinityRepository",
+		"requestLogWriteMonitor := requestlog.NewWriteMonitor(slog.Default())",
+		"RequestLogObserver:    requestLogWriteMonitor",
 		"gateway.NewResponseAffinityRetentionRunner",
 		"responseAffinityRetentionRunner.Run",
 		"ResponseAffinityStore:           responseAffinityRepo",
@@ -171,7 +173,7 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"service.PurgeExpiredAPIKeys(ctx)",
 		"go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour)",
 		"runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now)",
-		"autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, os.DirFS(\"frontend/build\")",
+		"autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS(\"frontend/build\")",
 		"server.Shutdown",
 	} {
 		if !strings.Contains(text, want) {

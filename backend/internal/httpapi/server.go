@@ -22,6 +22,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	gatewaypkg "github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
@@ -136,6 +137,10 @@ type AlertDeliveryStatusSource interface {
 	AlertDeliveryStatus() alerting.DeliveryStatus
 }
 
+type RequestLogWriteStatusSource interface {
+	RequestLogWriteStatus() requestlog.WriteStatus
+}
+
 type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
@@ -221,6 +226,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	requestLogRetentionStatusSource := requestLogRetentionStatusSourceFromOptions(options...)
 	responseAffinityRetentionStatusSource := responseAffinityRetentionStatusSourceFromOptions(options...)
 	alertDeliveryStatusSource := alertDeliveryStatusSourceFromOptions(options...)
+	requestLogWriteStatusSource := requestLogWriteStatusSourceFromOptions(options...)
 	alertingAdminService := alertingAdminServiceFromOptions(options...)
 	alertActionTester := alertActionTesterFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
@@ -292,6 +298,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			if alertDeliveryStatusSource != nil {
 				tasks["alertDelivery"] = alertDeliveryStatusSource.AlertDeliveryStatus()
+			}
+			if requestLogWriteStatusSource != nil {
+				tasks["requestLogWrite"] = requestLogWriteStatusSource.RequestLogWriteStatus()
 			}
 			if len(tasks) > 0 {
 				body["tasks"] = tasks
@@ -3070,6 +3079,15 @@ func responseAffinityRetentionStatusSourceFromOptions(options ...any) ResponseAf
 func alertDeliveryStatusSourceFromOptions(options ...any) AlertDeliveryStatusSource {
 	for _, option := range options {
 		if source, ok := option.(AlertDeliveryStatusSource); ok {
+			return source
+		}
+	}
+	return nil
+}
+
+func requestLogWriteStatusSourceFromOptions(options ...any) RequestLogWriteStatusSource {
+	for _, option := range options {
+		if source, ok := option.(RequestLogWriteStatusSource); ok {
 			return source
 		}
 	}

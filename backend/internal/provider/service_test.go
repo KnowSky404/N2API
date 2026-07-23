@@ -1507,8 +1507,11 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	service := newConfiguredService(repo, client)
 	requestLogger := &captureAccountTestRequestLogger{err: errors.New("request log unavailable")}
 	service.accountTestRequestLogger = requestLogger
+	writeObserver := &captureRequestLogWriteObserver{}
+	service.requestLogWriteObserver = writeObserver
+	requestContext := systemevent.WithRequestContext(context.Background(), systemevent.RequestContext{CorrelationID: "account-test-request-42"})
 
-	tested, err := service.TestAccount(context.Background(), 7)
+	tested, err := service.TestAccount(requestContext, 7)
 	if err != nil {
 		t.Fatalf("TestAccount returned error: %v", err)
 	}
@@ -1528,6 +1531,9 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	entry := requestLogger.entries[0]
 	if entry.RequestID == "" || entry.Provider != "openai" || entry.ProviderAccountID != account.ID || entry.ProviderAccountType != AccountTypeAPIUpstream || entry.ProviderAccountName != account.DisplayName {
 		t.Fatalf("request log attribution = %+v", entry)
+	}
+	if entry.RequestID != "account-test-request-42" || writeObserver.correlationID != entry.RequestID || !errors.Is(writeObserver.err, requestLogger.err) {
+		t.Fatalf("request log correlation/observation = entry:%q observer:%q err:%v", entry.RequestID, writeObserver.correlationID, writeObserver.err)
 	}
 	if entry.Route != "/v1/models" || entry.Method != http.MethodGet || entry.StatusCode != http.StatusOK || entry.Error != "" || entry.Latency < 0 || entry.CreatedAt.IsZero() {
 		t.Fatalf("request log probe fields = %+v", entry)
@@ -5193,6 +5199,16 @@ type captureAccountModelProber struct {
 type captureAccountTestRequestLogger struct {
 	entries []AccountTestRequestLog
 	err     error
+}
+
+type captureRequestLogWriteObserver struct {
+	correlationID string
+	err           error
+}
+
+func (o *captureRequestLogWriteObserver) Observe(correlationID string, err error) {
+	o.correlationID = correlationID
+	o.err = err
 }
 
 func (l *captureAccountTestRequestLogger) CreateAccountTestRequestLog(_ context.Context, entry AccountTestRequestLog) error {

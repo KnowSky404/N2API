@@ -17,6 +17,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
@@ -223,6 +224,7 @@ type Config struct {
 	ResponseAffinityStore           ResponseAffinityStore
 	ResponseAffinityTTL             time.Duration
 	ProcessLogger                   *slog.Logger
+	RequestLogWriteMonitor          *requestlog.WriteMonitor
 }
 
 type Proxy struct {
@@ -254,6 +256,7 @@ type Proxy struct {
 	affinities         ResponseAffinityStore
 	affinityTTL        time.Duration
 	processLogger      *slog.Logger
+	requestLogWrites   *requestlog.WriteMonitor
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -336,9 +339,10 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		setReadDeadline: func(writer http.ResponseWriter, deadline time.Time) error {
 			return http.NewResponseController(writer).SetReadDeadline(deadline)
 		},
-		affinities:    cfg.ResponseAffinityStore,
-		affinityTTL:   normalizedResponseAffinityTTL(cfg.ResponseAffinityTTL),
-		processLogger: normalizedProcessLogger(cfg.ProcessLogger),
+		affinities:       cfg.ResponseAffinityStore,
+		affinityTTL:      normalizedResponseAffinityTTL(cfg.ResponseAffinityTTL),
+		processLogger:    normalizedProcessLogger(cfg.ProcessLogger),
+		requestLogWrites: cfg.RequestLogWriteMonitor,
 	}
 }
 
@@ -2120,7 +2124,8 @@ func (p *Proxy) logRequest(ctx context.Context, entry RequestLog) {
 	}
 	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), requestLogWriteTimeout)
 	defer cancel()
-	_ = p.logger.CreateRequestLog(logCtx, entry)
+	err := p.logger.CreateRequestLog(logCtx, entry)
+	p.requestLogWrites.Observe(entry.RequestID, err)
 }
 
 func selectedProviderName(account SelectedAccount) string {

@@ -18,6 +18,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/store"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
@@ -287,6 +288,7 @@ func runServer() {
 
 	providerRepo := store.NewProviderRepository(pool)
 	requestLogRepo := store.NewGatewayRepository(pool)
+	requestLogWriteMonitor := requestlog.NewWriteMonitor(slog.Default())
 	responseAffinityRepo := store.NewResponseAffinityRepository(pool, cfg.EncryptionSecret)
 	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
 		Provider:              "openai",
@@ -300,6 +302,7 @@ func runServer() {
 		EncryptionKeyring:     cfg.EncryptionKeyring,
 		AllowHTTPAPIUpstreams: cfg.AllowHTTPAPIUpstreams,
 		AccountTestLogger:     requestLogRepo,
+		RequestLogObserver:    requestLogWriteMonitor,
 	})
 	autoTestRunner := provider.NewAutoTestRunnerWithConfigSource(providerService, func(ctx context.Context) (provider.AutoTestRunnerConfig, error) {
 		settings, err := adminService.GetGatewaySettings(ctx)
@@ -353,6 +356,7 @@ func runServer() {
 		ResponseAffinityStore:           responseAffinityRepo,
 		ResponseAffinityTTL:             cfg.ResponseAffinityTTL,
 		ProcessLogger:                   slog.Default(),
+		RequestLogWriteMonitor:          requestLogWriteMonitor,
 		Logger:                          requestLogRepo,
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,
@@ -365,7 +369,7 @@ func runServer() {
 
 	server := newHTTPServer(
 		cfg,
-		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
+		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
 		ctx,
 	)
 
