@@ -99,7 +99,15 @@ for runner_failure in test check; do
   set -e
   [[ ${runner_status} -eq ${runner_expected_status} ]] ||
     fail "frontend ${runner_failure} failure became status ${runner_status}, want ${runner_expected_status}"
-  grep -Eq '^fake bun: test$' "${runner_output}" || fail "frontend test command did not run"
+  if [[ "${runner_failure}" == "test" ]]; then
+    grep -Eq '^fake bun: run check$' "${runner_output}" || fail "frontend sync/check did not run before tests"
+    grep -Eq '^fake bun: test$' "${runner_output}" || fail "frontend test command did not run"
+    check_line="$(grep -n -m1 '^fake bun: run check$' "${runner_output}" | cut -d: -f1)"
+    test_line="$(grep -n -m1 '^fake bun: test$' "${runner_output}" | cut -d: -f1)"
+    [[ ${check_line} -lt ${test_line} ]] || fail "frontend test ran before sync/check"
+  elif grep -Eq '^fake bun: test$' "${runner_output}"; then
+    fail "frontend test ran after sync/check failed"
+  fi
   if grep -Eq '^fake bun: run build$' "${runner_output}"; then
     fail "frontend build ran after ${runner_failure} failed"
   fi
@@ -321,6 +329,12 @@ N2API_TEST_RUN_ID=contract-test docker compose \
   -f "${repo_root}/deploy/compose.e2e.yaml" config >/dev/null
 grep -Fq 'io.knowsky.n2api.resource: test' "${repo_root}/deploy/compose.e2e.yaml" ||
   fail "E2E Compose lacks test resource labels"
+grep -Fq 'N2API_REQUEST_LOG_QUERY_PROFILE=1' "${repo_root}/dev/testing/run.sh" ||
+  fail "request log profile runner does not enable the opt-in profile"
+grep -Fq "run_compose ps -q postgres" "${repo_root}/dev/testing/run.sh" ||
+  fail "request log profile runner does not select its isolated PostgreSQL container"
+grep -Fq '.NetworkSettings.Networks' "${repo_root}/dev/testing/run.sh" ||
+  fail "request log profile runner does not use its isolated Docker network"
 grep -Fq -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore cleanup does not remove local test images"
 grep -Fq 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||

@@ -37,17 +37,29 @@ case "${mode}" in
     n2api_run_command bash -c '
       set -euo pipefail
       cd "$1/frontend"
-      bun test
       bun run check
+      bun test
       bun run build
     ' _ "${repo_root}"
     ;;
   request-log-profile)
+	project="n2api-${N2API_RUN_ID}"
+	n2api_register_compose "${repo_root}/deploy/compose.e2e.yaml" "${project}"
+	run_compose up -d --wait postgres
+	postgres_container="$(run_compose ps -q postgres)"
+	postgres_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${postgres_container}")"
+	if [[ ! "${postgres_host}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		echo "request log profile database has no isolated Docker network address" >&2
+		exit 1
+	fi
     n2api_run_command bash -c '
       set -euo pipefail
       cd "$1/backend"
-      go test -count=1 -run TestRequestLogQueryProfile -v ./internal/store
-    ' _ "${repo_root}"
+      N2API_REQUEST_LOG_QUERY_PROFILE=1 \
+      N2API_STORE_TEST_ALLOW_DESTRUCTIVE=1 \
+      N2API_STORE_TEST_DATABASE_URL="$2" \
+        go test -count=1 -run TestRequestLogQueryProfile -v ./internal/store
+    ' _ "${repo_root}" "postgres://n2api:e2e-postgres-password@${postgres_host}:5432/n2api_e2e?sslmode=disable"
     ;;
   gateway-e2e)
     project="n2api-${N2API_RUN_ID}"

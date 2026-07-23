@@ -64,7 +64,12 @@ Run isolated Docker verification:
 ```bash
 make test-e2e
 make test-contracts
+make test-request-log-profile
 ```
+
+The Request Log profile starts its own labelled PostgreSQL Compose project
+without publishing the database port, loads one million synthetic rows, and
+removes the test database volume during managed cleanup.
 
 ## Local Database Backups
 

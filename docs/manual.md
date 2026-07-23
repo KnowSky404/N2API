@@ -1357,16 +1357,16 @@ cleanup. Removing the isolated PostgreSQL volume is the final cleanup boundary.
 
 ### Request Log Query Profile
 
-Run the opt-in Request Log profile against a disposable PostgreSQL database
+Run the opt-in Request Log profile against its managed disposable PostgreSQL
+Compose project
 after materially changing filters, retention queries, data distribution, or
-the PostgreSQL major version. The database role must be allowed to create and
-drop schemas. The test creates a uniquely named schema, loads one million
-synthetic rows, reports `EXPLAIN (ANALYZE, BUFFERS)` and index/write metrics,
-and drops only that schema during cleanup.
+the PostgreSQL major version. The runner does not publish the database port; it
+connects through the run-owned Docker bridge address, creates a uniquely named
+schema, loads one million synthetic rows, reports `EXPLAIN (ANALYZE, BUFFERS)`
+and index/write metrics, and removes the schema, container, network, and volume
+during scoped cleanup.
 
 ```bash
-N2API_REQUEST_LOG_QUERY_PROFILE=1 \
-N2API_STORE_TEST_DATABASE_URL='postgres://USER:PASSWORD@HOST:5432/DISPOSABLE_DATABASE?sslmode=require' \
 make test-request-log-profile
 ```
 
