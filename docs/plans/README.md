@@ -13,7 +13,7 @@ They are the active cross-cutting roadmap. Existing records under
 5. [Backup and restore verification](2026-07-21-backup-restore-verification.md)
 6. [Encryption key rotation](2026-07-21-encryption-key-rotation.md)
 7. [System Event alerting](2026-07-21-system-event-alerting.md)
-8. [Routing weight semantics](2026-07-21-routing-weight-semantics.md)
+8. [Scheduling preference semantics](2026-07-21-routing-weight-semantics.md)
 9. [Metrics and tracing](2026-07-21-metrics-and-tracing.md)
 10. [Repository governance](2026-07-21-repository-governance.md)
 
@@ -32,7 +32,7 @@ hardening.
 | 2: security baseline | Trusted proxy, login protection, session controls, headers, startup validation, and probes pass | Public deployment guidance |
 | 3: logs and deployment | Cursor paging, batched retention, streaming export, non-root image, hardened Compose, build identity | Long-retention production recommendation |
 | 4: recovery and alerts | Restore drill, key rotation, and bounded notifications pass | Disaster-recovery claim |
-| 5: scheduling and observability | Load-factor semantics are explicit and measured; metrics are bounded; tracing is opt-in | Scheduler behavior change |
+| 5: scheduling and observability | Scheduling preference tier semantics are explicit and measured; metrics are bounded; tracing is opt-in | Scheduler behavior change |
 | 6: governance | Security/contribution policies and automated security artifacts exist | Supported-version policy |
 
 Phases may overlap only where their data contracts do not conflict. Each task

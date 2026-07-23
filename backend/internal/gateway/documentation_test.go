@@ -444,7 +444,7 @@ func TestGatewayDocumentationOmitsGlobalAllowedModelList(t *testing.T) {
 	}
 }
 
-func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
+func TestGatewayDocumentationMentionsProviderAccountSchedulingPreference(t *testing.T) {
 	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -452,7 +452,8 @@ func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
 		}
 		text := string(content)
 		for _, want := range []string{
-			"load factor",
+			"Scheduling preference",
+			"`loadFactor`",
 			"strict descending preference tier",
 			"not a proportional request weight",
 			"least-recently-used time and account ID",
@@ -460,8 +461,11 @@ func TestGatewayDocumentationMentionsProviderAccountLoadFactor(t *testing.T) {
 			"concurrency-full accounts are excluded",
 		} {
 			if !strings.Contains(text, want) {
-				t.Fatalf("%s missing %q in provider account load factor documentation", path, want)
+				t.Fatalf("%s missing %q in provider account scheduling preference documentation", path, want)
 			}
+		}
+		if strings.Contains(text, "load-factor tier") {
+			t.Fatalf("%s still uses load-factor tier as operator-facing scheduling terminology", path)
 		}
 	}
 }
@@ -554,6 +558,7 @@ func TestGatewayDocumentationMentionsRoutingPreviewScheduleReasons(t *testing.T)
 			"Schedule reason",
 			"diagnostic text",
 			"pool/global priority tier",
+			"scheduling preference tier",
 			"recent-error tier",
 			"least-recently-used tie-breaker",
 			"does not change scheduler behavior",
@@ -649,7 +654,7 @@ func TestGatewayDocumentationMentionsProviderAccountBulkScheduling(t *testing.T)
 		for _, want := range []string{
 			"Apply scheduling",
 			"bulk priority",
-			"bulk load factor",
+			"bulk scheduling preference",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in provider account bulk scheduling documentation", path, want)
