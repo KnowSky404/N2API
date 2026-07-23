@@ -303,7 +303,7 @@ the complete test/image suite.
 
 All main, E2E, Compose, and CI runtime images now use readable exact version
 tags plus multi-platform manifest digests. Bun `1.3.14` is consistent across
-the frontend package metadata, Docker builds, and CI; Go `1.26.4` is consistent
+the frontend package metadata, Docker builds, and CI; Go `1.26.5` is consistent
 between `go.mod` and container builds. Release Compose requires an explicit
 `N2API_IMAGE` and no longer falls back to `latest`. A CI preflight rejects
 missing digests or toolchain drift. Every pinned manifest includes amd64 and
