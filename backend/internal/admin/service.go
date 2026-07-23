@@ -355,7 +355,7 @@ type Repository interface {
 	FindAdminByUsername(ctx context.Context, username string) (Admin, error)
 	CreateAdmin(ctx context.Context, username, passwordHash string) (Admin, error)
 	UpdateAdminUsername(ctx context.Context, id int64, username string) (Admin, error)
-	UpdateAdminPassword(ctx context.Context, id int64, passwordHash string) error
+	UpdateAdminPasswordAndRevokeOtherSessions(ctx context.Context, id int64, passwordHash, currentSessionHash string, revokedAt time.Time) (int64, error)
 	CreateSession(ctx context.Context, adminID int64, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) error
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
 	RevokeSession(ctx context.Context, tokenHash string, revokedAt time.Time) error
@@ -553,32 +553,35 @@ func (s *Service) ValidateSession(ctx context.Context, token string) (Admin, err
 	return admin, nil
 }
 
-// ChangePassword updates the password for an already-authenticated admin.
-func (s *Service) ChangePassword(ctx context.Context, adminID int64, currentPassword, newPassword string) error {
+// ChangePassword updates the password and atomically revokes every other session.
+func (s *Service) ChangePassword(ctx context.Context, adminID int64, currentToken, currentPassword, newPassword string) (int64, error) {
+	currentToken = strings.TrimSpace(currentToken)
 	currentPassword = strings.TrimSpace(currentPassword)
 	newPassword = strings.TrimSpace(newPassword)
-	if currentPassword == "" || newPassword == "" {
-		return ErrInvalidInput
+	if currentToken == "" || currentPassword == "" || newPassword == "" {
+		return 0, ErrInvalidInput
 	}
 	if len(newPassword) < secret.MinimumAdminPasswordBytes {
-		return ErrInvalidInput
+		return 0, ErrInvalidInput
 	}
 	adminRecord, err := s.repo.FindBootstrapAdmin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if adminRecord.ID != adminID {
-		return ErrUnauthorized
+		return 0, ErrUnauthorized
 	}
 	if !secret.VerifyPassword(adminRecord.PasswordHash, currentPassword) {
-		return ErrUnauthorized
+		return 0, ErrUnauthorized
 	}
 	newHash, hashErr := secret.HashPassword(newPassword)
 	if hashErr != nil {
-		return fmt.Errorf("hash new password: %w", hashErr)
+		return 0, fmt.Errorf("hash new password: %w", hashErr)
 	}
 	ctx = withSecurityIntent(ctx, systemevent.ActionAuthPasswordChanged, "admin", auditID(adminID), adminRecord.Username)
-	return s.repo.UpdateAdminPassword(ctx, adminID, newHash)
+	return s.repo.UpdateAdminPasswordAndRevokeOtherSessions(
+		ctx, adminID, newHash, secret.HashAPIKey(currentToken), s.now().UTC(),
+	)
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {

@@ -42,7 +42,7 @@ type HealthChecker interface {
 type AdminService interface {
 	Login(ctx context.Context, username, password string, metadata admin.SessionMetadata) (admin.Session, error)
 	Logout(ctx context.Context, token string) error
-	ChangePassword(ctx context.Context, adminID int64, currentPassword, newPassword string) error
+	ChangePassword(ctx context.Context, adminID int64, currentToken, currentPassword, newPassword string) (int64, error)
 	ValidateSession(ctx context.Context, token string) (admin.Admin, error)
 	ListSessions(ctx context.Context, adminID int64, currentToken string) ([]admin.AdminSession, error)
 	RevokeSessionByID(ctx context.Context, adminID, sessionID int64, currentToken string) (bool, error)
@@ -487,7 +487,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusBadRequest, "invalid_input")
 			return
 		}
-		if err := admins.ChangePassword(r.Context(), currentAdmin.ID, body.CurrentPassword, body.NewPassword); err != nil {
+		currentToken, _ := readSessionCookie(r)
+		revoked, err := admins.ChangePassword(r.Context(), currentAdmin.ID, currentToken, body.CurrentPassword, body.NewPassword)
+		if err != nil {
 			if errors.Is(err, admin.ErrInvalidInput) {
 				writeError(w, http.StatusBadRequest, "invalid_input")
 				return
@@ -499,7 +501,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "revokedOtherSessions": revoked})
 	}))
 
 	mux.HandleFunc("GET /api/admin/keys", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {

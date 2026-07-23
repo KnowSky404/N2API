@@ -189,6 +189,11 @@ only bounded client metadata: the creation IP is reduced to an IPv4 `/24` or
 IPv6 `/64` network and the User-Agent is cleaned and truncated. Authentication
 tokens and token hashes are never returned by the session API.
 
+Changing the administrator password keeps the authenticated session that
+submitted the change and atomically revokes every other active administrator
+session. The password dialog reports the number revoked. If the password update,
+session revocation, or security event cannot commit, none of them take effect.
+
 ## Browser Request Security
 
 N2API rejects unsafe browser requests that carry the administrator session

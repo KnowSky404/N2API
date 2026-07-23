@@ -1404,7 +1404,9 @@ function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
   clearRequestLogs();
   clearSystemEvents();
   clearUsage();
-  replaceState(changePasswordForm, { currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
+  replaceState(changePasswordForm, {
+    currentPassword: '', newPassword: '', submitting: false, error: '', saved: false, revokedOtherSessions: 0
+  });
   replaceState(opsMonitor, {
     loading: false,
     error: '',
@@ -2004,7 +2006,7 @@ export async function revokeOtherAdminSessions() {
 }
 
 export const MINIMUM_ADMIN_PASSWORD_BYTES = 12;
-export const changePasswordForm = $state({ currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
+export const changePasswordForm = $state({ currentPassword: '', newPassword: '', submitting: false, error: '', saved: false, revokedOtherSessions: 0 });
 
 /**
  * @param {Event} event
@@ -2015,6 +2017,7 @@ export async function changePassword(event) {
   if (!isCurrentAuthenticated(version)) return;
   changePasswordForm.error = '';
   changePasswordForm.saved = false;
+  changePasswordForm.revokedOtherSessions = 0;
 
   const currentPassword = changePasswordForm.currentPassword.trim();
   const newPassword = changePasswordForm.newPassword.trim();
@@ -2035,8 +2038,9 @@ export async function changePassword(event) {
       body: JSON.stringify({ currentPassword, newPassword }),
     });
     if (!isCurrentAuthenticated(version)) return;
-    if (response && response.ok === 'true') {
+    if (response && response.ok === true) {
       changePasswordForm.saved = true;
+      changePasswordForm.revokedOtherSessions = Math.max(0, Number(response.revokedOtherSessions) || 0);
       changePasswordForm.currentPassword = '';
       changePasswordForm.newPassword = '';
     } else {

@@ -11,7 +11,7 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 	files := map[string]map[string]string{
 		"admin.go": {
 			"CreateAdmin": "insertIntentSystemEvent", "UpdateAdminUsername": "insertIntentSystemEvent",
-			"UpdateAdminPassword": "insertIntentSystemEvent", "CreateSession": "insertIntentSystemEvent",
+			"UpdateAdminPasswordAndRevokeOtherSessions": "insertIntentSystemEvent", "CreateSession": "insertIntentSystemEvent",
 			"RevokeSession": "insertIntentSystemEvent", "RevokeAdminSession": "insertIntentSystemEvent",
 			"RevokeOtherAdminSessions": "insertIntentSystemEvent", "CreateAPIKey": "insertIntentSystemEvent",
 			"RevokeAPIKey": "insertIntentSystemEvent", "DeleteRevokedAPIKey": "insertIntentSystemEvent",

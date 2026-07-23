@@ -203,8 +203,8 @@ Cross-origin mutations fail before handlers; required pages and streams work.
 
 ## Task 4: Add Session Controls
 
-Status: completed locally on 2026-07-21; password-change session policy remains
-an owner decision
+Status: completed locally on 2026-07-23; password change preserves the current
+session and atomically revokes every other administrator session
 
 ### Goal
 
@@ -226,8 +226,9 @@ Tasks 1 and 3.
 
 Store last-used time, created IP summary, and user-agent summary without raw
 secrets. Add list, revoke one, and revoke all other endpoints. Rotate session on
-login by always issuing a new token. Present the owner decision for whether
-password change revokes other sessions; recommended default is yes.
+login by always issuing a new token. Password change preserves the current
+session and atomically updates the password, revokes every other active session,
+and records the security event.
 
 ### Tests And Verification
 
@@ -256,10 +257,9 @@ flows are verified separately after the atomic implementation commit.
 
 ### Owner Decision
 
-Pending: whether a password change should atomically revoke every other active
-session or preserve existing sessions. This does not block session listing,
-explicit revocation, or configurable expiry; the current behavior remains
-unchanged until the owner selects a policy.
+Resolved by the reliability iteration default: preserve the current session and
+atomically revoke every other administrator session after a successful password
+change.
 
 ### Commit
 

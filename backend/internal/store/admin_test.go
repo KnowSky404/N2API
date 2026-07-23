@@ -1275,6 +1275,46 @@ func TestAdminRepositoryManagesOwnedActiveSessions(t *testing.T) {
 	}
 }
 
+func TestUpdateAdminPasswordRevokesOtherSessionsAtomically(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	owner, err := repo.CreateAdmin(ctx, "password-owner", "old-hash")
+	if err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+	now := time.Date(2026, 7, 23, 10, 0, 0, 0, time.UTC)
+	for _, hash := range []string{"password-current", "password-other"} {
+		if err := repo.CreateSession(ctx, owner.ID, hash, admin.SessionMetadata{}, now, now.Add(time.Hour)); err != nil {
+			t.Fatalf("CreateSession(%s): %v", hash, err)
+		}
+	}
+	auditCtx := systemevent.WithRequestContext(ctx, systemevent.RequestContext{
+		CorrelationID: "password-change-atomic",
+		Actor:         systemevent.Actor{Type: systemevent.ActorAdmin, ID: owner.ID, Name: owner.Username},
+	})
+	auditCtx = systemevent.WithIntent(auditCtx, systemevent.EventIntent{
+		Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
+		Action: systemevent.ActionAuthPasswordChanged, Outcome: systemevent.OutcomeSuccess,
+	})
+	revoked, err := repo.UpdateAdminPasswordAndRevokeOtherSessions(auditCtx, owner.ID, "new-hash", "password-current", now)
+	if err != nil {
+		t.Fatalf("UpdateAdminPasswordAndRevokeOtherSessions: %v", err)
+	}
+	if revoked != 1 {
+		t.Fatalf("revoked = %d, want 1", revoked)
+	}
+	if _, err := repo.FindAdminBySessionHash(ctx, "password-current", now); err != nil {
+		t.Fatalf("current session was revoked: %v", err)
+	}
+	if _, err := repo.FindAdminBySessionHash(ctx, "password-other", now); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("other session error = %v, want ErrNotFound", err)
+	}
+	updated, err := repo.FindBootstrapAdmin(ctx)
+	if err != nil || updated.PasswordHash != "new-hash" {
+		t.Fatalf("updated admin = %+v err=%v", updated, err)
+	}
+}
+
 func TestAdminRepositoryMutationCommitsSystemEventAtomically(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := systemevent.WithRequestContext(context.Background(), systemevent.RequestContext{

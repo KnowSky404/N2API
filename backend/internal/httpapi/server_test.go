@@ -336,14 +336,14 @@ func (s *fakeAdminService) Logout(_ context.Context, token string) error {
 	return nil
 }
 
-func (s *fakeAdminService) ChangePassword(_ context.Context, _ int64, currentPassword, newPassword string) error {
+func (s *fakeAdminService) ChangePassword(_ context.Context, _ int64, currentToken, currentPassword, newPassword string) (int64, error) {
 	if s.changePasswordErr != nil {
-		return s.changePasswordErr
+		return 0, s.changePasswordErr
 	}
-	if currentPassword == "" || newPassword == "" {
-		return admin.ErrInvalidInput
+	if currentToken == "" || currentPassword == "" || newPassword == "" {
+		return 0, admin.ErrInvalidInput
 	}
-	return nil
+	return s.revokeOthersCount, nil
 }
 
 func (s *fakeAdminService) ValidateSession(_ context.Context, token string) (admin.Admin, error) {
@@ -1836,6 +1836,34 @@ func TestAdminChangePasswordWrongCurrentPasswordKeepsSessionAuthenticated(t *tes
 	}
 	if recorder.Header().Get("Set-Cookie") != "" {
 		t.Fatalf("wrong current password cleared valid session: %q", recorder.Header().Get("Set-Cookie"))
+	}
+}
+
+func TestAdminChangePasswordPreservesCurrentSessionAndReportsRevokedOthers(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.revokeOthersCount = 2
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/change-password", strings.NewReader(`{"currentPassword":"current","newPassword":"new-secret-value"}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	var body struct {
+		OK                   bool  `json:"ok"`
+		RevokedOtherSessions int64 `json:"revokedOtherSessions"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !body.OK || body.RevokedOtherSessions != 2 {
+		t.Fatalf("body = %+v, want ok and two revoked sessions", body)
+	}
+	if recorder.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("password change replaced current session cookie: %q", recorder.Header().Get("Set-Cookie"))
 	}
 }
 

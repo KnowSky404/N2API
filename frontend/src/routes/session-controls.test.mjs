@@ -62,7 +62,7 @@ beforeEach(() => {
     revokingOthers: false
   });
   Object.assign(loginForm, { username: '', password: '', submitting: false, error: '' });
-  Object.assign(changePasswordForm, { currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
+  Object.assign(changePasswordForm, { currentPassword: '', newPassword: '', submitting: false, error: '', saved: false, revokedOtherSessions: 0 });
   Object.assign(health, { loading: false, error: '', status: 'ok', database: 'ok', build: null, tasks: null });
   Object.assign(systemEvents, {
     loading: false,
@@ -167,7 +167,7 @@ test('protected request 401 clears authentication and all session state', async 
   providerAccountPauseForm.durationSeconds = 900;
   providerAccountBulkSchedulingForm.priority = '10';
   providerAccountBulkModelsForm.text = 'gpt-5';
-  Object.assign(changePasswordForm, { currentPassword: 'old-secret', newPassword: 'new-secret', submitting: true, error: 'stale', saved: true });
+  Object.assign(changePasswordForm, { currentPassword: 'old-secret', newPassword: 'new-secret', submitting: true, error: 'stale', saved: true, revokedOtherSessions: 2 });
   Object.assign(opsMonitor, { loading: true, error: 'stale', stats: { total: 1 } });
   Object.assign(fingerprintProfiles, { loading: true, error: 'stale', items: [{ id: 2 }], saving: true });
   Object.assign(errorPassthroughRules, { loading: true, error: 'stale', items: [{ id: 4 }], saving: true });
@@ -186,7 +186,7 @@ test('protected request 401 clears authentication and all session state', async 
   assert.equal(providerAccountPauseForm.durationSeconds, 300);
   assert.deepEqual(providerAccountBulkSchedulingForm, { priority: '', loadFactor: '', maxConcurrentRequests: '' });
   assert.equal(providerAccountBulkModelsForm.text, '');
-  assert.deepEqual(changePasswordForm, { currentPassword: '', newPassword: '', submitting: false, error: '', saved: false });
+  assert.deepEqual(changePasswordForm, { currentPassword: '', newPassword: '', submitting: false, error: '', saved: false, revokedOtherSessions: 0 });
   assert.equal(opsMonitor.loading, false);
   assert.equal(opsMonitor.error, '');
   assert.equal(opsMonitor.stats, null);
@@ -301,7 +301,8 @@ test('protected change-password 401 cannot repopulate cleared form state', async
     newPassword: 'new-password',
     submitting: false,
     error: '',
-    saved: false
+    saved: false,
+    revokedOtherSessions: 0
   });
   globalThis.fetch = async () => Response.json({ error: 'unauthorized' }, { status: 401 });
 
@@ -313,7 +314,8 @@ test('protected change-password 401 cannot repopulate cleared form state', async
     newPassword: '',
     submitting: false,
     error: '',
-    saved: false
+    saved: false,
+    revokedOtherSessions: 0
   });
 });
 
@@ -324,7 +326,8 @@ test('wrong current password remains a form error without clearing the valid ses
     newPassword: 'new-password',
     submitting: false,
     error: '',
-    saved: false
+    saved: false,
+    revokedOtherSessions: 0
   });
   globalThis.fetch = async () => Response.json({ error: 'invalid_current_password' }, { status: 400 });
 
@@ -336,6 +339,27 @@ test('wrong current password remains a form error without clearing the valid ses
   assert.equal(changePasswordForm.submitting, false);
 });
 
+test('password change reports the number of other sessions revoked', async () => {
+  adminSessions.items = [currentSession, { ...currentSession, id: 10, current: false }];
+  Object.assign(changePasswordForm, {
+    currentPassword: 'current-password',
+    newPassword: 'new-password',
+    submitting: false,
+    error: '',
+    saved: false,
+    revokedOtherSessions: 0
+  });
+  globalThis.fetch = async () => Response.json({ ok: true, revokedOtherSessions: 1 });
+
+  await changePassword({ preventDefault() {} });
+
+  assert.equal(session.authenticated, true);
+  assert.equal(changePasswordForm.saved, true);
+  assert.equal(changePasswordForm.revokedOtherSessions, 1);
+  assert.equal(changePasswordForm.currentPassword, '');
+  assert.equal(changePasswordForm.newPassword, '');
+});
+
 test('change password rejects a new password shorter than the shared byte minimum', async () => {
   let fetchCalls = 0;
   Object.assign(changePasswordForm, {
@@ -343,7 +367,8 @@ test('change password rejects a new password shorter than the shared byte minimu
     newPassword: 'x'.repeat(MINIMUM_ADMIN_PASSWORD_BYTES - 1),
     submitting: false,
     error: '',
-    saved: false
+    saved: false,
+    revokedOtherSessions: 0
   });
   globalThis.fetch = async () => {
     fetchCalls += 1;

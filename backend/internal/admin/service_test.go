@@ -127,10 +127,14 @@ func TestChangePasswordEnforcesMinimumAdminPasswordBytes(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	requireBootstrap(t, service, "admin", "current-password")
+	current, err := service.Login(context.Background(), "admin", "current-password", SessionMetadata{})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
 
 	previousHash := repo.admin.PasswordHash
 	tooShort := strings.Repeat("x", secret.MinimumAdminPasswordBytes-1)
-	if err := service.ChangePassword(context.Background(), repo.admin.ID, "current-password", tooShort); !errors.Is(err, ErrInvalidInput) {
+	if _, err := service.ChangePassword(context.Background(), repo.admin.ID, current.Token, "current-password", tooShort); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("ChangePassword short password error = %v, want ErrInvalidInput", err)
 	}
 	if repo.admin.PasswordHash != previousHash {
@@ -138,11 +142,41 @@ func TestChangePasswordEnforcesMinimumAdminPasswordBytes(t *testing.T) {
 	}
 
 	minimumLength := strings.Repeat("x", secret.MinimumAdminPasswordBytes)
-	if err := service.ChangePassword(context.Background(), repo.admin.ID, "current-password", minimumLength); err != nil {
+	if _, err := service.ChangePassword(context.Background(), repo.admin.ID, current.Token, "current-password", minimumLength); err != nil {
 		t.Fatalf("ChangePassword minimum-length password returned error: %v", err)
 	}
 	if !secret.VerifyPassword(repo.admin.PasswordHash, minimumLength) {
 		t.Fatal("ChangePassword did not store the accepted minimum-length password")
+	}
+}
+
+func TestChangePasswordPreservesCurrentSessionAndRevokesOthers(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.now = func() time.Time { return time.Unix(2000, 0).UTC() }
+	requireBootstrap(t, service, "admin", "current-password")
+
+	current, err := service.Login(context.Background(), "admin", "current-password", SessionMetadata{})
+	if err != nil {
+		t.Fatalf("current login: %v", err)
+	}
+	other, err := service.Login(context.Background(), "admin", "current-password", SessionMetadata{})
+	if err != nil {
+		t.Fatalf("other login: %v", err)
+	}
+
+	revoked, err := service.ChangePassword(context.Background(), repo.admin.ID, current.Token, "current-password", "replacement-password")
+	if err != nil {
+		t.Fatalf("ChangePassword returned error: %v", err)
+	}
+	if revoked != 1 {
+		t.Fatalf("revoked sessions = %d, want 1", revoked)
+	}
+	if _, err := service.ValidateSession(context.Background(), current.Token); err != nil {
+		t.Fatalf("current session was revoked: %v", err)
+	}
+	if _, err := service.ValidateSession(context.Background(), other.Token); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("other session error = %v, want ErrUnauthorized", err)
 	}
 }
 
@@ -1971,12 +2005,26 @@ func (r *memoryRepo) UpdateAdminUsername(_ context.Context, id int64, username s
 	return r.admin, nil
 }
 
-func (r *memoryRepo) UpdateAdminPassword(_ context.Context, id int64, passwordHash string) error {
+func (r *memoryRepo) UpdateAdminPasswordAndRevokeOtherSessions(_ context.Context, id int64, passwordHash, currentSessionHash string, revokedAt time.Time) (int64, error) {
 	if r.admin.ID != id || r.admin.ID == 0 {
-		return ErrNotFound
+		return 0, ErrNotFound
+	}
+	current, ok := r.sessions[currentSessionHash]
+	if !ok || current.adminID != id || current.revokedAt != nil || !current.expiresAt.After(revokedAt) {
+		return 0, ErrUnauthorized
 	}
 	r.admin.PasswordHash = passwordHash
-	return nil
+	var revoked int64
+	for hash, session := range r.sessions {
+		if session.adminID != id || hash == currentSessionHash || session.revokedAt != nil || !session.expiresAt.After(revokedAt) {
+			continue
+		}
+		value := revokedAt
+		session.revokedAt = &value
+		r.sessions[hash] = session
+		revoked++
+	}
+	return revoked, nil
 }
 
 func (r *memoryRepo) CreateSession(_ context.Context, adminID int64, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) error {

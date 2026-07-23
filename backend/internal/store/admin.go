@@ -175,10 +175,10 @@ func (r *AdminRepository) UpdateAdminUsername(ctx context.Context, id int64, use
 	return updated, nil
 }
 
-func (r *AdminRepository) UpdateAdminPassword(ctx context.Context, id int64, passwordHash string) error {
+func (r *AdminRepository) UpdateAdminPasswordAndRevokeOtherSessions(ctx context.Context, id int64, passwordHash, currentSessionHash string, revokedAt time.Time) (int64, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback(ctx)
 	var username string
@@ -186,18 +186,43 @@ func (r *AdminRepository) UpdateAdminPassword(ctx context.Context, id int64, pas
 		UPDATE admins
 		SET password_hash = $2, updated_at = now()
 		WHERE id = $1
+			AND EXISTS (
+				SELECT 1
+				FROM admin_sessions
+				WHERE admin_id = $1
+					AND token_hash = $3
+					AND revoked_at IS NULL
+					AND expires_at > $4
+			)
 		RETURNING username
-	`, id, passwordHash).Scan(&username)
+	`, id, passwordHash, currentSessionHash, revokedAt).Scan(&username)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return admin.ErrNotFound
+		return 0, admin.ErrUnauthorized
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin", ID: strconv.FormatInt(id, 10), Name: username}, nil); err != nil {
-		return err
+	result, err := tx.Exec(ctx, `
+		UPDATE admin_sessions
+		SET revoked_at = $3
+		WHERE admin_id = $1
+			AND token_hash <> $2
+			AND revoked_at IS NULL
+			AND expires_at > $3
+	`, id, currentSessionHash, revokedAt)
+	if err != nil {
+		return 0, err
 	}
-	return tx.Commit(ctx)
+	revoked := result.RowsAffected()
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin", ID: strconv.FormatInt(id, 10), Name: username}, map[string]any{
+		"revoked_other_sessions": revoked,
+	}); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return revoked, nil
 }
 
 func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, metadata admin.SessionMetadata, createdAt, expiresAt time.Time) error {

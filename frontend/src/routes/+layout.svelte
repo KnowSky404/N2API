@@ -179,6 +179,7 @@
     changePasswordForm.newPassword = '';
     changePasswordForm.error = '';
     changePasswordForm.saved = false;
+    changePasswordForm.revokedOtherSessions = 0;
     passwordModalOpen = true;
   }
 
@@ -189,6 +190,7 @@
     changePasswordForm.newPassword = '';
     changePasswordForm.error = '';
     changePasswordForm.saved = false;
+    changePasswordForm.revokedOtherSessions = 0;
   }
 
   /** @param {SubmitEvent} event */
@@ -743,7 +745,11 @@
           <p class="mt-3 text-xs text-red-700">{changePasswordForm.error}</p>
         {/if}
         {#if changePasswordForm.saved}
-          <p class="mt-3 text-xs text-[#0a7a5e]">Password changed.</p>
+          <p class="mt-3 text-xs text-[#0a7a5e]">
+            Password changed. {changePasswordForm.revokedOtherSessions === 1
+              ? '1 other session was revoked.'
+              : `${changePasswordForm.revokedOtherSessions} other sessions were revoked.`}
+          </p>
         {/if}
         <div class="mt-4 flex gap-2">
           <button
