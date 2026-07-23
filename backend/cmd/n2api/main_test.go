@@ -2,13 +2,32 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
+
+func TestNewHTTPServerAppliesInboundResourceBoundariesWithoutWriteTimeout(t *testing.T) {
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	server := newHTTPServer(config.Config{
+		Host:               "127.0.0.1",
+		Port:               3000,
+		HTTPIdleTimeout:    75 * time.Second,
+		HTTPMaxHeaderBytes: 512 << 10,
+	}, handler)
+	if server.Addr != "127.0.0.1:3000" || server.Handler == nil || server.ReadHeaderTimeout != 5*time.Second || server.IdleTimeout != 75*time.Second || server.MaxHeaderBytes != 512<<10 {
+		t.Fatalf("server = %+v", server)
+	}
+	if server.WriteTimeout != 0 || server.ReadTimeout != 0 {
+		t.Fatalf("global timeouts = read:%s write:%s, want zero", server.ReadTimeout, server.WriteTimeout)
+	}
+}
 
 func TestGatewayAccountProviderReportsAccountFailures(t *testing.T) {
 	var _ gateway.AccountFailureReporter = gatewayAccountProvider{}

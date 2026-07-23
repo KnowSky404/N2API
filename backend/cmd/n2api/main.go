@@ -291,6 +291,7 @@ func runServer() {
 		MaxAcceptedRequestBodyBytes:     cfg.GatewayMaxAcceptedRequestBodyBytes,
 		MaxInMemoryReplayBodyBytes:      cfg.GatewayMaxInMemoryReplayBodyBytes,
 		MaxUpstreamResponseBodyBytes:    cfg.GatewayMaxUpstreamResponseBodyBytes,
+		RequestBodyTimeout:              cfg.HTTPRequestBodyTimeout,
 		SettingsProvider:                adminService,
 		BudgetProvider:                  adminService,
 		ErrorPassthroughRulesProvider:   adminService,
@@ -302,11 +303,10 @@ func runServer() {
 		UsagePricer: gatewayUsagePricer{admins: adminService},
 	})
 
-	server := &http.Server{
-		Addr:              cfg.Addr(),
-		Handler:           httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	server := newHTTPServer(
+		cfg,
+		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
+	)
 
 	serverErrors := make(chan error, 1)
 	go func() {
@@ -339,6 +339,16 @@ func runServer() {
 	if exitCode != 0 {
 		pool.Close()
 		os.Exit(exitCode)
+	}
+}
+
+func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              cfg.Addr(),
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
+		MaxHeaderBytes:    cfg.HTTPMaxHeaderBytes,
 	}
 }
 

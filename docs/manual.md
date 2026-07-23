@@ -1159,6 +1159,16 @@ body, upstream headers, or the underlying network error, and truncated data is
 not parsed as usage or stored in Request Logs. SSE remains streaming and is not
 subject to this total response-body limit.
 
+Inbound HTTP connections use `N2API_HTTP_IDLE_TIMEOUT_SECONDS` (60 seconds by
+default) and `N2API_HTTP_MAX_HEADER_BYTES` (1 MiB by default). Model-routed POST
+requests arm a per-request read deadline after gateway and client-key admission
+and before reading the complete body; `N2API_HTTP_REQUEST_BODY_TIMEOUT_SECONDS`
+defaults to 30 seconds. The deadline is cleared immediately after the body read
+on success and error paths. A slow upload that reaches the deadline returns
+`408` with `request_body_timeout` and releases both admission slots. N2API does
+not set a global HTTP `WriteTimeout`, because that would truncate healthy long
+SSE responses.
+
 Request Logs keep local gateway rejections diagnosable while client responses stay OpenAI-compatible. Local limit responses still return `rate_limit_exceeded` to clients, but the stored request-log error identifies the guard as `api_key_request_rate_limited`, `api_key_token_rate_limited`, `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, `api_key_cost_budget_exceeded`, `gateway_concurrency_limited`, `api_key_concurrency_limited`, or `provider_account_concurrency_limited`.
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.

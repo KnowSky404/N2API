@@ -3429,6 +3429,69 @@ func TestProxyReleasesAdmissionSlotsAfterInvalidJSONBody(t *testing.T) {
 	releaseKey()
 }
 
+func TestProxyArmsRequestBodyDeadlineAfterAdmissionAndClearsIt(t *testing.T) {
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{
+		RequestBodyTimeout: 15 * time.Second,
+	}, http.DefaultClient)
+	deadlineActive := false
+	deadlineCalls := 0
+	proxy.setReadDeadline = func(_ http.ResponseWriter, deadline time.Time) error {
+		deadlineCalls++
+		deadlineActive = !deadline.IsZero()
+		return nil
+	}
+	body := &trackingReadCloser{
+		reader: strings.NewReader(`{"model":`),
+		onRead: func() {
+			if !deadlineActive {
+				t.Fatal("request body was read before deadline was armed")
+			}
+		},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Body = body
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest || deadlineCalls != 2 || deadlineActive {
+		t.Fatalf("status=%d deadlineCalls=%d active=%v", recorder.Code, deadlineCalls, deadlineActive)
+	}
+}
+
+func TestProxyReturnsStableRequestBodyTimeoutAndReleasesSlots(t *testing.T) {
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{
+		MaxConcurrentGatewayRequests: 1,
+		MaxConcurrentRequestsPerKey:  1,
+		RequestBodyTimeout:           time.Second,
+	}, http.DefaultClient)
+	proxy.setReadDeadline = func(http.ResponseWriter, time.Time) error { return nil }
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req.Body = &errorReadCloser{err: timeoutCanaryError{}}
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusRequestTimeout || !strings.Contains(recorder.Body.String(), `"code":"request_body_timeout"`) || strings.Contains(recorder.Body.String(), "timeout-address-canary") {
+		t.Fatalf("status/body=%d/%s", recorder.Code, recorder.Body.String())
+	}
+	releaseGateway, gatewayOK := proxy.tryAcquireGatewaySlot(1)
+	if gatewayOK {
+		releaseGateway()
+	}
+	releaseKey, keyOK := proxy.tryAcquireAPIKeySlot(42, 1)
+	if keyOK {
+		releaseKey()
+	}
+	if !gatewayOK || !keyOK {
+		t.Fatalf("slots not released after timeout: gateway=%v key=%v", gatewayOK, keyOK)
+	}
+}
+
 func TestProxyLogsPreciseAPIKeyConcurrencyLimitReason(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "busy key"}}, &fakeSelectedAccountProvider{}, Config{
@@ -4322,10 +4385,14 @@ type brokenReader struct {
 type trackingReadCloser struct {
 	reader io.Reader
 	reads  int
+	onRead func()
 }
 
 func (body *trackingReadCloser) Read(buffer []byte) (int, error) {
 	body.reads++
+	if body.onRead != nil {
+		body.onRead()
+	}
 	return body.reader.Read(buffer)
 }
 
@@ -4343,6 +4410,17 @@ func (body *countingReadCloser) Read(buffer []byte) (int, error) {
 }
 
 func (body *countingReadCloser) Close() error { return nil }
+
+type errorReadCloser struct{ err error }
+
+func (body *errorReadCloser) Read([]byte) (int, error) { return 0, body.err }
+func (body *errorReadCloser) Close() error             { return nil }
+
+type timeoutCanaryError struct{}
+
+func (timeoutCanaryError) Error() string   { return "read tcp timeout-address-canary" }
+func (timeoutCanaryError) Timeout() bool   { return true }
+func (timeoutCanaryError) Temporary() bool { return true }
 
 func (r *brokenReader) Read(p []byte) (int, error) {
 	if !r.sent {

@@ -26,6 +26,7 @@ const defaultCodexInstructions = "You are Codex, a coding agent."
 const defaultMaxAcceptedRequestBody = 4 << 20
 const defaultMaxInMemoryReplayBody = 1 << 20
 const defaultMaxUpstreamResponseBody = 8 << 20
+const defaultRequestBodyTimeout = 30 * time.Second
 const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 const requestLogWriteTimeout = 5 * time.Second
@@ -187,6 +188,7 @@ type Config struct {
 	MaxAcceptedRequestBodyBytes     int
 	MaxInMemoryReplayBodyBytes      int
 	MaxUpstreamResponseBodyBytes    int
+	RequestBodyTimeout              time.Duration
 	Logger                          RequestLogger
 	ModelProvider                   ModelProvider
 	UsagePricer                     UsagePricer
@@ -196,26 +198,28 @@ type Config struct {
 }
 
 type Proxy struct {
-	auth            APIKeyAuthenticator
-	accounts        AccountProvider
-	client          *http.Client
-	upstreamBaseURL string
-	codexBaseURL    string
-	staticSettings  admin.GatewaySettings
-	settings        GatewaySettingsProvider
-	limiter         *gatewayConcurrencyLimiter
-	accountLimiter  *accountConcurrencyLimiter
-	keyLimiter      *apiKeyConcurrencyLimiter
-	rateLimiter     *apiKeyRateLimiter
-	tokenLimiter    *apiKeyTokenLimiter
-	logger          RequestLogger
-	models          ModelProvider
-	usagePricer     UsagePricer
-	budgets         BudgetProvider
-	errorRules      ErrorPassthroughRulesProvider
-	maxAcceptedBody int
-	maxReplayBody   int
-	maxResponseBody int
+	auth               APIKeyAuthenticator
+	accounts           AccountProvider
+	client             *http.Client
+	upstreamBaseURL    string
+	codexBaseURL       string
+	staticSettings     admin.GatewaySettings
+	settings           GatewaySettingsProvider
+	limiter            *gatewayConcurrencyLimiter
+	accountLimiter     *accountConcurrencyLimiter
+	keyLimiter         *apiKeyConcurrencyLimiter
+	rateLimiter        *apiKeyRateLimiter
+	tokenLimiter       *apiKeyTokenLimiter
+	logger             RequestLogger
+	models             ModelProvider
+	usagePricer        UsagePricer
+	budgets            BudgetProvider
+	errorRules         ErrorPassthroughRulesProvider
+	maxAcceptedBody    int
+	maxReplayBody      int
+	maxResponseBody    int
+	requestBodyTimeout time.Duration
+	setReadDeadline    func(http.ResponseWriter, time.Time) error
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -258,27 +262,35 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if maxResponseBody <= 0 {
 		maxResponseBody = defaultMaxUpstreamResponseBody
 	}
+	requestBodyTimeout := cfg.RequestBodyTimeout
+	if requestBodyTimeout <= 0 {
+		requestBodyTimeout = defaultRequestBodyTimeout
+	}
 	return &Proxy{
-		auth:            auth,
-		accounts:        accounts,
-		client:          client,
-		upstreamBaseURL: upstreamBaseURL,
-		codexBaseURL:    codexBaseURL,
-		staticSettings:  staticSettings,
-		settings:        cfg.SettingsProvider,
-		limiter:         newGatewayConcurrencyLimiter(),
-		accountLimiter:  newAccountConcurrencyLimiter(),
-		keyLimiter:      newAPIKeyConcurrencyLimiter(),
-		rateLimiter:     rateLimiter,
-		tokenLimiter:    tokenLimiter,
-		logger:          cfg.Logger,
-		models:          cfg.ModelProvider,
-		usagePricer:     cfg.UsagePricer,
-		budgets:         cfg.BudgetProvider,
-		errorRules:      cfg.ErrorPassthroughRulesProvider,
-		maxAcceptedBody: maxAcceptedBody,
-		maxReplayBody:   maxReplayBody,
-		maxResponseBody: maxResponseBody,
+		auth:               auth,
+		accounts:           accounts,
+		client:             client,
+		upstreamBaseURL:    upstreamBaseURL,
+		codexBaseURL:       codexBaseURL,
+		staticSettings:     staticSettings,
+		settings:           cfg.SettingsProvider,
+		limiter:            newGatewayConcurrencyLimiter(),
+		accountLimiter:     newAccountConcurrencyLimiter(),
+		keyLimiter:         newAPIKeyConcurrencyLimiter(),
+		rateLimiter:        rateLimiter,
+		tokenLimiter:       tokenLimiter,
+		logger:             cfg.Logger,
+		models:             cfg.ModelProvider,
+		usagePricer:        cfg.UsagePricer,
+		budgets:            cfg.BudgetProvider,
+		errorRules:         cfg.ErrorPassthroughRulesProvider,
+		maxAcceptedBody:    maxAcceptedBody,
+		maxReplayBody:      maxReplayBody,
+		maxResponseBody:    maxResponseBody,
+		requestBodyTimeout: requestBodyTimeout,
+		setReadDeadline: func(writer http.ResponseWriter, deadline time.Time) error {
+			return http.NewResponseController(writer).SetReadDeadline(deadline)
+		},
 	}
 }
 
@@ -415,7 +427,18 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer releaseKey()
 
+	deadlineArmed, deadlineErr := p.armRequestBodyDeadline(recorder, r)
+	if deadlineErr != nil {
+		errorCode = "request_body_deadline_error"
+		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not set request body deadline")
+		return
+	}
 	bodyFactory, maxAttempts, model, sessionID, err := p.requestBodyFactory(r)
+	if deadlineArmed {
+		if clearErr := p.setReadDeadline(recorder, time.Time{}); err == nil && clearErr != nil {
+			err = errRequestBodyDeadline
+		}
+	}
 	if err != nil {
 		errorCode = requestBodyErrorCode(err)
 		writeOpenAIError(recorder, requestBodyErrorStatus(err), errorCode, requestBodyErrorMessage(err))
@@ -577,6 +600,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+}
+
+func (p *Proxy) armRequestBodyDeadline(w http.ResponseWriter, r *http.Request) (bool, error) {
+	if p == nil || p.setReadDeadline == nil || p.requestBodyTimeout <= 0 || r == nil || r.Method != http.MethodPost || r.Body == nil {
+		return false, nil
+	}
+	err := p.setReadDeadline(w, time.Now().Add(p.requestBodyTimeout))
+	if errors.Is(err, http.ErrNotSupported) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (p *Proxy) clientForSelectedAccount(selected SelectedAccount) *http.Client {
@@ -1475,6 +1509,7 @@ var (
 	errRequestBodyTooLarge = errors.New("request body exceeds accepted limit")
 	errInvalidJSONBody     = errors.New("request body must be valid json")
 	errModelNotFound       = errors.New("model not found")
+	errRequestBodyDeadline = errors.New("request body deadline failed")
 )
 
 func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, error) {
@@ -1608,6 +1643,10 @@ func apiKeyAllowsModel(key admin.APIKey, model string) bool {
 
 func requestBodyErrorCode(err error) string {
 	switch {
+	case isTimeoutError(err):
+		return "request_body_timeout"
+	case errors.Is(err, errRequestBodyDeadline):
+		return "request_body_deadline_error"
 	case errors.Is(err, errRequestBodyTooLarge):
 		return "request_too_large"
 	case errors.Is(err, errInvalidJSONBody):
@@ -1621,6 +1660,10 @@ func requestBodyErrorCode(err error) string {
 
 func requestBodyErrorStatus(err error) int {
 	switch {
+	case isTimeoutError(err):
+		return http.StatusRequestTimeout
+	case errors.Is(err, errRequestBodyDeadline):
+		return http.StatusInternalServerError
 	case errors.Is(err, errRequestBodyTooLarge):
 		return http.StatusRequestEntityTooLarge
 	case errors.Is(err, errInvalidJSONBody), errors.Is(err, errModelNotFound), errors.Is(err, admin.ErrInvalidInput):
@@ -1632,6 +1675,10 @@ func requestBodyErrorStatus(err error) int {
 
 func requestBodyErrorMessage(err error) string {
 	switch {
+	case isTimeoutError(err):
+		return "request body read timed out"
+	case errors.Is(err, errRequestBodyDeadline):
+		return "could not clear request body deadline"
 	case errors.Is(err, errRequestBodyTooLarge):
 		return "request body is too large"
 	case errors.Is(err, errInvalidJSONBody):
@@ -1641,6 +1688,11 @@ func requestBodyErrorMessage(err error) string {
 	default:
 		return "could not read upstream request"
 	}
+}
+
+func isTimeoutError(err error) bool {
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout()
 }
 
 func isSupportedRoute(r *http.Request) bool {
@@ -1806,6 +1858,10 @@ func newRequestID() string {
 type statusRecorder struct {
 	http.ResponseWriter
 	status int
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 func (r *statusRecorder) WriteHeader(status int) {

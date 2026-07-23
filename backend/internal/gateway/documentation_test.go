@@ -117,6 +117,9 @@ func TestGatewayDocumentationMatchesRequestBodyBoundaryContract(t *testing.T) {
 			"admission occurs before the complete body read",
 			"stable code `upstream_response_too_large`",
 			"SSE remains streaming",
+			"per-request read deadline",
+			"`408` with `request_body_timeout`",
+			"global HTTP `WriteTimeout`",
 		},
 	}
 	for path, wants := range checks {
