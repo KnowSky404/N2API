@@ -704,11 +704,27 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 47 {
-		t.Fatalf("migration sources = %d, want 47", len(sources))
+	if len(sources) != 48 {
+		t.Fatalf("migration sources = %d, want 48", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[46].Path != "00047_response_affinities.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[47].Path != "00048_request_log_upstream_request_id.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestRequestLogUpstreamRequestIDMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00048_request_log_upstream_request_id.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ADD COLUMN upstream_request_id TEXT NOT NULL DEFAULT ''",
+		"CHECK (octet_length(upstream_request_id) <= 200)",
+		"DROP COLUMN IF EXISTS upstream_request_id",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }
 

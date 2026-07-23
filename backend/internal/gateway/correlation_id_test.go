@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -85,7 +86,7 @@ func TestProxyUsesOneCorrelationIDAcrossResponseUpstreamLogAndEvent(t *testing.T
 				Logger:          logger,
 			}, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				upstreamRequestID = req.Header.Get("X-Request-ID")
-				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"object":"list","data":[]}`))}, nil
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Request-Id": []string{"upstream-request-42"}}, Body: io.NopCloser(strings.NewReader(`{"object":"list","data":[]}`))}, nil
 			})})
 			req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_test", nil)
 			req.Header.Set("Authorization", "Bearer client-key")
@@ -113,6 +114,12 @@ func TestProxyUsesOneCorrelationIDAcrossResponseUpstreamLogAndEvent(t *testing.T
 			if upstreamRequestID != responseRequestID || entries[0].RequestID != responseRequestID || auth.event.CorrelationID != responseRequestID {
 				t.Fatalf("correlation IDs = response:%q upstream:%q log:%q event:%q", responseRequestID, upstreamRequestID, entries[0].RequestID, auth.event.CorrelationID)
 			}
+			if values := recorder.Header().Values("X-Request-ID"); len(values) != 1 || values[0] != responseRequestID {
+				t.Fatalf("response X-Request-ID values = %q, want only gateway correlation", values)
+			}
+			if entries[0].UpstreamRequestID != "upstream-request-42" {
+				t.Fatalf("request log upstream request ID = %q", entries[0].UpstreamRequestID)
+			}
 		})
 	}
 }
@@ -133,7 +140,7 @@ func TestProxyPreservesCorrelationIDAcrossFallbackAttempts(t *testing.T) {
 		if len(requestIDs) == 2 {
 			status = http.StatusOK
 		}
-		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"object":"list","data":[]}`))}, nil
+		return &http.Response{StatusCode: status, Header: http.Header{"X-Request-Id": []string{"upstream-attempt-" + strconv.Itoa(len(requestIDs))}}, Body: io.NopCloser(strings.NewReader(`{"object":"list","data":[]}`))}, nil
 	})})
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_test", nil)
 	req.Header.Set("Authorization", "Bearer client-key")
@@ -145,6 +152,29 @@ func TestProxyPreservesCorrelationIDAcrossFallbackAttempts(t *testing.T) {
 	entries := logger.snapshot()
 	if len(requestIDs) != 2 || requestIDs[0] != "fallback-request-7" || requestIDs[1] != requestIDs[0] || len(entries) != 1 || entries[0].RequestID != requestIDs[0] {
 		t.Fatalf("fallback correlation = attempts:%+v logs:%+v", requestIDs, entries)
+	}
+	if entries[0].UpstreamRequestID != "upstream-attempt-2" {
+		t.Fatalf("fallback upstream request ID = %q, want final attempt", entries[0].UpstreamRequestID)
+	}
+}
+
+func TestResponseUpstreamRequestIDRejectsUnsafeValues(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "valid", value: " req_upstream-42 ", want: "req_upstream-42"},
+		{name: "control", value: "req\tsecret"},
+		{name: "invalid utf8", value: string([]byte{'r', 'e', 'q', 0xff})},
+		{name: "too long", value: strings.Repeat("x", maxUpstreamRequestIDLength+1)},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := &http.Response{Header: http.Header{"X-Request-Id": []string{testCase.value}}}
+			if got := responseUpstreamRequestID(response); got != testCase.want {
+				t.Fatalf("responseUpstreamRequestID() = %q, want %q", got, testCase.want)
+			}
+		})
 	}
 }
 

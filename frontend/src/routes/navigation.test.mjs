@@ -649,6 +649,14 @@ test('request log details show sticky session attribution', () => {
   assert.match(requestLogsPage, /colspan="6"/);
 });
 
+test('request log details separate gateway and upstream request IDs', () => {
+  assert.match(requestLogsPage, />Request ID</);
+  assert.match(requestLogsPage, />Upstream request ID</);
+  assert.match(requestLogsPage, /selectedRequestLog\.requestId/);
+  assert.match(requestLogsPage, /selectedRequestLog\.upstreamRequestId/);
+  assert.match(adminState, /@property \{string\} upstreamRequestId/);
+});
+
 test('request log details show complete token usage', () => {
   assert.match(requestLogsPage, />Usage</);
   assert.match(requestLogsPage, /selectedRequestLog\.inputTokens/);

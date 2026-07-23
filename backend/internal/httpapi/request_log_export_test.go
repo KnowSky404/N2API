@@ -185,7 +185,7 @@ func TestSpreadsheetSafeCSVCellProtectsFirstNonWhitespaceFormulaRune(t *testing.
 }
 
 func TestRequestLogExportRowHasExplicitSafeFieldSet(t *testing.T) {
-	encoded, err := json.Marshal(newRequestLogExportRow(admin.RequestLog{ID: 7, RequestID: "req_7", SessionID: "workspace"}))
+	encoded, err := json.Marshal(newRequestLogExportRow(admin.RequestLog{ID: 7, RequestID: "req_7", UpstreamRequestID: "upstream_7", SessionID: "workspace"}))
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestRequestLogExportRowHasExplicitSafeFieldSet(t *testing.T) {
 		t.Fatalf("Unmarshal returned error: %v", err)
 	}
 	want := []string{
-		"id", "requestId", "clientKey", "provider", "providerAccountId", "providerAccountType", "providerAccountName",
+		"id", "requestId", "upstreamRequestId", "clientKey", "provider", "providerAccountId", "providerAccountType", "providerAccountName",
 		"routingPoolId", "routingPoolName", "routingPoolFallbackDepth", "routingPoolFallbackChain", "routingPoolError",
 		"model", "sessionId", "route", "method", "statusCode", "latencyMs", "error", "inputTokens", "outputTokens",
 		"totalTokens", "cachedInputTokens", "reasoningTokens", "usageSource", "estimatedCostMicrousd", "pricingMatched",
@@ -218,7 +218,7 @@ func TestRequestLogExportRowHasExplicitSafeFieldSet(t *testing.T) {
 func TestRequestLogExportStreamsGzipCSVWithSafeCellsTrailersAndEvents(t *testing.T) {
 	admins := newFakeAdminService()
 	admins.logs = []admin.RequestLog{{
-		ID: 9, RequestID: "=HYPERLINK(\"bad\")", ClientKey: " +key", Provider: "openai", SessionID: "@workspace",
+		ID: 9, RequestID: "=HYPERLINK(\"bad\")", UpstreamRequestID: "upstream_9", ClientKey: " +key", Provider: "openai", SessionID: "@workspace",
 		Model: "gpt-5", StatusCode: 200, CreatedAt: time.Unix(150, 0).UTC(),
 	}}
 	recorder := &memorySystemEventRecorder{}
@@ -242,7 +242,7 @@ func TestRequestLogExportStreamsGzipCSVWithSafeCellsTrailersAndEvents(t *testing
 	if err != nil {
 		t.Fatalf("ReadAll returned error: %v", err)
 	}
-	if len(rows) != 2 || rows[1][1] != "'=HYPERLINK(\"bad\")" || rows[1][2] != " '+key" || rows[1][13] != "'@workspace" {
+	if len(rows) != 2 || len(rows[1]) != len(requestLogExportCSVHeader) || rows[1][1] != "'=HYPERLINK(\"bad\")" || rows[1][2] != "upstream_9" || rows[1][3] != " '+key" || rows[1][14] != "'@workspace" {
 		t.Fatalf("CSV rows = %#v", rows)
 	}
 	trailers := response.Result().Trailer

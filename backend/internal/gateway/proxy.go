@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
@@ -39,6 +41,7 @@ const requestLogWriteTimeout = 5 * time.Second
 const accountRecoveryWriteTimeout = 2 * time.Second
 const responseAffinityWriteTimeout = 2 * time.Second
 const defaultResponseAffinityTTL = 30 * 24 * time.Hour
+const maxUpstreamRequestIDLength = 200
 
 type APIKeyAuthenticator interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (admin.APIKey, error)
@@ -177,6 +180,7 @@ type UsageCostEstimate struct {
 
 type RequestLog struct {
 	RequestID                string
+	UpstreamRequestID        string
 	ClientKeyID              int64
 	Provider                 string
 	ProviderAccountID        int64
@@ -445,6 +449,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestModel := ""
 	requestSessionID := ""
 	observedUsage := Usage{Source: "missing"}
+	upstreamRequestID := ""
 	gatewayAttemptCount := 0
 	gatewayFallbackCount := 0
 	defer func() {
@@ -459,6 +464,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		finishMetrics()
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:                requestID,
+			UpstreamRequestID:        upstreamRequestID,
 			ClientKeyID:              key.ID,
 			Provider:                 selectedProviderName(loggedAccount),
 			ProviderAccountID:        loggedAccount.AccountID,
@@ -682,6 +688,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		var upstreamResp *http.Response
 		var upstreamErr error
+		upstreamRequestID = ""
 		authorizationRetried := false
 		authorizationRefreshFailureRecorded := false
 		for {
@@ -702,6 +709,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				p.observeUpstreamAttempt(selected.AccountType, upstreamTransportOutcome(r.Context(), upstreamErr))
 				break
 			}
+			upstreamRequestID = responseUpstreamRequestID(upstreamResp)
 			if authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
 				p.observeUpstreamAttempt(selected.AccountType, upstreamHTTPOutcome(upstreamResp.StatusCode))
 				break
@@ -2210,13 +2218,24 @@ func copyRequestHeaders(dst, src http.Header) {
 
 func copyResponseHeaders(dst, src http.Header) {
 	for key, values := range src {
-		if isHopByHopHeader(key) {
+		if isHopByHopHeader(key) || strings.EqualFold(key, "X-Request-ID") {
 			continue
 		}
 		for _, value := range values {
 			dst.Add(key, value)
 		}
 	}
+}
+
+func responseUpstreamRequestID(response *http.Response) string {
+	if response == nil {
+		return ""
+	}
+	requestID := strings.TrimSpace(response.Header.Get("X-Request-ID"))
+	if requestID == "" || len(requestID) > maxUpstreamRequestIDLength || !utf8.ValidString(requestID) || strings.IndexFunc(requestID, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return requestID
 }
 
 func isHopByHopHeader(key string) bool {

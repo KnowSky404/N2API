@@ -20,13 +20,13 @@ func NewGatewayRepository(pool *pgxpool.Pool) *GatewayRepository {
 func createRequestLogSQL() string {
 	return `
 		INSERT INTO request_logs (
-			request_id, client_key_id, provider_account_id, provider_account_type,
+			request_id, upstream_request_id, client_key_id, provider_account_id, provider_account_type,
 			provider_account_name, routing_pool_id, routing_pool_name, routing_pool_fallback_depth, routing_pool_fallback_chain, routing_pool_error,
 			provider, model, session_id, route, method, status_code, latency_ms, error,
 			input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens, usage_source,
 			estimated_cost_microusd, pricing_snapshot, gateway_attempt_count, gateway_fallback_count, created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
 	`
 }
 
@@ -37,6 +37,7 @@ func (r *GatewayRepository) CreateRequestLog(ctx context.Context, entry gateway.
 	}
 	_, err = r.pool.Exec(ctx, createRequestLogSQL(),
 		entry.RequestID,
+		entry.UpstreamRequestID,
 		nullInt64(entry.ClientKeyID),
 		nullInt64(entry.ProviderAccountID),
 		entry.ProviderAccountType,

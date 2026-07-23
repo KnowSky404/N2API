@@ -1154,6 +1154,7 @@ type requestLogCursor struct {
 const requestLogSelectSQL = `SELECT
 	l.id,
 	l.request_id,
+	l.upstream_request_id,
 	COALESCE(k.name || ' (' || k.prefix || ')', ''),
 	l.provider,
 	COALESCE(l.provider_account_id, 0),
@@ -1293,6 +1294,7 @@ func scanRequestLog(row rowScanner) (admin.RequestLog, error) {
 	err := row.Scan(
 		&log.ID,
 		&log.RequestID,
+		&log.UpstreamRequestID,
 		&log.ClientKey,
 		&log.Provider,
 		&log.ProviderAccountID,

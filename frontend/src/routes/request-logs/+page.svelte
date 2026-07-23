@@ -824,6 +824,7 @@
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Model</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.model || '-'}</dd></div>
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Usage source</dt><dd class="mt-1 text-sm text-[#0d0d0d]">{usageSourceLabel(selectedRequestLog.usageSource)}</dd></div>
         <div class="sm:col-span-2"><dt class="text-xs font-medium text-[#6e6e6e]">Request ID</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.requestId || '-'}</dd></div>
+        <div class="sm:col-span-2"><dt class="text-xs font-medium text-[#6e6e6e]">Upstream request ID</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.upstreamRequestId || '-'}</dd></div>
         <div class="sm:col-span-2"><dt class="text-xs font-medium text-[#6e6e6e]">Session ID</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.sessionId || '-'}</dd></div>
       </dl>
 

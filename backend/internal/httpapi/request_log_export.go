@@ -44,6 +44,7 @@ type requestLogExportOptions struct {
 type requestLogExportRow struct {
 	ID                       int64     `json:"id"`
 	RequestID                string    `json:"requestId"`
+	UpstreamRequestID        string    `json:"upstreamRequestId"`
 	ClientKey                string    `json:"clientKey"`
 	Provider                 string    `json:"provider"`
 	ProviderAccountID        int64     `json:"providerAccountId"`
@@ -76,7 +77,7 @@ type requestLogExportRow struct {
 
 func newRequestLogExportRow(log admin.RequestLog) requestLogExportRow {
 	return requestLogExportRow{
-		ID: log.ID, RequestID: log.RequestID, ClientKey: log.ClientKey, Provider: log.Provider,
+		ID: log.ID, RequestID: log.RequestID, UpstreamRequestID: log.UpstreamRequestID, ClientKey: log.ClientKey, Provider: log.Provider,
 		ProviderAccountID: log.ProviderAccountID, ProviderAccountType: log.ProviderAccountType, ProviderAccountName: log.ProviderAccountName,
 		RoutingPoolID: log.RoutingPoolID, RoutingPoolName: log.RoutingPoolName, RoutingPoolFallbackDepth: log.RoutingPoolFallbackDepth,
 		RoutingPoolFallbackChain: log.RoutingPoolFallbackChain, RoutingPoolError: log.RoutingPoolError,
@@ -254,7 +255,7 @@ func spreadsheetSafeCSVCell(value string) string {
 }
 
 var requestLogExportCSVHeader = []string{
-	"id", "request_id", "client_key", "provider", "provider_account_id", "provider_account_type", "provider_account_name",
+	"id", "request_id", "upstream_request_id", "client_key", "provider", "provider_account_id", "provider_account_type", "provider_account_name",
 	"routing_pool_id", "routing_pool_name", "routing_pool_fallback_depth", "routing_pool_fallback_chain", "routing_pool_error",
 	"model", "session_id", "route", "method", "status_code", "latency_ms", "error", "input_tokens", "output_tokens",
 	"total_tokens", "cached_input_tokens", "reasoning_tokens", "usage_source", "estimated_cost_microusd", "pricing_matched",
@@ -265,7 +266,7 @@ func requestLogExportCSVRecord(log admin.RequestLog) []string {
 	row := newRequestLogExportRow(log)
 	safe := spreadsheetSafeCSVCell
 	return []string{
-		strconv.FormatInt(row.ID, 10), safe(row.RequestID), safe(row.ClientKey), safe(row.Provider), strconv.FormatInt(row.ProviderAccountID, 10),
+		strconv.FormatInt(row.ID, 10), safe(row.RequestID), safe(row.UpstreamRequestID), safe(row.ClientKey), safe(row.Provider), strconv.FormatInt(row.ProviderAccountID, 10),
 		safe(row.ProviderAccountType), safe(row.ProviderAccountName), strconv.FormatInt(row.RoutingPoolID, 10), safe(row.RoutingPoolName),
 		strconv.Itoa(row.RoutingPoolFallbackDepth), safe(row.RoutingPoolFallbackChain), safe(row.RoutingPoolError), safe(row.Model),
 		safe(row.SessionID), safe(row.Route), safe(row.Method), strconv.Itoa(row.StatusCode), strconv.Itoa(row.LatencyMS), safe(row.Error),

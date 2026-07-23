@@ -1291,9 +1291,12 @@ ID. The accepted or generated value is returned as `X-Request-ID` and remains th
 same across every upstream attempt, the Request Log `requestId`, related System
 Event `correlationId`, and request-scoped process-log field `correlation_id`.
 An ID assigned or returned by the upstream provider is separate provider data.
-N2API does not currently persist that value; any integration that captures it
-must use a distinct field such as `upstream_request_id` and must never replace
-N2API's correlation ID.
+When the final upstream response supplies a valid `X-Request-ID`, N2API stores
+it separately as Request Log `upstreamRequestId` and includes it in JSON, JSONL,
+and CSV exports. It is limited to 200 bytes and discarded when it contains
+control characters or invalid UTF-8. It never replaces N2API's correlation ID
+or adds a second `X-Request-ID` value to the client response. Transport failures
+and responses without a valid upstream ID leave the field empty.
 
 Request Log persistence is best effort. A write failure does not replace or
 otherwise change the gateway response, including an already successful upstream

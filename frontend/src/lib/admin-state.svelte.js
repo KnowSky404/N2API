@@ -129,6 +129,7 @@ import { copyText } from '$lib/clipboard.js';
  * @typedef {object} RequestLog
  * @property {number} id
  * @property {string} requestId
+ * @property {string} upstreamRequestId
  * @property {number} clientKeyId
  * @property {string} clientKey
  * @property {string} provider

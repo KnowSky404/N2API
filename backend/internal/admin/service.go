@@ -157,6 +157,7 @@ type APIKeyBudgetUsage struct {
 type RequestLog struct {
 	ID                       int64     `json:"id"`
 	RequestID                string    `json:"requestId"`
+	UpstreamRequestID        string    `json:"upstreamRequestId"`
 	ClientKey                string    `json:"clientKey"`
 	Provider                 string    `json:"provider"`
 	ProviderAccountID        int64     `json:"providerAccountId"`
