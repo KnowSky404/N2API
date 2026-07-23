@@ -98,8 +98,8 @@ for runner_failure in test check; do
   set -e
   [[ ${runner_status} -eq ${runner_expected_status} ]] ||
     fail "frontend ${runner_failure} failure became status ${runner_status}, want ${runner_expected_status}"
-  rg -q '^fake bun: test$' "${runner_output}" || fail "frontend test command did not run"
-  if rg -q '^fake bun: run build$' "${runner_output}"; then
+  grep -Eq '^fake bun: test$' "${runner_output}" || fail "frontend test command did not run"
+  if grep -Eq '^fake bun: run build$' "${runner_output}"; then
     fail "frontend build ran after ${runner_failure} failed"
   fi
 done
@@ -255,10 +255,10 @@ N2API_DEV_CACHE_ROOT="${fixture}/cache" \
   "${cleaner}" >/dev/null
 
 for resource in test-container test-network test-volume test-image; do
-  rg -q "rm .*${resource}|rm ${resource}" "${docker_log}" ||
+  grep -Eq "rm .*${resource}|rm ${resource}" "${docker_log}" ||
     fail "test resource ${resource} was not removed"
 done
-if rg -q '^(container|network|volume|image) rm.*(prod-|deploy_n2api-postgres)|system prune|volume prune|image prune' "${docker_log}"; then
+if grep -Eq '^(container|network|volume|image) rm.*(prod-|deploy_n2api-postgres)|system prune|volume prune|image prune' "${docker_log}"; then
   fail "cleanup crossed the production/global boundary"
 fi
 while IFS= read -r line; do
@@ -304,10 +304,10 @@ N2API_TMP_ROOT="${fixture}/tmp" \
 disk_status=$?
 set -e
 [[ ${disk_status} -ne 0 ]] || fail "low disk did not block a heavy test"
-rg -q 'make clean-dev-artifacts' "${disk_output}" || fail "disk failure lacked cleanup guidance"
-rg -q 'Production persistent data' "${disk_output}" || fail "disk failure lacked production summary"
-rg -q 'Reclaimable N2API test resources' "${disk_output}" || fail "disk failure lacked reclaimable summary"
-rg -q 'Unknown or shared resources' "${disk_output}" || fail "disk failure lacked unknown summary"
+grep -Fq 'make clean-dev-artifacts' "${disk_output}" || fail "disk failure lacked cleanup guidance"
+grep -Fq 'Production persistent data' "${disk_output}" || fail "disk failure lacked production summary"
+grep -Fq 'Reclaimable N2API test resources' "${disk_output}" || fail "disk failure lacked reclaimable summary"
+grep -Fq 'Unknown or shared resources' "${disk_output}" || fail "disk failure lacked unknown summary"
 
 N2API_DISK_MIN_FREE_GIB=4 \
 PATH="${fake_bin}:${PATH}" \
@@ -318,17 +318,17 @@ N2API_TMP_ROOT="${fixture}/tmp" \
 
 N2API_TEST_RUN_ID=contract-test docker compose \
   -f "${repo_root}/deploy/compose.e2e.yaml" config >/dev/null
-rg -q 'io.knowsky.n2api.resource: test' "${repo_root}/deploy/compose.e2e.yaml" ||
+grep -Fq 'io.knowsky.n2api.resource: test' "${repo_root}/deploy/compose.e2e.yaml" ||
   fail "E2E Compose lacks test resource labels"
-rg -q -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
+grep -Fq -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore cleanup does not remove local test images"
-rg -q 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||
+grep -Fq 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore verification lacks the disk preflight"
 image_build_block="$(sed -n '/name: Build platform image once/,/name: Start PostgreSQL for smoke test/p' "${repo_root}/.github/workflows/ci-image.yml")"
-if rg -q 'io.knowsky.n2api.resource=test' <<<"${image_build_block}"; then
+if grep -Fq 'io.knowsky.n2api.resource=test' <<<"${image_build_block}"; then
   fail "publishable image config contains a test resource label"
 fi
-rg -q 'make clean-dev-artifacts' "${repo_root}/docs/development.md" ||
+grep -Fq 'make clean-dev-artifacts' "${repo_root}/docs/development.md" ||
   fail "development cleanup command is undocumented"
 
 echo "Development artifact lifecycle tests passed."
