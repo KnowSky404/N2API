@@ -29,7 +29,9 @@ Owner chooses contact/private reporting channel and supported-version policy.
 ### Files
 
 - Create: `SECURITY.md`, `CONTRIBUTING.md`, `.github/pull_request_template.md`
-- Create: `.github/ISSUE_TEMPLATE/bug.yml`, `feature.yml`, `config.yml`
+- Create: `.github/ISSUE_TEMPLATE/bug_report.yml`,
+  `.github/ISSUE_TEMPLATE/feature_request.yml`, and
+  `.github/ISSUE_TEMPLATE/config.yml`
 - Modify: `docs/README.md`
 
 ### Implementation

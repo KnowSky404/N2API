@@ -43,6 +43,20 @@ Both required workflows listen for `pull_request` and
 queue. If merge queue is enabled, verify a real queued pull request before
 treating the ruleset as complete.
 
+### Code Scanning Merge Protection
+
+Required `CodeQL (go)` and `CodeQL (javascript-typescript)` status checks prove
+that analysis completed, but those checks alone do not block a merge merely
+because CodeQL reported an alert. In the same `main` ruleset, also require code
+scanning results from CodeQL and configure merge protection so every new alert
+with `HIGH` or `CRITICAL` security severity blocks the pull request.
+
+Review the existing CodeQL baseline before enabling the rule. Do not lower the
+severity threshold or dismiss an alert only to make the ruleset pass. A
+temporary accepted finding must use the exact, expiring exception policy in
+`security/exceptions.json`, retain its owner and reason, and be removed before
+expiry.
+
 Do not require the following checks on pull requests or merge groups because
 their jobs intentionally run only after a push to `main`, on a schedule, or on
 manual dispatch:
@@ -90,11 +104,14 @@ Apply protections in this order:
    `CI Image` and `Security` runs to finish.
 2. Confirm every required check name exists and has a successful run; do not
    create placeholder or similarly named checks.
-3. Create the `main` ruleset, then open a test pull request and verify that a
-   failing required check blocks merge.
-4. If using merge queue, enqueue the test pull request and confirm both required
+3. With explicit owner authorization, create the `main` ruleset, including the
+   CodeQL code-scanning merge protection described above.
+4. Open a test pull request and verify separately that a failing required check
+   and a new HIGH or CRITICAL CodeQL alert each block merge. A successful CodeQL
+   status check must not bypass the alert gate.
+5. If using merge queue, enqueue the test pull request and confirm both required
    workflows run for the merge group.
-5. Create the `release` environment and run Release in `preview` mode first.
+6. Create the `release` environment and run Release in `preview` mode first.
    Confirm `publish` waits for approval and that rejection leaves tags, Releases,
    and package tags unchanged.
 
@@ -105,7 +122,7 @@ checks pass. Do not delete the ruleset as a routine workaround.
 ## Acceptance State
 
 Local acceptance consists of workflow syntax, check-name, merge-group, and
-least-privilege validation. Actual ruleset and environment state, the first
-protected pull request, merge-queue behavior, and release approval remain
-operator acceptance checks until the owner explicitly authorizes those remote
-changes.
+least-privilege validation. Actual ruleset and environment state, CodeQL
+severity enforcement, the first protected pull request, merge-queue behavior,
+and release approval remain operator acceptance checks until the owner
+explicitly authorizes those remote changes.
