@@ -350,6 +350,25 @@ func TestTimeoutBeforeHeadersHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestResourceBoundaryScenarios(t *testing.T) {
+	t.Run("oversized JSON", func(t *testing.T) {
+		handler := newMockHandler()
+		response := performRequest(t, handler, http.MethodPost, "/v1/chat/completions", `{"model":"gpt-5"}`, "oversized-json-response")
+		if response.Code != http.StatusOK || response.Header().Get("X-N2API-E2E-Canary") != "must-not-pass" || response.Body.Len() <= 16<<10 {
+			t.Fatalf("response = status:%d size:%d headers:%v", response.Code, response.Body.Len(), response.Header())
+		}
+	})
+
+	t.Run("periodic SSE", func(t *testing.T) {
+		handler := newMockHandler().(*mockHandler)
+		handler.periodicDelay = time.Millisecond
+		response := performRequest(t, handler, http.MethodPost, "/v1/responses", `{"model":"gpt-5","stream":true}`, "periodic-sse")
+		if response.Code != http.StatusOK || response.Header().Get("Content-Type") != "text/event-stream" || !strings.Contains(response.Body.String(), "response.completed") {
+			t.Fatalf("response = status:%d headers:%v body:%s", response.Code, response.Header(), response.Body.String())
+		}
+	})
+}
+
 func TestDisconnectScenariosUseRealConnections(t *testing.T) {
 	handler := newMockHandler().(*mockHandler)
 	server := httptest.NewServer(handler)

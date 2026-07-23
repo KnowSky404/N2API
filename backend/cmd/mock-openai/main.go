@@ -23,6 +23,7 @@ const (
 	defaultListenAddress = ":8080"
 	maxRequestBodyBytes  = 1 << 20
 	defaultTimeoutDelay  = 5 * time.Second
+	defaultPeriodicDelay = 300 * time.Millisecond
 	mockModelID          = "gpt-5"
 	defaultMockAPIKey    = "e2e-upstream-fixture-key"
 	scenarioHeader       = "X-N2API-E2E-Scenario"
@@ -44,6 +45,9 @@ var allowedScenarios = map[string]struct{}{
 	"timeout-before-headers":       {},
 	"disconnect-before-headers":    {},
 	"disconnect-after-first-event": {},
+	"oversized-json-response":      {},
+	"stalled-sse":                  {},
+	"periodic-sse":                 {},
 }
 
 type mockHandler struct {
@@ -51,6 +55,7 @@ type mockHandler struct {
 	state                     *diagnosticState
 	now                       func() time.Time
 	timeoutDelay              time.Duration
+	periodicDelay             time.Duration
 }
 
 type mockRequest struct {
@@ -143,6 +148,7 @@ func newMockHandler(apiKeys ...string) http.Handler {
 		state:                     newDiagnosticState(),
 		now:                       time.Now,
 		timeoutDelay:              defaultTimeoutDelay,
+		periodicDelay:             defaultPeriodicDelay,
 	}
 }
 
@@ -232,11 +238,35 @@ func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.state.record(scenario, method, route, status, h.now())
 		})
 		return
+	case "stalled-sse":
+		status = http.StatusOK
+		h.state.record(scenario, method, route, status, h.now())
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(status)
+		flush(w)
+		h.waitBeforeHeaders(r.Context())
+		return
+	case "periodic-sse":
+		status = http.StatusOK
+		h.state.record(scenario, method, route, status, h.now())
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(status)
+		writePeriodicResponsesStream(r.Context(), w, h.periodicDelay)
+		return
 	}
 
 	status = http.StatusOK
 	h.state.record(scenario, method, route, status, h.now())
 	setSuccessContentType(w.Header(), scenario, request.Stream)
+	if scenario == "oversized-json-response" {
+		w.Header().Set("X-N2API-E2E-Canary", "must-not-pass")
+		writeJSONBody(w, map[string]any{
+			"id":      "oversized_mock",
+			"object":  "chat.completion",
+			"padding": strings.Repeat("response-canary", 2048),
+		})
+		return
+	}
 	switch route {
 	case "/v1/models":
 		writeModels(w)
@@ -538,6 +568,36 @@ func writeResponsesStream(w http.ResponseWriter, scenario string) {
 	setResponsesUsage(response, scenario)
 	writeSSEEvent(w, "response.completed", map[string]any{
 		"type": "response.completed", "response": response,
+	})
+	flush(w)
+}
+
+func writePeriodicResponsesStream(ctx context.Context, w http.ResponseWriter, delay time.Duration) {
+	if delay <= 0 {
+		delay = defaultPeriodicDelay
+	}
+	writeSSEEvent(w, "response.created", map[string]any{
+		"type":     "response.created",
+		"response": map[string]any{"id": "resp_periodic", "status": "in_progress", "model": mockModelID},
+	})
+	flush(w)
+	for index := 0; index < 4; index++ {
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		_, _ = io.WriteString(w, ": keep-alive\n\n")
+		flush(w)
+	}
+	writeSSEEvent(w, "response.completed", map[string]any{
+		"type": "response.completed",
+		"response": map[string]any{
+			"id": "resp_periodic", "status": "completed", "model": mockModelID,
+			"usage": map[string]any{"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+		},
 	})
 	flush(w)
 }
