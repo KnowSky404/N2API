@@ -1258,11 +1258,12 @@ Inbound HTTP connections use `N2API_HTTP_IDLE_TIMEOUT_SECONDS` (60 seconds by
 default) and `N2API_HTTP_MAX_HEADER_BYTES` (1 MiB by default). Model-routed POST
 requests arm a per-request read deadline after gateway and client-key admission
 and before reading the complete body; `N2API_HTTP_REQUEST_BODY_TIMEOUT_SECONDS`
-defaults to 30 seconds. The deadline is cleared immediately after the body read
-on success and error paths. A slow upload that reaches the deadline returns
-`408` with `request_body_timeout` and releases both admission slots. N2API does
-not set a global HTTP `WriteTimeout`, because that would truncate healthy long
-SSE responses.
+defaults to 30 seconds. The deadline is cleared after the body read returns
+while the request context remains active. When the deadline or request
+cancellation has already fired, it remains in effect until the handler unwinds;
+every path still releases both admission slots. A slow upload that reaches the
+deadline returns `408` with `request_body_timeout`. N2API does not set a global
+HTTP `WriteTimeout`, because that would truncate healthy long SSE responses.
 
 Outbound gateway connections use
 `N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS` (10 seconds by default),

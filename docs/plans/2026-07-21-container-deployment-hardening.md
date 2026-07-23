@@ -1,7 +1,7 @@
 # Container And Deployment Hardening Plan
 
-Status: Tasks 1-6 implemented locally; owner loopback acceptance and authorized
-CI/release evidence remain
+Status: Tasks 1-6 are on GitHub `main`; owner loopback acceptance and formal
+release evidence remain
 Public API changes: additive health and version endpoints
 Data migration: none
 
@@ -9,23 +9,23 @@ Data migration: none
 
 | Dimension | Status | Evidence and remaining gate |
 | --- | --- | --- |
-| `design` | complete | Probe separation, non-root execution, runtime restrictions, explicit host binding, build identity, and dependency pinning are defined. Loopback is the accepted release default. |
+| `design` | complete | Probe separation, non-root execution, runtime restrictions, explicit host binding, build identity, and dependency pinning are defined. Loopback is the provisional release default pending owner acceptance. |
 | `implementation` | complete | Local commits `86a72bc`, `d6321c6`, `34eb1d4`, `b843c97`, `bc524f6`, and `e6c55a5` implement Tasks 1-6. |
-| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `merged` | complete | All six cited commits are on GitHub `main` at `3664abe`. |
 | `local_tests` | partial | Local Compose and image contracts cover probes, non-root identity, restrictions, host binding, and build metadata. Remote multi-platform execution is not local evidence. |
-| `ci` | pending | No GitHub Actions run contains the local commits. AMD64 and ARM64 image jobs remain unverified remotely. |
-| `release_artifact` | pending | No published multi-platform digest, SBOM, scan, or attestation is tied to the local commits. |
+| `ci` | complete | `CI Image` run `29976822364` succeeded for `3664abe`, including Test, AMD64/ARM64 image smoke, multi-platform publication, platform SBOMs, Trivy scans, and attestations. |
+| `release_artifact` | partial | Run `29976822364` published a tested SHA multi-platform digest with SBOM, scan, and attestation evidence. No CalVer release newer than `2026071701` has promoted it. |
 | `operator_acceptance` | pending | Confirm the chosen loopback/reverse-proxy deployment, writable mounts, graceful shutdown, and externally observed readiness. |
-| `owner_decision` | complete | Release Compose defaults to `127.0.0.1`; LAN, public, IPv6, or dual-stack exposure requires explicit operator configuration. |
+| `owner_decision` | pending | Release Compose provisionally defaults to `127.0.0.1`; owner acceptance of that default and the intended reverse-proxy topology is still required. |
 
-## Current Baseline
+## Starting Baseline
 
-The release pipeline already pins GitHub Actions by commit, smoke-tests amd64
-and arm64 images, verifies tested image digests, emits attestations, and promotes
-the tested manifest into CalVer releases. Runtime defaults are weaker: the
-image runs as root, N2API has no container healthcheck, Compose publishes on all
-interfaces, and hardening flags are absent. Base images and Bun are not fully
-reproducibly pinned.
+Before this plan, the release pipeline pinned GitHub Actions by commit,
+smoke-tested amd64 and arm64 images, verified tested image digests, emitted
+attestations, and promoted the tested manifest into CalVer releases. Runtime
+defaults were weaker: the image ran as root, N2API had no container healthcheck,
+Compose published on all interfaces, and hardening flags were absent. Base
+images and Bun were not fully reproducibly pinned.
 
 ## Task 1: Separate Liveness And Readiness
 
@@ -91,8 +91,8 @@ HTML health responses.
 
 ## Task 2: Run The Application As Non-root
 
-Task status: completed locally on 2026-07-21; amd64/arm64 CI smoke pending the
-next authorized push
+Task status: completed; AMD64 and ARM64 smoke passed in `CI Image` run
+`29976822364`
 
 ### Goal
 
@@ -147,8 +147,7 @@ matrix now enforces the same contract for ARM64 and AMD64 before publication.
 
 ## Task 3: Apply Compose Runtime Restrictions
 
-Task status: completed locally on 2026-07-21; CI enforcement pending the next
-authorized push
+Task status: completed; CI enforcement passed in run `29976822364`
 
 ### Goal
 
@@ -242,8 +241,8 @@ Release startup has a documented, tested binding and no ambiguous public default
 
 ## Task 5: Expose Build Identity
 
-Task status: completed locally on 2026-07-21; amd64/arm64 CI smoke and release
-promotion verification pending the next authorized push
+Task status: completed; AMD64/ARM64 CI smoke passed in run `29976822364`, while
+formal CalVer release promotion remains pending
 
 ### Goal
 
@@ -285,9 +284,9 @@ manifest.
 
 ## Task 6: Pin Maintainable Dependencies
 
-Task status: dependency pins completed locally on 2026-07-21; automated update
-configuration is tracked by Repository Governance Task 3, and amd64 execution
-remains pending the next authorized push
+Task status: dependency pins completed; automated update configuration is
+tracked by Repository Governance Task 3, and both image architectures passed
+run `29976822364`
 
 ### Goal
 
@@ -321,8 +320,8 @@ between `go.mod` and container builds. Release Compose requires an explicit
 `N2API_IMAGE` and no longer falls back to `latest`. A CI preflight rejects
 missing digests or toolchain drift. Every pinned manifest includes amd64 and
 arm64; native arm64 main/E2E builds and the PostgreSQL-backed gateway plus both
-SDK contract suites passed locally. The existing image matrix will execute the
-amd64 build after the next authorized push.
+SDK contract suites passed locally. Run `29976822364` then executed and passed
+the existing AMD64 and ARM64 image matrix on GitHub.
 
 ### Commit
 

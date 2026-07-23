@@ -10,7 +10,7 @@ Data migration: alert rules/actions and delivery state
 | --- | --- | --- |
 | `design` | partial | Rules, encrypted actions, bounded dispatch, recovery semantics, and sixteen operational slices are defined. Fallback, 5xx, latency, storage, and version policies still need owner or external-monitor decisions. |
 | `implementation` | partial | Local commits from `06b06c4` through `e643a2b` implement Tasks 1-3 and sixteen Task 4 slices; `57029b9` adds bounded queue and delivery metrics. Remaining policy-dependent signals are not implemented. |
-| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `merged` | partial | The main alerting implementation range is on GitHub `main` at `3664abe`; the later metrics commit remains local. |
 | `local_tests` | partial | PostgreSQL, dispatcher, adapter, recovery, admin UI, template, retention, cancellation, queue, and metric tests cover implemented slices. Real destinations and remaining policies are outside local evidence. |
 | `ci` | pending | No GitHub Actions run contains the local alerting commits. |
 | `release_artifact` | pending | No tested release digest contains the alerting implementation. |

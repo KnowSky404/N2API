@@ -10,9 +10,9 @@ Data migration: none
 | Dimension | Status | Evidence and remaining gate |
 | --- | --- | --- |
 | `design` | partial | Security policy, dependency updates, source/image scanning, exceptions, stable-digest rescans, and recommended protections are defined. License selection remains open. |
-| `implementation` | partial | Local commits `7e31ad9`, `77518c7`, `387fd7b`, `7f70f9c`, `9f4028c`, `02cc38c`, `d29d83d`, `6e7cf28`, and `f70dcd2` implement repository files and workflows. No `LICENSE` or remote rule change exists. |
-| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
-| `local_tests` | partial | Static workflow, action-pin, exception, audit, SBOM, Trivy, and policy contracts are locally testable. GitHub-hosted CodeQL and registry evidence are not local tests. |
+| `implementation` | partial | The cited governance commits plus local `e59ad6c` and `6863e43` implement repository files, strict issue-form validation, and lint-clean workflows. No `LICENSE` or remote rule change exists. |
+| `merged` | partial | `77518c7` and `9f4028c` are on GitHub `main` at `3664abe`; the remaining cited governance work and later validator/lint fixes remain local. |
+| `local_tests` | complete | The issue-form validator, exact actionlint `v1.7.12` with ShellCheck `0.10.0`, action pins, exception evaluator, and security policy contracts pass locally. GitHub-hosted CodeQL and registry evidence remain CI gates. |
 | `ci` | pending | No GitHub Actions run contains the local governance commits. CodeQL, dependency scans, platform scans, and scheduled stable-digest rescan remain unverified remotely. |
 | `release_artifact` | pending | No AMD64/ARM64 SBOM, Trivy report, provenance, attestation, or release preview is tied to a tested digest from these commits. |
 | `operator_acceptance` | pending | Review security evidence, apply the documented repository ruleset and protected release environment, and approve any expiring exception. |

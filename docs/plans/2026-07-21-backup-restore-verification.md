@@ -10,7 +10,7 @@ Data migration: none initially
 | --- | --- | --- |
 | `design` | partial | The isolated restore, drill record, and non-sensitive export contracts are defined. Import conflict and natural-key semantics remain owner-blocked. |
 | `implementation` | partial | Local commits `93e6a52`, `e229053`, `5ed5a1b`, `0400c23`, `b9c9bb7`, and `2280d95` cover fixture restore, drill evidence, redacted export, and restore failure scenarios. Import is not implemented. |
-| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `merged` | partial | Four cited commits are on GitHub `main` at `3664abe`; `b9c9bb7` and `2280d95` remain local. |
 | `local_tests` | partial | Generated current-schema and migration fixtures cover successful restore, wrong key, corrupt archive, interruption, cleanup, readiness, and mock gateway checks. This is not a real-backup drill. |
 | `ci` | pending | No GitHub Actions run contains the local commits or restore driver. |
 | `release_artifact` | pending | No release image has been accepted through a restore drill. |

@@ -10,7 +10,7 @@ Data migration: cursor/query index changes only after measurement
 | --- | --- | --- |
 | `design` | complete | Cursor paging, URL-backed UI state, bounded retention, streaming export, and measured index contracts are defined. |
 | `implementation` | complete | Local commits `3084733`, `e9aea72`, `1a5be6e`, `8eb9b10`, and `37526b3` implement Tasks 1-5; `7e9d5d5`, `5c2a9b4`, and `00aab64` close correlation and write-failure observability. |
-| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `merged` | partial | The five planned lifecycle commits are on GitHub `main` at `3664abe`; the three later observability commits remain local. |
 | `local_tests` | complete | Local tests cover signed cursors, filtering/paging, retention locks and cancellation, bounded CSV/JSONL export, representative query plans, correlation IDs, and best-effort write-failure state. |
 | `ci` | pending | No GitHub Actions run contains the local commits. |
 | `release_artifact` | pending | No tested release digest contains the lifecycle changes. |

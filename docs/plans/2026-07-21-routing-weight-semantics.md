@@ -10,7 +10,7 @@ Data migration: none
 | --- | --- | --- |
 | `design` | complete | Strict descending scheduling-preference tiers within the same priority are the accepted contract; proportional weighted scheduling is explicitly rejected. |
 | `implementation` | complete | Local commits `054e31e`, `27f0510`, `f6e3897`, and `8f1aabe` align UI, API diagnostics, manual text, and this plan while preserving `LoadFactor`, `loadFactor`, and `load_factor`. |
-| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `merged` | partial | `054e31e` is on GitHub `main` at `3664abe`; the other three cited terminology commits remain local. |
 | `local_tests` | complete | Scheduler distribution tests and focused provider-page tests cover strict tiers, same-priority ordering, diagnostics, and compatibility names without a weighted scheduler. |
 | `ci` | pending | No GitHub Actions run contains the local naming and documentation commits. |
 | `release_artifact` | pending | No tested release digest contains the updated operator-facing labels. |
