@@ -133,6 +133,48 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		waitForProcessListenerClosed(t, port)
 		waitForInstanceLockAvailable(t, pool)
 	})
+
+	t.Run("does not start a metrics listener when disabled", func(t *testing.T) {
+		port := reserveProcessTestPort(t)
+		metricsPort := reserveProcessTestPort(t)
+		process := startN2APIProcess(t, binaryPath, databaseURL, adminUsername, adminPassword, encryptionSecret, port,
+			"N2API_METRICS_ENABLED=false",
+			fmt.Sprintf("N2API_METRICS_PORT=%d", metricsPort),
+		)
+		waitForProcessListener(t, process, port, databaseURL, adminPassword, encryptionSecret)
+		if connection, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", metricsPort), 250*time.Millisecond); err == nil {
+			_ = connection.Close()
+			t.Fatal("disabled metrics configuration started a listener")
+		}
+		if strings.Contains(process.logs.String(), "starting n2api metrics") {
+			t.Fatalf("disabled metrics configuration entered listener startup; logs: %s", processLogs(process, databaseURL, adminPassword, encryptionSecret))
+		}
+		stopN2APIProcess(t, process, databaseURL, adminPassword, encryptionSecret)
+		waitForProcessListenerClosed(t, port)
+	})
+
+	t.Run("exits non-zero when the enabled metrics listener cannot bind", func(t *testing.T) {
+		occupied, err := net.Listen("tcp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("occupy metrics port: %v", err)
+		}
+		t.Cleanup(func() { _ = occupied.Close() })
+		metricsPort := occupied.Addr().(*net.TCPAddr).Port
+		port := reserveProcessTestPort(t)
+		process := startN2APIProcess(t, binaryPath, databaseURL, adminUsername, adminPassword, encryptionSecret, port,
+			"N2API_METRICS_ENABLED=true",
+			fmt.Sprintf("N2API_METRICS_PORT=%d", metricsPort),
+		)
+		waitErr := waitForProcessExit(t, process, 15*time.Second)
+		if waitErr == nil || process.command.ProcessState == nil || process.command.ProcessState.ExitCode() == 0 {
+			t.Fatalf("process exit after metrics bind failure = %v, want non-zero; logs: %s", waitErr, processLogs(process, databaseURL, adminPassword, encryptionSecret))
+		}
+		if !strings.Contains(process.logs.String(), "metrics_server_stopped") {
+			t.Fatalf("metrics bind failure did not report metrics_server_stopped; logs: %s", processLogs(process, databaseURL, adminPassword, encryptionSecret))
+		}
+		waitForProcessListenerClosed(t, port)
+		waitForInstanceLockAvailable(t, pool)
+	})
 }
 
 func requireIsolatedProcessTestDatabase(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -189,11 +231,11 @@ func reserveProcessTestPort(t *testing.T) int {
 	return port
 }
 
-func startN2APIProcess(t *testing.T, binaryPath, databaseURL, adminUsername, adminPassword, encryptionSecret string, port int) *n2apiTestProcess {
+func startN2APIProcess(t *testing.T, binaryPath, databaseURL, adminUsername, adminPassword, encryptionSecret string, port int, overrides ...string) *n2apiTestProcess {
 	t.Helper()
 	logs := &lockedProcessLog{}
 	command := exec.Command(binaryPath)
-	command.Env = n2apiProcessTestEnv(databaseURL, adminUsername, adminPassword, encryptionSecret, port)
+	command.Env = overrideProcessTestEnv(n2apiProcessTestEnv(databaseURL, adminUsername, adminPassword, encryptionSecret, port), overrides...)
 	command.Stdout = logs
 	command.Stderr = logs
 	if err := command.Start(); err != nil {
@@ -219,6 +261,24 @@ func startN2APIProcess(t *testing.T, binaryPath, databaseURL, adminUsername, adm
 		}
 	})
 	return process
+}
+
+func overrideProcessTestEnv(environment []string, overrides ...string) []string {
+	for _, override := range overrides {
+		key, _, ok := strings.Cut(override, "=")
+		if !ok || key == "" {
+			continue
+		}
+		filtered := environment[:0]
+		for _, item := range environment {
+			itemKey, _, _ := strings.Cut(item, "=")
+			if itemKey != key {
+				filtered = append(filtered, item)
+			}
+		}
+		environment = append(filtered, override)
+	}
+	return environment
 }
 
 func n2apiProcessTestEnv(databaseURL, adminUsername, adminPassword, encryptionSecret string, port int) []string {
