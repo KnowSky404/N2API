@@ -4,6 +4,19 @@ Status: Tasks 1-3 completed locally on 2026-07-21; Task 4 is owner-blocked
 Public API changes: optional non-sensitive configuration export/import
 Data migration: none initially
 
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | partial | The isolated restore, drill record, and non-sensitive export contracts are defined. Import conflict and natural-key semantics remain owner-blocked. |
+| `implementation` | partial | Local commits `93e6a52`, `e229053`, `5ed5a1b`, `0400c23`, `b9c9bb7`, and `2280d95` cover fixture restore, drill evidence, redacted export, and restore failure scenarios. Import is not implemented. |
+| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | partial | Generated current-schema and migration fixtures cover successful restore, wrong key, corrupt archive, interruption, cleanup, readiness, and mock gateway checks. This is not a real-backup drill. |
+| `ci` | pending | No GitHub Actions run contains the local commits or restore driver. |
+| `release_artifact` | pending | No release image has been accepted through a restore drill. |
+| `operator_acceptance` | pending | Restore an encrypted off-host operator backup in isolation, validate the historical keyring and gateway, record duration, and obtain owner sign-off. |
+| `owner_decision` | partial | Real restore evidence is required. Import conflict defaults and natural-key strategy remain undecided. |
+
 ## Current Baseline
 
 `docs/manual.md` documents PostgreSQL custom-format backups and checking a dump

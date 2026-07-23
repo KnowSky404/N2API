@@ -4,6 +4,19 @@ Status: in progress; Tasks 1-3 and the first sixteen Task 4 slices completed loc
 Public API changes: additive authenticated alert settings and test endpoint
 Data migration: alert rules/actions and delivery state
 
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | partial | Rules, encrypted actions, bounded dispatch, recovery semantics, and sixteen operational slices are defined. Fallback, 5xx, latency, storage, and version policies still need owner or external-monitor decisions. |
+| `implementation` | partial | Local commits from `06b06c4` through `e643a2b` implement Tasks 1-3 and sixteen Task 4 slices; `57029b9` adds bounded queue and delivery metrics. Remaining policy-dependent signals are not implemented. |
+| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | partial | PostgreSQL, dispatcher, adapter, recovery, admin UI, template, retention, cancellation, queue, and metric tests cover implemented slices. Real destinations and remaining policies are outside local evidence. |
+| `ci` | pending | No GitHub Actions run contains the local alerting commits. |
+| `release_artifact` | pending | No tested release digest contains the alerting implementation. |
+| `operator_acceptance` | pending | Configure a real encrypted action, review disabled templates, send a test notification, exercise recovery, and verify queue/delivery metrics without disclosing destination secrets. |
+| `owner_decision` | partial | Existing templates remain explicit and disabled by default. Rolling windows, thresholds, storage source, version source, and external monitoring remain undecided. |
+
 ## Current Baseline
 
 System Events provide validated categories, severities, outcomes, bounded

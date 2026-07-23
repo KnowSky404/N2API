@@ -1,8 +1,21 @@
 # Metrics And Tracing Plan
 
-Status: in progress; Tasks 1 and 2 completed locally, tracing remains unplanned
+Status: selected metrics scope completed locally; OpenTelemetry tracing is not selected for this iteration
 Public API changes: optional `/metrics` on a separate listener; no telemetry by default
 Data migration: none
+
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | complete | Commit `20b42e6` defines the bounded metrics contract. The current iteration explicitly excludes OpenTelemetry tracing. |
+| `implementation` | complete | Local commits `39389e6` and `57029b9` implement the selected optional Prometheus scope, including alerting, readiness, and background-task state. |
+| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | complete | Focused tests cover disabled mode, bind/auth policy, loopback listener, bind failure, concurrency, SSE lifetime, cancellation, shutdown, labels, secret canaries, readiness, alert queue/delivery, histogram output, and a measured 1,516-series owned budget below 1,600. |
+| `ci` | pending | No GitHub Actions run contains the metrics commits. |
+| `release_artifact` | pending | No published image digest contains the metrics listener. |
+| `operator_acceptance` | pending | Scrape the deployed loopback/private listener, verify bearer handling where applicable, and connect an external readiness monitor without exposing the listener publicly. |
+| `owner_decision` | complete | Metrics are disabled by default on a separate loopback listener; non-loopback requires bearer auth; tracing is out of scope. |
 
 ## Current Baseline
 

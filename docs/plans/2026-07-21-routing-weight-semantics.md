@@ -4,6 +4,19 @@ Status: Tasks 1 and 3A locally completed; strict scheduling-preference semantics
 Public API changes: operator-facing labels and diagnostics renamed; `loadFactor` and scheduler behavior unchanged
 Data migration: none
 
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | complete | Strict descending scheduling-preference tiers within the same priority are the accepted contract; proportional weighted scheduling is explicitly rejected. |
+| `implementation` | complete | Local commits `054e31e`, `27f0510`, `f6e3897`, and `8f1aabe` align UI, API diagnostics, manual text, and this plan while preserving `LoadFactor`, `loadFactor`, and `load_factor`. |
+| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | complete | Scheduler distribution tests and focused provider-page tests cover strict tiers, same-priority ordering, diagnostics, and compatibility names without a weighted scheduler. |
+| `ci` | pending | No GitHub Actions run contains the local naming and documentation commits. |
+| `release_artifact` | pending | No tested release digest contains the updated operator-facing labels. |
+| `operator_acceptance` | pending | Confirm the Providers and Models workflows render the terminology clearly on desktop and mobile and that operators do not interpret tiers as traffic shares. |
+| `owner_decision` | complete | Do not implement weighted least-connections in this iteration. Reopening it requires a new explicit decision. |
+
 ## Current Baseline
 
 Provider repository queries and routing-preview sorting order lower pool

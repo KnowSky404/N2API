@@ -4,6 +4,19 @@ Status: in progress; Tasks 1-2 completed locally on 2026-07-21
 Public API changes: CLI first; optional admin status later
 Data migration: versioned ciphertext envelope and rotation run state
 
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | complete | Envelope compatibility, lifecycle inventory, bounded OAuth-state cleanup, rotation preflight, resumability, and retirement gates are defined. |
+| `implementation` | partial | Local commits `f7a3e88`, `4b1c9af`, `0afe82d`, and `e5e5b58` implement safe reads, inventory, cleanup, and the fail-closed preflight. Re-encryption and previous-key retirement have not run. |
+| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | partial | Unit and PostgreSQL tests cover envelope classes, deterministic redacted output, cleanup bounds/cancellation/concurrency, and rotation-gate rejection. They do not prove a production keyring. |
+| `ci` | pending | No GitHub Actions run contains the local commits. |
+| `release_artifact` | pending | No release artifact has been restored with both current and required historical keys. |
+| `operator_acceptance` | pending | Supply the correct historical keyring without logging it, restore a real backup in isolation, approve the inventory, then run rotation and retirement drills. |
+| `owner_decision` | complete | Re-encryption must remain blocked until every required secret is readable and a recent real-backup restore record is accepted. |
+
 ## Current Baseline
 
 The runtime now derives named AES-256 keys by SHA-256 hashing the configured

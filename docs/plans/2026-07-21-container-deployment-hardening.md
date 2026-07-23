@@ -5,6 +5,19 @@ CI/release evidence remain
 Public API changes: additive health and version endpoints
 Data migration: none
 
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | complete | Probe separation, non-root execution, runtime restrictions, explicit host binding, build identity, and dependency pinning are defined. Loopback is the accepted release default. |
+| `implementation` | complete | Local commits `86a72bc`, `d6321c6`, `34eb1d4`, `b843c97`, `bc524f6`, and `e6c55a5` implement Tasks 1-6. |
+| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | partial | Local Compose and image contracts cover probes, non-root identity, restrictions, host binding, and build metadata. Remote multi-platform execution is not local evidence. |
+| `ci` | pending | No GitHub Actions run contains the local commits. AMD64 and ARM64 image jobs remain unverified remotely. |
+| `release_artifact` | pending | No published multi-platform digest, SBOM, scan, or attestation is tied to the local commits. |
+| `operator_acceptance` | pending | Confirm the chosen loopback/reverse-proxy deployment, writable mounts, graceful shutdown, and externally observed readiness. |
+| `owner_decision` | complete | Release Compose defaults to `127.0.0.1`; LAN, public, IPv6, or dual-stack exposure requires explicit operator configuration. |
+
 ## Current Baseline
 
 The release pipeline already pins GitHub Actions by commit, smoke-tests amd64

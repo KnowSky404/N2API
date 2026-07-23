@@ -4,6 +4,19 @@ Status: in progress
 Public API changes: additive admin endpoints; stricter mutation and proxy behavior
 Data migration: additive session metadata in Task 4
 
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | complete | Tasks 1-5 define the accepted security boundary; the owner decision preserves the password-changing session and revokes the others. |
+| `implementation` | partial | Local commits `4ab6f46`, `5a70617`, `ba74c8f`, `d0f5496`, `3b9ed3a`, and `ebfe260` implement Tasks 1-5. Optional TOTP is intentionally not implemented. |
+| `merged` | pending | The cited commits exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | partial | Scoped trusted-proxy, login-throttle, browser-policy, session, password-change, and startup-validation tests exist. Real reverse-proxy and browser acceptance remain separate gates. |
+| `ci` | pending | No GitHub Actions run contains the local commits. |
+| `release_artifact` | pending | No tested release digest contains the local commits. |
+| `operator_acceptance` | pending | Validate the real reverse proxy, cookie/browser flows, and password-change session behavior in the deployed environment. |
+| `owner_decision` | partial | Password-change behavior is accepted. TOTP remains owner-blocked until recovery codes, key backup, and lost-device recovery are designed. |
+
 ## Current Baseline And Threat Decision
 
 Sessions are random, hashed in PostgreSQL, HttpOnly, SameSite=Lax, and scoped to

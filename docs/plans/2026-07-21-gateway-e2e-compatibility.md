@@ -4,6 +4,19 @@ Status: in progress
 Public API changes: none; tests validate existing `/v1/*` contracts
 Data migration: none
 
+## Evidence Status (2026-07-23)
+
+| Dimension | Status | Evidence and remaining gate |
+| --- | --- | --- |
+| `design` | complete | Tasks 1-5 define PostgreSQL-backed gateway, protocol/client, mock-upstream, and sanitized failure-evidence contracts. |
+| `implementation` | complete | Local commits `e67600a`, `db02f13`, `3dd65df`, `f22c678`, and `9fcf9d6` implement the planned harness; later boundary, transport, affinity, cancellation, and correlation fixes build on it. |
+| `merged` | pending | The cited commits and later fixes exist only on the local `main` branch, which is ahead of `origin/main`; no remote merge is claimed. |
+| `local_tests` | partial | Mock PostgreSQL/upstream, raw HTTP, SDK, streaming, fallback, affinity, proxy, response-bound, cancellation, and artifact-redaction coverage exists. Real OAuth/Codex and reverse-proxy acceptance remain external. |
+| `ci` | pending | No GitHub Actions run contains the local commits or later gateway fixes. |
+| `release_artifact` | pending | No tested or published image digest contains the local commits. |
+| `operator_acceptance` | pending | Exercise a real OpenAI OAuth account, Codex CLI, reverse proxy, streaming, and request-log attribution without exposing credentials. |
+| `owner_decision` | complete | Protected real-account checks remain manual and secret-safe; they must not upload tokens, bodies, dumps, or callback material. |
+
 ## Current Baseline
 
 `backend/internal/gateway/proxy_test.go` already covers most gateway branches
