@@ -166,13 +166,15 @@ jobs:
             fi
           fi
 
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "source_digest=$source_digest" >> "$GITHUB_OUTPUT"
-          echo "source_platforms=linux/amd64, linux/arm64" >> "$GITHUB_OUTPUT"
-          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
-          echo "source_tag=$source_tag" >> "$GITHUB_OUTPUT"
-          echo "resume=$resume" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "image=$image"
+            echo "source_digest=$source_digest"
+            echo "source_platforms=linux/amd64, linux/arm64"
+            echo "source_sha=$source_sha"
+            echo "source_tag=$source_tag"
+            echo "resume=$resume"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify tested image SPDX attestation
         env:
@@ -232,12 +234,12 @@ jobs:
             printf '# N2API %s\n\n' "$VERSION"
             cat release-notes.md
             printf '\n## Container Image\n\n'
-            printf -- '- Version: `%s:%s`\n' "$IMAGE" "$VERSION"
-            printf -- '- Stable: `%s:latest`\n' "$IMAGE"
-            printf -- '- Tested source: `%s:%s`\n' "$IMAGE" "$SOURCE_TAG"
-            printf -- '- Source commit: `%s`\n' "$SOURCE_SHA"
-            printf -- '- Manifest digest: `%s`\n' "$SOURCE_DIGEST"
-            printf -- '- Platforms: `%s`\n\n' "$SOURCE_PLATFORMS"
+            printf -- "- Version: \`%s:%s\`\n" "$IMAGE" "$VERSION"
+            printf -- "- Stable: \`%s:latest\`\n" "$IMAGE"
+            printf -- "- Tested source: \`%s:%s\`\n" "$IMAGE" "$SOURCE_TAG"
+            printf -- "- Source commit: \`%s\`\n" "$SOURCE_SHA"
+            printf -- "- Manifest digest: \`%s\`\n" "$SOURCE_DIGEST"
+            printf -- "- Platforms: \`%s\`\n\n" "$SOURCE_PLATFORMS"
             printf '%s\n' \
               '## Supply Chain Evidence' \
               '' \
@@ -251,14 +253,14 @@ jobs:
               '## Upgrade' \
               '' \
               '1. Back up PostgreSQL.' \
-              '2. Set `N2API_IMAGE` to the immutable version tag above.' \
-              '3. Run `docker compose -f deploy/compose.release.yaml --env-file .env pull`.' \
-              '4. Run `docker compose -f deploy/compose.release.yaml --env-file .env up -d`.' \
-              '5. Verify `GET /readyz` and `GET /livez`.' \
+              "2. Set \`N2API_IMAGE\` to the immutable version tag above." \
+              "3. Run \`docker compose -f deploy/compose.release.yaml --env-file .env pull\`." \
+              "4. Run \`docker compose -f deploy/compose.release.yaml --env-file .env up -d\`." \
+              "5. Verify \`GET /readyz\` and \`GET /livez\`." \
               '' \
               '## Rollback' \
               '' \
-              'Set `N2API_IMAGE` to the previous immutable version, then run the pull and up commands above. Restore PostgreSQL only when a database migration requires it.' \
+              "Set \`N2API_IMAGE\` to the previous immutable version, then run the pull and up commands above. Restore PostgreSQL only when a database migration requires it." \
               '' \
               '## Full Changelog' \
               ''
@@ -439,9 +441,9 @@ jobs:
 
           {
             printf '## Published\n\n'
-            printf -- '- Release: `%s`\n' "$VERSION"
-            printf -- '- Source: `%s`\n' "$SOURCE_SHA"
-            printf -- '- Image: `%s:%s`\n' "${{ needs.prepare.outputs.image }}" "$VERSION"
-            printf -- '- Digest: `%s`\n' "${{ needs.prepare.outputs.source_digest }}"
-            printf -- '- Platforms: `%s`\n' "${{ needs.prepare.outputs.source_platforms }}"
+            printf -- "- Release: \`%s\`\n" "$VERSION"
+            printf -- "- Source: \`%s\`\n" "$SOURCE_SHA"
+            printf -- "- Image: \`%s:%s\`\n" "${{ needs.prepare.outputs.image }}" "$VERSION"
+            printf -- "- Digest: \`%s\`\n" "${{ needs.prepare.outputs.source_digest }}"
+            printf -- "- Platforms: \`%s\`\n" "${{ needs.prepare.outputs.source_platforms }}"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -83,15 +83,17 @@ jobs:
             exit 1
           fi
 
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "digest=$digest"
+            echo "image=$image"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
 
           {
             printf '### Stable image resolution\n\n'
-            printf -- '- Release: `%s`\n' "$version"
-            printf -- '- Image: `%s@%s`\n' "$image" "$digest"
-            printf -- '- Platforms: `linux/amd64`, `linux/arm64`\n'
+            printf -- "- Release: \`%s\`\n" "$version"
+            printf -- "- Image: \`%s@%s\`\n" "$image" "$digest"
+            printf -- "- Platforms: \`linux/amd64\`, \`linux/arm64\`\n"
           } >> "$GITHUB_STEP_SUMMARY"
 
   scan:
@@ -130,10 +132,12 @@ jobs:
           set -euo pipefail
           evidence_dir="$RUNNER_TEMP/n2api-stable-image-evidence/${{ matrix.suffix }}"
           mkdir -p "$evidence_dir"
-          echo "EVIDENCE_DIR=$evidence_dir" >> "$GITHUB_ENV"
-          echo "SBOM_FILE=$evidence_dir/n2api-stable-sbom-${{ matrix.suffix }}.spdx.json" >> "$GITHUB_ENV"
-          echo "TRIVY_FILE=$evidence_dir/n2api-stable-trivy-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
-          echo "METADATA_FILE=$evidence_dir/n2api-stable-evidence-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
+          {
+            echo "EVIDENCE_DIR=$evidence_dir"
+            echo "SBOM_FILE=$evidence_dir/n2api-stable-sbom-${{ matrix.suffix }}.spdx.json"
+            echo "TRIVY_FILE=$evidence_dir/n2api-stable-trivy-${{ matrix.suffix }}.json"
+            echo "METADATA_FILE=$evidence_dir/n2api-stable-evidence-${{ matrix.suffix }}.json"
+          } >> "$GITHUB_ENV"
 
       - name: Generate platform SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
@@ -219,8 +223,8 @@ jobs:
 
           {
             printf '### Stable image vulnerability evidence (%s)\n\n' "$PLATFORM"
-            printf -- '- Release: `%s`\n' "$RELEASE_VERSION"
-            printf -- '- Digest: `%s`\n\n' "$PARENT_DIGEST"
+            printf -- "- Release: \`%s\`\n" "$RELEASE_VERSION"
+            printf -- "- Digest: \`%s\`\n\n" "$PARENT_DIGEST"
             printf '| Severity | Findings |\n'
             printf '| --- | ---: |\n'
             for severity in UNKNOWN LOW MEDIUM HIGH CRITICAL; do

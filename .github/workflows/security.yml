@@ -49,8 +49,16 @@ jobs:
         run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
       - name: Validate GitHub Actions workflows
+        shell: bash
         run: |
-          $RUNNER_TEMP/n2api-security-bin/actionlint
+          set -euo pipefail
+          shellcheck_path="$(command -v shellcheck)"
+          shellcheck_version="$(shellcheck --version | sed -n 's/^version: //p')"
+          if [ "$shellcheck_version" != "0.10.0" ]; then
+            echo "Expected ShellCheck 0.10.0, found ${shellcheck_version:-unknown}" >&2
+            exit 1
+          fi
+          "$RUNNER_TEMP/n2api-security-bin/actionlint" -shellcheck "$shellcheck_path"
           bash dev/ci/verify-pinned-dependencies.sh
 
   codeql:
@@ -118,7 +126,7 @@ jobs:
 
       - name: Scan reachable Go vulnerabilities
         working-directory: backend
-        run: $RUNNER_TEMP/n2api-security-bin/govulncheck -json ./... > "$RUNNER_TEMP/govulncheck.json"
+        run: '"$RUNNER_TEMP/n2api-security-bin/govulncheck" -json ./... > "$RUNNER_TEMP/govulncheck.json"'
 
       - name: Enforce reachable Go vulnerability policy
         run: dev/ci/evaluate-govulncheck-report.sh "$RUNNER_TEMP/govulncheck.json" security/exceptions.json

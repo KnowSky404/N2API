@@ -458,11 +458,13 @@ jobs:
             echo "Could not resolve commit timestamp for $GITHUB_SHA" >&2
             exit 1
           fi
-          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
-          echo "BUILD_VERSION=sha-${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
-          echo "BUILD_TIME=$(date -u -d "@$commit_epoch" +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
-          echo "SOURCE_URL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" >> "$GITHUB_ENV"
+          {
+            echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}"
+            echo "SHORT_SHA=${GITHUB_SHA:0:12}"
+            echo "BUILD_VERSION=sha-${GITHUB_SHA:0:12}"
+            echo "BUILD_TIME=$(date -u -d "@$commit_epoch" +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "SOURCE_URL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          } >> "$GITHUB_ENV"
 
       - name: Docker metadata
         id: meta
@@ -692,9 +694,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
-          echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
-          echo "LOCAL_IMAGE=n2api:ci-${{ matrix.suffix }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          {
+            echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}"
+            echo "SHORT_SHA=${GITHUB_SHA:0:12}"
+            echo "LOCAL_IMAGE=n2api:ci-${{ matrix.suffix }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_ENV"
 
       - name: Download tested platform image
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
@@ -946,10 +950,12 @@ jobs:
           set -euo pipefail
           evidence_dir="$RUNNER_TEMP/n2api-image-evidence/${{ matrix.suffix }}"
           mkdir -p "$evidence_dir"
-          echo "EVIDENCE_DIR=$evidence_dir" >> "$GITHUB_ENV"
-          echo "SBOM_FILE=$evidence_dir/n2api-sbom-${{ matrix.suffix }}.spdx.json" >> "$GITHUB_ENV"
-          echo "TRIVY_FILE=$evidence_dir/n2api-trivy-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
-          echo "METADATA_FILE=$evidence_dir/n2api-evidence-${{ matrix.suffix }}.json" >> "$GITHUB_ENV"
+          {
+            echo "EVIDENCE_DIR=$evidence_dir"
+            echo "SBOM_FILE=$evidence_dir/n2api-sbom-${{ matrix.suffix }}.spdx.json"
+            echo "TRIVY_FILE=$evidence_dir/n2api-trivy-${{ matrix.suffix }}.json"
+            echo "METADATA_FILE=$evidence_dir/n2api-evidence-${{ matrix.suffix }}.json"
+          } >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
