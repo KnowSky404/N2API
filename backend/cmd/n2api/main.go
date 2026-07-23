@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -310,6 +311,7 @@ func runServer() {
 	server := newHTTPServer(
 		cfg,
 		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester),
+		ctx,
 	)
 
 	serverErrors := make(chan error, 1)
@@ -346,13 +348,19 @@ func runServer() {
 	}
 }
 
-func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
+func newHTTPServer(cfg config.Config, handler http.Handler, baseContext context.Context) *http.Server {
+	if baseContext == nil {
+		baseContext = context.Background()
+	}
 	return &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       cfg.HTTPIdleTimeout,
 		MaxHeaderBytes:    cfg.HTTPMaxHeaderBytes,
+		BaseContext: func(net.Listener) context.Context {
+			return baseContext
+		},
 	}
 }
 

@@ -123,6 +123,7 @@ func TestGatewayDocumentationMatchesRequestBodyBoundaryContract(t *testing.T) {
 			"stable code `upstream_timeout`",
 			"continuous no-data limit",
 			"`upstream_sse_idle_timeout`",
+			"graceful shutdown cancels active uploads and SSE streams",
 		},
 	}
 	for path, wants := range checks {

@@ -1181,6 +1181,9 @@ continuous no-data limit. Each received chunk resets the limit. When it expires,
 N2API closes the upstream body and records `upstream_sse_idle_timeout`; because
 the SSE headers are already committed, the stream closes without appending a
 JSON error object. Client disconnects also close the upstream body immediately.
+The HTTP server derives every request context from the process lifecycle context,
+so graceful shutdown cancels active uploads and SSE streams before waiting for
+connections to drain.
 
 Request Logs keep local gateway rejections diagnosable while client responses stay OpenAI-compatible. Local limit responses still return `rate_limit_exceeded` to clients, but the stored request-log error identifies the guard as `api_key_request_rate_limited`, `api_key_token_rate_limited`, `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, `api_key_cost_budget_exceeded`, `gateway_concurrency_limited`, `api_key_concurrency_limited`, or `provider_account_concurrency_limited`.
 

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -20,12 +23,71 @@ func TestNewHTTPServerAppliesInboundResourceBoundariesWithoutWriteTimeout(t *tes
 		Port:               3000,
 		HTTPIdleTimeout:    75 * time.Second,
 		HTTPMaxHeaderBytes: 512 << 10,
-	}, handler)
+	}, handler, context.Background())
 	if server.Addr != "127.0.0.1:3000" || server.Handler == nil || server.ReadHeaderTimeout != 5*time.Second || server.IdleTimeout != 75*time.Second || server.MaxHeaderBytes != 512<<10 {
 		t.Fatalf("server = %+v", server)
 	}
 	if server.WriteTimeout != 0 || server.ReadTimeout != 0 {
 		t.Fatalf("global timeouts = read:%s write:%s, want zero", server.ReadTimeout, server.WriteTimeout)
+	}
+}
+
+func TestHTTPServerCancelsActiveRequestsWhenBaseContextEnds(t *testing.T) {
+	baseContext, cancelBase := context.WithCancel(context.Background())
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-r.Context().Done()
+		close(requestCanceled)
+	})
+	server := newHTTPServer(config.Config{}, handler, baseContext)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	serveErrors := make(chan error, 1)
+	go func() { serveErrors <- server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		response, requestErr := (&http.Client{Timeout: 2 * time.Second}).Get("http://" + listener.Addr().String())
+		if requestErr == nil {
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+		}
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("active request did not start")
+	}
+
+	cancelBase()
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("active request was not canceled with server base context")
+	}
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		t.Fatalf("Shutdown returned error: %v", err)
+	}
+	select {
+	case err := <-serveErrors:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("Serve returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not stop")
+	}
+	select {
+	case <-clientDone:
+	case <-time.After(time.Second):
+		t.Fatal("client request did not stop")
 	}
 }
 
