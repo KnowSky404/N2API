@@ -11,7 +11,7 @@ Data migration: versioned ciphertext envelope and rotation run state
 | `design` | complete | Envelope compatibility, lifecycle inventory, bounded OAuth-state cleanup, rotation preflight, resumability, and retirement gates are defined. |
 | `implementation` | partial | Local commits `f7a3e88`, `4b1c9af`, `0afe82d`, and `e5e5b58` implement safe reads, inventory, cleanup, and the fail-closed preflight. Re-encryption and previous-key retirement have not run. |
 | `merged` | partial | `f7a3e88` is on GitHub `main` at `3664abe`; the other three cited implementation commits remain local. |
-| `local_tests` | partial | Unit and PostgreSQL tests cover envelope classes, deterministic redacted output, cleanup bounds/cancellation/concurrency, and rotation-gate rejection. They do not prove a production keyring. |
+| `local_tests` | complete | Unit and PostgreSQL tests cover envelope classes, deterministic redacted output, cleanup bounds/cancellation/concurrency, and rotation-gate rejection for the selected gate-only scope. Production-keyring evidence remains under `operator_acceptance`. |
 | `ci` | pending | No GitHub Actions run contains the local commits. |
 | `release_artifact` | pending | No release artifact has been restored with both current and required historical keys. |
 | `operator_acceptance` | pending | Supply the correct historical keyring without logging it, restore a real backup in isolation, approve the inventory, then run rotation and retirement drills. |

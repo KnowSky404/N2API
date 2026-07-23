@@ -12,7 +12,7 @@ Data migration: none
 | `design` | complete | Probe separation, non-root execution, runtime restrictions, explicit host binding, build identity, and dependency pinning are defined. Loopback is the provisional release default pending owner acceptance. |
 | `implementation` | complete | Local commits `86a72bc`, `d6321c6`, `34eb1d4`, `b843c97`, `bc524f6`, and `e6c55a5` implement Tasks 1-6. |
 | `merged` | complete | All six cited commits are on GitHub `main` at `3664abe`. |
-| `local_tests` | partial | Local Compose and image contracts cover probes, non-root identity, restrictions, host binding, and build metadata. Remote multi-platform execution is not local evidence. |
+| `local_tests` | complete | Local Compose and image contracts cover probes, non-root identity, restrictions, host binding, build metadata, single-instance rejection, lock loss, and the explicit unsafe override. Remote multi-platform execution remains under `ci`. |
 | `ci` | complete | `CI Image` run `29976822364` succeeded for `3664abe`, including Test, AMD64/ARM64 image smoke, multi-platform publication, platform SBOMs, Trivy scans, and attestations. |
 | `release_artifact` | partial | Run `29976822364` published a tested SHA multi-platform digest with SBOM, scan, and attestation evidence. No CalVer release newer than `2026071701` has promoted it. |
 | `operator_acceptance` | pending | Confirm the chosen loopback/reverse-proxy deployment, writable mounts, graceful shutdown, and externally observed readiness. |

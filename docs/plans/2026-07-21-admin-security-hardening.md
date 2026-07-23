@@ -11,7 +11,7 @@ Data migration: additive session metadata in Task 4
 | `design` | complete | Tasks 1-5 define the accepted security boundary; the owner decision preserves the password-changing session and revokes the others. |
 | `implementation` | partial | Local commits `4ab6f46`, `5a70617`, `ba74c8f`, `d0f5496`, `3b9ed3a`, and `ebfe260` implement Tasks 1-5. Optional TOTP is intentionally not implemented. |
 | `merged` | partial | Five cited commits are on GitHub `main` at `3664abe`; `ebfe260` and later local fixes are not pushed. |
-| `local_tests` | partial | Scoped trusted-proxy, login-throttle, browser-policy, session, password-change, and startup-validation tests exist. Real reverse-proxy and browser acceptance remain separate gates. |
+| `local_tests` | complete | Scoped trusted-proxy, login-throttle, browser-policy, session, password-change, and startup-validation tests pass for the implemented scope. Real reverse-proxy and browser checks remain under `operator_acceptance`. |
 | `ci` | pending | No GitHub Actions run contains the local commits. |
 | `release_artifact` | pending | No tested release digest contains the local commits. |
 | `operator_acceptance` | pending | Validate the real reverse proxy, cookie/browser flows, and password-change session behavior in the deployed environment. |
