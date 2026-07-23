@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KnowSky404/N2API/security/exceptions.schema.json",
+  "title": "N2API Security Exception Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "exceptions"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "exceptions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/securityException"
+      }
+    }
+  },
+  "$defs": {
+    "securityException": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scanner",
+        "platform",
+        "reason",
+        "owner",
+        "created_at",
+        "expires_at"
+      ],
+      "oneOf": [
+        {
+          "required": ["package"],
+          "not": {"anyOf": [{"required": ["cve"]}, {"required": ["rule"]}]}
+        },
+        {
+          "required": ["cve"],
+          "not": {"anyOf": [{"required": ["package"]}, {"required": ["rule"]}]}
+        },
+        {
+          "required": ["rule"],
+          "not": {"anyOf": [{"required": ["package"]}, {"required": ["cve"]}]}
+        }
+      ],
+      "properties": {
+        "scanner": {
+          "enum": [
+            "codeql",
+            "govulncheck",
+            "bun-audit",
+            "trivy"
+          ]
+        },
+        "package": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "^[A-Za-z0-9@._:/+~-]+$"
+        },
+        "cve": {
+          "type": "string",
+          "pattern": "^CVE-[0-9]{4}-[0-9]{4,}$"
+        },
+        "rule": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "^[A-Za-z0-9@._:/+~-]+$"
+        },
+        "platform": {
+          "enum": [
+            "source",
+            "linux/amd64",
+            "linux/arm64"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[A-Za-z0-9@._/-]+$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}
