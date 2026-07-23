@@ -1262,8 +1262,8 @@ defaults to 30 seconds. The deadline is cleared after the body read returns
 while the request context remains active. When the deadline or request
 cancellation has already fired, it remains in effect until the handler unwinds;
 every path still releases both admission slots. A slow upload that reaches the
-deadline returns `408` with `request_body_timeout`. N2API does not set a global
-HTTP `WriteTimeout`, because that would truncate healthy long SSE responses.
+deadline returns `408` with `request_body_timeout`. N2API does not set a global HTTP `WriteTimeout`,
+because that would truncate healthy long SSE responses.
 
 Outbound gateway connections use
 `N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS` (10 seconds by default),
