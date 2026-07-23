@@ -19,10 +19,15 @@ type WriteStatus struct {
 }
 
 type WriteMonitor struct {
-	mu     sync.RWMutex
-	status WriteStatus
-	logger *slog.Logger
-	now    func() time.Time
+	mu       sync.RWMutex
+	status   WriteStatus
+	logger   *slog.Logger
+	now      func() time.Time
+	observer WriteObserver
+}
+
+type WriteObserver interface {
+	ObserveRequestLogWrite(err error)
 }
 
 func NewWriteMonitor(logger *slog.Logger) *WriteMonitor {
@@ -32,9 +37,18 @@ func NewWriteMonitor(logger *slog.Logger) *WriteMonitor {
 	return &WriteMonitor{logger: logger, now: time.Now}
 }
 
+func (m *WriteMonitor) SetObserver(observer WriteObserver) {
+	if m != nil {
+		m.observer = observer
+	}
+}
+
 func (m *WriteMonitor) Observe(correlationID string, err error) {
 	if m == nil {
 		return
+	}
+	if m.observer != nil {
+		m.observer.ObserveRequestLogWrite(err)
 	}
 	m.mu.Lock()
 	now := m.now().UTC()

@@ -146,6 +146,17 @@ type UsagePricer interface {
 	EstimateUsageCost(ctx context.Context, usage Usage) (UsageCostEstimate, error)
 }
 
+type MetricsObserver interface {
+	GatewayRequestStarted()
+	GatewayRequestFinished(route string, statusCode int, stream bool, accountType string, duration time.Duration)
+	ObserveUpstreamAttempt(accountType, outcome string)
+	ObserveFallback(reason string)
+	ObserveRoutingFailure(reason string)
+	ObserveLimitRejection(scope, reason string)
+	ObserveStream(route, outcome string)
+	ObserveUsage(source string, priced bool, input, output, cachedInput, reasoning int, costMicrousd int64)
+}
+
 type GatewaySettingsProvider interface {
 	GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error)
 }
@@ -225,6 +236,7 @@ type Config struct {
 	ResponseAffinityTTL             time.Duration
 	ProcessLogger                   *slog.Logger
 	RequestLogWriteMonitor          *requestlog.WriteMonitor
+	Metrics                         MetricsObserver
 }
 
 type Proxy struct {
@@ -257,6 +269,7 @@ type Proxy struct {
 	affinityTTL        time.Duration
 	processLogger      *slog.Logger
 	requestLogWrites   *requestlog.WriteMonitor
+	metrics            MetricsObserver
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -343,6 +356,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		affinityTTL:      normalizedResponseAffinityTTL(cfg.ResponseAffinityTTL),
 		processLogger:    normalizedProcessLogger(cfg.ProcessLogger),
 		requestLogWrites: cfg.RequestLogWriteMonitor,
+		metrics:          cfg.Metrics,
 	}
 }
 
@@ -386,28 +400,42 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusNotFound, "unsupported_route", "unsupported route")
 		return
 	}
+	recorder := &statusRecorder{ResponseWriter: w}
+	startedAt := time.Now()
+	metricsFinished := false
+	metricsStream := false
+	metricsAccountType := "none"
+	if p.metrics != nil {
+		p.metrics.GatewayRequestStarted()
+	}
+	finishMetrics := func() {
+		if metricsFinished || p.metrics == nil {
+			return
+		}
+		metricsFinished = true
+		p.metrics.GatewayRequestFinished(r.URL.Path, recorder.statusCode(), metricsStream, metricsAccountType, time.Since(startedAt))
+	}
+	defer finishMetrics()
 	if p.auth == nil {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "service_unavailable", "gateway service unavailable")
+		writeOpenAIError(recorder, http.StatusServiceUnavailable, "service_unavailable", "gateway service unavailable")
 		return
 	}
 
 	apiKey, ok := bearerToken(r.Header.Get("Authorization"))
 	if !ok {
-		writeOpenAIError(w, http.StatusUnauthorized, "unauthorized", "missing bearer token")
+		writeOpenAIError(recorder, http.StatusUnauthorized, "unauthorized", "missing bearer token")
 		return
 	}
 	key, err := p.auth.AuthenticateAPIKey(r.Context(), apiKey)
 	if err != nil {
 		if errors.Is(err, admin.ErrUnauthorized) {
-			writeOpenAIError(w, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
+			writeOpenAIError(recorder, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
 			return
 		}
-		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "api key authentication failed")
+		writeOpenAIError(recorder, http.StatusInternalServerError, "internal_error", "api key authentication failed")
 		return
 	}
 	settings := p.gatewaySettings(r.Context())
-	recorder := &statusRecorder{ResponseWriter: w}
-	startedAt := time.Now()
 	errorCode := ""
 	var loggedAccount SelectedAccount
 	loggedRoutingPoolID, loggedRoutingPoolName := apiKeyRoutingPool(key)
@@ -425,6 +453,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		p.recordAPIKeyUsage(key.ID, observedUsage.TotalTokens, effectiveAPIKeyLimit(key.TokensPerMinute, settings.TokensPerMinutePerKey))
 		costEstimate := p.estimateUsageCost(r.Context(), observedUsage)
+		if p.metrics != nil {
+			p.metrics.ObserveUsage(observedUsage.Source, costEstimate.Matched, observedUsage.InputTokens, observedUsage.OutputTokens, observedUsage.CachedInputTokens, observedUsage.ReasoningTokens, costEstimate.CostMicrousd)
+		}
+		finishMetrics()
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:                requestID,
 			ClientKeyID:              key.ID,
@@ -464,11 +496,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if budgetErrorCode != "" {
 		errorCode = budgetErrorCode
+		p.observeLimitRejection("api_key", budgetMetricReason(budgetErrorCode))
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
 		return
 	}
 	if retryAfter, ok := p.allowAPIKeyRequest(key.ID, key.RequestsPerMinute, settings.RequestsPerMinutePerKey); !ok {
 		errorCode = "api_key_request_rate_limited"
+		p.observeLimitRejection("api_key", "request_rate")
 		setRetryAfterHeader(recorder.Header(), retryAfter)
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key request rate limit exceeded")
 		return
@@ -494,6 +528,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if retryAfter, ok := p.allowAPIKeyTokens(key.ID, key.TokensPerMinute, settings.TokensPerMinutePerKey); !ok {
 		errorCode = "api_key_token_rate_limited"
+		p.observeLimitRejection("api_key", "token_rate")
 		setRetryAfterHeader(recorder.Header(), retryAfter)
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key token rate limit exceeded")
 		return
@@ -501,6 +536,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	release, ok := p.tryAcquireGatewaySlot(settings.MaxConcurrentGatewayRequests)
 	if !ok {
 		errorCode = "gateway_concurrency_limited"
+		p.observeLimitRejection("gateway", "concurrency")
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "gateway concurrency limit exceeded")
 		return
 	}
@@ -509,6 +545,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	releaseKey, ok := p.tryAcquireAPIKeySlot(key.ID, settings.MaxConcurrentRequestsPerKey)
 	if !ok {
 		errorCode = "api_key_concurrency_limited"
+		p.observeLimitRejection("api_key", "concurrency")
 		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key concurrency limit exceeded")
 		return
 	}
@@ -553,6 +590,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		selected, err := p.selectAccountForRequest(r.Context(), key, model, sessionID, affinitySelection, failedAccountIDs...)
+		if selected.AccountType != "" {
+			metricsAccountType = selected.AccountType
+		}
 		if err != nil {
 			loggedRoutingPoolID, loggedRoutingPoolName, loggedRoutingPoolFallbackDepth, loggedRoutingPoolFallbackChain, loggedRoutingPoolError = selectedRoutingPoolLogFields(
 				selected,
@@ -565,6 +605,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if accountConcurrencyLimited && errors.Is(err, provider.ErrAccountsUnavailable) {
 				errorCode = "provider_account_concurrency_limited"
+				p.observeLimitRejection("provider_account", "concurrency")
 				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 				return
 			}
@@ -579,6 +620,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			errorCode = providerErrorCodeForSelection(err, selected)
+			p.observeRoutingFailure(errorCode)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
 			return
 		}
@@ -599,9 +641,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			gatewayFallbackCount++
 			if attempt+1 < maxAttempts {
+				p.observeFallback("account_concurrency")
 				continue
 			}
 			errorCode = "provider_account_concurrency_limited"
+			p.observeLimitRejection("provider_account", "concurrency")
 			writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 			return
 		}
@@ -636,23 +680,32 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			upstreamResp, upstreamErr = client.Do(upstreamReq)
-			if upstreamErr != nil || authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
+			if upstreamErr != nil {
+				p.observeUpstreamAttempt(selected.AccountType, upstreamTransportOutcome(r.Context(), upstreamErr))
+				break
+			}
+			if authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
+				p.observeUpstreamAttempt(selected.AccountType, upstreamHTTPOutcome(upstreamResp.StatusCode))
 				break
 			}
 
 			message, failureBody := captureFailure(upstreamResp)
 			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
+				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			refreshedToken, retry, failureRecorded, refreshErr := p.refreshAccountAuthorization(r.Context(), selected, upstreamResp.StatusCode, message)
 			if !retry {
+				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			authorizationRetried = true
 			if refreshErr != nil || strings.TrimSpace(refreshedToken) == "" {
 				authorizationRefreshFailureRecorded = failureRecorded
+				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
+			p.observeUpstreamAttempt(selected.AccountType, "refresh_retry")
 			_ = upstreamResp.Body.Close()
 			selected.AuthorizationToken = refreshedToken
 			gatewayAttemptCount++
@@ -664,6 +717,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				gatewayFallbackCount++
+				p.observeFallback("transport_error")
 				continue
 			}
 			errorCode = upstreamErrCode
@@ -679,8 +733,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer upstreamResp.Body.Close()
 
 				streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
+				metricsStream = streamResponse
 				observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
 				observedUsage, err = observation.Usage, writeErr
+				if streamResponse {
+					p.observeStream(r.URL.Path, observation.StreamOutcome)
+				}
 				if err != nil {
 					errorCode = upstreamResponseErrorCode(err)
 					if !recorder.committed() {
@@ -699,6 +757,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if attempt+1 < maxAttempts {
 				releaseAccount()
 				gatewayFallbackCount++
+				p.observeFallback("retryable_status")
 				lastRetryableResp = upstreamResp
 				continue
 			}
@@ -711,8 +770,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer upstreamResp.Body.Close()
 
 		streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
+		metricsStream = streamResponse
 		observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
 		observedUsage, err = observation.Usage, writeErr
+		if streamResponse {
+			p.observeStream(r.URL.Path, observation.StreamOutcome)
+		}
 		if err != nil {
 			errorCode = upstreamResponseErrorCode(err)
 			if !recorder.committed() {
@@ -1316,8 +1379,9 @@ var (
 )
 
 type upstreamResponseObservation struct {
-	Usage      Usage
-	ResponseID string
+	Usage         Usage
+	ResponseID    string
+	StreamOutcome string
 }
 
 func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (upstreamResponseObservation, error) {
@@ -1388,19 +1452,26 @@ func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.R
 			chunk := buffer[:n]
 			observer.Observe(chunk)
 			if _, writeErr := writer.Write(chunk); writeErr != nil {
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, nil
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "client_canceled"}, nil
 			}
 		}
 		select {
 		case <-idleExpired:
-			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, errUpstreamSSEIdleTimeout
+			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "upstream_error"}, errUpstreamSSEIdleTimeout
 		default:
 		}
 		if readErr != nil {
-			if errors.Is(readErr, io.EOF) || ctx.Err() != nil {
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, nil
+			if ctx.Err() != nil {
+				outcome := "client_canceled"
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					outcome = "server_error"
+				}
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: outcome}, nil
 			}
-			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID()}, errUpstreamResponseRead
+			if errors.Is(readErr, io.EOF) {
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "completed"}, nil
+			}
+			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "upstream_error"}, errUpstreamResponseRead
 		}
 	}
 }
@@ -1417,6 +1488,63 @@ func upstreamRequestErrorMessage(code string) string {
 		return "upstream request timed out"
 	}
 	return "upstream request failed"
+}
+
+func upstreamHTTPOutcome(statusCode int) string {
+	if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+		return "success"
+	}
+	return "http_error"
+}
+
+func upstreamTransportOutcome(ctx context.Context, err error) string {
+	if errors.Is(err, context.Canceled) || (ctx != nil && errors.Is(ctx.Err(), context.Canceled)) {
+		return "canceled"
+	}
+	return "transport_error"
+}
+
+func budgetMetricReason(errorCode string) string {
+	switch errorCode {
+	case "api_key_request_budget_exceeded":
+		return "request_budget"
+	case "api_key_token_budget_exceeded":
+		return "token_budget"
+	case "api_key_cost_budget_exceeded":
+		return "cost_budget"
+	default:
+		return "other"
+	}
+}
+
+func (p *Proxy) observeUpstreamAttempt(accountType, outcome string) {
+	if p.metrics != nil {
+		p.metrics.ObserveUpstreamAttempt(accountType, outcome)
+	}
+}
+
+func (p *Proxy) observeFallback(reason string) {
+	if p.metrics != nil {
+		p.metrics.ObserveFallback(reason)
+	}
+}
+
+func (p *Proxy) observeRoutingFailure(reason string) {
+	if p.metrics != nil {
+		p.metrics.ObserveRoutingFailure(reason)
+	}
+}
+
+func (p *Proxy) observeLimitRejection(scope, reason string) {
+	if p.metrics != nil {
+		p.metrics.ObserveLimitRejection(scope, reason)
+	}
+}
+
+func (p *Proxy) observeStream(route, outcome string) {
+	if p.metrics != nil {
+		p.metrics.ObserveStream(route, outcome)
+	}
 }
 
 func (p *Proxy) estimateUsageCost(ctx context.Context, usage Usage) UsageCostEstimate {
@@ -2172,6 +2300,9 @@ func (r *statusRecorder) Unwrap() http.ResponseWriter {
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
+	if r.status != 0 {
+		return
+	}
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
 }

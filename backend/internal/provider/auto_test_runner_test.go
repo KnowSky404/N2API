@@ -16,6 +16,17 @@ type captureSystemEventRecorder struct {
 	events []systemevent.Event
 }
 
+type captureProviderTaskMetrics struct {
+	runs [][2]string
+}
+
+func (m *captureProviderTaskMetrics) BeginBackgroundTask(task string) func(string) {
+	return func(outcome string) { m.runs = append(m.runs, [2]string{task, outcome}) }
+}
+func (m *captureProviderTaskMetrics) ObserveBackgroundTaskRun(task, outcome string, _ time.Duration) {
+	m.runs = append(m.runs, [2]string{task, outcome})
+}
+
 func (r *captureSystemEventRecorder) Insert(_ context.Context, event systemevent.Event) error {
 	r.events = append(r.events, event)
 	return nil
@@ -97,6 +108,19 @@ func TestAutoTestRunnerStatusTracksFailedCycle(t *testing.T) {
 	status := runner.ProviderAccountAutoTestStatus()
 	if status.Running || status.LastStartedAt == nil || status.LastFinishedAt == nil || status.LastAccountCount != 0 || status.LastError != "probe failed" {
 		t.Fatalf("status = %+v, want failed completed cycle", status)
+	}
+}
+
+func TestAutoTestRunnerReportsPartialMetricsOutcome(t *testing.T) {
+	metrics := &captureProviderTaskMetrics{}
+	runner := NewAutoTestRunner(immediateAutoTestService{
+		accounts: []Account{{ID: 1}},
+		err:      &accountBatchError{Err: errors.New("partial"), Requested: 2, Attempted: 2, Succeeded: 1, Failed: 1},
+	}, AutoTestRunnerConfig{Enabled: true}, slog.Default())
+	runner.SetMetricsObserver(metrics)
+	runner.runCycle(context.Background())
+	if len(metrics.runs) != 1 || metrics.runs[0] != [2]string{"provider_auto_test", "partial"} {
+		t.Fatalf("task metrics = %+v", metrics.runs)
 	}
 }
 

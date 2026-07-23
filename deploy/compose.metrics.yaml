@@ -1,0 +1,13 @@
+services:
+  n2api:
+    environment:
+      N2API_METRICS_ENABLED: "true"
+      N2API_METRICS_HOST: 0.0.0.0
+      N2API_METRICS_PORT: 9090
+      N2API_METRICS_BEARER_TOKEN: ${N2API_METRICS_BEARER_TOKEN:?N2API_METRICS_BEARER_TOKEN is required}
+    ports:
+      - name: metrics
+        target: 9090
+        published: "${N2API_METRICS_PORT:-9090}"
+        host_ip: "${N2API_METRICS_BIND_ADDRESS:-127.0.0.1}"
+        protocol: tcp

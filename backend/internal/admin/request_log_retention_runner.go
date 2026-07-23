@@ -49,6 +49,12 @@ type RequestLogRetentionRunner struct {
 	statusMu      sync.Mutex
 	status        RequestLogRetentionStatus
 	now           func() time.Time
+	metrics       BackgroundTaskObserver
+}
+
+type BackgroundTaskObserver interface {
+	BeginBackgroundTask(task string) func(outcome string)
+	ObserveBackgroundTaskRun(task, outcome string, duration time.Duration)
 }
 
 func NewRequestLogRetentionRunner(service requestLogRetentionService, cfg RequestLogRetentionRunnerConfig, logger *slog.Logger) *RequestLogRetentionRunner {
@@ -73,6 +79,12 @@ func NewRequestLogRetentionRunner(service requestLogRetentionService, cfg Reques
 func (r *RequestLogRetentionRunner) SetSystemEventRecorder(recorder requestLogRetentionEventRecorder) {
 	if r != nil {
 		r.eventRecorder = recorder
+	}
+}
+
+func (r *RequestLogRetentionRunner) SetMetricsObserver(observer BackgroundTaskObserver) {
+	if r != nil {
+		r.metrics = observer
 	}
 }
 
@@ -103,9 +115,18 @@ func (r *RequestLogRetentionRunner) Run(ctx context.Context) {
 
 func (r *RequestLogRetentionRunner) runCycle(ctx context.Context) {
 	if !r.running.CompareAndSwap(false, true) {
+		if r.metrics != nil {
+			r.metrics.ObserveBackgroundTaskRun("request_log_retention", "skipped", 0)
+		}
 		return
 	}
 	defer r.running.Store(false)
+	outcome := "failure"
+	finishMetrics := func(string) {}
+	if r.metrics != nil {
+		finishMetrics = r.metrics.BeginBackgroundTask("request_log_retention")
+	}
+	defer func() { finishMetrics(outcome) }()
 
 	settings, err := r.service.GetGatewaySettings(ctx)
 	if err != nil {
@@ -116,9 +137,13 @@ func (r *RequestLogRetentionRunner) runCycle(ctx context.Context) {
 			r.recordEvent(ctx, started, RequestLogCleanupResult{}, errors.New("settings unavailable"), "request_log_retention_settings_failed")
 			r.logger.Warn("request log retention settings unavailable", "error", err)
 		}
+		if ctx.Err() != nil {
+			outcome = "canceled"
+		}
 		return
 	}
 	if settings.RequestLogRetentionDays <= 0 {
+		outcome = "skipped"
 		return
 	}
 
@@ -127,6 +152,7 @@ func (r *RequestLogRetentionRunner) runCycle(ctx context.Context) {
 	r.start(started, cutoff)
 	result, runErr := r.service.RunRequestLogRetention(ctx, settings.RequestLogRetentionDays, cutoff, r.cfg.BatchSize)
 	if errors.Is(runErr, ErrConflict) {
+		outcome = "skipped"
 		r.finishSkipped()
 		return
 	}
@@ -138,12 +164,17 @@ func (r *RequestLogRetentionRunner) runCycle(ctx context.Context) {
 		finished := r.now().UTC()
 		r.finishFailure(finished, result, errorCode)
 		if ctx.Err() != nil {
+			outcome = "canceled"
 			return
+		}
+		if result.Deleted > 0 {
+			outcome = "partial"
 		}
 		r.recordEvent(ctx, started, result, runErr, errorCode)
 		r.logger.Warn("request log retention failed", "error", runErr, "deleted_count", result.Deleted, "batch_count", result.Batches)
 		return
 	}
+	outcome = "success"
 	finished := r.now().UTC()
 	r.finishSuccess(finished, result)
 	r.recordEvent(ctx, started, result, nil, "")

@@ -67,6 +67,10 @@ type Config struct {
 	AdminLoginThrottleFailures             int
 	AdminLoginThrottleMaxEntries           int
 	AdminSessionTTL                        time.Duration
+	MetricsEnabled                         bool
+	MetricsHost                            string
+	MetricsPort                            int
+	MetricsBearerToken                     string
 }
 
 const (
@@ -102,6 +106,7 @@ const (
 	defaultUpstreamConnectTimeoutSeconds      = 10
 	defaultUpstreamTLSHandshakeSeconds        = 10
 	defaultUpstreamSSEIdleTimeoutSeconds      = 60
+	defaultMetricsPort                        = 9090
 )
 
 const (
@@ -312,6 +317,24 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.Port = port
+	metricsEnabled, err := parseBool(lookup("N2API_METRICS_ENABLED"), "N2API_METRICS_ENABLED")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.MetricsEnabled = metricsEnabled
+	cfg.MetricsHost = valueOrDefault(strings.TrimSpace(lookup("N2API_METRICS_HOST")), "127.0.0.1")
+	metricsPort, err := parseNamedPort(valueOrDefault(lookup("N2API_METRICS_PORT"), strconv.Itoa(defaultMetricsPort)), "N2API_METRICS_PORT")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.MetricsPort = metricsPort
+	cfg.MetricsBearerToken = strings.TrimSpace(lookup("N2API_METRICS_BEARER_TOKEN"))
+	if cfg.MetricsEnabled && !isLoopbackHost(cfg.MetricsHost) && cfg.MetricsBearerToken == "" {
+		return Config{}, errors.New("N2API_METRICS_BEARER_TOKEN is required when N2API_METRICS_HOST is not loopback")
+	}
+	if cfg.MetricsEnabled && cfg.MetricsPort == cfg.Port {
+		return Config{}, errors.New("N2API_METRICS_PORT must not reuse the primary N2API listener")
+	}
 	maxConcurrent, err := parseNonNegativeInt(lookup("N2API_GATEWAY_MAX_CONCURRENT_REQUESTS"), "N2API_GATEWAY_MAX_CONCURRENT_REQUESTS")
 	if err != nil {
 		return Config{}, err
@@ -437,7 +460,11 @@ func Load(lookup func(string) string) (Config, error) {
 }
 
 func (c Config) Addr() string {
-	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
+}
+
+func (c Config) MetricsAddr() string {
+	return net.JoinHostPort(c.MetricsHost, strconv.Itoa(c.MetricsPort))
 }
 
 func valueOrDefault(value, fallback string) string {
@@ -448,12 +475,16 @@ func valueOrDefault(value, fallback string) string {
 }
 
 func parsePort(value string) (int, error) {
+	return parseNamedPort(value, "N2API_PORT")
+}
+
+func parseNamedPort(value, name string) (int, error) {
 	port, err := strconv.Atoi(value)
 	if err != nil {
-		return 0, fmt.Errorf("N2API_PORT must be a number: %w", err)
+		return 0, fmt.Errorf("%s must be a number: %w", name, err)
 	}
 	if port < 1 || port > 65535 {
-		return 0, fmt.Errorf("N2API_PORT must be between 1 and 65535")
+		return 0, fmt.Errorf("%s must be between 1 and 65535", name)
 	}
 	return port, nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
+	"github.com/KnowSky404/N2API/backend/internal/metrics"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/store"
@@ -212,12 +213,26 @@ func runServer() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	var metricsRegistry *metrics.Registry
+	var taskMetrics backgroundTaskObserver
+	var gatewayMetrics gateway.MetricsObserver
+	var providerMetrics provider.MetricsObserver
+	if cfg.MetricsEnabled {
+		metricsRegistry = metrics.New(pool)
+		taskMetrics = metricsRegistry
+		gatewayMetrics = metricsRegistry
+		providerMetrics = metricsRegistry
+		ctx = systemevent.WithWriteObserver(ctx, metricsRegistry)
+	}
 
 	if err := store.RunMigrations(ctx, pool); err != nil {
 		slog.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
 	systemEventRepo := store.NewSystemEventRepository(pool, cfg.EncryptionSecret)
+	if metricsRegistry != nil {
+		systemEventRepo.SetWriteObserver(metricsRegistry)
+	}
 	alertingRepo := store.NewAlertingRepository(pool)
 	alertingService := alerting.NewService(alertingRepo, cfg.EncryptionKeyring)
 	alertHTTPAdapter := alerting.NewHTTPAdapter(nil)
@@ -281,14 +296,17 @@ func runServer() {
 		}()
 	}
 	alertDispatcher.Start()
-	go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour)
+	go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)
 	if cfg.SystemEventRetentionDays > 0 {
-		go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour)
+		go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour, taskMetrics)
 	}
 
 	providerRepo := store.NewProviderRepository(pool)
 	requestLogRepo := store.NewGatewayRepository(pool)
 	requestLogWriteMonitor := requestlog.NewWriteMonitor(slog.Default())
+	if metricsRegistry != nil {
+		requestLogWriteMonitor.SetObserver(metricsRegistry)
+	}
 	responseAffinityRepo := store.NewResponseAffinityRepository(pool, cfg.EncryptionSecret)
 	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
 		Provider:              "openai",
@@ -303,6 +321,7 @@ func runServer() {
 		AllowHTTPAPIUpstreams: cfg.AllowHTTPAPIUpstreams,
 		AccountTestLogger:     requestLogRepo,
 		RequestLogObserver:    requestLogWriteMonitor,
+		Metrics:               providerMetrics,
 	})
 	autoTestRunner := provider.NewAutoTestRunnerWithConfigSource(providerService, func(ctx context.Context) (provider.AutoTestRunnerConfig, error) {
 		settings, err := adminService.GetGatewaySettings(ctx)
@@ -315,11 +334,17 @@ func runServer() {
 		}, nil
 	}, slog.Default())
 	autoTestRunner.SetSystemEventRecorder(systemEventRepo)
+	if metricsRegistry != nil {
+		autoTestRunner.SetMetricsObserver(metricsRegistry)
+	}
 	go autoTestRunner.Run(ctx)
 	requestLogRetentionRunner := admin.NewRequestLogRetentionRunner(adminService, admin.RequestLogRetentionRunnerConfig{
 		Enabled: cfg.RequestLogRetentionRunnerEnabled, Interval: cfg.RequestLogRetentionInterval, BatchSize: cfg.RequestLogRetentionBatchSize,
 	}, slog.Default())
 	requestLogRetentionRunner.SetSystemEventRecorder(systemEventRepo)
+	if metricsRegistry != nil {
+		requestLogRetentionRunner.SetMetricsObserver(metricsRegistry)
+	}
 	go requestLogRetentionRunner.Run(ctx)
 	responseAffinityRetentionRunner := gateway.NewResponseAffinityRetentionRunner(
 		responseAffinityRetentionStore{repository: responseAffinityRepo},
@@ -357,6 +382,7 @@ func runServer() {
 		ResponseAffinityTTL:             cfg.ResponseAffinityTTL,
 		ProcessLogger:                   slog.Default(),
 		RequestLogWriteMonitor:          requestLogWriteMonitor,
+		Metrics:                         gatewayMetrics,
 		Logger:                          requestLogRepo,
 		ModelProvider: gatewayModelProvider{
 			admins:    adminService,
@@ -366,6 +392,10 @@ func runServer() {
 	})
 	providerService.SetAccountTransportInvalidator(gatewayProxy)
 	defer gatewayProxy.Close()
+	if metricsRegistry != nil {
+		updateProviderAccountMetrics(ctx, providerService, metricsRegistry)
+		go runProviderAccountMetrics(ctx, providerService, metricsRegistry, time.Minute)
+	}
 
 	server := newHTTPServer(
 		cfg,
@@ -378,6 +408,17 @@ func runServer() {
 		slog.Info("starting n2api", "addr", cfg.Addr(), "version", build.Version, "commit", build.Commit, "built_at", build.BuiltAt)
 		serverErrors <- server.ListenAndServe()
 	}()
+	var metricsServer *http.Server
+	var metricsServerErrors <-chan error
+	if metricsRegistry != nil {
+		metricsServer = metrics.NewHTTPServer(cfg.MetricsAddr(), cfg.MetricsBearerToken, metricsRegistry.Handler(), ctx)
+		errors := make(chan error, 1)
+		metricsServerErrors = errors
+		go func() {
+			slog.Info("starting n2api metrics", "addr", cfg.MetricsAddr())
+			errors <- metricsServer.ListenAndServe()
+		}()
+	}
 
 	exitCode := 0
 	select {
@@ -386,15 +427,26 @@ func runServer() {
 			slog.Error("server stopped", "error", err)
 			exitCode = 1
 		}
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			slog.Error("server shutdown failed", "error", err)
+	case err := <-metricsServerErrors:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("metrics server stopped", "error_code", "metrics_server_stopped")
 			exitCode = 1
 		}
-		cancel()
+	case <-ctx.Done():
 	}
 	stop()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server shutdown failed", "error", err)
+		exitCode = 1
+	}
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			slog.Error("metrics server shutdown failed", "error_code", "metrics_server_shutdown_failed")
+			exitCode = 1
+		}
+	}
+	cancel()
 	dispatcherShutdownCtx, cancelDispatcher := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := alertDispatcher.Shutdown(dispatcherShutdownCtx); err != nil {
 		slog.Error("alert delivery shutdown failed", "error_code", "alert_delivery_shutdown_failed")
@@ -410,6 +462,54 @@ func runServer() {
 		pool.Close()
 		os.Exit(exitCode)
 	}
+}
+
+type providerAccountMetricsSource interface {
+	ListAccounts(ctx context.Context) ([]provider.Account, error)
+}
+
+func runProviderAccountMetrics(ctx context.Context, source providerAccountMetricsSource, registry *metrics.Registry, interval time.Duration) {
+	if source == nil || registry == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			updateProviderAccountMetrics(ctx, source, registry)
+		}
+	}
+}
+
+func updateProviderAccountMetrics(ctx context.Context, source providerAccountMetricsSource, registry *metrics.Registry) {
+	accounts, err := source.ListAccounts(ctx)
+	if err != nil {
+		slog.Warn("provider account metrics refresh failed", "error_code", "provider_account_metrics_refresh_failed")
+		return
+	}
+	now := time.Now()
+	snapshot := make([]metrics.ProviderAccount, 0, len(accounts))
+	for _, account := range accounts {
+		state := account.Status
+		switch {
+		case !account.Enabled:
+			state = provider.AccountStatusDisabled
+		case state == provider.AccountStatusRateLimited && (account.RateLimitedUntil == nil || !account.RateLimitedUntil.After(now)):
+			state = provider.AccountStatusActive
+		case state == provider.AccountStatusCircuitOpen && (account.CircuitOpenUntil == nil || !account.CircuitOpenUntil.After(now)):
+			state = provider.AccountStatusActive
+		case state == "":
+			state = provider.AccountStatusActive
+		}
+		snapshot = append(snapshot, metrics.ProviderAccount{AccountType: account.AccountType, State: state})
+	}
+	registry.UpdateProviderAccounts(snapshot)
 }
 
 func newHTTPServer(cfg config.Config, handler http.Handler, baseContext context.Context) *http.Server {
@@ -436,9 +536,14 @@ type apiKeyCleanupEventRecorder interface {
 	Insert(ctx context.Context, event systemevent.Event) error
 }
 
-func runAPIKeyCleanup(ctx context.Context, service apiKeyCleanupService, events apiKeyCleanupEventRecorder, interval time.Duration) {
+type backgroundTaskObserver interface {
+	BeginBackgroundTask(task string) func(outcome string)
+	ObserveBackgroundTaskRun(task, outcome string, duration time.Duration)
+}
+
+func runAPIKeyCleanup(ctx context.Context, service apiKeyCleanupService, events apiKeyCleanupEventRecorder, interval time.Duration, observers ...backgroundTaskObserver) {
 	cleanup := func() {
-		runAPIKeyCleanupCycle(ctx, service, events, slog.Default(), time.Now)
+		runAPIKeyCleanupCycle(ctx, service, events, slog.Default(), time.Now, observers...)
 	}
 
 	cleanup()
@@ -454,16 +559,24 @@ func runAPIKeyCleanup(ctx context.Context, service apiKeyCleanupService, events 
 	}
 }
 
-func runAPIKeyCleanupCycle(ctx context.Context, service apiKeyCleanupService, events apiKeyCleanupEventRecorder, logger *slog.Logger, now func() time.Time) {
+func runAPIKeyCleanupCycle(ctx context.Context, service apiKeyCleanupService, events apiKeyCleanupEventRecorder, logger *slog.Logger, now func() time.Time, observers ...backgroundTaskObserver) {
+	outcome := "failure"
+	finishMetrics := func(string) {}
+	if len(observers) > 0 && observers[0] != nil {
+		finishMetrics = observers[0].BeginBackgroundTask("api_key_purge")
+	}
+	defer func() { finishMetrics(outcome) }()
 	started := now().UTC()
 	deleted, err := service.PurgeExpiredAPIKeys(ctx)
 	if err == nil {
+		outcome = "success"
 		if deleted > 0 {
 			logger.Info("physically deleted expired API keys", "count", deleted)
 		}
 		return
 	}
 	if ctx.Err() != nil {
+		outcome = "canceled"
 		return
 	}
 
@@ -500,9 +613,9 @@ type systemEventRetentionStore interface {
 	Insert(ctx context.Context, event systemevent.Event) error
 }
 
-func runSystemEventCleanup(ctx context.Context, events systemEventRetentionStore, retentionDays int, interval time.Duration) {
+func runSystemEventCleanup(ctx context.Context, events systemEventRetentionStore, retentionDays int, interval time.Duration, observers ...backgroundTaskObserver) {
 	cleanup := func() {
-		runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now)
+		runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now, observers...)
 	}
 	cleanup()
 	ticker := time.NewTicker(interval)
@@ -517,7 +630,13 @@ func runSystemEventCleanup(ctx context.Context, events systemEventRetentionStore
 	}
 }
 
-func runSystemEventCleanupCycle(ctx context.Context, events systemEventRetentionStore, retentionDays int, logger *slog.Logger, now func() time.Time) {
+func runSystemEventCleanupCycle(ctx context.Context, events systemEventRetentionStore, retentionDays int, logger *slog.Logger, now func() time.Time, observers ...backgroundTaskObserver) {
+	outcome := "failure"
+	finishMetrics := func(string) {}
+	if len(observers) > 0 && observers[0] != nil {
+		finishMetrics = observers[0].BeginBackgroundTask("system_event_retention")
+	}
+	defer func() { finishMetrics(outcome) }()
 	started := now().UTC()
 	cutoff := started.Add(-time.Duration(retentionDays) * 24 * time.Hour)
 	var deleted int64
@@ -525,7 +644,11 @@ func runSystemEventCleanupCycle(ctx context.Context, events systemEventRetention
 		count, err := events.DeleteBeforeBatch(ctx, cutoff, 1000)
 		if err != nil {
 			if ctx.Err() != nil {
+				outcome = "canceled"
 				return
+			}
+			if deleted > 0 {
+				outcome = "partial"
 			}
 			recordSystemEventRetentionFailure(ctx, events, logger, started, now().UTC(), cutoff, retentionDays, deleted)
 			logger.Error("system event retention failed", "error_code", "system_event_retention_failed")
@@ -536,6 +659,7 @@ func runSystemEventCleanupCycle(ctx context.Context, events systemEventRetention
 			break
 		}
 	}
+	outcome = "success"
 	metadata, _ := systemevent.SafeMetadata(map[string]any{
 		"cutoff": cutoff.Format(time.RFC3339), "deleted_count": deleted, "retention_days": retentionDays,
 	}, "cutoff", "deleted_count", "retention_days")

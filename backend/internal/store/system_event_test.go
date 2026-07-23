@@ -12,8 +12,21 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type captureSystemEventWriteObserver struct{ errors []error }
+
+func (o *captureSystemEventWriteObserver) ObserveSystemEventWrite(err error) {
+	o.errors = append(o.errors, err)
+}
+
+type fakeSystemEventExecutor struct{ err error }
+
+func (e fakeSystemEventExecutor) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.NewCommandTag("INSERT 0 1"), e.err
+}
 
 func TestSystemEventCursorIsAuthenticatedAndSelfContained(t *testing.T) {
 	repo := NewSystemEventRepository(nil, "cursor-secret")
@@ -45,6 +58,35 @@ func TestSystemEventSQLUsesDeterministicKeysetAndBoundedRetention(t *testing.T) 
 		t.Fatal("select SQL must return canonical source IP")
 	}
 	_ = systemevent.ActionAPIKeyCreated
+}
+
+func TestSystemEventInsertObservesStatementOutcomes(t *testing.T) {
+	observer := &captureSystemEventWriteObserver{}
+	ctx := systemevent.WithWriteObserver(context.Background(), observer)
+	event := testSystemEvent("metrics-observation")
+	if err := insertSystemEvent(ctx, fakeSystemEventExecutor{}, event); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("database unavailable")
+	if err := insertSystemEvent(ctx, fakeSystemEventExecutor{err: wantErr}, event); err == nil {
+		t.Fatal("insertSystemEvent returned nil error")
+	}
+	if len(observer.errors) != 2 || observer.errors[0] != nil || observer.errors[1] == nil {
+		t.Fatalf("observed errors = %+v", observer.errors)
+	}
+}
+
+func TestSystemEventRepositoryPreservesContextObserverOverFallback(t *testing.T) {
+	fallback := &captureSystemEventWriteObserver{}
+	existing := &captureSystemEventWriteObserver{}
+	ctx := systemevent.WithWriteObserver(context.Background(), existing)
+
+	if got := systemevent.WriteObserverFromContext(systemEventWriteContext(ctx, fallback)); got != existing {
+		t.Fatalf("context observer = %T, want existing observer", got)
+	}
+	if got := systemevent.WriteObserverFromContext(systemEventWriteContext(context.Background(), fallback)); got != fallback {
+		t.Fatalf("fallback observer = %T, want repository observer", got)
+	}
 }
 
 func TestParseSystemEventNotificationID(t *testing.T) {

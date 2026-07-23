@@ -43,11 +43,23 @@ type AutoTestRunner struct {
 	running       atomic.Bool
 	statusMu      sync.Mutex
 	status        AutoTestStatus
+	metrics       BackgroundTaskObserver
+}
+
+type BackgroundTaskObserver interface {
+	BeginBackgroundTask(task string) func(outcome string)
+	ObserveBackgroundTaskRun(task, outcome string, duration time.Duration)
 }
 
 func (r *AutoTestRunner) SetSystemEventRecorder(recorder SystemEventRecorder) {
 	if r != nil {
 		r.eventRecorder = recorder
+	}
+}
+
+func (r *AutoTestRunner) SetMetricsObserver(observer BackgroundTaskObserver) {
+	if r != nil {
+		r.metrics = observer
 	}
 }
 
@@ -135,10 +147,19 @@ func waitAutoTestInterval(ctx context.Context, interval time.Duration) bool {
 
 func (r *AutoTestRunner) runCycle(ctx context.Context) {
 	if !r.running.CompareAndSwap(false, true) {
+		if r.metrics != nil {
+			r.metrics.ObserveBackgroundTaskRun("provider_auto_test", "skipped", 0)
+		}
 		r.logger.Debug("provider account auto test skipped because previous cycle is still running")
 		return
 	}
 	defer r.running.Store(false)
+	outcome := "failure"
+	finishMetrics := func(string) {}
+	if r.metrics != nil {
+		finishMetrics = r.metrics.BeginBackgroundTask("provider_auto_test")
+	}
+	defer func() { finishMetrics(outcome) }()
 
 	started := time.Now()
 	r.setStatusStarted(started)
@@ -149,14 +170,20 @@ func (r *AutoTestRunner) runCycle(ctx context.Context) {
 	accounts, err := r.service.TestAccounts(cycleCtx)
 	if err != nil {
 		if ctx.Err() != nil {
+			outcome = "canceled"
 			r.setStatusFinished(time.Now(), len(accounts), ctx.Err().Error())
 			return
+		}
+		var batchErr *accountBatchError
+		if errors.As(err, &batchErr) && batchErr.Succeeded > 0 {
+			outcome = "partial"
 		}
 		r.setStatusFinished(time.Now(), len(accounts), err.Error())
 		r.recordCycleEvent(cycleCtx, started, len(accounts), err)
 		r.logger.Warn("provider account auto test failed", "error", err, "duration", time.Since(started))
 		return
 	}
+	outcome = "success"
 	r.setStatusFinished(time.Now(), len(accounts), "")
 	r.recordCycleEvent(cycleCtx, started, len(accounts), nil)
 	r.logger.Info("provider account auto test completed", "accounts", len(accounts), "duration", time.Since(started))

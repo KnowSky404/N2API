@@ -1143,6 +1143,49 @@ func TestLoadNormalizesUpstreamURLSchemes(t *testing.T) {
 	}
 }
 
+func TestMetricsDefaultsDisabledAndLoopback(t *testing.T) {
+	cfg, err := Load(strictConfigLookup(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsEnabled || cfg.MetricsHost != "127.0.0.1" || cfg.MetricsPort != 9090 || cfg.MetricsAddr() != "127.0.0.1:9090" {
+		t.Fatalf("metrics config = enabled:%t addr:%q", cfg.MetricsEnabled, cfg.MetricsAddr())
+	}
+}
+
+func TestMetricsNonLoopbackRequiresBearerToken(t *testing.T) {
+	_, err := Load(strictConfigLookup(map[string]string{
+		"N2API_METRICS_ENABLED": "true",
+		"N2API_METRICS_HOST":    "0.0.0.0",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "N2API_METRICS_BEARER_TOKEN") {
+		t.Fatalf("Load error = %v", err)
+	}
+	cfg, err := Load(strictConfigLookup(map[string]string{
+		"N2API_METRICS_ENABLED":      "true",
+		"N2API_METRICS_HOST":         "0.0.0.0",
+		"N2API_METRICS_BEARER_TOKEN": "metrics-secret",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MetricsAddr() != "0.0.0.0:9090" {
+		t.Fatalf("MetricsAddr = %q", cfg.MetricsAddr())
+	}
+}
+
+func TestMetricsListenerRejectsInvalidOrConflictingPort(t *testing.T) {
+	for _, overrides := range []map[string]string{
+		{"N2API_METRICS_ENABLED": "true", "N2API_METRICS_PORT": "0"},
+		{"N2API_METRICS_ENABLED": "true", "N2API_METRICS_HOST": "127.0.0.1", "N2API_METRICS_PORT": "3000"},
+		{"N2API_HOST": "0.0.0.0", "N2API_METRICS_ENABLED": "true", "N2API_METRICS_HOST": "127.0.0.1", "N2API_METRICS_PORT": "3000"},
+	} {
+		if _, err := Load(strictConfigLookup(overrides)); err == nil {
+			t.Fatalf("Load(%v) returned nil error", overrides)
+		}
+	}
+}
+
 func strictConfigLookup(overrides map[string]string) func(string) string {
 	values := map[string]string{
 		"N2API_HOST":              "127.0.0.1",

@@ -21,8 +21,9 @@ type SystemEventFilter = systemevent.Filter
 type SystemEventPage = systemevent.Page
 
 type SystemEventRepository struct {
-	pool         *pgxpool.Pool
-	cursorSecret []byte
+	pool          *pgxpool.Pool
+	cursorSecret  []byte
+	writeObserver systemevent.WriteObserver
 }
 
 func NewSystemEventRepository(pool *pgxpool.Pool, cursorSecret string) *SystemEventRepository {
@@ -31,7 +32,23 @@ func NewSystemEventRepository(pool *pgxpool.Pool, cursorSecret string) *SystemEv
 }
 
 func (r *SystemEventRepository) Insert(ctx context.Context, event systemevent.Event) error {
+	if r != nil {
+		ctx = systemEventWriteContext(ctx, r.writeObserver)
+	}
 	return insertSystemEvent(ctx, r.pool, event)
+}
+
+func (r *SystemEventRepository) SetWriteObserver(observer systemevent.WriteObserver) {
+	if r != nil {
+		r.writeObserver = observer
+	}
+}
+
+func systemEventWriteContext(ctx context.Context, fallback systemevent.WriteObserver) context.Context {
+	if systemevent.WriteObserverFromContext(ctx) != nil || fallback == nil {
+		return ctx
+	}
+	return systemevent.WithWriteObserver(ctx, fallback)
 }
 
 func (r *SystemEventRepository) GetByID(ctx context.Context, id int64) (systemevent.Event, error) {
@@ -54,8 +71,12 @@ func InsertSystemEventTx(ctx context.Context, tx pgx.Tx, event systemevent.Event
 
 func insertSystemEvent(ctx context.Context, executor interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, event systemevent.Event) error {
-	if err := systemevent.ValidateEvent(event); err != nil {
+}, event systemevent.Event) (err error) {
+	if observer := systemevent.WriteObserverFromContext(ctx); observer != nil {
+		defer func() { observer.ObserveSystemEventWrite(err) }()
+	}
+	if validationErr := systemevent.ValidateEvent(event); validationErr != nil {
+		err = validationErr
 		return err
 	}
 	metadataValue := event.Metadata

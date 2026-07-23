@@ -116,6 +116,16 @@ func TestRunAPIKeyCleanupCycleSuppressesCanceledFailure(t *testing.T) {
 	}
 }
 
+func TestRunAPIKeyCleanupCycleReportsCanceledMetricsOutcome(t *testing.T) {
+	metrics := &captureMainTaskMetrics{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runAPIKeyCleanupCycle(ctx, &fakeAPIKeyCleanupService{err: context.Canceled}, nil, slog.Default(), time.Now, metrics)
+	if len(metrics.runs) != 1 || metrics.runs[0] != [2]string{"api_key_purge", "canceled"} {
+		t.Fatalf("task metrics = %+v", metrics.runs)
+	}
+}
+
 func TestRunAPIKeyCleanupCycleSanitizesEventRecordingFailure(t *testing.T) {
 	const storageError = "insert failed: secret sql detail"
 	service := &fakeAPIKeyCleanupService{err: errors.New("purge failed")}

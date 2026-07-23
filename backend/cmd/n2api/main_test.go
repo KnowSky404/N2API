@@ -13,8 +13,27 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
+	"github.com/KnowSky404/N2API/backend/internal/metrics"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
+
+type captureMainTaskMetrics struct{ runs [][2]string }
+
+func (m *captureMainTaskMetrics) BeginBackgroundTask(task string) func(string) {
+	return func(outcome string) { m.runs = append(m.runs, [2]string{task, outcome}) }
+}
+func (m *captureMainTaskMetrics) ObserveBackgroundTaskRun(task, outcome string, _ time.Duration) {
+	m.runs = append(m.runs, [2]string{task, outcome})
+}
+
+type fakeProviderAccountMetricsSource struct {
+	accounts []provider.Account
+	err      error
+}
+
+func (s *fakeProviderAccountMetricsSource) ListAccounts(context.Context) ([]provider.Account, error) {
+	return s.accounts, s.err
+}
 
 func TestNewHTTPServerAppliesInboundResourceBoundariesWithoutWriteTimeout(t *testing.T) {
 	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
@@ -89,6 +108,44 @@ func TestHTTPServerCancelsActiveRequestsWhenBaseContextEnds(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("client request did not stop")
 	}
+}
+
+func TestProviderAccountMetricsPreserveLastSnapshotAfterRefreshFailure(t *testing.T) {
+	registry := metrics.New(nil)
+	expired := time.Now().Add(-time.Minute)
+	source := &fakeProviderAccountMetricsSource{accounts: []provider.Account{{
+		AccountType:      provider.AccountTypeAPIUpstream,
+		Enabled:          true,
+		Status:           provider.AccountStatusRateLimited,
+		RateLimitedUntil: &expired,
+	}}}
+	updateProviderAccountMetrics(context.Background(), source, registry)
+	source.accounts = nil
+	source.err = errors.New("database unavailable")
+	updateProviderAccountMetrics(context.Background(), source, registry)
+
+	families, err := registry.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "n2api_provider_accounts" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := map[string]string{}
+			for _, label := range metric.Label {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["account_type"] == "api_key" && labels["provider_state"] == "active" {
+				if metric.GetGauge().GetValue() != 1 {
+					t.Fatalf("provider account gauge = %v, want 1", metric.GetGauge().GetValue())
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("active api_key provider account metric not found")
 }
 
 func TestGatewayAccountProviderReportsAccountFailures(t *testing.T) {
@@ -169,12 +226,16 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",
 		"go autoTestRunner.Run(ctx)",
-		"go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour)",
+		"go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)",
 		"service.PurgeExpiredAPIKeys(ctx)",
-		"go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour)",
-		"runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now)",
+		"go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour, taskMetrics)",
+		"runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now, observers...)",
 		"autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS(\"frontend/build\")",
 		"server.Shutdown",
+		"metrics.NewHTTPServer",
+		"metricsServer.Shutdown",
+		"updateProviderAccountMetrics",
+		"systemEventRepo.SetWriteObserver(metricsRegistry)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("main.go missing %q", want)

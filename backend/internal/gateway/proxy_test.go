@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	n2metrics "github.com/KnowSky404/N2API/backend/internal/metrics"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 )
@@ -304,6 +305,53 @@ type fakeBudgetProvider struct {
 	key   admin.APIKey
 }
 
+type captureMetricsObserver struct {
+	started   int
+	finished  []capturedGatewayRequest
+	upstream  [][2]string
+	fallbacks []string
+	routing   []string
+	limits    [][2]string
+	streams   [][2]string
+	usage     []capturedUsage
+}
+
+type capturedGatewayRequest struct {
+	route, accountType string
+	status             int
+	stream             bool
+}
+
+type capturedUsage struct {
+	source                                string
+	priced                                bool
+	input, output, cachedInput, reasoning int
+	costMicrousd                          int64
+}
+
+func (m *captureMetricsObserver) GatewayRequestStarted() { m.started++ }
+func (m *captureMetricsObserver) GatewayRequestFinished(route string, statusCode int, stream bool, accountType string, _ time.Duration) {
+	m.finished = append(m.finished, capturedGatewayRequest{route: route, status: statusCode, stream: stream, accountType: accountType})
+}
+func (m *captureMetricsObserver) ObserveUpstreamAttempt(accountType, outcome string) {
+	m.upstream = append(m.upstream, [2]string{accountType, outcome})
+}
+func (m *captureMetricsObserver) ObserveFallback(reason string) {
+	m.fallbacks = append(m.fallbacks, reason)
+}
+func (m *captureMetricsObserver) ObserveRoutingFailure(reason string) {
+	m.routing = append(m.routing, reason)
+}
+func (m *captureMetricsObserver) ObserveLimitRejection(scope, reason string) {
+	m.limits = append(m.limits, [2]string{scope, reason})
+}
+func (m *captureMetricsObserver) ObserveStream(route, outcome string) {
+	m.streams = append(m.streams, [2]string{route, outcome})
+}
+func (m *captureMetricsObserver) ObserveUsage(source string, priced bool, input, output, cachedInput, reasoning int, costMicrousd int64) {
+	m.usage = append(m.usage, capturedUsage{source: source, priced: priced, input: input, output: output, cachedInput: cachedInput, reasoning: reasoning, costMicrousd: costMicrousd})
+}
+
 func (p *fakeBudgetProvider) GetAPIKeyBudgetUsage(_ context.Context, key admin.APIKey, _ time.Time) (admin.APIKeyBudgetUsage, error) {
 	p.calls++
 	p.key = key
@@ -330,6 +378,128 @@ func TestProxyRequiresBearerAPIKey(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "unauthorized") {
 		t.Fatalf("body = %q, want unauthorized error", recorder.Body.String())
+	}
+}
+
+func TestProxyMetricsCoverSupportedAuthenticationFailure(t *testing.T) {
+	observer := &captureMetricsObserver{}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{Metrics: observer})
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	if observer.started != 1 || len(observer.finished) != 1 {
+		t.Fatalf("request lifecycle = started:%d finished:%+v", observer.started, observer.finished)
+	}
+	got := observer.finished[0]
+	if got.route != "/v1/models" || got.status != http.StatusUnauthorized || got.stream || got.accountType != "none" {
+		t.Fatalf("finished request = %+v", got)
+	}
+	if len(observer.usage) != 0 {
+		t.Fatalf("unauthenticated usage observations = %+v", observer.usage)
+	}
+}
+
+func TestProxyTrafficUpdatesPrometheusRegistry(t *testing.T) {
+	registry := n2metrics.New(nil)
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{Metrics: registry})
+	proxy.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/models", nil))
+
+	families, err := registry.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requestCount, activeRequests float64
+	for _, family := range families {
+		switch family.GetName() {
+		case "n2api_gateway_requests_total":
+			for _, metric := range family.Metric {
+				labels := map[string]string{}
+				for _, label := range metric.Label {
+					labels[label.GetName()] = label.GetValue()
+				}
+				if labels["route"] == "models" && labels["status_class"] == "4xx" && labels["stream"] == "false" && labels["account_type"] == "none" {
+					requestCount = metric.GetCounter().GetValue()
+				}
+			}
+		case "n2api_gateway_active_requests":
+			activeRequests = family.Metric[0].GetGauge().GetValue()
+		}
+	}
+	if requestCount != 1 || activeRequests != 0 {
+		t.Fatalf("prometheus request metrics = count:%v active:%v", requestCount, activeRequests)
+	}
+}
+
+func TestProxyMetricsCoverUpstreamUsageAndCompletedStream(t *testing.T) {
+	observer := &captureMetricsObserver{}
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token",
+	}}}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n")),
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, accounts, Config{Metrics: observer}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test","stream":true}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK || len(observer.finished) != 1 || !observer.finished[0].stream || observer.finished[0].accountType != provider.AccountTypeAPIUpstream {
+		t.Fatalf("response/finished = %d %+v", recorder.Code, observer.finished)
+	}
+	if !slices.Equal(observer.upstream, [][2]string{{provider.AccountTypeAPIUpstream, "success"}}) {
+		t.Fatalf("upstream observations = %+v", observer.upstream)
+	}
+	if !slices.Equal(observer.streams, [][2]string{{"/v1/responses", "completed"}}) {
+		t.Fatalf("stream observations = %+v", observer.streams)
+	}
+	if len(observer.usage) != 1 || observer.usage[0].source != "stream" || observer.usage[0].input != 3 || observer.usage[0].output != 2 {
+		t.Fatalf("usage observations = %+v", observer.usage)
+	}
+}
+
+func TestProxyMetricsRetainSelectedAccountTypeAfterConcurrencyExhaustion(t *testing.T) {
+	observer := &captureMetricsObserver{}
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
+		AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token",
+	}}}
+	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
+		MaxConcurrentRequestsPerAccount: 1,
+		Metrics:                         observer,
+	})
+	release, ok := proxy.tryAcquireAccountSlot(7, 1)
+	if !ok {
+		t.Fatal("failed to acquire setup account slot")
+	}
+	defer release()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusTooManyRequests || len(observer.finished) != 1 {
+		t.Fatalf("response/finished = %d %+v", recorder.Code, observer.finished)
+	}
+	if observer.finished[0].accountType != provider.AccountTypeAPIUpstream {
+		t.Fatalf("account type = %q", observer.finished[0].accountType)
+	}
+}
+
+func TestStatusRecorderKeepsFirstCommittedStatus(t *testing.T) {
+	underlying := httptest.NewRecorder()
+	recorder := &statusRecorder{ResponseWriter: underlying}
+	recorder.WriteHeader(http.StatusCreated)
+	recorder.WriteHeader(http.StatusInternalServerError)
+	if recorder.statusCode() != http.StatusCreated || underlying.Code != http.StatusCreated {
+		t.Fatalf("status = recorder:%d underlying:%d", recorder.statusCode(), underlying.Code)
 	}
 }
 

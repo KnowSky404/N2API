@@ -985,6 +985,39 @@ func TestImageEvidenceDocumentationMatchesWorkflowContract(t *testing.T) {
 	}
 }
 
+func TestPrometheusDocumentationMatchesPrivateListenerContract(t *testing.T) {
+	checks := map[string][]string{
+		"../../../.env.example": {
+			"N2API_METRICS_ENABLED=false",
+			"N2API_METRICS_HOST=127.0.0.1",
+			"N2API_METRICS_PORT=9090",
+			"N2API_METRICS_BEARER_TOKEN=",
+		},
+		"../../../deploy/compose.metrics.yaml": {
+			"N2API_METRICS_ENABLED",
+			"N2API_METRICS_BEARER_TOKEN is required",
+			"host_ip",
+		},
+		"../../../docs/manual.md": {
+			"separate listener",
+			"mandatory",
+			"pgxpool.Stat()",
+			"no exemplars",
+		},
+	}
+	for path, wants := range checks {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%q): %v", path, err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(string(content), want) {
+				t.Fatalf("%s missing metrics contract %q", path, want)
+			}
+		}
+	}
+}
+
 func TestEncryptionEnvelopeDocumentationMatchesRuntimeContract(t *testing.T) {
 	checks := map[string][]string{
 		"../../../.env.example": {

@@ -239,6 +239,11 @@ type Config struct {
 	AllowHTTPAPIUpstreams bool
 	AccountTestLogger     AccountTestRequestLogger
 	RequestLogObserver    RequestLogWriteObserver
+	Metrics               MetricsObserver
+}
+
+type MetricsObserver interface {
+	ObserveProviderRefresh(mode, outcome string)
 }
 
 type Status struct {
@@ -657,6 +662,7 @@ type Service struct {
 	modelProber              accountModelProber
 	accountTestRequestLogger AccountTestRequestLogger
 	requestLogWriteObserver  RequestLogWriteObserver
+	metrics                  MetricsObserver
 	cfg                      Config
 	encryptionKeyring        *secret.Keyring
 	refreshMu                sync.Mutex
@@ -741,6 +747,7 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		modelProber:              httpClient,
 		accountTestRequestLogger: cfg.AccountTestLogger,
 		requestLogWriteObserver:  cfg.RequestLogObserver,
+		metrics:                  cfg.Metrics,
 		cfg:                      cfg,
 		encryptionKeyring:        cfg.EncryptionKeyring,
 		httpClient:               httpClient,
@@ -1929,6 +1936,8 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
+	refreshOutcome := "failure"
+	defer func() { s.observeProviderRefresh("manual", refreshOutcome) }()
 	unlock := s.lockAccountRefresh(id)
 	defer unlock()
 
@@ -1937,6 +1946,7 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 		return Account{}, err
 	}
 	if strings.TrimSpace(account.AccountType) == AccountTypeAPIUpstream {
+		refreshOutcome = "skipped"
 		return Account{}, ErrInvalidInput
 	}
 	refreshToken, err := s.decryptString(secret.SecretKindOAuthRefreshToken, account.EncryptedRefreshToken)
@@ -1966,6 +1976,7 @@ func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error)
 	if err != nil {
 		return Account{}, err
 	}
+	refreshOutcome = "success"
 	return s.probeLatestAccountStatus(ctx, refreshed, tokens.AccessToken)
 }
 
@@ -2297,6 +2308,8 @@ func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int
 	if accountID <= 0 || rejectedAccessToken == "" {
 		return "", false, false, ErrInvalidInput
 	}
+	refreshOutcome := "skipped"
+	defer func() { s.observeProviderRefresh("rejected_token", refreshOutcome) }()
 	if statusCode != http.StatusUnauthorized && statusCode != http.StatusForbidden {
 		return "", false, false, nil
 	}
@@ -2309,6 +2322,7 @@ func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int
 
 	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
 	if err != nil {
+		refreshOutcome = "failure"
 		return "", false, false, err
 	}
 	account = normalizeAccountCredentialFields(account)
@@ -2322,6 +2336,7 @@ func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int
 
 	currentAccessToken, err := s.decryptString(secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
 	if err != nil {
+		refreshOutcome = "failure"
 		return "", true, false, err
 	}
 	if subtle.ConstantTimeCompare([]byte(currentAccessToken), []byte(rejectedAccessToken)) != 1 {
@@ -2329,6 +2344,11 @@ func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int
 	}
 
 	accessToken, failureRecorded, err = s.refreshAccessTokenLocked(ctx, account, RefreshTriggerGatewayRequest, true)
+	if err != nil {
+		refreshOutcome = "failure"
+	} else {
+		refreshOutcome = "success"
+	}
 	return accessToken, true, failureRecorded, err
 }
 
@@ -2337,6 +2357,8 @@ func (s *Service) accessTokenForAccount(ctx context.Context, account Account, tr
 	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
 		return s.decryptString(secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
 	}
+	refreshOutcome := "failure"
+	defer func() { s.observeProviderRefresh("automatic", refreshOutcome) }()
 
 	if account.ID > 0 {
 		unlock := s.lockAccountRefresh(account.ID)
@@ -2348,13 +2370,23 @@ func (s *Service) accessTokenForAccount(ctx context.Context, account Account, tr
 		}
 		latest = normalizeAccountCredentialFields(latest)
 		if latest.AccessTokenExpiresAt == nil || latest.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
+			refreshOutcome = "skipped"
 			return s.decryptString(secret.SecretKindOAuthAccessToken, latest.EncryptedAccessToken)
 		}
 		account = latest
 	}
 
 	accessToken, _, err := s.refreshAccessTokenLocked(ctx, account, trigger, recordRefreshFailure)
+	if err == nil {
+		refreshOutcome = "success"
+	}
 	return accessToken, err
+}
+
+func (s *Service) observeProviderRefresh(mode, outcome string) {
+	if s != nil && s.metrics != nil {
+		s.metrics.ObserveProviderRefresh(mode, outcome)
+	}
 }
 
 func (s *Service) refreshAccessTokenLocked(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, bool, error) {

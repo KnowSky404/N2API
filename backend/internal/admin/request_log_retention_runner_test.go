@@ -49,6 +49,17 @@ type captureRequestLogRetentionEvents struct {
 	events []systemevent.Event
 }
 
+type captureAdminTaskMetrics struct {
+	runs [][2]string
+}
+
+func (m *captureAdminTaskMetrics) BeginBackgroundTask(task string) func(string) {
+	return func(outcome string) { m.runs = append(m.runs, [2]string{task, outcome}) }
+}
+func (m *captureAdminTaskMetrics) ObserveBackgroundTaskRun(task, outcome string, _ time.Duration) {
+	m.runs = append(m.runs, [2]string{task, outcome})
+}
+
 func (r *captureRequestLogRetentionEvents) Insert(_ context.Context, event systemevent.Event) error {
 	r.events = append(r.events, event)
 	return nil
@@ -101,6 +112,18 @@ func TestRequestLogRetentionRunnerRecordsSuccessStatusAndEvent(t *testing.T) {
 	}
 	if len(recorder.events) != 1 || recorder.events[0].Action != systemevent.ActionSchedulerRequestLogRetentionSucceeded || recorder.events[0].Outcome != systemevent.OutcomeSuccess {
 		t.Fatalf("success events = %+v", recorder.events)
+	}
+}
+
+func TestRequestLogRetentionRunnerReportsSuccessMetricsOutcome(t *testing.T) {
+	metrics := &captureAdminTaskMetrics{}
+	runner := NewRequestLogRetentionRunner(&fakeRequestLogRetentionService{
+		settings: GatewaySettings{RequestLogRetentionDays: 30},
+	}, RequestLogRetentionRunnerConfig{Enabled: true}, slog.Default())
+	runner.SetMetricsObserver(metrics)
+	runner.runCycle(context.Background())
+	if len(metrics.runs) != 1 || metrics.runs[0] != [2]string{"request_log_retention", "success"} {
+		t.Fatalf("task metrics = %+v", metrics.runs)
 	}
 }
 

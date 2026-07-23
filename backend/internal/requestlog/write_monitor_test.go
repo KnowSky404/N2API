@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+type captureWriteObserver struct {
+	errors []error
+}
+
+func (o *captureWriteObserver) ObserveRequestLogWrite(err error) { o.errors = append(o.errors, err) }
+
 func TestWriteMonitorTracksFailuresAndRecoveryWithoutLoggingDetails(t *testing.T) {
 	var output bytes.Buffer
 	monitor := NewWriteMonitor(slog.New(slog.NewTextHandler(&output, nil)))
@@ -47,6 +53,18 @@ func TestWriteMonitorTracksFailuresAndRecoveryWithoutLoggingDetails(t *testing.T
 	}
 	if recovered.LastFailedAt == nil || !recovered.LastFailedAt.Equal(*failed.LastFailedAt) || recovered.LastErrorCode != WriteFailedErrorCode || recovered.TotalFailures != 2 {
 		t.Fatalf("recovered status lost failure history = %+v", recovered)
+	}
+}
+
+func TestWriteMonitorForwardsEveryPersistenceOutcome(t *testing.T) {
+	monitor := NewWriteMonitor(nil)
+	observer := &captureWriteObserver{}
+	monitor.SetObserver(observer)
+	wantErr := errors.New("write failed")
+	monitor.Observe("request-1", nil)
+	monitor.Observe("request-2", wantErr)
+	if len(observer.errors) != 2 || observer.errors[0] != nil || !errors.Is(observer.errors[1], wantErr) {
+		t.Fatalf("observed errors = %+v", observer.errors)
 	}
 }
 

@@ -19,6 +19,14 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
+type captureProviderMetrics struct {
+	refreshes [][2]string
+}
+
+func (m *captureProviderMetrics) ObserveProviderRefresh(mode, outcome string) {
+	m.refreshes = append(m.refreshes, [2]string{mode, outcome})
+}
+
 func TestStatusReportsConfigurationAndConnection(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, fakeOAuthClient{}, Config{
@@ -1395,6 +1403,51 @@ func TestRefreshAccountForcesOAuthTokenRefreshAndClearsFailureState(t *testing.T
 	if account.Status != AccountStatusActive || account.FailureCount != 0 || account.CircuitOpenUntil != nil || account.LastRefreshAt == nil {
 		t.Fatalf("account after refresh = %+v", account)
 	}
+}
+
+func TestProviderRefreshMetricsDistinguishModesAndOutcomes(t *testing.T) {
+	t.Run("manual success", func(t *testing.T) {
+		repo := newMemoryRepo()
+		account := testAccount(t, 7, true, 0, "old-access")
+		account.EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
+		repo.accounts = []Account{account}
+		metrics := &captureProviderMetrics{}
+		service := newConfiguredService(repo, fakeOAuthClient{refresh: TokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600}})
+		service.metrics = metrics
+		if _, err := service.RefreshAccount(context.Background(), account.ID); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(metrics.refreshes, [][2]string{{"manual", "success"}}) {
+			t.Fatalf("refresh metrics = %+v", metrics.refreshes)
+		}
+	})
+
+	t.Run("rejected token skipped", func(t *testing.T) {
+		metrics := &captureProviderMetrics{}
+		service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
+		service.metrics = metrics
+		_, _, _, err := service.RefreshAccountAuthorization(context.Background(), 7, "token", http.StatusForbidden, "missing scopes: api.responses.write")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(metrics.refreshes, [][2]string{{"rejected_token", "skipped"}}) {
+			t.Fatalf("refresh metrics = %+v", metrics.refreshes)
+		}
+	})
+
+	t.Run("automatic failure", func(t *testing.T) {
+		repo := newMemoryRepo()
+		expired := time.Now().Add(-time.Minute)
+		account := testExpiredAccount(t, 7, true, 0, "old-access", "old-refresh", expired)
+		repo.accounts = []Account{account}
+		metrics := &captureProviderMetrics{}
+		service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
+		service.metrics = metrics
+		_, _ = service.AccessTokenForAccount(context.Background(), account)
+		if !reflect.DeepEqual(metrics.refreshes, [][2]string{{"automatic", "failure"}}) {
+			t.Fatalf("refresh metrics = %+v", metrics.refreshes)
+		}
+	})
 }
 
 func TestRefreshAccountRejectsAPIUpstreamAccount(t *testing.T) {

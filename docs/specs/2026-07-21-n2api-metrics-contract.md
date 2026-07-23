@@ -81,7 +81,7 @@ cannot recursively modify these counters.
 | `n2api_gateway_fallbacks_total` | Counter, fallbacks | `reason` | 4 | Frequency of explicit account fallback. |
 | `n2api_gateway_routing_failures_total` | Counter, failures | `reason` | 11 | Pool/model/provider selection exhaustion. |
 | `n2api_gateway_limit_rejections_total` | Counter, rejections | `scope`, `reason` | 28 | Concurrency, rate, and budget enforcement. |
-| `n2api_gateway_streams_total` | Counter, streams | `route`, `outcome` | 15 | Completed, canceled, and failed stream outcomes after headers. |
+| `n2api_gateway_streams_total` | Counter, streams | `route`, `outcome` | 30 | Completed, canceled, and failed stream outcomes after headers. |
 | `n2api_gateway_usage_observations_total` | Counter, observations | `usage_source`, `outcome` | 16 | Missing usage and pricing-match coverage. |
 | `n2api_gateway_tokens_total` | Counter, tokens | `token_type`, `usage_source` | 32 | Aggregate token volume without model/key/account dimensions. |
 | `n2api_gateway_estimated_cost_usd_total` | Counter, USD | none | 1 | Aggregate matched estimated cost; unmatched usage contributes zero. |
@@ -179,9 +179,9 @@ Alert `outcome` is reserved as `delivered`, `failed`, `dropped`,
 
 ## Budget Accounting
 
-The worst-case active N2API-owned series in the implemented sections is 1,301:
+The worst-case active N2API-owned series in the implemented sections is 1,316:
 
-- gateway: 1,140;
+- gateway: 1,155;
 - provider and persistence: 44;
 - background tasks: 105; and
 - PostgreSQL pool: 12.
@@ -194,11 +194,12 @@ and fail when either cap is exceeded.
 
 ## Exposure And Implementation Gate
 
-This contract does not authorize a public endpoint, choose a Go client library,
-or select loopback binding versus bearer-token protection. Metrics And Tracing
-Task 2 must use Context7 to review the current Go library, keep metrics disabled
-by default, decide the exposure policy with the owner, and test that disabled
-startup performs no registration or outbound work.
+The accepted implementation uses `github.com/prometheus/client_golang`, a
+private registry, and a separate listener that is disabled by default. The
+listener defaults to loopback; any non-loopback bind requires an
+operator-configured bearer token. The public gateway router never exposes the
+handler. Disabled startup performs no registration, listener setup, or metrics
+inventory query.
 
 Implementation acceptance must also prove:
 

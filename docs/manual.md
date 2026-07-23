@@ -62,6 +62,63 @@ startup. OAuth authorization and token endpoints must use HTTPS. The API base
 URL may use HTTP only when `N2API_ALLOW_HTTP_API_UPSTREAMS=true`, matching the
 explicit opt-in used for API-key upstream accounts.
 
+## Prometheus Metrics
+
+Prometheus metrics are disabled by default. When enabled, N2API creates a
+private Prometheus registry and serves `/metrics` from a separate listener; the
+gateway, admin API, probes, and static router never expose this handler. The
+default listener is `127.0.0.1:9090`. A non-loopback
+`N2API_METRICS_HOST` is rejected unless `N2API_METRICS_BEARER_TOKEN` is also
+set. The token protects only the metrics listener and must not reuse an
+administrator password, API key, provider credential, or encryption secret.
+
+For a scrape from inside the application container, keep the loopback default:
+
+```dotenv
+N2API_METRICS_ENABLED=true
+N2API_METRICS_HOST=127.0.0.1
+N2API_METRICS_PORT=9090
+N2API_METRICS_BEARER_TOKEN=
+```
+
+```bash
+docker compose -f deploy/compose.yaml exec -T n2api \
+  wget -q -O - http://127.0.0.1:9090/metrics
+```
+
+For a host-side Prometheus process, set a dedicated random token in `.env` and
+apply the metrics override. The override binds the process inside the container
+to `0.0.0.0`, requires bearer authentication, and publishes the port on host
+loopback by default:
+
+```dotenv
+N2API_METRICS_BEARER_TOKEN=replace-with-a-dedicated-random-token
+N2API_METRICS_BIND_ADDRESS=127.0.0.1
+N2API_METRICS_PORT=9090
+```
+
+```bash
+docker compose -f deploy/compose.yaml -f deploy/compose.metrics.yaml --env-file .env up -d
+curl --fail --silent --show-error \
+  --header "Authorization: Bearer ${N2API_METRICS_BEARER_TOKEN}" \
+  http://127.0.0.1:9090/metrics
+```
+
+Use the same override after `deploy/compose.release.yaml` for an immutable image
+deployment. Publishing metrics beyond host loopback requires an explicit
+`N2API_METRICS_BIND_ADDRESS` plus firewall policy; bearer authentication remains
+mandatory. Do not send the bearer token over an untrusted network without a TLS
+reverse proxy or private encrypted transport. Missing or incorrect credentials
+return HTTP 401.
+
+Metrics are process-local and reset on restart. Labels use fixed allowlists and
+omit request, key, account, pool, model, IP, token, body, and error details.
+Request Logs and System Events remain the durable records. Provider inventory
+is refreshed into memory once per minute, and a scrape reads only that snapshot,
+in-process counters, and `pgxpool.Stat()`. A PostgreSQL failure can make the
+inventory snapshot stale but does not prevent scraping. N2API emits no exemplars,
+tracing, remote export, Grafana configuration, or outbound telemetry.
+
 ## Reverse Proxy Trust
 
 N2API ignores `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`, and

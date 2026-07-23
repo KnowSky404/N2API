@@ -1,8 +1,7 @@
 # Metrics And Tracing Plan
 
-Status: in progress; Task 1 completed locally on 2026-07-21, and Task 2 waits
-for owner selection of the metrics exposure policy
-Public API changes: optional `/metrics`; no telemetry by default
+Status: in progress; Tasks 1 and 2 completed locally, tracing remains unplanned
+Public API changes: optional `/metrics` on a separate listener; no telemetry by default
 Data migration: none
 
 ## Current Baseline
@@ -59,8 +58,8 @@ are reserved but not registered before alerting exists.
 
 ## Task 2: Add Optional Prometheus Metrics
 
-Status: blocked on explicit owner selection between loopback-only exposure and
-an operator-configured bearer token; implementation remains disabled by default.
+Status: completed locally with a loopback default and mandatory bearer token for
+every non-loopback bind; implementation remains disabled by default.
 
 ### Goal
 
@@ -79,9 +78,11 @@ Task 1 and Context7 review of the selected current Go metrics library.
 
 ### Implementation
 
-Default disabled. Bind separately or protect with an operator bearer token;
-never expose accidentally through the public gateway. Record errors using
-stable codes. Instrument PostgreSQL pool stats without query text.
+Default disabled. Bind on a separate `127.0.0.1:9090` listener. Require an
+operator bearer token for every non-loopback bind and never expose the handler
+through the public gateway. Use a private Prometheus registry with explicit Go,
+process, build, N2API, and PostgreSQL pool collectors. Record errors using
+stable codes and instrument `pgxpool.Stat()` without query text.
 
 ### Tests And Verification
 
@@ -98,7 +99,9 @@ Metrics can create memory/cardinality pressure. Disable registration/export.
 
 ### Completion Criteria
 
-A bounded scrape reflects E2E traffic and contains no prohibited value.
+A bounded scrape reflects gateway and background-task traffic, remains available
+during PostgreSQL failure, and contains no prohibited value. The implementation
+stays below 1,600 N2API-owned series and 2,000 complete scrape series.
 
 ### Commit
 

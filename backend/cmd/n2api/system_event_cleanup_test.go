@@ -110,6 +110,15 @@ func TestRunSystemEventCleanupCycleEmitsPartialFailure(t *testing.T) {
 	assertSystemEventRetentionFailure(t, events[0], systemevent.SeverityWarning, systemevent.OutcomePartial, 1000, now, 14)
 }
 
+func TestRunSystemEventCleanupCycleReportsPartialMetricsOutcome(t *testing.T) {
+	metrics := &captureMainTaskMetrics{}
+	store := &fakeSystemEventRetentionStore{deleteResults: []systemEventDeleteResult{{count: 1000}, {err: errors.New("failed")}}}
+	runSystemEventCleanupCycle(context.Background(), store, 30, slog.Default(), time.Now, metrics)
+	if len(metrics.runs) != 1 || metrics.runs[0] != [2]string{"system_event_retention", "partial"} {
+		t.Fatalf("task metrics = %+v", metrics.runs)
+	}
+}
+
 func TestRunSystemEventCleanupCycleSuppressesCancellation(t *testing.T) {
 	store := &fakeSystemEventRetentionStore{}
 	var logs bytes.Buffer
