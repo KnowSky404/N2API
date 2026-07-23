@@ -1248,8 +1248,11 @@ copying the upstream status, headers, or body. An oversized response becomes a
 `502` response with the stable code `upstream_response_too_large`; a response
 read failure uses `upstream_response_error`. Neither path returns a partial
 body, upstream headers, or the underlying network error, and truncated data is
-not parsed as usage or stored in Request Logs. SSE remains streaming and is not
-subject to this total response-body limit.
+not parsed as usage or stored in Request Logs. Bounded upstream failure bodies
+may be inspected in memory for configured passthrough rules, but account health
+persists only a stable failure classification and never the original body or a
+truncated prefix. SSE remains streaming and is not subject to this total
+response-body limit.
 
 Inbound HTTP connections use `N2API_HTTP_IDLE_TIMEOUT_SECONDS` (60 seconds by
 default) and `N2API_HTTP_MAX_HEADER_BYTES` (1 MiB by default). Model-routed POST

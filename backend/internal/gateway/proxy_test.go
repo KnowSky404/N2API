@@ -4427,11 +4427,58 @@ func TestProxyRecordsRateLimitAndRetriesAnotherAccountBeforeStreaming(t *testing
 		t.Fatalf("failures = %+v, want one rate-limit report", tokens.failures)
 	}
 	failure := tokens.failures[0]
-	if failure.accountID != 1 || failure.statusCode != http.StatusTooManyRequests || failure.retryAfter != "120" || !strings.Contains(failure.message, "rate limited") {
+	if failure.accountID != 1 || failure.statusCode != http.StatusTooManyRequests || failure.retryAfter != "120" || failure.message != "upstream_rate_limited" {
 		t.Fatalf("failure = %+v", failure)
 	}
 	if !slices.Equal(tokens.used, []int64{1, 2}) || !slices.Equal(tokens.recovered, []int64{2}) {
 		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1 2]/[2]", tokens.used, tokens.recovered)
+	}
+}
+
+func TestCaptureFailureSeparatesRuleBodyFromPersistedSummary(t *testing.T) {
+	const canary = "upstream-body-secret-canary"
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		wantMessage string
+	}{
+		{
+			name:        "json error",
+			status:      http.StatusTooManyRequests,
+			body:        `{"error":{"message":"rate limited ` + canary + `"}}`,
+			wantMessage: "upstream_rate_limited",
+		},
+		{
+			name:        "plain text error",
+			status:      http.StatusBadGateway,
+			body:        "temporary failure " + canary,
+			wantMessage: "upstream_unavailable",
+		},
+		{
+			name:        "endpoint permission error",
+			status:      http.StatusForbidden,
+			body:        `{"error":{"message":"missing scopes: api.responses.write ` + canary + `"}}`,
+			wantMessage: "upstream_endpoint_permission_denied: missing scopes",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp := &http.Response{
+				StatusCode: test.status,
+				Body:       io.NopCloser(strings.NewReader(test.body)),
+			}
+			message, ruleBody := captureFailure(resp)
+			if message != test.wantMessage {
+				t.Fatalf("message = %q, want %q", message, test.wantMessage)
+			}
+			if strings.Contains(message, canary) {
+				t.Fatalf("persisted summary contains canary: %q", message)
+			}
+			if !strings.Contains(ruleBody, canary) {
+				t.Fatalf("rule body = %q, want in-memory canary for matching", ruleBody)
+			}
+		})
 	}
 }
 

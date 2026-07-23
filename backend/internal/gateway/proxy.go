@@ -1769,27 +1769,29 @@ func captureFailure(resp *http.Response) (string, string) {
 		closer: originalBody,
 	}
 	if err != nil {
-		return "", ""
+		return upstreamStatusErrorCode(resp.StatusCode), ""
 	}
 	summary := body
 	if len(summary) > maxFailureBody {
 		summary = summary[:maxFailureBody]
 	}
 	failureBody := string(bytes.TrimSpace(summary))
-	message := http.StatusText(resp.StatusCode)
-	if strings.TrimSpace(failureBody) == "" {
-		return message, failureBody
+	message := upstreamStatusErrorCode(resp.StatusCode)
+	if resp.StatusCode == http.StatusForbidden && isEndpointPermissionFailure(failureBody) {
+		message = "upstream_endpoint_permission_denied: missing scopes"
 	}
-	var payload struct {
-		Error struct {
-			Message string `json:"message"`
-			Code    string `json:"code"`
-		} `json:"error"`
+	return message, failureBody
+}
+
+func isEndpointPermissionFailure(failureBody string) bool {
+	_, message := upstreamErrorFields(failureBody)
+	if message == "" {
+		message = failureBody
 	}
-	if err := json.Unmarshal(summary, &payload); err == nil && strings.TrimSpace(payload.Error.Message) != "" {
-		return strings.TrimSpace(payload.Error.Message), failureBody
-	}
-	return string(bytes.TrimSpace(summary)), failureBody
+	lower := strings.ToLower(strings.TrimSpace(message))
+	return strings.Contains(lower, "missing scopes") ||
+		strings.Contains(lower, "api.responses.write") ||
+		(strings.Contains(lower, "insufficient permissions") && strings.Contains(lower, "scope"))
 }
 
 type prefixedReadCloser struct {
