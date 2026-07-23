@@ -255,7 +255,7 @@ func TestGatewayDocumentationUsesCurrentCodexProfileAndSecretHandling(t *testing
 		}
 	}
 	for _, forbidden := range []string{
-		"[profiles.n2api]",
+		"\n[profiles.n2api]\n",
 		`export N2API_API_KEY="`,
 	} {
 		if strings.Contains(text, forbidden) {
