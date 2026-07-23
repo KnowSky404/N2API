@@ -87,4 +87,30 @@ if "$repo_root/dev/ci/evaluate-govulncheck-report.sh" "$report" "$registry" >/de
   exit 1
 fi
 
+workflow="$repo_root/.github/workflows/ci-image.yml"
+job_block() {
+  local job="$1"
+  awk -v target="  ${job}:" '
+    $0 == target { active = 1 }
+    active && $0 ~ /^  [A-Za-z0-9_-]+:$/ && $0 != target { exit }
+    active { print }
+  ' "$workflow"
+}
+
+image_job="$(job_block image)"
+publish_job="$(job_block publish-platform)"
+manifest_job="$(job_block manifest)"
+
+grep -Fq '  merge_group:' "$workflow"
+grep -Fq '      contents: read' <<< "$image_job"
+if grep -Fq 'packages: write' <<< "$image_job"; then
+  echo "image build job unexpectedly has package write permission" >&2
+  exit 1
+fi
+grep -Fq '    needs: image' <<< "$publish_job"
+grep -Fq '      packages: write' <<< "$publish_job"
+grep -Fq '      - name: Download tested platform image' <<< "$publish_job"
+grep -Fq '      - name: Validate and load tested platform image' <<< "$publish_job"
+grep -Fq '    needs: publish-platform' <<< "$manifest_job"
+
 echo "Security policy evaluator tests passed."
