@@ -120,8 +120,13 @@ The documented baseline requires monthly and pre-upgrade drills, immutable
 current/proposed image identifiers, a measured duration, three successful
 monthly backups, pre-upgrade retention through the next successful monthly
 drill, encrypted off-host storage with separately held key material, and dated
-owner sign-off. The checklist explicitly excludes secrets and real dumps from
-CI and release records.
+owner sign-off. The standalone operator record captures the non-sensitive
+backup identifier, restored schema version, current and candidate image tags
+and digests, and separate archive-list, restore, migration, readiness,
+restored-secret, mock-gateway, and cleanup outcomes. It also keeps generated CI
+fixture evidence independent from real operator-backup acceptance. The
+checklist explicitly excludes secrets and real dumps from CI and release
+records.
 
 ### Completion Criteria
 

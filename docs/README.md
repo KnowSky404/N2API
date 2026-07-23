@@ -17,6 +17,7 @@ path; detailed usage and operations guidance belongs here.
 - [Published images](manual.md#published-images)
 - [Release workflow](manual.md#preview-and-publish-a-release)
 - [Release checklist](release-checklist.md)
+- [Operator restore drill record](restore-drill-record.md)
 - [Docker installation on Ubuntu 24.04 ARM64](manual.md#install-docker-on-ubuntu-2404-arm64)
 - [Production deployment](manual.md#deploy-a-published-image)
 - [Backup, upgrade, and rollback](manual.md#back-up-and-upgrade)

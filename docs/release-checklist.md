@@ -34,19 +34,29 @@ Run a real-backup restore drill at least monthly and again before every upgrade.
 The pre-upgrade drill must use a fresh backup. First prove that backup with the
 currently deployed immutable image. When the upgrade contains migrations, run
 a second isolated drill from the same backup with the proposed immutable image
-to prove migration and readiness before changing the live stack.
+to prove migration and readiness before changing the live stack. Complete one
+[operator restore drill record](restore-drill-record.md) for each drill and
+reference its non-sensitive identifier below.
 
+- [ ] Operator restore drill record identifier:
+- [ ] Real operator-backup restore status is `passed`:
+- [ ] CI generated-fixture restore status was recorded independently:
 - [ ] Drill date and time (UTC):
 - [ ] Backup creation date and time (UTC):
+- [ ] Backup identifier (non-sensitive object or inventory reference):
 - [ ] Source deployment version or digest:
-- [ ] Current image tested (tag or digest):
-- [ ] Proposed image tested when migrations apply (tag or digest, or `N/A`):
+- [ ] Current image tested (tag and digest):
+- [ ] Proposed image tested when migrations apply (tag and digest, or `N/A`):
+- [ ] Restored schema version:
 - [ ] Planned drill window:
 - [ ] Measured duration:
-- [ ] Archive listing passed:
-- [ ] Restore and migrations passed:
-- [ ] Readiness, integrity, restored-secret, and mock-gateway checks passed:
-- [ ] Temporary containers, network, and volume were removed:
+- [ ] Archive list status is `passed`:
+- [ ] Restore status is `passed`:
+- [ ] Migration status is `passed` or `not_applicable`:
+- [ ] Readiness status is `passed`:
+- [ ] Restored-secret check status is `passed`:
+- [ ] Mock gateway check status is `passed`:
+- [ ] Cleanup status is `passed`:
 - [ ] Encrypted off-host copy exists:
 - [ ] Retention expiry or deletion condition:
 - [ ] Owner sign-off and date:
@@ -62,9 +72,10 @@ storage, with decryption material held separately. A local backup is not a
 second copy, and a CI artifact is not approved backup storage.
 
 The drill record may contain a non-sensitive storage object identifier or
-inventory reference, but not a public URL, credential, encryption key, dump
-listing, or restored data. A failed or overdue drill blocks the recovery claim
-and release approval until the owner records an explicit exception.
+inventory reference, but not a public or signed URL, credential, encryption
+key, dump contents, complete archive listing, restored data, or complete object
+list. A failed or overdue drill blocks the recovery claim and release approval
+until the owner records an explicit, time-bounded exception.
 
 ## Deployment And Verification
 
@@ -78,5 +89,6 @@ and release approval until the owner records an explicit exception.
 - [ ] Owner approved publish or deployment:
 
 CI restore checks may create and destroy generated, non-sensitive fixture
-dumps. Real operator backups must remain in the operator-controlled local and
-off-host recovery path and must never be uploaded to GitHub Actions.
+dumps. Their status must remain separate from real operator-backup acceptance.
+Real operator backups must remain in the operator-controlled local and off-host
+recovery path and must never be uploaded to GitHub Actions.

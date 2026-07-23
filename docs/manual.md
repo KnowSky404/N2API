@@ -903,19 +903,26 @@ the isolated drill with the proposed immutable image before changing the live
 stack. A drill is not complete until cleanup has removed its temporary
 containers, network, and volume.
 
-Use the [release checklist](release-checklist.md) as the drill record. Record
-UTC backup and drill timestamps, source deployment version, exact tested image
-tags or digests, planned window, measured duration, redacted check outcomes,
-retention expiry or deletion condition, and owner sign-off. Allocate at least
-60 minutes or twice the previous measured duration, whichever is longer; this
-is a planning window rather than a recovery-time guarantee.
+Complete an [operator restore drill record](restore-drill-record.md), then
+reference its non-sensitive identifier from the
+[release checklist](release-checklist.md). Record UTC backup and drill
+timestamps, a non-sensitive backup identifier, source and restored schema
+versions, exact current and candidate image tags and digests, planned window,
+measured duration, every redacted check outcome, retention condition, and owner
+sign-off. Keep CI generated-fixture status separate from real operator-backup
+acceptance. Allocate at least 60 minutes or twice the previous measured
+duration, whichever is longer; this is a planning window rather than a
+recovery-time guarantee.
 
 Keep at least the three most recent successful monthly backups. Retain each
 pre-upgrade backup until the upgraded deployment passes its next monthly
 restore drill. Backups must be encrypted in off-host storage, with decryption
 material stored separately from the dump. Keep real operator dumps and storage
-credentials out of Git, GitHub Actions, logs, and drill records. CI may validate
-only generated non-sensitive fixture dumps.
+credentials out of Git, GitHub Actions, logs, and drill records. Do not record
+public or signed storage URLs, dump contents, complete archive listings,
+restored row data, or complete object listings. CI may validate only generated
+non-sensitive fixture dumps and never satisfies the real-backup acceptance
+gate.
 
 ### Portable Configuration Export
 
