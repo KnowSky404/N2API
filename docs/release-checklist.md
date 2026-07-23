@@ -21,12 +21,14 @@ record.
 - [ ] Both platform SBOMs were generated from the tested parent manifest digest without rebuilding:
 - [ ] The release prepare job verified an SPDX attestation for the exact tested digest, repository workflow, and source commit:
 - [ ] Both 14-day evidence artifacts contain a non-empty SPDX JSON SBOM, Trivy JSON, and non-sensitive metadata naming the same parent digest:
-- [ ] UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL report-only counts were reviewed for both platforms:
+- [ ] UNKNOWN, LOW, MEDIUM, HIGH, and CRITICAL counts were reviewed for both platforms:
+- [ ] No unexcepted HIGH or CRITICAL finding with a non-empty Trivy `FixedVersion` remains on either platform:
+- [ ] Every active image exception is exact, platform-scoped, owner-assigned, justified, and expires within 30 days:
 
-Vulnerability findings do not currently block a release by severity. The owner
-must approve a severity, fix-availability, and time-bounded exception policy
-before findings become a release gate. Evidence generation, schema validation,
-attestation, and upload failures are already blocking workflow errors.
+Unexcepted HIGH and CRITICAL findings with an available fix block release image
+evidence. Unfixed findings remain report-only. Scanner execution, malformed
+reports, invalid or expired exception registries, attestation, and evidence
+upload failures also block the workflow.
 
 ## Restore Drill Gate
 

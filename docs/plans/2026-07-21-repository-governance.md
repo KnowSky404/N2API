@@ -1,6 +1,6 @@
 # Repository Governance Plan
 
-Status: in progress; Tasks 3 and 5 completed locally, owner decisions remain
+Status: in progress; Tasks 1, 3, 4, and 5 completed locally; owner decisions remain
 Public API changes: none
 Data migration: none
 
@@ -8,13 +8,12 @@ Data migration: none
 
 The repository has CI Image and Release workflows with commit-pinned actions,
 multi-platform smoke tests, tested-digest publication, attestations, and
-Conventional Commit-based release notes. The workflows now generate and attest
-two platform SPDX SBOMs and retain report-only Trivy evidence tied to the tested
-parent manifest digest. It has no `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`,
-issue/PR templates, CodeQL, `govulncheck`, frontend audit, approved blocking
-vulnerability policy, or documented supported-version/security-release policy.
-Dependabot version updates are configured locally across every current
-dependency ecosystem.
+Conventional Commit-based release notes. The workflows generate and attest two
+platform SPDX SBOMs, retain Trivy evidence tied to the tested parent manifest
+digest, and block unexcepted fixed HIGH/CRITICAL findings. Security and
+contribution policies, templates, CodeQL, `govulncheck`, frontend audit, and an
+expiring exception registry are configured locally. No `LICENSE` has been
+selected. Dependabot version updates cover every current dependency ecosystem.
 
 ## Task 1: Establish Security And Contribution Policies
 
@@ -127,6 +126,9 @@ pending without expanding this task's push authorization.
 
 ## Task 4: Add Source And Dependency Vulnerability Checks
 
+Task status: implemented locally on 2026-07-23; first GitHub CodeQL and
+scheduled-scan evidence remains pending after an owner-authorized push
+
 ### Goal
 
 Detect actionable Go, JavaScript, and workflow issues without blocking on noise.
@@ -144,9 +146,10 @@ Task 1 triage policy.
 ### Implementation
 
 Use current official actions pinned by SHA. Run CodeQL for Go/JavaScript,
-`govulncheck ./...`, and a Bun-compatible lockfile audit. Initially report-only
-for a short baseline period; make high-confidence findings required after
-documented exceptions are resolved.
+`govulncheck ./...`, and a Bun-compatible lockfile audit. CodeQL reports the
+`security-extended` suite while reachable Go findings and HIGH/CRITICAL Bun
+findings block immediately. Apply only exact, expiring exceptions from the
+shared registry.
 
 ### Completion Criteria
 
@@ -181,7 +184,7 @@ parent manifest digest. A dependent `linux/amd64` and `linux/arm64` matrix reads
 that exact `IMAGE@digest` with platform-specific Syft and Trivy selection; it
 does not build or retag the image. Each matrix leg validates its SPDX JSON,
 attests it to the parent manifest in GHCR, validates the Trivy JSON schema,
-writes only severity counts and the report-only status to the job summary, and
+writes only severity counts and the blocking policy to the job summary, and
 uploads the SBOM, vulnerability report, and non-sensitive relationship metadata
 for 14 days.
 
@@ -192,10 +195,10 @@ the CI evidence matrix rather than a fragile count of CLI verification output.
 The Release body and operator documentation state that both platform records
 are tied to the same digest and that stable release promotion never rebuilds it.
 
-Vulnerability findings remain report-only. Selecting blocking severities,
-whether only fixed findings should block, and the exception/expiry process are
-owner decisions; scanner, schema, attestation, and artifact failures already
-fail CI.
+Unexcepted HIGH/CRITICAL findings with a non-empty Trivy `FixedVersion` block
+the platform job. Unfixed findings remain report-only. Exact CVE or package
+exceptions are platform-scoped and expire within 30 days. Scanner, report,
+registry, schema, attestation, and artifact failures fail closed.
 
 ### Completion Criteria
 

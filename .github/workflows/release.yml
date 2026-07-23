@@ -243,7 +243,8 @@ jobs:
               '' \
               "- SPDX JSON SBOM attestations for \`linux/amd64\` and \`linux/arm64\` are bound to \`${IMAGE}@${SOURCE_DIGEST}\`." \
               '- Both platform SBOMs and vulnerability reports were generated from that existing parent manifest without rebuilding it.' \
-              '- Trivy vulnerability findings are report-only; scanner, schema, and report-generation failures still fail CI.' \
+              '- Unexcepted HIGH/CRITICAL Trivy findings with a non-empty fixed version block CI; unfixed findings remain report-only.' \
+              '- Scanner, schema, exception-registry, and report-generation failures fail closed.' \
               '- The per-platform SBOM, Trivy JSON, and non-sensitive evidence metadata artifacts are retained with the originating CI run for 14 days.' \
               ''
             printf '%s\n' \

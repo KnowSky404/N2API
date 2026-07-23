@@ -67,6 +67,9 @@ dependency checks:
 - `govulncheck` blocks reachable Go vulnerabilities.
 - `bun audit --audit-level=high` blocks HIGH and CRITICAL frontend dependency
   vulnerabilities.
+- Trivy blocks HIGH and CRITICAL image vulnerabilities when the report names a
+  non-empty fixed version. Unfixed findings remain visible in retained evidence
+  but do not block publication.
 - `actionlint` and the pinned-dependency policy reject malformed workflows and
   external Actions that are not pinned to complete commit SHAs.
 

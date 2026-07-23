@@ -262,13 +262,16 @@ attested to that parent manifest digest in GHCR. CI also retains the SBOM,
 Trivy JSON, and a non-sensitive metadata file naming the parent digest,
 platform, and evidence filenames for 14 days.
 
-Vulnerability findings are report-only until the owner approves a blocking
-severity, fix-availability, and exception-expiry policy. Scanner execution,
-invalid JSON or schema, attestation, and artifact upload errors still fail the
-platform evidence job. Release preview and publish runs verify that the tested
-parent digest has an SPDX attestation issued by this repository's `CI Image`
-workflow for the selected source commit; stable tags continue to promote that
-same digest without rebuilding it.
+Unexcepted HIGH and CRITICAL findings with a non-empty Trivy `FixedVersion`
+block the platform evidence job. Unfixed findings remain report-only so a base
+image is not permanently blocked when no remediation exists. Exact CVE or
+package exceptions may be recorded per platform in `security/exceptions.json`;
+they require an owner, reason, and expiry no more than 30 days after creation.
+Scanner execution, invalid JSON or schema, exception-registry validation,
+attestation, and artifact upload errors fail closed. Release preview and
+publish runs verify that the tested parent digest has an SPDX attestation issued
+by this repository's `CI Image` workflow for the selected source commit; stable
+tags continue to promote that same digest without rebuilding it.
 
 Release `2026071401` predates multi-platform publishing and supports only
 `linux/amd64`. ARM64 hosts must use a later release. Inspect any tag before
