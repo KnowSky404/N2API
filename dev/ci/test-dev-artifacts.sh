@@ -70,6 +70,40 @@ set -e
 failure_path="$(<"${failure_path_file}")"
 [[ ! -e "${failure_path}" ]] || fail "failure exit left ${failure_path}"
 
+for runner_failure in test check; do
+  runner_output="${fixture}/runner-${runner_failure}.out"
+  case "${runner_failure}" in
+    test) runner_expected_status=17 ;;
+    check) runner_expected_status=23 ;;
+  esac
+  set +e
+  N2API_TMP_ROOT="${fixture}/tmp" \
+  N2API_DEV_CACHE_ROOT="${fixture}/cache" \
+  N2API_DISK_MIN_FREE_GIB=0 \
+  N2API_FAKE_BUN_FAILURE="${runner_failure}" \
+    bash -c '
+      go() { return 0; }
+      bun() {
+        printf "fake bun: %s\n" "$*"
+        case "${N2API_FAKE_BUN_FAILURE}:$*" in
+          test:test) return 17 ;;
+          "check:run check") return 23 ;;
+        esac
+        return 0
+      }
+      export -f go bun
+      "$1" unit
+    ' _ "${repo_root}/dev/testing/run.sh" >"${runner_output}" 2>&1
+  runner_status=$?
+  set -e
+  [[ ${runner_status} -eq ${runner_expected_status} ]] ||
+    fail "frontend ${runner_failure} failure became status ${runner_status}, want ${runner_expected_status}"
+  rg -q '^fake bun: test$' "${runner_output}" || fail "frontend test command did not run"
+  if rg -q '^fake bun: run build$' "${runner_output}"; then
+    fail "frontend build ran after ${runner_failure} failed"
+  fi
+done
+
 signal_path_file="${fixture}/signal.path"
 run_lifecycle_child signal "${signal_path_file}" &
 signal_pid=$!

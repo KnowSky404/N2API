@@ -29,8 +29,13 @@ run_compose() {
 
 case "${mode}" in
   unit)
-    n2api_run_command bash -c 'cd "$1/backend" && go test ./...' _ "${repo_root}"
     n2api_run_command bash -c '
+      set -euo pipefail
+      cd "$1/backend"
+      go test ./...
+    ' _ "${repo_root}"
+    n2api_run_command bash -c '
+      set -euo pipefail
       cd "$1/frontend"
       bun test
       bun run check
@@ -39,6 +44,7 @@ case "${mode}" in
     ;;
   request-log-profile)
     n2api_run_command bash -c '
+      set -euo pipefail
       cd "$1/backend"
       go test -count=1 -run TestRequestLogQueryProfile -v ./internal/store
     ' _ "${repo_root}"
