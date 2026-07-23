@@ -108,12 +108,15 @@ func TestGatewayDocumentationMatchesRequestBodyBoundaryContract(t *testing.T) {
 		"../../../.env.example": {
 			"N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES=4194304",
 			"N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES=1048576",
+			"N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES=8388608",
 		},
 		"../../../docs/manual.md": {
 			"hard limit for both known-length and chunked requests",
 			"stable code `request_too_large`",
 			"at most one upstream attempt",
 			"admission occurs before the complete body read",
+			"stable code `upstream_response_too_large`",
+			"SSE remains streaming",
 		},
 	}
 	for path, wants := range checks {

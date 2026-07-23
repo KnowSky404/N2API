@@ -1149,6 +1149,16 @@ retain pre-stream retry and fallback behavior. Gateway and client-key
 concurrency admission occurs before the complete body read, and every body
 error path releases both slots.
 
+Non-streaming upstream responses are buffered only up to
+`N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES` plus one byte; the default is
+8 MiB and the startup maximum is 64 MiB. N2API verifies this bound before
+copying the upstream status, headers, or body. An oversized response becomes a
+`502` response with the stable code `upstream_response_too_large`; a response
+read failure uses `upstream_response_error`. Neither path returns a partial
+body, upstream headers, or the underlying network error, and truncated data is
+not parsed as usage or stored in Request Logs. SSE remains streaming and is not
+subject to this total response-body limit.
+
 Request Logs keep local gateway rejections diagnosable while client responses stay OpenAI-compatible. Local limit responses still return `rate_limit_exceeded` to clients, but the stored request-log error identifies the guard as `api_key_request_rate_limited`, `api_key_token_rate_limited`, `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, `api_key_cost_budget_exceeded`, `gateway_concurrency_limited`, `api_key_concurrency_limited`, or `provider_account_concurrency_limited`.
 
 Request Logs also include gateway fallback diagnostics: attempts count selected provider-account tries, and fallbacks count pre-stream scheduler moves caused by busy accounts or retryable upstream failures.

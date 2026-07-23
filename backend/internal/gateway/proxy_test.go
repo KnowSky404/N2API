@@ -523,6 +523,118 @@ func TestProxyRoutesChatCompletionByRequestedModel(t *testing.T) {
 	}
 }
 
+func TestProxyBoundsNonStreamingUpstreamResponseBeforeCommittingHeaders(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	upstreamBody := &countingReadCloser{reader: strings.NewReader(strings.Repeat("response-canary", 8))}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Header: http.Header{
+				"Content-Type":      []string{"application/json"},
+				"X-Upstream-Canary": []string{"must-not-be-copied"},
+			},
+			Body:    upstreamBody,
+			Request: request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}, Config{
+		MaxUpstreamResponseBodyBytes: 32,
+		Logger:                       logger,
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), `"code":"upstream_response_too_large"`) {
+		t.Fatalf("status/body=%d/%s, want stable oversized response", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "response-canary") || recorder.Header().Get("X-Upstream-Canary") != "" {
+		t.Fatalf("oversized upstream data leaked: headers=%v body=%s", recorder.Header(), recorder.Body.String())
+	}
+	if upstreamBody.bytesRead != 33 {
+		t.Fatalf("upstream bytes read=%d, want max+1", upstreamBody.bytesRead)
+	}
+	if len(logger.entries) != 1 || logger.entries[0].Error != "upstream_response_too_large" || logger.entries[0].UsageSource != "missing" {
+		t.Fatalf("request log=%+v", logger.entries)
+	}
+}
+
+func TestProxyAllowsNonStreamingUpstreamResponseAtExactLimit(t *testing.T) {
+	const responseBody = `{"id":"response-exact-limit"}`
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusCreated,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "X-Upstream": []string{"preserved"}},
+			Body:       io.NopCloser(strings.NewReader(responseBody)),
+			Request:    request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}, Config{
+		MaxUpstreamResponseBodyBytes: len(responseBody),
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusCreated || recorder.Body.String() != responseBody || recorder.Header().Get("X-Upstream") != "preserved" {
+		t.Fatalf("status=%d headers=%v body=%s", recorder.Code, recorder.Header(), recorder.Body.String())
+	}
+}
+
+func TestProxyRedactsNonStreamingUpstreamReadFailure(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}, "X-Upstream-Canary": []string{"must-not-be-copied"}},
+			Body:       &brokenReader{},
+			Request:    request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}, Config{
+		MaxUpstreamResponseBodyBytes: 1024,
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), `"code":"upstream_response_error"`) {
+		t.Fatalf("status/body=%d/%s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "partial") || recorder.Header().Get("X-Upstream-Canary") != "" || strings.Contains(recorder.Body.String(), "stream broke") {
+		t.Fatalf("upstream read failure leaked details: headers=%v body=%s", recorder.Header(), recorder.Body.String())
+	}
+}
+
+func TestProxyDoesNotApplyTotalBodyLimitToSSE(t *testing.T) {
+	const streamBody = "data: {\"type\":\"response.completed\"}\n\n"
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(streamBody)),
+			Request:    request,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "token"}}}, Config{
+		MaxUpstreamResponseBodyBytes: 1,
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := &flushRecordingResponseWriter{}
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.status != http.StatusOK || recorder.body.String() != streamBody {
+		t.Fatalf("status/body=%d/%q, want complete SSE", recorder.status, recorder.body.String())
+	}
+}
+
 func TestProxyRoutesRequestWithSessionIDForStickySelection(t *testing.T) {
 	const requestBody = `{"model":"gpt-5","session_id":" workspace-123 ","messages":[]}`
 	var gotBody string
@@ -4218,6 +4330,19 @@ func (body *trackingReadCloser) Read(buffer []byte) (int, error) {
 }
 
 func (body *trackingReadCloser) Close() error { return nil }
+
+type countingReadCloser struct {
+	reader    io.Reader
+	bytesRead int
+}
+
+func (body *countingReadCloser) Read(buffer []byte) (int, error) {
+	count, err := body.reader.Read(buffer)
+	body.bytesRead += count
+	return count, err
+}
+
+func (body *countingReadCloser) Close() error { return nil }
 
 func (r *brokenReader) Read(p []byte) (int, error) {
 	if !r.sent {

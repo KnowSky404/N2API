@@ -290,6 +290,7 @@ func runServer() {
 		MaxTokensPerMinutePerKey:        cfg.GatewayTokensPerMinutePerKey,
 		MaxAcceptedRequestBodyBytes:     cfg.GatewayMaxAcceptedRequestBodyBytes,
 		MaxInMemoryReplayBodyBytes:      cfg.GatewayMaxInMemoryReplayBodyBytes,
+		MaxUpstreamResponseBodyBytes:    cfg.GatewayMaxUpstreamResponseBodyBytes,
 		SettingsProvider:                adminService,
 		BudgetProvider:                  adminService,
 		ErrorPassthroughRulesProvider:   adminService,

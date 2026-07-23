@@ -25,6 +25,7 @@ const defaultCodexUserAgent = provider.DefaultCodexFingerprintUserAgent
 const defaultCodexInstructions = "You are Codex, a coding agent."
 const defaultMaxAcceptedRequestBody = 4 << 20
 const defaultMaxInMemoryReplayBody = 1 << 20
+const defaultMaxUpstreamResponseBody = 8 << 20
 const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 const requestLogWriteTimeout = 5 * time.Second
@@ -185,6 +186,7 @@ type Config struct {
 	MaxTokensPerMinutePerKey        int
 	MaxAcceptedRequestBodyBytes     int
 	MaxInMemoryReplayBodyBytes      int
+	MaxUpstreamResponseBodyBytes    int
 	Logger                          RequestLogger
 	ModelProvider                   ModelProvider
 	UsagePricer                     UsagePricer
@@ -213,6 +215,7 @@ type Proxy struct {
 	errorRules      ErrorPassthroughRulesProvider
 	maxAcceptedBody int
 	maxReplayBody   int
+	maxResponseBody int
 }
 
 func NewProxy(auth APIKeyAuthenticator, accounts AccountProvider, cfg Config) *Proxy {
@@ -251,6 +254,10 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if maxReplayBody > maxAcceptedBody {
 		maxReplayBody = maxAcceptedBody
 	}
+	maxResponseBody := cfg.MaxUpstreamResponseBodyBytes
+	if maxResponseBody <= 0 {
+		maxResponseBody = defaultMaxUpstreamResponseBody
+	}
 	return &Proxy{
 		auth:            auth,
 		accounts:        accounts,
@@ -271,6 +278,7 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		errorRules:      cfg.ErrorPassthroughRulesProvider,
 		maxAcceptedBody: maxAcceptedBody,
 		maxReplayBody:   maxReplayBody,
+		maxResponseBody: maxResponseBody,
 	}
 }
 
@@ -536,12 +544,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer upstreamResp.Body.Close()
 
 				streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
-				copyResponseHeaders(recorder.Header(), upstreamResp.Header)
-				if streamResponse {
-					recorder.Header().Set("Content-Type", "text/event-stream")
+				observedUsage, err = p.writeUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
+				if err != nil {
+					errorCode = upstreamResponseErrorCode(err)
+					writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 				}
-				recorder.WriteHeader(upstreamResp.StatusCode)
-				observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
 				return
 			}
 			if !authorizationRefreshFailureRecorded {
@@ -563,12 +570,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer upstreamResp.Body.Close()
 
 		streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
-		copyResponseHeaders(recorder.Header(), upstreamResp.Header)
-		if streamResponse {
-			recorder.Header().Set("Content-Type", "text/event-stream")
+		observedUsage, err = p.writeUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
+		if err != nil {
+			errorCode = upstreamResponseErrorCode(err)
+			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 		}
-		recorder.WriteHeader(upstreamResp.StatusCode)
-		observedUsage = copyUpstreamResponse(recorder, upstreamResp, r.URL.Path, streamResponse)
 		return
 	}
 }
@@ -1066,19 +1072,46 @@ func secondsUntilNextMinute(now time.Time) int {
 	return seconds
 }
 
-func copyUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string, stream bool) Usage {
+var (
+	errUpstreamResponseTooLarge = errors.New("upstream response exceeds configured limit")
+	errUpstreamResponseRead     = errors.New("upstream response read failed")
+)
+
+func (p *Proxy) writeUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string, stream bool) (Usage, error) {
 	if resp == nil || resp.Body == nil {
-		return Usage{Source: "missing"}
+		return Usage{Source: "missing"}, errUpstreamResponseRead
 	}
 	if stream {
-		return copyStreamingResponse(w, resp.Body, route)
+		copyResponseHeaders(w.Header(), resp.Header)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(resp.StatusCode)
+		return copyStreamingResponse(w, resp.Body, route), nil
 	}
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(p.maxResponseBody)+1))
 	if err != nil {
-		return Usage{Source: "missing"}
+		return Usage{Source: "missing"}, errUpstreamResponseRead
 	}
+	if len(body) > p.maxResponseBody {
+		return Usage{Source: "missing"}, errUpstreamResponseTooLarge
+	}
+	copyResponseHeaders(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
-	return ParseUsageFromJSON(route, body)
+	return ParseUsageFromJSON(route, body), nil
+}
+
+func upstreamResponseErrorCode(err error) string {
+	if errors.Is(err, errUpstreamResponseTooLarge) {
+		return "upstream_response_too_large"
+	}
+	return "upstream_response_error"
+}
+
+func upstreamResponseErrorMessage(err error) string {
+	if errors.Is(err, errUpstreamResponseTooLarge) {
+		return "upstream response is too large"
+	}
+	return "could not read upstream response"
 }
 
 func copyStreamingResponse(w http.ResponseWriter, body io.Reader, route string) Usage {
