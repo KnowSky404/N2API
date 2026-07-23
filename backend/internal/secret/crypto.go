@@ -47,8 +47,9 @@ const (
 	SecretKindOAuthIDToken           SecretKind = "oauth-id-token"
 	SecretKindAlertActionDestination SecretKind = "alert-action-destination"
 
-	CiphertextFormatV1     CiphertextFormat = "v1"
-	CiphertextFormatLegacy CiphertextFormat = "legacy"
+	CiphertextFormatV1      CiphertextFormat = "v1"
+	CiphertextFormatLegacy  CiphertextFormat = "legacy"
+	CiphertextFormatUnknown CiphertextFormat = "unknown"
 )
 
 type CiphertextVerification struct {
@@ -247,6 +248,19 @@ func (k *Keyring) VerifyStringFor(kind SecretKind, encoded string) (CiphertextVe
 	}
 	clear(plaintext)
 	return verification, nil
+}
+
+// InspectCiphertextFormat reports only the structural envelope format. It does
+// not authenticate metadata or imply that the ciphertext is readable.
+func InspectCiphertextFormat(encoded string) CiphertextFormat {
+	if !strings.HasPrefix(encoded, ciphertextEnvelopeNamespace+":") {
+		return CiphertextFormatLegacy
+	}
+	parts := strings.SplitN(encoded, ":", 3)
+	if len(parts) >= 2 && parts[1] == ciphertextEnvelopeVersion {
+		return CiphertextFormatV1
+	}
+	return CiphertextFormatUnknown
 }
 
 func (k *Keyring) decryptBytesFor(kind SecretKind, encoded string) ([]byte, CiphertextVerification, error) {

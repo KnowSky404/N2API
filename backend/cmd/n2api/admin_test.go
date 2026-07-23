@@ -21,8 +21,9 @@ func TestRunAdminCommandWritesJSONAndMapsVerificationStatus(t *testing.T) {
 		report encryptioninventory.Report
 		want   int
 	}{
-		"verified": {report: encryptioninventory.Report{Status: encryptioninventory.StatusOK}, want: 0},
-		"failed":   {report: encryptioninventory.Report{Status: encryptioninventory.StatusFailed}, want: 1},
+		"verified":  {report: encryptioninventory.Report{Status: encryptioninventory.StatusOK}, want: 0},
+		"attention": {report: encryptioninventory.Report{Status: encryptioninventory.StatusAttention}, want: 0},
+		"failed":    {report: encryptioninventory.Report{Status: encryptioninventory.StatusFailed}, want: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var stdout bytes.Buffer

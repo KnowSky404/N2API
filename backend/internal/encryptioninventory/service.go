@@ -4,15 +4,39 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
 )
 
 const (
-	StatusOK     = "ok"
-	StatusFailed = "failed"
+	StatusOK        = "ok"
+	StatusAttention = "attention"
+	StatusFailed    = "failed"
+)
 
-	FailureUnreadable = "unreadable"
+type LifecycleStatus string
+
+const (
+	LifecycleReadableCurrentKey         LifecycleStatus = "readable_current_key"
+	LifecycleReadablePreviousKey        LifecycleStatus = "readable_previous_key"
+	LifecycleReadableLegacy             LifecycleStatus = "readable_legacy"
+	LifecycleUnreadableRequired         LifecycleStatus = "unreadable_required"
+	LifecycleUnreadableExpiredPurgeable LifecycleStatus = "unreadable_expired_or_purgeable"
+	LifecycleUnreadableUnknown          LifecycleStatus = "unreadable_unknown"
+)
+
+type ReasonCode string
+
+const (
+	ReasonCurrentKeyVerified  ReasonCode = "current_key_verified"
+	ReasonPreviousKeyVerified ReasonCode = "previous_key_verified"
+	ReasonLegacyCiphertext    ReasonCode = "legacy_ciphertext_verified"
+	ReasonCredentialRequired  ReasonCode = "credential_required"
+	ReasonOAuthStateActive    ReasonCode = "oauth_state_active"
+	ReasonOAuthStateExpired   ReasonCode = "oauth_state_expired"
+	ReasonOAuthStateConsumed  ReasonCode = "oauth_state_consumed"
+	ReasonLifecycleUnknown    ReasonCode = "lifecycle_unknown"
 )
 
 type EncryptedValue struct {
@@ -20,45 +44,42 @@ type EncryptedValue struct {
 	Type       secret.SecretKind
 	RowID      int64
 	Ciphertext string `json:"-"`
+	ExpiresAt  *time.Time
+	ConsumedAt *time.Time
 }
 
 type Repository interface {
 	ListEncryptedValues(ctx context.Context) ([]EncryptedValue, error)
 }
 
-type Totals struct {
-	Values   int `json:"values"`
-	Verified int `json:"verified"`
-	Failed   int `json:"failed"`
-}
-
-type KeyIDCount struct {
-	ID     string                  `json:"id"`
-	Format secret.CiphertextFormat `json:"format"`
-	Count  int                     `json:"count"`
+type LifecycleCount struct {
+	Status LifecycleStatus `json:"lifecycleStatus"`
+	Count  int             `json:"count"`
 }
 
 type TypeReport struct {
-	Table    string            `json:"table"`
-	Type     secret.SecretKind `json:"type"`
-	Values   int               `json:"values"`
-	Verified int               `json:"verified"`
-	Failed   int               `json:"failed"`
-	KeyIDs   []KeyIDCount      `json:"keyIds"`
+	Table           string            `json:"table"`
+	CredentialKind  secret.SecretKind `json:"credentialKind"`
+	Count           int               `json:"count"`
+	LifecycleCounts []LifecycleCount  `json:"lifecycleCounts"`
 }
 
-type Failure struct {
-	Table  string            `json:"table"`
-	Type   secret.SecretKind `json:"type"`
-	RowID  string            `json:"rowId"`
-	Status string            `json:"status"`
+type ValueReport struct {
+	Table              string                  `json:"table"`
+	CredentialKind     secret.SecretKind       `json:"credentialKind"`
+	RowID              int64                   `json:"rowId"`
+	EnvelopeFormat     secret.CiphertextFormat `json:"envelopeFormat"`
+	AuthenticatedKeyID string                  `json:"authenticatedKeyId,omitempty"`
+	LifecycleStatus    LifecycleStatus         `json:"lifecycleStatus"`
+	ReasonCode         ReasonCode              `json:"reasonCode"`
 }
 
 type Report struct {
-	Status   string       `json:"status"`
-	Totals   Totals       `json:"totals"`
-	Types    []TypeReport `json:"types"`
-	Failures []Failure    `json:"failures"`
+	Status          string           `json:"status"`
+	Count           int              `json:"count"`
+	LifecycleCounts []LifecycleCount `json:"lifecycleCounts"`
+	Types           []TypeReport     `json:"types"`
+	Values          []ValueReport    `json:"values"`
 }
 
 type credentialClass struct {
@@ -77,12 +98,20 @@ var credentialClasses = []credentialClass{
 	{table: "alert_actions", kind: secret.SecretKindAlertActionDestination},
 }
 
-type keyCountKey struct {
-	id     string
-	format secret.CiphertextFormat
+var lifecycleStatuses = []LifecycleStatus{
+	LifecycleReadableCurrentKey,
+	LifecycleReadablePreviousKey,
+	LifecycleReadableLegacy,
+	LifecycleUnreadableRequired,
+	LifecycleUnreadableExpiredPurgeable,
+	LifecycleUnreadableUnknown,
 }
 
 func Verify(ctx context.Context, repo Repository, keyring *secret.Keyring) (Report, error) {
+	return VerifyAt(ctx, repo, keyring, time.Now().UTC())
+}
+
+func VerifyAt(ctx context.Context, repo Repository, keyring *secret.Keyring, now time.Time) (Report, error) {
 	if repo == nil || keyring == nil {
 		return Report{}, fmt.Errorf("encrypted credential inventory is not configured")
 	}
@@ -92,16 +121,17 @@ func Verify(ctx context.Context, repo Repository, keyring *secret.Keyring) (Repo
 	}
 
 	report := Report{
-		Status:   StatusOK,
-		Types:    make([]TypeReport, len(credentialClasses)),
-		Failures: []Failure{},
+		Status:          StatusOK,
+		LifecycleCounts: emptyLifecycleCounts(),
+		Types:           make([]TypeReport, len(credentialClasses)),
+		Values:          []ValueReport{},
 	}
 	classIndexes := make(map[credentialClass]int, len(credentialClasses))
-	keyCounts := make([]map[keyCountKey]int, len(credentialClasses))
 	for index, class := range credentialClasses {
 		classIndexes[class] = index
-		keyCounts[index] = make(map[keyCountKey]int)
-		report.Types[index] = TypeReport{Table: class.table, Type: class.kind, KeyIDs: []KeyIDCount{}}
+		report.Types[index] = TypeReport{
+			Table: class.table, CredentialKind: class.kind, LifecycleCounts: emptyLifecycleCounts(),
+		}
 	}
 
 	sort.SliceStable(values, func(i, j int) bool {
@@ -129,43 +159,82 @@ func Verify(ctx context.Context, repo Repository, keyring *secret.Keyring) (Repo
 		}
 
 		typeReport := &report.Types[index]
-		typeReport.Values++
-		report.Totals.Values++
+		typeReport.Count++
+		report.Count++
 		verification, err := keyring.VerifyStringFor(class.kind, value.Ciphertext)
+		valueReport := ValueReport{
+			Table: class.table, CredentialKind: class.kind, RowID: value.RowID,
+			EnvelopeFormat: secret.InspectCiphertextFormat(value.Ciphertext),
+		}
 		if err != nil {
-			typeReport.Failed++
-			report.Totals.Failed++
-			report.Failures = append(report.Failures, Failure{
-				Table: class.table, Type: class.kind, RowID: fmt.Sprintf("%d", value.RowID), Status: FailureUnreadable,
-			})
-			continue
+			valueReport.LifecycleStatus, valueReport.ReasonCode = unreadableLifecycle(value, now)
+		} else {
+			valueReport.EnvelopeFormat = verification.Format
+			valueReport.AuthenticatedKeyID = verification.KeyID
+			valueReport.LifecycleStatus, valueReport.ReasonCode = readableLifecycle(verification, keyring.CurrentKeyID())
 		}
-
-		typeReport.Verified++
-		report.Totals.Verified++
-		keyCounts[index][keyCountKey{id: verification.KeyID, format: verification.Format}]++
+		incrementLifecycleCount(report.LifecycleCounts, valueReport.LifecycleStatus)
+		incrementLifecycleCount(typeReport.LifecycleCounts, valueReport.LifecycleStatus)
+		report.Values = append(report.Values, valueReport)
 	}
 
-	for index, counts := range keyCounts {
-		keys := make([]keyCountKey, 0, len(counts))
-		for key := range counts {
-			keys = append(keys, key)
-		}
-		sort.Slice(keys, func(i, j int) bool {
-			if keys[i].id != keys[j].id {
-				return keys[i].id < keys[j].id
-			}
-			return keys[i].format < keys[j].format
-		})
-		for _, key := range keys {
-			report.Types[index].KeyIDs = append(report.Types[index].KeyIDs, KeyIDCount{
-				ID: key.id, Format: key.format, Count: counts[key],
-			})
-		}
-	}
-
-	if report.Totals.Failed > 0 {
+	if lifecycleCount(report.LifecycleCounts, LifecycleUnreadableRequired) > 0 ||
+		lifecycleCount(report.LifecycleCounts, LifecycleUnreadableUnknown) > 0 {
 		report.Status = StatusFailed
+	} else if lifecycleCount(report.LifecycleCounts, LifecycleUnreadableExpiredPurgeable) > 0 {
+		report.Status = StatusAttention
 	}
 	return report, nil
+}
+
+func emptyLifecycleCounts() []LifecycleCount {
+	counts := make([]LifecycleCount, len(lifecycleStatuses))
+	for index, status := range lifecycleStatuses {
+		counts[index] = LifecycleCount{Status: status}
+	}
+	return counts
+}
+
+func incrementLifecycleCount(counts []LifecycleCount, status LifecycleStatus) {
+	for index := range counts {
+		if counts[index].Status == status {
+			counts[index].Count++
+			return
+		}
+	}
+}
+
+func lifecycleCount(counts []LifecycleCount, status LifecycleStatus) int {
+	for _, count := range counts {
+		if count.Status == status {
+			return count.Count
+		}
+	}
+	return 0
+}
+
+func readableLifecycle(verification secret.CiphertextVerification, currentKeyID string) (LifecycleStatus, ReasonCode) {
+	if verification.Format == secret.CiphertextFormatLegacy {
+		return LifecycleReadableLegacy, ReasonLegacyCiphertext
+	}
+	if verification.KeyID == currentKeyID {
+		return LifecycleReadableCurrentKey, ReasonCurrentKeyVerified
+	}
+	return LifecycleReadablePreviousKey, ReasonPreviousKeyVerified
+}
+
+func unreadableLifecycle(value EncryptedValue, now time.Time) (LifecycleStatus, ReasonCode) {
+	if value.Type == secret.SecretKindOAuthCodeVerifier {
+		if value.ConsumedAt != nil {
+			return LifecycleUnreadableExpiredPurgeable, ReasonOAuthStateConsumed
+		}
+		if value.ExpiresAt == nil {
+			return LifecycleUnreadableUnknown, ReasonLifecycleUnknown
+		}
+		if !value.ExpiresAt.After(now) {
+			return LifecycleUnreadableExpiredPurgeable, ReasonOAuthStateExpired
+		}
+		return LifecycleUnreadableRequired, ReasonOAuthStateActive
+	}
+	return LifecycleUnreadableRequired, ReasonCredentialRequired
 }

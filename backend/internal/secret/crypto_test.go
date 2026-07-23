@@ -215,6 +215,24 @@ func TestKeyringWritesCurrentKeyEnvelope(t *testing.T) {
 	}
 }
 
+func TestInspectCiphertextFormatDoesNotAuthenticateMetadata(t *testing.T) {
+	for name, tt := range map[string]struct {
+		value string
+		want  CiphertextFormat
+	}{
+		"legacy":           {value: "not-valid-base64", want: CiphertextFormatLegacy},
+		"v1":               {value: "n2api:v1:unknown:oauth-access-token:broken", want: CiphertextFormatV1},
+		"unsupported":      {value: "n2api:v2:unknown:oauth-access-token:broken", want: CiphertextFormatUnknown},
+		"malformed prefix": {value: "n2api", want: CiphertextFormatLegacy},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := InspectCiphertextFormat(tt.value); got != tt.want {
+				t.Fatalf("InspectCiphertextFormat() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestKeyringEnvelopeSupportsEdgeValuesAndRandomNonces(t *testing.T) {
 	keyring, err := NewKeyring(EncryptionKey{ID: "current", Secret: "current-encryption-secret"}, nil)
 	if err != nil {

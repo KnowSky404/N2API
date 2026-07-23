@@ -435,9 +435,22 @@ bootstrap an administrator, rewrite credentials, or start HTTP/background
 services. Its single JSON document always contains all eight credential types,
 including zero-count types. Counts cover OAuth code verifiers; provider access,
 refresh, and ID tokens; provider API keys and proxy URLs; and reusable client
-API-key secrets and alert action destinations. Authenticated key IDs are grouped
-by `v1` or `legacy` format.
-For legacy values, the reported ID is the key that actually decrypted the
+API-key secrets and alert action destinations. Every non-empty value has one of
+these lifecycle states:
+
+- `readable_current_key`
+- `readable_previous_key`
+- `readable_legacy`
+- `unreadable_required`
+- `unreadable_expired_or_purgeable`
+- `unreadable_unknown`
+
+Only an OAuth code verifier with an explicit expired `expires_at` or non-null
+`consumed_at` can be classified as purgeable. An active verifier is required;
+provider credentials, reusable client-key secrets, proxy credentials, and alert
+destinations are always required. Missing lifecycle evidence fails closed as
+unknown. The report includes an authenticated key ID only after successful
+decryption. For legacy values, that ID is the key that actually decrypted the
 value, not an inferred default.
 
 The shortened example below shows one type entry and one failure shape; actual
@@ -446,34 +459,53 @@ output is never abbreviated and always includes all eight type entries.
 ```json
 {
   "status": "failed",
-  "totals": {"values": 2, "verified": 1, "failed": 1},
+  "count": 2,
+  "lifecycleCounts": [
+    {"lifecycleStatus": "readable_previous_key", "count": 1},
+    {"lifecycleStatus": "unreadable_required", "count": 1}
+  ],
   "types": [
     {
       "table": "provider_account_credentials",
-      "type": "oauth-refresh-token",
-      "values": 2,
-      "verified": 1,
-      "failed": 1,
-      "keyIds": [{"id": "default", "format": "legacy", "count": 1}]
+      "credentialKind": "oauth-refresh-token",
+      "count": 2,
+      "lifecycleCounts": [
+        {"lifecycleStatus": "readable_previous_key", "count": 1},
+        {"lifecycleStatus": "unreadable_required", "count": 1}
+      ]
     }
   ],
-  "failures": [
+  "values": [
     {
       "table": "provider_account_credentials",
-      "type": "oauth-refresh-token",
-      "rowId": "42",
-      "status": "unreadable"
+      "credentialKind": "oauth-refresh-token",
+      "rowId": 41,
+      "envelopeFormat": "v1",
+      "authenticatedKeyId": "previous-202606",
+      "lifecycleStatus": "readable_previous_key",
+      "reasonCode": "previous_key_verified"
+    },
+    {
+      "table": "provider_account_credentials",
+      "credentialKind": "oauth-refresh-token",
+      "rowId": 42,
+      "envelopeFormat": "v1",
+      "lifecycleStatus": "unreadable_required",
+      "reasonCode": "credential_required"
     }
   ]
 }
 ```
 
 The report never includes plaintext, ciphertext, provider identity, key prefix,
-state hash, or raw crypto/database errors. Exit code `0` means every value was
-verified (including an empty database), `1` means the complete report contains
-one or more unreadable rows, and `2` means command usage, configuration,
-database access, query, or output failed. Do not begin re-encryption while any
-row is unreadable or before the backup restore drill succeeds.
+state hash, unauthenticated key IDs, or raw crypto/database errors. Exit code `0`
+means there is no required or unknown unreadable value, including an empty
+database or a report containing only explicitly purgeable OAuth states. Such a
+report uses top-level status `attention`. Exit code `1` means at least one
+`unreadable_required` or `unreadable_unknown` value blocks rotation. Exit code `2`
+means command usage, configuration, database access, query, or output
+failed. Do not begin re-encryption while a blocking unreadable value exists or
+before the backup restore drill succeeds.
 
 ### Alert Rules And Delivery
 

@@ -27,7 +27,7 @@ func runAdminCommand(ctx context.Context, args []string, stdout, stderr io.Write
 		fmt.Fprintln(stderr, "write verify-encryption report failed")
 		return 2
 	}
-	if report.Status != encryptioninventory.StatusOK {
+	if report.Status == encryptioninventory.StatusFailed {
 		return 1
 	}
 	return 0

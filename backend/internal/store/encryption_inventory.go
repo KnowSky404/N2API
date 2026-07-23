@@ -18,14 +18,16 @@ func NewEncryptionInventoryRepository(pool *pgxpool.Pool) *EncryptionInventoryRe
 }
 
 const encryptionInventoryQuery = `
-	SELECT table_name, secret_type, row_id, ciphertext
+	SELECT table_name, secret_type, row_id, ciphertext, expires_at, consumed_at
 	FROM (
 		SELECT
 			1 AS class_order,
 			'oauth_states'::text AS table_name,
 			'oauth-code-verifier'::text AS secret_type,
 			id AS row_id,
-			encrypted_code_verifier AS ciphertext
+			encrypted_code_verifier AS ciphertext,
+			expires_at,
+			consumed_at
 		FROM oauth_states
 		WHERE encrypted_code_verifier <> ''
 
@@ -36,7 +38,9 @@ const encryptionInventoryQuery = `
 			'provider_account_credentials'::text AS table_name,
 			credential.secret_type,
 			account_id AS row_id,
-			credential.ciphertext
+			credential.ciphertext,
+			NULL::timestamptz AS expires_at,
+			NULL::timestamptz AS consumed_at
 		FROM provider_account_credentials
 		CROSS JOIN LATERAL (VALUES
 			(2, 'oauth-access-token'::text, encrypted_access_token),
@@ -54,7 +58,9 @@ const encryptionInventoryQuery = `
 			'client_api_keys'::text AS table_name,
 			'client-api-key'::text AS secret_type,
 			id AS row_id,
-			encrypted_secret AS ciphertext
+			encrypted_secret AS ciphertext,
+			NULL::timestamptz AS expires_at,
+			NULL::timestamptz AS consumed_at
 		FROM client_api_keys
 		WHERE encrypted_secret <> ''
 
@@ -65,7 +71,9 @@ const encryptionInventoryQuery = `
 			'alert_actions'::text AS table_name,
 			'alert-action-destination'::text AS secret_type,
 			id AS row_id,
-			encrypted_destination AS ciphertext
+			encrypted_destination AS ciphertext,
+			NULL::timestamptz AS expires_at,
+			NULL::timestamptz AS consumed_at
 		FROM alert_actions
 		WHERE encrypted_destination <> ''
 	) AS encrypted_values
@@ -86,7 +94,7 @@ func (r *EncryptionInventoryRepository) ListEncryptedValues(ctx context.Context)
 	for rows.Next() {
 		var value encryptioninventory.EncryptedValue
 		var kind string
-		if err := rows.Scan(&value.Table, &kind, &value.RowID, &value.Ciphertext); err != nil {
+		if err := rows.Scan(&value.Table, &kind, &value.RowID, &value.Ciphertext, &value.ExpiresAt, &value.ConsumedAt); err != nil {
 			return nil, fmt.Errorf("scan encryption inventory: %w", err)
 		}
 		value.Type = secret.SecretKind(kind)

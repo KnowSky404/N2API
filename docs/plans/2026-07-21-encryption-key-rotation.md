@@ -77,8 +77,8 @@ or keep the upgraded reader and prior keyring available.
 
 ## Task 2: Inventory And Verify Encrypted Values
 
-Task status: completed locally on 2026-07-21; operator backup and isolated
-restore acceptance remain prerequisites for Task 3
+Task status: lifecycle-aware inventory completed locally on 2026-07-23;
+operator backup and isolated restore acceptance remain prerequisites for Task 3
 
 ### Goal
 
@@ -96,29 +96,39 @@ Task 1.
 
 ### Implementation
 
-Add `n2api admin verify-encryption` with dry-run output limited to table/type,
-counts, key IDs, and failures by stable row ID. It never prints ciphertext or
-plaintext.
+Add `n2api admin verify-encryption` with dry-run output limited to table,
+credential kind, numeric row ID, envelope format, authenticated key ID,
+lifecycle status, stable reason code, and aggregate counts. It never prints
+ciphertext or plaintext.
 
 ### Completion Criteria
 
-The command accounts for every reversible secret class and exits nonzero on
-any unreadable value.
+The command accounts for every reversible secret class and exits nonzero on a
+required or unknown unreadable value.
 
 The local implementation uses one fixed, ordered PostgreSQL query to include
-all eight non-empty secret columns, including expired OAuth states,
+all eight non-empty secret columns, including OAuth `expires_at` and
+`consumed_at` lifecycle evidence,
 disabled providers, and revoked client keys. The read-only command runs before
 server startup and does not migrate, bootstrap, or mutate the database. Its
-deterministic JSON always includes all eight types, verified counts, and only
-authenticated key IDs grouped by legacy or v1 format. Unreadable entries expose
-only table, credential type, stable numeric row ID, and the `unreadable` status;
-raw errors, plaintext, and ciphertext are never emitted. Exit codes distinguish
-verified (`0`), unreadable rows (`1`), and usage/infrastructure failure (`2`).
+deterministic JSON always includes all eight types and all six lifecycle states,
+even when their counts are zero. Each non-empty value is classified as readable
+by the current key, readable by a previous key, readable legacy, unreadable and
+required, unreadable and explicitly expired/purgeable, or unreadable with
+unknown lifecycle. Only successfully decrypted values expose an authenticated
+key ID. Provider credentials, reusable client-key secrets, proxy credentials,
+and alert destinations are required. OAuth code verifiers are purgeable only
+when `expires_at` has passed or `consumed_at` is set; missing evidence is
+unknown and blocking. Raw errors, plaintext, ciphertext, and unauthenticated key
+IDs are never emitted. Exit codes distinguish non-blocking reports (`0`),
+required/unknown unreadable values (`1`), and usage/infrastructure failure (`2`).
 
 Local tests cover current and previous v1 envelopes, the actual key that opens
-a legacy value, all eight classes, zero-count classes, deterministic ordering,
-unreadable-row redaction, query coverage, stable row IDs, CLI dispatch, and
-secret-safe errors. No migration or data rewrite is part of this task.
+a legacy value, unknown keys, corrupt and cross-kind envelopes, active,
+expired, consumed, and unknown-lifecycle OAuth states, all eight classes,
+zero-count classes and statuses, deterministic ordering, canary redaction,
+query coverage, stable numeric row IDs, CLI dispatch, and secret-safe errors.
+No migration or data rewrite is part of this task.
 
 ### Commit
 
@@ -127,8 +137,8 @@ secret-safe errors. No migration or data rewrite is part of this task.
 ## Task 3: Add Resumable Re-encryption
 
 Task status: blocked locally on the correct historical keyring and successful
-operator-backup restore acceptance. The 2026-07-21 development-stack inventory
-found 14 unreadable values with the currently configured keyring: eight OAuth
+operator-backup restore acceptance. The 2026-07-21 pre-lifecycle development
+inventory found 14 unreadable values with the then-configured keyring: eight OAuth
 code verifiers, one access token, one refresh token, one ID token, one provider
 API key, and two reusable client-key secrets. No proxy value was present and no
 alert action destination was present; no database value was modified. Do not
