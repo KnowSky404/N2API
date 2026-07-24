@@ -11,7 +11,8 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 	files := map[string]map[string]string{
 		"admin.go": {
 			"CreateAdmin": "insertIntentSystemEvent", "UpdateAdminUsername": "insertIntentSystemEvent",
-			"UpdateAdminPasswordAndRevokeOtherSessions": "insertIntentSystemEvent", "CreateSession": "insertIntentSystemEvent",
+			"UpdateAdminPasswordAndRevokeOtherSessions": "insertIntentSystemEvent", "CreateSession": "createSession",
+			"CreateSessionIfAdminPasswordHashMatches": "createSession", "createSession": "insertIntentSystemEvent",
 			"RevokeSession": "insertIntentSystemEvent", "RevokeAdminSession": "insertIntentSystemEvent",
 			"RevokeOtherAdminSessions": "insertIntentSystemEvent", "CreateAPIKey": "insertIntentSystemEvent",
 			"RevokeAPIKey": "insertIntentSystemEvent", "DeleteRevokedAPIKey": "insertIntentSystemEvent",
@@ -57,7 +58,7 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 		found := make(map[string]bool, len(methods))
 		for _, declaration := range parsed.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
-			if !ok || function.Recv == nil || function.Body == nil {
+			if !ok || function.Body == nil {
 				continue
 			}
 			helper, audited := methods[function.Name.Name]

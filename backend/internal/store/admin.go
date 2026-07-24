@@ -226,11 +226,35 @@ func (r *AdminRepository) UpdateAdminPasswordAndRevokeOtherSessions(ctx context.
 }
 
 func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, metadata admin.SessionMetadata, createdAt, expiresAt time.Time) error {
-	tx, err := r.pool.Begin(ctx)
+	_, err := createSession(ctx, r.pool, adminID, "", tokenHash, metadata, createdAt, expiresAt, false)
+	return err
+}
+
+func (r *AdminRepository) CreateSessionIfAdminPasswordHashMatches(ctx context.Context, adminID int64, passwordHash, tokenHash string, metadata admin.SessionMetadata, createdAt, expiresAt time.Time) (bool, error) {
+	return createSession(ctx, r.pool, adminID, passwordHash, tokenHash, metadata, createdAt, expiresAt, true)
+}
+
+func createSession(ctx context.Context, pool *pgxpool.Pool, adminID int64, passwordHash, tokenHash string, metadata admin.SessionMetadata, createdAt, expiresAt time.Time, verifyPasswordHash bool) (bool, error) {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
+	if verifyPasswordHash {
+		var matches bool
+		err = tx.QueryRow(ctx, `
+			SELECT password_hash = $2
+			FROM admins
+			WHERE id = $1
+			FOR UPDATE
+		`, adminID, passwordHash).Scan(&matches)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !matches) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO admin_sessions (
 			admin_id, token_hash, expires_at, created_at, last_used_at,
@@ -239,12 +263,15 @@ func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, toke
 		VALUES ($1, $2, $3, $4, $4, $5, $6)
 	`, adminID, tokenHash, expiresAt, createdAt, metadata.CreatedIP, metadata.UserAgent)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "admin", ID: strconv.FormatInt(adminID, 10)}, map[string]any{"expires_at": expiresAt.UTC().Format(time.RFC3339)}); err != nil {
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *AdminRepository) FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (admin.Admin, error) {

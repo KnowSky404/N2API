@@ -357,7 +357,7 @@ type Repository interface {
 	CreateAdmin(ctx context.Context, username, passwordHash string) (Admin, error)
 	UpdateAdminUsername(ctx context.Context, id int64, username string) (Admin, error)
 	UpdateAdminPasswordAndRevokeOtherSessions(ctx context.Context, id int64, passwordHash, currentSessionHash string, revokedAt time.Time) (int64, error)
-	CreateSession(ctx context.Context, adminID int64, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) error
+	CreateSessionIfAdminPasswordHashMatches(ctx context.Context, adminID int64, passwordHash, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) (bool, error)
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
 	RevokeSession(ctx context.Context, tokenHash string, revokedAt time.Time) error
 	ListAdminSessions(ctx context.Context, adminID int64, currentHash string, now time.Time) ([]AdminSession, error)
@@ -531,8 +531,14 @@ func (s *Service) Login(ctx context.Context, username, password string, metadata
 	expiresAt := now.Add(s.sessionTTL)
 	metadata = normalizeSessionMetadata(metadata)
 	ctx = withSecurityIntent(ctx, systemevent.ActionAuthLoginSucceeded, "admin", auditID(admin.ID), admin.Username)
-	if err := s.repo.CreateSession(ctx, admin.ID, secret.HashAPIKey(token), metadata, now, expiresAt); err != nil {
+	created, err := s.repo.CreateSessionIfAdminPasswordHashMatches(
+		ctx, admin.ID, admin.PasswordHash, secret.HashAPIKey(token), metadata, now, expiresAt,
+	)
+	if err != nil {
 		return Session{}, err
+	}
+	if !created {
+		return Session{}, ErrUnauthorized
 	}
 
 	return Session{Token: token, AdminID: admin.ID, ExpiresAt: expiresAt}, nil

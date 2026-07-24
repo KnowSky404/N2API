@@ -180,6 +180,38 @@ func TestChangePasswordPreservesCurrentSessionAndRevokesOthers(t *testing.T) {
 	}
 }
 
+func TestLoginRejectsOldPasswordWhenPasswordChangesBeforeSessionCreation(t *testing.T) {
+	baseRepo := newMemoryRepo()
+	repo := &passwordChangeRaceRepo{memoryRepo: baseRepo}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	service.now = func() time.Time { return time.Unix(2000, 0).UTC() }
+	requireBootstrap(t, service, "admin", "current-password")
+
+	current, err := service.Login(context.Background(), "admin", "current-password", SessionMetadata{})
+	if err != nil {
+		t.Fatalf("current login: %v", err)
+	}
+	var changeErr error
+	repo.beforeSessionCreate = func() {
+		repo.beforeSessionCreate = nil
+		_, changeErr = service.ChangePassword(
+			context.Background(), baseRepo.admin.ID, current.Token,
+			"current-password", "replacement-password",
+		)
+	}
+
+	stale, err := service.Login(context.Background(), "admin", "current-password", SessionMetadata{})
+	if changeErr != nil {
+		t.Fatalf("concurrent password change: %v", changeErr)
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("old-password login = %+v/%v, want empty/ErrUnauthorized", stale, err)
+	}
+	if len(baseRepo.sessions) != 1 {
+		t.Fatalf("active session records = %d, want only the preserved current session", len(baseRepo.sessions))
+	}
+}
+
 func TestLoginCreatesSessionAndValidateSessionReturnsAdmin(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -1965,6 +1997,18 @@ type memoryAPIKey struct {
 	EncryptedSecret string
 }
 
+type passwordChangeRaceRepo struct {
+	*memoryRepo
+	beforeSessionCreate func()
+}
+
+func (r *passwordChangeRaceRepo) CreateSessionIfAdminPasswordHashMatches(ctx context.Context, adminID int64, passwordHash, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) (bool, error) {
+	if r.beforeSessionCreate != nil {
+		r.beforeSessionCreate()
+	}
+	return r.memoryRepo.CreateSessionIfAdminPasswordHashMatches(ctx, adminID, passwordHash, tokenHash, metadata, createdAt, expiresAt)
+}
+
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
 		nextAdminID:   1,
@@ -2034,6 +2078,13 @@ func (r *memoryRepo) CreateSession(_ context.Context, adminID int64, tokenHash s
 	}
 	r.nextSessionID++
 	return nil
+}
+
+func (r *memoryRepo) CreateSessionIfAdminPasswordHashMatches(ctx context.Context, adminID int64, passwordHash, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) (bool, error) {
+	if r.admin.ID != adminID || r.admin.PasswordHash != passwordHash {
+		return false, nil
+	}
+	return true, r.CreateSession(ctx, adminID, tokenHash, metadata, createdAt, expiresAt)
 }
 
 func (r *memoryRepo) FindAdminBySessionHash(_ context.Context, tokenHash string, now time.Time) (Admin, error) {

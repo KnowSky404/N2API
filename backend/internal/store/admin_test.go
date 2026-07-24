@@ -1315,6 +1315,73 @@ func TestUpdateAdminPasswordRevokesOtherSessionsAtomically(t *testing.T) {
 	}
 }
 
+func TestCreateSessionWaitsForPasswordUpdateAndRejectsOldHash(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	owner, err := repo.CreateAdmin(ctx, "concurrent-password-owner", "old-hash")
+	if err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+
+	passwordTx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin password transaction: %v", err)
+	}
+	defer passwordTx.Rollback(ctx)
+	if _, err := passwordTx.Exec(ctx, `
+		UPDATE admins
+		SET password_hash = 'new-hash', updated_at = now()
+		WHERE id = $1
+	`, owner.ID); err != nil {
+		t.Fatalf("update password while holding row lock: %v", err)
+	}
+
+	type createResult struct {
+		created bool
+		err     error
+	}
+	started := make(chan struct{})
+	result := make(chan createResult, 1)
+	now := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
+	go func() {
+		close(started)
+		created, createErr := repo.CreateSessionIfAdminPasswordHashMatches(
+			ctx, owner.ID, "old-hash", "stale-login-hash", admin.SessionMetadata{}, now, now.Add(time.Hour),
+		)
+		result <- createResult{created: created, err: createErr}
+	}()
+	<-started
+	select {
+	case got := <-result:
+		t.Fatalf("session creation completed before password transaction committed: %+v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if err := passwordTx.Commit(ctx); err != nil {
+		t.Fatalf("commit password transaction: %v", err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil || got.created {
+			t.Fatalf("old-hash session creation = %+v, want created=false without error", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session creation remained blocked after password transaction committed")
+	}
+
+	var count int
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM admin_sessions
+		WHERE token_hash = 'stale-login-hash'
+	`).Scan(&count); err != nil {
+		t.Fatalf("count stale login sessions: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("stale login sessions = %d, want 0", count)
+	}
+}
+
 func TestAdminRepositoryMutationCommitsSystemEventAtomically(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := systemevent.WithRequestContext(context.Background(), systemevent.RequestContext{
