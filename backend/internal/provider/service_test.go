@@ -2925,6 +2925,23 @@ func TestSelectSingleResponseAffinityAccountSelectsUniqueFallbackAccount(t *test
 	}
 }
 
+func TestSelectSingleResponseAffinityAccountRejectsDisabledPrimaryPool(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.routingPools[1] = RoutingPool{ID: 1, Name: "disabled primary", Enabled: false, FallbackPoolID: ptrInt64(2)}
+	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
+	repo.accounts = []Account{testAccount(t, 20, true, 1, "fallback-token")}
+	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20}}
+	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
+
+	selected, unique, err := newConfiguredService(repo, fakeOAuthClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	if !errors.Is(err, ErrAccountsDisabled) || unique || selected.AccountID != 0 {
+		t.Fatalf("disabled primary selection = %+v/%v/%v, want empty/false/ErrAccountsDisabled", selected, unique, err)
+	}
+	if selected.RoutingPoolError != RoutingPoolErrorDisabled {
+		t.Fatalf("routing pool error = %q, want %q", selected.RoutingPoolError, RoutingPoolErrorDisabled)
+	}
+}
+
 func TestSelectAccountForModelInRoutingPoolChainSkipsDisabledFallbackPool(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}

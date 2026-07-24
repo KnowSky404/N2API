@@ -2608,6 +2608,9 @@ func (s *Service) responseAffinityTopology(ctx context.Context, primaryPoolID in
 	}
 	topology := make([]responseAffinityCandidate, 0)
 	for depth, pool := range pools {
+		if depth == 0 && !pool.Enabled {
+			return nil, chainLabel, ErrAccountsDisabled
+		}
 		accounts, err := s.repo.ListRoutingPoolAccounts(ctx, s.cfg.Provider, pool.ID)
 		if err != nil {
 			return nil, chainLabel, err
@@ -3143,6 +3146,8 @@ func moreSpecificSelectionError(current, next error) error {
 
 func routingPoolDiagnosticError(err error) string {
 	switch {
+	case errors.Is(err, ErrAccountsDisabled):
+		return RoutingPoolErrorDisabled
 	case errors.Is(err, ErrRoutingPoolCycle):
 		return RoutingPoolErrorCycle
 	case errors.Is(err, ErrRoutingPoolNotFound):
