@@ -17,6 +17,7 @@ const (
 
 type InstanceLock struct {
 	conn          *pgxpool.Conn
+	lockID        int64
 	acquireCtx    context.Context
 	monitorCancel context.CancelFunc
 	monitorDone   chan struct{}
@@ -30,6 +31,10 @@ func TryAcquireInstanceLock(ctx context.Context, pool *pgxpool.Pool) (*InstanceL
 }
 
 func tryAcquireInstanceLock(ctx context.Context, pool *pgxpool.Pool, monitorInterval time.Duration) (*InstanceLock, bool, error) {
+	return tryAcquireInstanceLockWithID(ctx, pool, instanceAdvisoryLockID, monitorInterval)
+}
+
+func tryAcquireInstanceLockWithID(ctx context.Context, pool *pgxpool.Pool, lockID int64, monitorInterval time.Duration) (*InstanceLock, bool, error) {
 	if pool == nil {
 		return nil, false, errors.New("instance lock pool is not configured")
 	}
@@ -41,7 +46,7 @@ func tryAcquireInstanceLock(ctx context.Context, pool *pgxpool.Pool, monitorInte
 		return nil, false, err
 	}
 	var acquired bool
-	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, instanceAdvisoryLockID).Scan(&acquired); err != nil {
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, lockID).Scan(&acquired); err != nil {
 		discardInstanceLockConnection(conn)
 		return nil, false, err
 	}
@@ -52,6 +57,7 @@ func tryAcquireInstanceLock(ctx context.Context, pool *pgxpool.Pool, monitorInte
 	monitorCtx, monitorCancel := context.WithCancel(context.Background())
 	lock := &InstanceLock{
 		conn:          conn,
+		lockID:        lockID,
 		acquireCtx:    ctx,
 		monitorCancel: monitorCancel,
 		monitorDone:   make(chan struct{}),
@@ -122,7 +128,7 @@ func (l *InstanceLock) Close() error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.acquireCtx), instanceLockOperationTimeout)
 	defer cancel()
 	var unlocked bool
-	err := l.conn.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, instanceAdvisoryLockID).Scan(&unlocked)
+	err := l.conn.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, l.lockID).Scan(&unlocked)
 	if err == nil && unlocked {
 		l.conn.Release()
 		return nil

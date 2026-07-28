@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,15 +63,7 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatalf("open process test database: %v", redactProcessText(err.Error(), databaseURL))
-	}
-	t.Cleanup(pool.Close)
-	requireIsolatedProcessTestDatabase(t, ctx, pool)
-	if err := store.RunMigrations(ctx, pool); err != nil {
-		t.Fatalf("run process test migrations: %v", redactProcessText(err.Error(), databaseURL))
-	}
+	pool, databaseURL := newIsolatedProcessTestPool(t, ctx, databaseURL)
 
 	adminUsername, cleanupAdmin := processTestAdminUsername(t, ctx, pool)
 	if cleanupAdmin {
@@ -211,6 +204,83 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		waitForProcessListenerClosed(t, port)
 		waitForInstanceLockAvailable(t, pool)
 	})
+}
+
+func TestProcessTestDatabaseURLSetsSearchPath(t *testing.T) {
+	t.Parallel()
+
+	for name, databaseURL := range map[string]string{
+		"URL":     "postgres://n2api:secret@127.0.0.1:5432/n2api_store_test?sslmode=disable",
+		"keyword": "host=127.0.0.1 port=5432 dbname=n2api_store_test user=n2api password=secret sslmode=disable",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			const schema = "instance_lock_process_test_123"
+			isolatedURL, err := processTestDatabaseURL(databaseURL, schema)
+			if err != nil {
+				t.Fatalf("processTestDatabaseURL returned error: %v", err)
+			}
+			config, err := pgxpool.ParseConfig(isolatedURL)
+			if err != nil {
+				t.Fatalf("parse isolated process test database URL: %v", err)
+			}
+			if got := config.ConnConfig.RuntimeParams["search_path"]; got != schema {
+				t.Fatalf("search_path = %q, want %q", got, schema)
+			}
+		})
+	}
+}
+
+func newIsolatedProcessTestPool(t *testing.T, ctx context.Context, databaseURL string) (*pgxpool.Pool, string) {
+	t.Helper()
+
+	adminPool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("open process test database: %v", redactProcessText(err.Error(), databaseURL))
+	}
+	t.Cleanup(adminPool.Close)
+	requireIsolatedProcessTestDatabase(t, ctx, adminPool)
+
+	schema := fmt.Sprintf("instance_lock_process_test_%d", time.Now().UnixNano())
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	if _, err := adminPool.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
+		t.Fatalf("create process test schema: %v", redactProcessText(err.Error(), databaseURL))
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if _, err := adminPool.Exec(cleanupCtx, "DROP SCHEMA "+quotedSchema+" CASCADE"); err != nil {
+			t.Errorf("drop process test schema: %v", redactProcessText(err.Error(), databaseURL))
+		}
+	})
+
+	isolatedURL, err := processTestDatabaseURL(databaseURL, schema)
+	if err != nil {
+		t.Fatalf("configure process test schema: %v", err)
+	}
+	pool, err := pgxpool.New(ctx, isolatedURL)
+	if err != nil {
+		t.Fatalf("open isolated process test schema: %v", redactProcessText(err.Error(), databaseURL, isolatedURL))
+	}
+	t.Cleanup(pool.Close)
+	if err := store.RunMigrations(ctx, pool); err != nil {
+		t.Fatalf("run isolated process test migrations: %v", redactProcessText(err.Error(), databaseURL, isolatedURL))
+	}
+	return pool, isolatedURL
+}
+
+func processTestDatabaseURL(databaseURL, schema string) (string, error) {
+	if strings.HasPrefix(databaseURL, "postgres://") || strings.HasPrefix(databaseURL, "postgresql://") {
+		parsed, err := url.Parse(databaseURL)
+		if err != nil {
+			return "", fmt.Errorf("parse process test database URL: %w", err)
+		}
+		query := parsed.Query()
+		query.Set("search_path", schema)
+		parsed.RawQuery = query.Encode()
+		return parsed.String(), nil
+	}
+	return strings.TrimSpace(databaseURL) + " search_path=" + schema, nil
 }
 
 func requireIsolatedProcessTestDatabase(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
