@@ -36,7 +36,7 @@ func TestRoutingExhaustionProjectorMigrationBaselinesExistingLogs(t *testing.T) 
 	if err != nil {
 		t.Fatalf("create migration provider: %v", err)
 	}
-	for _, wantVersion := range []int64{47, 46, 45} {
+	for _, wantVersion := range []int64{48, 47, 46, 45} {
 		result, err := provider.Down(ctx)
 		if err != nil {
 			t.Fatalf("roll back migration %d: %v", wantVersion, err)
