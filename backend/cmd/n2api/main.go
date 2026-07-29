@@ -269,12 +269,14 @@ func runServer() int {
 	var gatewayMetrics gateway.MetricsObserver
 	var providerMetrics provider.MetricsObserver
 	var gatewaySettingsObserver admin.GatewaySettingsRuntimeObserver
+	var apiKeyAuthObserver admin.APIKeyAuthenticationObserver
 	if cfg.MetricsEnabled {
 		metricsRegistry = metrics.New(pool)
 		taskMetrics = metricsRegistry
 		gatewayMetrics = metricsRegistry
 		providerMetrics = metricsRegistry
 		gatewaySettingsObserver = metricsRegistry
+		apiKeyAuthObserver = metricsRegistry
 	}
 	startupCtx := signalCtx
 	if metricsRegistry != nil {
@@ -355,6 +357,7 @@ func runServer() int {
 		SystemEvents:           systemEventRepo,
 		DefaultGatewaySettings: defaultGatewaySettings,
 		GatewaySettingsRuntime: gatewaySettingsRuntime,
+		APIKeyAuthObserver:     apiKeyAuthObserver,
 	})
 	if err := adminService.BootstrapAdmin(migrationCriticalCtx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		if migrationCriticalCtx.Err() != nil && signalCtx.Err() == nil {

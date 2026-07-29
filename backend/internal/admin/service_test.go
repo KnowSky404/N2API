@@ -25,6 +25,14 @@ type fakeSystemEventRepository struct {
 	events []systemevent.Event
 }
 
+type captureAPIKeyAuthenticationObserver struct {
+	outcomes []string
+}
+
+func (o *captureAPIKeyAuthenticationObserver) ObserveAPIKeyLastUsed(outcome string) {
+	o.outcomes = append(o.outcomes, outcome)
+}
+
 func (r *fakeSystemEventRepository) List(_ context.Context, filter systemevent.Filter) (systemevent.Page, error) {
 	r.filter = filter
 	return r.page, r.err
@@ -669,17 +677,46 @@ func TestAPIKeyBudgetUsageComputesRemainingAndExceeded(t *testing.T) {
 	}
 }
 
-func TestAuthenticateAPIKeyMapsTouchNotFoundToUnauthorized(t *testing.T) {
+func TestAuthenticateAPIKeyUsesOneUTCInstantAndReportsBoundedTouchOutcomes(t *testing.T) {
 	repo := newMemoryRepo()
-	service := NewService(repo, Config{SessionTTL: time.Hour})
+	observer := &captureAPIKeyAuthenticationObserver{}
+	service := NewService(repo, Config{SessionTTL: time.Hour, APIKeyAuthObserver: observer})
+	now := time.Date(2026, time.July, 29, 15, 30, 0, 0, time.FixedZone("test", 2*60*60))
+	service.now = func() time.Time { return now }
 	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
-	repo.touchErr = ErrNotFound
 
+	repo.authenticateTouched = true
+	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); err != nil {
+		t.Fatalf("AuthenticateAPIKey updated returned error: %v", err)
+	}
+	repo.authenticateTouched = false
+	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); err != nil {
+		t.Fatalf("AuthenticateAPIKey skipped returned error: %v", err)
+	}
+	if len(repo.authenticationTimes) != 2 || !repo.authenticationTimes[0].Equal(now) || repo.authenticationTimes[0].Location() != time.UTC || repo.authenticationTimes[0] != repo.authenticationTimes[1] {
+		t.Fatalf("authentication times = %+v, want one injected UTC instant per call", repo.authenticationTimes)
+	}
+	if !slices.Equal(observer.outcomes, []string{APIKeyLastUsedOutcomeUpdated, APIKeyLastUsedOutcomeSkipped}) {
+		t.Fatalf("observer outcomes = %+v", observer.outcomes)
+	}
+
+	repo.authenticateErr = ErrNotFound
 	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("AuthenticateAPIKey error = %v, want ErrUnauthorized", err)
+	}
+	if len(observer.outcomes) != 2 {
+		t.Fatalf("unauthorized authentication changed touch outcomes: %+v", observer.outcomes)
+	}
+
+	repo.authenticateErr = errors.New("database unavailable")
+	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); !errors.Is(err, ErrAuthenticationUnavailable) || strings.Contains(err.Error(), "database") {
+		t.Fatalf("AuthenticateAPIKey database error = %v, want sanitized unavailable sentinel", err)
+	}
+	if !slices.Equal(observer.outcomes, []string{APIKeyLastUsedOutcomeUpdated, APIKeyLastUsedOutcomeSkipped, APIKeyLastUsedOutcomeFailure}) {
+		t.Fatalf("observer failure outcomes = %+v", observer.outcomes)
 	}
 }
 
@@ -1950,7 +1987,9 @@ type memoryRepo struct {
 	sessions                       map[string]memorySession
 	keys                           map[int64]memoryAPIKey
 	nextAPIKeyID                   int64
-	touchErr                       error
+	authenticateErr                error
+	authenticateTouched            bool
+	authenticationTimes            []time.Time
 	logs                           []RequestLog
 	lastLogFilter                  RequestLogFilter
 	lastStreamMaxRows              int
@@ -2422,26 +2461,17 @@ func (r *memoryRepo) ListAPIKeyModels(_ context.Context, id int64) ([]string, er
 	return append([]string(nil), key.AllowedModels...), nil
 }
 
-func (r *memoryRepo) FindAPIKeyByHash(_ context.Context, hash string, _ time.Time) (APIKey, error) {
+func (r *memoryRepo) AuthenticateAPIKeyByHash(_ context.Context, hash string, now time.Time) (APIKey, bool, error) {
+	r.authenticationTimes = append(r.authenticationTimes, now)
+	if r.authenticateErr != nil {
+		return APIKey{}, false, r.authenticateErr
+	}
 	for _, key := range r.keys {
 		if key.Hash == hash && key.RevokedAt == nil && key.DisabledAt == nil {
-			return key.APIKey, nil
+			return key.APIKey, r.authenticateTouched, nil
 		}
 	}
-	return APIKey{}, ErrNotFound
-}
-
-func (r *memoryRepo) TouchAPIKey(_ context.Context, id int64, usedAt time.Time) error {
-	if r.touchErr != nil {
-		return r.touchErr
-	}
-	key, ok := r.keys[id]
-	if !ok {
-		return ErrNotFound
-	}
-	key.LastUsedAt = &usedAt
-	r.keys[id] = key
-	return nil
+	return APIKey{}, false, ErrNotFound
 }
 
 func (r *memoryRepo) ListRequestLogs(_ context.Context, filter RequestLogFilter) (RequestLogPage, error) {

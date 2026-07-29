@@ -603,30 +603,46 @@ func (r *AdminRepository) PurgeRevokedAPIKeys(ctx context.Context, cutoff time.T
 	return deleted, nil
 }
 
-func (r *AdminRepository) FindAPIKeyByHash(ctx context.Context, hash string, _ time.Time) (admin.APIKey, error) {
+func (r *AdminRepository) AuthenticateAPIKeyByHash(ctx context.Context, hash string, now time.Time) (admin.APIKey, bool, error) {
 	var found admin.APIKey
+	var touched bool
 	err := r.pool.QueryRow(ctx, `
-		SELECT `+apiKeySelectColumns+`
-		FROM client_api_keys k
-		LEFT JOIN routing_pools rp ON rp.id = k.routing_pool_id
-		WHERE k.key_hash = $1
-			AND k.revoked_at IS NULL
-			AND k.disabled_at IS NULL
-	`, hash).Scan(scanAPIKey(&found)...)
+		WITH active_key AS MATERIALIZED (
+			SELECT `+apiKeySelectColumns+`,
+				ARRAY(
+					SELECT model
+					FROM client_api_key_models
+					WHERE client_key_id = k.id
+					ORDER BY model
+				) AS allowed_models
+			FROM client_api_keys k
+			LEFT JOIN routing_pools rp ON rp.id = k.routing_pool_id
+			WHERE k.key_hash = $1
+				AND k.revoked_at IS NULL
+				AND k.disabled_at IS NULL
+		), touched AS (
+			UPDATE client_api_keys AS key
+			SET last_used_at = $2::timestamptz
+			FROM active_key
+			WHERE key.id = active_key.id
+				AND key.revoked_at IS NULL
+				AND key.disabled_at IS NULL
+				AND (key.last_used_at IS NULL OR key.last_used_at <= $2::timestamptz - INTERVAL '1 minute')
+			RETURNING key.id
+		)
+		SELECT active_key.*, EXISTS (SELECT 1 FROM touched)
+		FROM active_key
+	`, hash, now).Scan(append(scanAPIKey(&found), &found.AllowedModels, &touched)...)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return admin.APIKey{}, admin.ErrNotFound
+		return admin.APIKey{}, false, admin.ErrNotFound
 	}
 	if err != nil {
-		return admin.APIKey{}, err
+		return admin.APIKey{}, false, err
 	}
-	if found.ModelPolicy == admin.APIKeyModelPolicySelected {
-		models, err := r.ListAPIKeyModels(ctx, found.ID)
-		if err != nil {
-			return admin.APIKey{}, err
-		}
-		found.AllowedModels = models
+	if found.ModelPolicy != admin.APIKeyModelPolicySelected {
+		found.AllowedModels = nil
 	}
-	return found, nil
+	return found, touched, nil
 }
 
 func (r *AdminRepository) UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error) {
@@ -1151,22 +1167,6 @@ func (r *AdminRepository) populateAPIKeyModels(ctx context.Context, keys []admin
 			return err
 		}
 		keys[i].AllowedModels = models
-	}
-	return nil
-}
-
-func (r *AdminRepository) TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE client_api_keys
-		SET last_used_at = $2
-		WHERE id = $1
-			AND revoked_at IS NULL
-	`, id, usedAt)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return admin.ErrNotFound
 	}
 	return nil
 }

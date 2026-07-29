@@ -441,6 +441,26 @@ func TestProxyRequiresBearerAPIKey(t *testing.T) {
 	}
 }
 
+func TestProxyFailsClosedWithStableAuthenticationUnavailableError(t *testing.T) {
+	proxy := NewProxy(
+		&fakeAPIKeyAuthenticator{err: admin.ErrAuthenticationUnavailable},
+		&fakeSelectedAccountProvider{},
+		Config{},
+	)
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, `"code":"authentication_unavailable"`) || strings.Contains(body, "database") {
+		t.Fatalf("body = %q, want stable sanitized authentication error", body)
+	}
+}
+
 func TestProxyMetricsCoverSupportedAuthenticationFailure(t *testing.T) {
 	observer := &captureMetricsObserver{}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{}, Config{Metrics: observer})

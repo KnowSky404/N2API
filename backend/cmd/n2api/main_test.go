@@ -365,6 +365,7 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"unsafe_multi_instance_enabled",
 		"admin.NewGatewaySettingsRuntime",
 		"GatewaySettingsRuntime: gatewaySettingsRuntime",
+		"APIKeyAuthObserver:     apiKeyAuthObserver",
 		"gatewaySettingsRuntime.LoadInitial(startupCtx)",
 		"provider.NewAutoTestRunnerWithConfigSource",
 		"gatewaySettingsRuntime.GetGatewaySettings",

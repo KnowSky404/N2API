@@ -16,32 +16,33 @@ import (
 const (
 	MaxOwnedSeries            = 1600
 	MaxScrapeSeries           = 2000
-	MaxInitializedOwnedSeries = 1525
+	MaxInitializedOwnedSeries = 1529
 )
 
 var (
-	routes            = []string{"models", "chat_completions", "responses_create", "responses_retrieve", "responses_input_items", "other"}
-	statusClasses     = []string{"2xx", "4xx", "5xx", "other"}
-	boolValues        = []string{"true", "false"}
-	accountTypes      = []string{"codex_oauth", "api_key", "none", "other"}
-	usageSources      = []string{"responses", "chat_completions", "stream", "gemini_usage_metadata", "anthropic_usage", "json", "missing", "other"}
-	tokenTypes        = []string{"input", "output", "cached_input", "reasoning"}
-	providerStates    = []string{"active", "disabled", "rate_limited", "circuit_open", "expired", "other"}
-	tasks             = []string{"provider_auto_test", "request_log_retention", "system_event_retention", "api_key_purge", "response_affinity_retention", "api_key_budget_monitor", "routing_exhaustion_projector", "other"}
-	taskOutcomes      = []string{"success", "failure", "partial", "skipped", "canceled", "other"}
-	upstreamOutcomes  = []string{"success", "http_error", "transport_error", "refresh_retry", "canceled", "other"}
-	fallbackReasons   = []string{"account_concurrency", "transport_error", "retryable_status", "other"}
-	routingReasons    = []string{"routing_pool_disabled", "routing_pool_unavailable", "routing_pool_empty", "routing_pool_exhausted", "routing_pool_cycle", "provider_not_connected", "provider_not_configured", "provider_accounts_disabled", "provider_accounts_unavailable", "model_unavailable", "other"}
-	limitScopes       = []string{"gateway", "api_key", "provider_account", "other"}
-	limitReasons      = []string{"concurrency", "request_rate", "token_rate", "request_budget", "token_budget", "cost_budget", "other"}
-	streamOutcomes    = []string{"completed", "client_canceled", "upstream_error", "server_error", "other"}
-	refreshModes      = []string{"manual", "automatic", "rejected_token", "other"}
-	refreshOutcomes   = []string{"success", "failure", "skipped", "other"}
-	persistenceStates = []string{"success", "failure"}
-	settingsOutcomes  = []string{"success", "failure", "other"}
-	alertAdapters     = []string{"generic_webhook", "ntfy", "gotify", "other"}
-	alertOutcomes     = []string{"delivered", "failed", "dropped", "deduplicated", "recovery", "other"}
-	readinessParts    = []string{"overall", "database", "static_assets", "runtime", "gateway_settings", "other"}
+	routes              = []string{"models", "chat_completions", "responses_create", "responses_retrieve", "responses_input_items", "other"}
+	statusClasses       = []string{"2xx", "4xx", "5xx", "other"}
+	boolValues          = []string{"true", "false"}
+	accountTypes        = []string{"codex_oauth", "api_key", "none", "other"}
+	usageSources        = []string{"responses", "chat_completions", "stream", "gemini_usage_metadata", "anthropic_usage", "json", "missing", "other"}
+	tokenTypes          = []string{"input", "output", "cached_input", "reasoning"}
+	providerStates      = []string{"active", "disabled", "rate_limited", "circuit_open", "expired", "other"}
+	tasks               = []string{"provider_auto_test", "request_log_retention", "system_event_retention", "api_key_purge", "response_affinity_retention", "api_key_budget_monitor", "routing_exhaustion_projector", "other"}
+	taskOutcomes        = []string{"success", "failure", "partial", "skipped", "canceled", "other"}
+	upstreamOutcomes    = []string{"success", "http_error", "transport_error", "refresh_retry", "canceled", "other"}
+	fallbackReasons     = []string{"account_concurrency", "transport_error", "retryable_status", "other"}
+	routingReasons      = []string{"routing_pool_disabled", "routing_pool_unavailable", "routing_pool_empty", "routing_pool_exhausted", "routing_pool_cycle", "provider_not_connected", "provider_not_configured", "provider_accounts_disabled", "provider_accounts_unavailable", "model_unavailable", "other"}
+	limitScopes         = []string{"gateway", "api_key", "provider_account", "other"}
+	limitReasons        = []string{"concurrency", "request_rate", "token_rate", "request_budget", "token_budget", "cost_budget", "other"}
+	streamOutcomes      = []string{"completed", "client_canceled", "upstream_error", "server_error", "other"}
+	refreshModes        = []string{"manual", "automatic", "rejected_token", "other"}
+	refreshOutcomes     = []string{"success", "failure", "skipped", "other"}
+	persistenceStates   = []string{"success", "failure"}
+	settingsOutcomes    = []string{"success", "failure", "other"}
+	apiKeyTouchOutcomes = []string{"updated", "skipped", "failure", "other"}
+	alertAdapters       = []string{"generic_webhook", "ntfy", "gotify", "other"}
+	alertOutcomes       = []string{"delivered", "failed", "dropped", "deduplicated", "recovery", "other"}
+	readinessParts      = []string{"overall", "database", "static_assets", "runtime", "gateway_settings", "other"}
 )
 
 type Registry struct {
@@ -77,6 +78,7 @@ type Registry struct {
 	gatewaySettingsRefreshes *prometheus.CounterVec
 	gatewaySettingsAge       prometheus.GaugeFunc
 	gatewaySettingsLoadedAt  atomic.Int64
+	apiKeyLastUsed           *prometheus.CounterVec
 	providerAccountsMu       sync.Mutex
 }
 
@@ -126,6 +128,7 @@ func New(pool *pgxpool.Pool) *Registry {
 		}
 		return age
 	})
+	r.apiKeyLastUsed = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "n2api_api_key_last_used_total", Help: "Total API key authentication last-used outcomes."}, []string{"outcome"})
 
 	r.registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -138,6 +141,7 @@ func New(pool *pgxpool.Pool) *Registry {
 		r.taskDuration, r.taskRunning, r.taskLastSuccess, r.taskLastFailure,
 		r.alertQueueDepth, r.alertNotifications, r.alertDuration, r.readiness, r.draining,
 		r.gatewaySettingsValid, r.gatewaySettingsStale, r.gatewaySettingsRefreshes, r.gatewaySettingsAge,
+		r.apiKeyLastUsed,
 		newPoolCollector(pool),
 	)
 	r.initializeBoundedSeries()
@@ -215,6 +219,9 @@ func (r *Registry) initializeBoundedSeries() {
 	}
 	for _, outcome := range settingsOutcomes {
 		r.gatewaySettingsRefreshes.WithLabelValues(outcome)
+	}
+	for _, outcome := range apiKeyTouchOutcomes {
+		r.apiKeyLastUsed.WithLabelValues(outcome)
 	}
 	r.gatewaySettingsValid.Set(0)
 	r.gatewaySettingsStale.Set(0)
@@ -304,6 +311,12 @@ func (r *Registry) ObserveProviderRefresh(mode, outcome string) {
 func (r *Registry) ObserveGatewaySettingsRefresh(outcome string) {
 	if r != nil {
 		r.gatewaySettingsRefreshes.WithLabelValues(normalize(outcome, settingsOutcomes)).Inc()
+	}
+}
+
+func (r *Registry) ObserveAPIKeyLastUsed(outcome string) {
+	if r != nil {
+		r.apiKeyLastUsed.WithLabelValues(normalize(outcome, apiKeyTouchOutcomes)).Inc()
 	}
 }
 

@@ -436,6 +436,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(recorder, http.StatusUnauthorized, "unauthorized", "invalid bearer token")
 			return
 		}
+		if errors.Is(err, admin.ErrAuthenticationUnavailable) {
+			writeOpenAIError(recorder, http.StatusServiceUnavailable, "authentication_unavailable", "api key authentication unavailable")
+			return
+		}
 		writeOpenAIError(recorder, http.StatusInternalServerError, "internal_error", "api key authentication failed")
 		return
 	}

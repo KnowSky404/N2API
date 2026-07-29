@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -638,9 +640,9 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 		t.Fatalf("renamed key = %+v, want renamed selected-policy key", renamed)
 	}
 
-	found, err := repo.FindAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt)
+	found, _, err := repo.AuthenticateAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt)
 	if err != nil {
-		t.Fatalf("FindAPIKeyByHash returned error: %v", err)
+		t.Fatalf("AuthenticateAPIKeyByHash returned error: %v", err)
 	}
 	if found.ModelPolicy != admin.APIKeyModelPolicySelected || !slices.Equal(found.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
 		t.Fatalf("found key = %+v, want selected policy with models", found)
@@ -653,8 +655,8 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	if disabled.DisabledAt == nil || disabled.ModelPolicy != admin.APIKeyModelPolicySelected || !slices.Equal(disabled.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
 		t.Fatalf("disabled key = %+v, want disabled selected-policy key", disabled)
 	}
-	if _, err := repo.FindAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt); !errors.Is(err, admin.ErrNotFound) {
-		t.Fatalf("FindAPIKeyByHash disabled error = %v, want ErrNotFound", err)
+	if _, _, err := repo.AuthenticateAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("AuthenticateAPIKeyByHash disabled error = %v, want ErrNotFound", err)
 	}
 	enabled, err := repo.SetAPIKeyDisabled(ctx, created.ID, false)
 	if err != nil {
@@ -663,8 +665,8 @@ func TestAdminRepositoryAPIKeyModelPolicyBehavior(t *testing.T) {
 	if enabled.DisabledAt != nil {
 		t.Fatalf("DisabledAt = %v, want nil after enable", enabled.DisabledAt)
 	}
-	if _, err := repo.FindAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt); err != nil {
-		t.Fatalf("FindAPIKeyByHash after enable returned error: %v", err)
+	if _, _, err := repo.AuthenticateAPIKeyByHash(ctx, "hash-model-policy", created.CreatedAt); err != nil {
+		t.Fatalf("AuthenticateAPIKeyByHash after enable returned error: %v", err)
 	}
 
 	budgeted, err := repo.UpdateAPIKeyBudgets(ctx, created.ID, 12, 1200, 1500000, 300, 30000, 9000000)
@@ -921,6 +923,126 @@ func newTestAdminRepository(t *testing.T) *AdminRepository {
 		t.Fatalf("test database cleanup failed: %v", err)
 	}
 	return NewAdminRepository(pool, "store-test-cursor-secret")
+}
+
+func TestAPIKeyAuthenticationBoundsLastUsedWritesAndObservesLifecycleCommits(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	created, err := repo.CreateAPIKey(ctx, "authentication key", "authentication-hash", "n2api_", "encrypted", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+	created, err = repo.UpdateAPIKeyModelPolicy(ctx, created.ID, admin.APIKeyModelPolicySelected, []string{"gpt-5-mini", "gpt-5"})
+	if err != nil {
+		t.Fatalf("UpdateAPIKeyModelPolicy returned error: %v", err)
+	}
+	now := time.Date(2026, time.July, 29, 13, 0, 0, 0, time.UTC)
+	if _, err := repo.pool.Exec(ctx, `UPDATE client_api_keys SET last_used_at = NULL WHERE id = $1`, created.ID); err != nil {
+		t.Fatalf("reset sequential last_used_at: %v", err)
+	}
+
+	sequentialTouches := 0
+	for i := 0; i < 1000; i++ {
+		key, touched, err := repo.AuthenticateAPIKeyByHash(ctx, "authentication-hash", now)
+		if err != nil {
+			t.Fatalf("sequential authentication %d: %v", i, err)
+		}
+		if key.ID != created.ID || !slices.Equal(key.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+			t.Fatalf("sequential authentication key = %+v", key)
+		}
+		if touched {
+			sequentialTouches++
+		}
+	}
+	if sequentialTouches != 1 {
+		t.Fatalf("sequential last-used writes = %d, want 1", sequentialTouches)
+	}
+
+	if _, err := repo.pool.Exec(ctx, `UPDATE client_api_keys SET last_used_at = NULL WHERE id = $1`, created.ID); err != nil {
+		t.Fatalf("reset concurrent last_used_at: %v", err)
+	}
+	start := make(chan struct{})
+	errorsCh := make(chan error, 1000)
+	var concurrentTouches atomic.Int64
+	var group sync.WaitGroup
+	for range 1000 {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			key, touched, err := repo.AuthenticateAPIKeyByHash(ctx, "authentication-hash", now)
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			if key.ID != created.ID || !slices.Equal(key.AllowedModels, []string{"gpt-5", "gpt-5-mini"}) {
+				errorsCh <- errors.New("concurrent authentication returned incomplete key")
+				return
+			}
+			if touched {
+				concurrentTouches.Add(1)
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Fatalf("concurrent authentication: %v", err)
+	}
+	if got := concurrentTouches.Load(); got != 1 {
+		t.Fatalf("concurrent last-used writes = %d, want 1", got)
+	}
+
+	if _, touched, err := repo.AuthenticateAPIKeyByHash(ctx, "authentication-hash", now.Add(30*time.Second)); err != nil || touched {
+		t.Fatalf("authentication inside touch window = touched:%v err:%v", touched, err)
+	}
+	if _, touched, err := repo.AuthenticateAPIKeyByHash(ctx, "authentication-hash", now.Add(time.Minute)); err != nil || !touched {
+		t.Fatalf("authentication at next touch window = touched:%v err:%v", touched, err)
+	}
+
+	if _, err := repo.SetAPIKeyDisabled(ctx, created.ID, true); err != nil {
+		t.Fatalf("SetAPIKeyDisabled true: %v", err)
+	}
+	if _, _, err := repo.AuthenticateAPIKeyByHash(ctx, "authentication-hash", now.Add(2*time.Minute)); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("disabled authentication error = %v, want not found", err)
+	}
+	if _, err := repo.SetAPIKeyDisabled(ctx, created.ID, false); err != nil {
+		t.Fatalf("SetAPIKeyDisabled false: %v", err)
+	}
+	if _, _, err := repo.AuthenticateAPIKeyByHash(ctx, "authentication-hash", now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("re-enabled authentication: %v", err)
+	}
+	if _, err := repo.RevokeAPIKey(ctx, created.ID); err != nil {
+		t.Fatalf("RevokeAPIKey: %v", err)
+	}
+	if _, _, err := repo.AuthenticateAPIKeyByHash(ctx, "authentication-hash", now.Add(3*time.Minute)); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("revoked authentication error = %v, want not found", err)
+	}
+}
+
+func TestAPIKeyAuthenticationSourceUsesOneConditionalStatement(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("ReadFile admin.go: %v", err)
+	}
+	contents := string(source)
+	for _, want := range []string{
+		"WITH active_key AS MATERIALIZED",
+		"UPDATE client_api_keys AS key",
+		"key.last_used_at IS NULL OR key.last_used_at <= $2::timestamptz - INTERVAL '1 minute'",
+		"ARRAY(",
+		"EXISTS (SELECT 1 FROM touched)",
+	} {
+		if !strings.Contains(contents, want) {
+			t.Fatalf("API key authentication source missing %q", want)
+		}
+	}
+	if strings.Contains(contents, "func (r *AdminRepository) TouchAPIKey") {
+		t.Fatal("API key authentication still has a separate touch statement")
+	}
 }
 
 func TestAdminRepositoryPagesRequestLogsWithoutDuplicatesOrOmissions(t *testing.T) {

@@ -49,6 +49,7 @@ func TestRegistryStaysWithinSeriesBudgetsAndExcludesCanaries(t *testing.T) {
 	r.SetDraining(true)
 	r.SetGatewaySettingsSnapshot(true, true, time.Now().Add(-time.Second))
 	r.ObserveGatewaySettingsRefresh("secret-settings-outcome-canary")
+	r.ObserveAPIKeyLastUsed("secret-api-key-touch-outcome-canary")
 	families, err := r.Gatherer().Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -74,9 +75,28 @@ func TestRegistryStaysWithinSeriesBudgetsAndExcludesCanaries(t *testing.T) {
 	if !strings.Contains(body, "n2api_draining 1") {
 		t.Fatal("scrape does not expose draining state")
 	}
-	for _, canary := range []string{"resp_canary", "owner@example.com", "secret-source-canary", "secret-account-canary", "secret-state-canary", "secret-adapter-canary", "secret-outcome-canary", "secret-component-canary", "secret-settings-outcome-canary"} {
+	for _, canary := range []string{"resp_canary", "owner@example.com", "secret-source-canary", "secret-account-canary", "secret-state-canary", "secret-adapter-canary", "secret-outcome-canary", "secret-component-canary", "secret-settings-outcome-canary", "secret-api-key-touch-outcome-canary"} {
 		if strings.Contains(body, canary) {
 			t.Fatalf("scrape contains prohibited canary %q", canary)
+		}
+	}
+}
+
+func TestAPIKeyLastUsedMetricsExposeOnlyBoundedOutcomes(t *testing.T) {
+	r := New(nil)
+	r.ObserveAPIKeyLastUsed("updated")
+	r.ObserveAPIKeyLastUsed("skipped")
+	r.ObserveAPIKeyLastUsed("failure")
+	recorder := httptest.NewRecorder()
+	r.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		`n2api_api_key_last_used_total{outcome="updated"} 1`,
+		`n2api_api_key_last_used_total{outcome="skipped"} 1`,
+		`n2api_api_key_last_used_total{outcome="failure"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics missing %q", want)
 		}
 	}
 }

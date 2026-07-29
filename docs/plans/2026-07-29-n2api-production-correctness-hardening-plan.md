@@ -16,7 +16,7 @@ review, and atomic commit are complete.
 | PostgreSQL control connections | completed | Dedicated connections, serialized startup, bounded-pool process tests, LISTEN reconnect, vet, and race verification committed in Task 2 |
 | Lifecycle and graceful drain | completed | Separate contexts, supervised listeners/runners, ordered Alert drain, one 30-second maximum deadline, real request/SSE tests, race/vet, and 144 ms clean container SIGTERM |
 | Gateway Settings runtime | completed | Atomic validated snapshots, startup gating, supervised refresh, immediate committed publication, LKG stale state, bounded health/metrics, and zero request-path settings loads implemented in Task 4 |
-| API key authentication touch | pending | Current successful authentication writes every request |
+| API key authentication touch | completed | One active-state statement returns the key and selected models while conditionally touching at most once per UTC minute, with bounded metrics and stable failure behavior |
 | Durable budget ledger | pending | Current budget reads aggregate Request Logs |
 | Bounded admin lists | pending | Current key list has N+1 budget reads and both lists are unbounded |
 | Database TLS identity | completed | Parsed pgx primary and fallback attempts are classified as plaintext, unverified TLS, or verified-full with independent accepted-risk gates |
@@ -144,7 +144,7 @@ Commit: `feat(runtime): add last-known-good gateway settings`
 
 ## Task 5: Bound API Key Last-Used Writes
 
-Status: pending
+Status: completed
 Dependencies: Task 2
 
 Implementation:
@@ -159,6 +159,22 @@ Tests and acceptance:
   per minute per key.
 - Disable/revoke commits are observed by subsequent authentications.
 - Read failure fails closed; touch behavior is deterministic and race-clean.
+
+Evidence:
+
+- The Store uses one PostgreSQL statement for active-state authentication,
+  selected-model loading, conditional touch, and the touch outcome; the Service
+  supplies one injected UTC timestamp.
+- Isolated PostgreSQL tests proved that 1,000 sequential and 1,000 concurrent
+  authentications each perform exactly one touch, and that committed disable,
+  re-enable, and revoke operations are observed by the next authentication.
+- `make test-control-connections` passed the Store suite, focused Store race
+  test, and real-process lifecycle suite. Focused Admin, Gateway, Metrics, main
+  tests and `go vet` passed.
+- `make test` passed all Go packages, Svelte diagnostics with 0 errors and 0
+  warnings, 198 Bun tests, and the production frontend build.
+- `bash -n dev/testing/run.sh` and `git diff --check` passed before the atomic
+  Task 5 commit.
 
 Commit: `perf(auth): bound api key last-used writes`
 

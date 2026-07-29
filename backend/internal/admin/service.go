@@ -44,11 +44,22 @@ const MaxRequestLogFilterValueLength = 100
 const MaxRequestLogRoutingPoolChainLength = 200
 
 var (
-	ErrNotFound     = errors.New("not found")
-	ErrUnauthorized = errors.New("unauthorized")
-	ErrInvalidInput = errors.New("invalid input")
-	ErrConflict     = errors.New("conflict")
+	ErrNotFound                  = errors.New("not found")
+	ErrUnauthorized              = errors.New("unauthorized")
+	ErrInvalidInput              = errors.New("invalid input")
+	ErrConflict                  = errors.New("conflict")
+	ErrAuthenticationUnavailable = errors.New("authentication unavailable")
 )
+
+const (
+	APIKeyLastUsedOutcomeUpdated = "updated"
+	APIKeyLastUsedOutcomeSkipped = "skipped"
+	APIKeyLastUsedOutcomeFailure = "failure"
+)
+
+type APIKeyAuthenticationObserver interface {
+	ObserveAPIKeyLastUsed(outcome string)
+}
 
 type Config struct {
 	SessionTTL             time.Duration
@@ -56,6 +67,7 @@ type Config struct {
 	EncryptionKeyring      *secret.Keyring
 	DefaultGatewaySettings GatewaySettings
 	GatewaySettingsRuntime *GatewaySettingsRuntime
+	APIKeyAuthObserver     APIKeyAuthenticationObserver
 	SystemEvents           SystemEventRepository
 }
 
@@ -370,7 +382,7 @@ type Repository interface {
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	DeleteRevokedAPIKey(ctx context.Context, id int64) error
 	GetAPIKeyEncryptedSecret(ctx context.Context, id int64) (string, error)
-	FindAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, error)
+	AuthenticateAPIKeyByHash(ctx context.Context, hash string, now time.Time) (APIKey, bool, error)
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (APIKey, error)
 	SetAPIKeyDisabled(ctx context.Context, id int64, disabled bool) (APIKey, error)
 	UpdateAPIKeyModelPolicy(ctx context.Context, id int64, policy string, models []string) (APIKey, error)
@@ -384,7 +396,6 @@ type Repository interface {
 	UpdateAPIKeyRoutingPool(ctx context.Context, id int64, routingPoolID *int64) (APIKey, error)
 	GetAPIKeyBudgetUsage(ctx context.Context, keyID int64, now time.Time) (APIKeyBudgetUsage, error)
 	ListAPIKeyModels(ctx context.Context, id int64) ([]string, error)
-	TouchAPIKey(ctx context.Context, id int64, usedAt time.Time) error
 	ListRequestLogs(ctx context.Context, filter RequestLogFilter) (RequestLogPage, error)
 	StreamRequestLogs(ctx context.Context, filter RequestLogFilter, maxRows int, visit func(RequestLog) error) (RequestLogExportResult, error)
 	TryAcquireRequestLogRetention(ctx context.Context) (RequestLogRetentionLease, bool, error)
@@ -420,6 +431,7 @@ type Service struct {
 	encryptionKeyring       *secret.Keyring
 	defaultGatewaySettings  GatewaySettings
 	gatewaySettingsRuntime  *GatewaySettingsRuntime
+	apiKeyAuthObserver      APIKeyAuthenticationObserver
 	officialDocumentFetcher OfficialDocumentFetcher
 	now                     func() time.Time
 	systemEvents            SystemEventRepository
@@ -438,6 +450,7 @@ func NewService(repo Repository, cfg Config) *Service {
 		encryptionKeyring:       cfg.EncryptionKeyring,
 		defaultGatewaySettings:  cfg.DefaultGatewaySettings,
 		gatewaySettingsRuntime:  cfg.GatewaySettingsRuntime,
+		apiKeyAuthObserver:      cfg.APIKeyAuthObserver,
 		officialDocumentFetcher: NewHTTPOfficialDocumentFetcher(30 * time.Second),
 		now:                     time.Now,
 		systemEvents:            cfg.SystemEvents,
@@ -1021,27 +1034,27 @@ func (s *Service) AuthenticateAPIKey(ctx context.Context, apiKey string) (APIKey
 		return APIKey{}, ErrUnauthorized
 	}
 
-	key, err := s.repo.FindAPIKeyByHash(ctx, secret.HashAPIKey(apiKey), time.Now())
+	now := s.now().UTC()
+	key, touched, err := s.repo.AuthenticateAPIKeyByHash(ctx, secret.HashAPIKey(apiKey), now)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return APIKey{}, ErrUnauthorized
 		}
-		return APIKey{}, err
+		s.observeAPIKeyLastUsed(APIKeyLastUsedOutcomeFailure)
+		return APIKey{}, ErrAuthenticationUnavailable
 	}
-	if key.RevokedAt != nil {
-		return APIKey{}, ErrUnauthorized
+	if touched {
+		s.observeAPIKeyLastUsed(APIKeyLastUsedOutcomeUpdated)
+	} else {
+		s.observeAPIKeyLastUsed(APIKeyLastUsedOutcomeSkipped)
 	}
-	if key.DisabledAt != nil {
-		return APIKey{}, ErrUnauthorized
-	}
-	if err := s.repo.TouchAPIKey(ctx, key.ID, time.Now()); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return APIKey{}, ErrUnauthorized
-		}
-		return APIKey{}, err
-	}
-
 	return key, nil
+}
+
+func (s *Service) observeAPIKeyLastUsed(outcome string) {
+	if s.apiKeyAuthObserver != nil {
+		s.apiKeyAuthObserver.ObserveAPIKeyLastUsed(outcome)
+	}
 }
 
 func (s *Service) ListRequestLogs(ctx context.Context, filter RequestLogFilter) (RequestLogPage, error) {

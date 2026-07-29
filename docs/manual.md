@@ -121,6 +121,10 @@ in-process counters, and `pgxpool.Stat()`. A PostgreSQL failure can make the
 inventory snapshot stale but does not prevent scraping. N2API emits no exemplars,
 tracing, remote export, Grafana configuration, or outbound telemetry.
 
+`n2api_api_key_last_used_total` reports fixed `updated`, `skipped`, `failure`,
+or `other` outcomes for the conditional API key last-used write. It never uses
+key identity or database error text as a label.
+
 ## Reverse Proxy Trust
 
 N2API ignores `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`, and
