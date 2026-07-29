@@ -91,7 +91,7 @@ case "${mode}" in
       cd "$1/backend"
       export N2API_STORE_TEST_ALLOW_DESTRUCTIVE=1
       export N2API_STORE_TEST_DATABASE_URL="$2"
-      go test -count=1 -run "Test(PostgresConnection|PostgresPool|InstanceLock|MigrationLock|SystemEventSubscription|APIKeyAuthentication|APIKeyBudget|Management)" ./internal/store
+      go test -count=1 -run "Test(AllMigrationsRoundTrip|PostgresConnection|PostgresPool|InstanceLock|MigrationLock|SystemEventSubscription|APIKeyAuthentication|APIKeyBudget|Management)" ./internal/store
       go test -race -count=1 -run "Test(APIKeyAuthentication|APIKeyBudget)" ./internal/store
       go test -count=1 -run TestInstanceLockProcessLifecycle ./cmd/n2api
     ' _ "${repo_root}" "postgres://n2api:e2e-postgres-password@${postgres_host}:5432/n2api_e2e?sslmode=disable"

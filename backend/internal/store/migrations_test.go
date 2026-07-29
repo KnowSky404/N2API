@@ -713,6 +713,39 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 	}
 }
 
+func TestAllMigrationsRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	repo := newTestAlertingRepository(t, ctx)
+	provider := newStoreMigrationTestProvider(t, repo)
+
+	for wantVersion := int64(50); wantVersion >= 1; wantVersion-- {
+		result, err := provider.Down(ctx)
+		if err != nil {
+			t.Fatalf("roll back migration %d: %v", wantVersion, err)
+		}
+		if result == nil || result.Source.Version != wantVersion {
+			t.Fatalf("migration down result = %+v, want version %d", result, wantVersion)
+		}
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 0)
+	for _, relation := range []string{"admins", "client_api_keys", "provider_accounts", "request_logs", "settings"} {
+		assertStoreRelationExists(t, ctx, repo, relation, false)
+	}
+
+	results, err := provider.Up(ctx)
+	if err != nil {
+		t.Fatalf("reapply all migrations: %v", err)
+	}
+	if len(results) != 50 || results[0].Source.Version != 1 || results[len(results)-1].Source.Version != 50 {
+		t.Fatalf("migration up results = %d versions %v..%v, want 50 versions 1..50", len(results), results[0].Source.Version, results[len(results)-1].Source.Version)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 50)
+	for _, relation := range []string{"admins", "client_api_keys", "provider_accounts", "request_logs", "settings", "api_key_budget_states", "client_api_keys_management_page_idx"} {
+		assertStoreRelationExists(t, ctx, repo, relation, true)
+	}
+}
+
 func TestManagementListIndexesMigrationIsEmbedded(t *testing.T) {
 	sql, err := MigrationSQL("00050_management_list_indexes.sql")
 	if err != nil {

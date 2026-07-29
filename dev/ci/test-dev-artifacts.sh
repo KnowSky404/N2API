@@ -347,6 +347,9 @@ for package in \
   grep -Fq "${package}" <<<"${critical_race_block}" ||
     fail "critical race runner does not cover ${package}"
 done
+control_connections_block="$(sed -n '/^  control-connections)/,/^    ;;/p' "${repo_root}/dev/testing/run.sh")"
+grep -Fq 'AllMigrationsRoundTrip' <<<"${control_connections_block}" ||
+  fail "control connection runner does not cover the full migration round trip"
 grep -Fq -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore cleanup does not remove local test images"
 grep -Fq 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||
