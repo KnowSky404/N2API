@@ -370,6 +370,10 @@ grep -Fq 'snapshot_development_stack' "${restore_driver}" ||
   fail "restore scenario driver does not protect the development stack"
 grep -Fq 'test-restore-backup:' "${repo_root}/Makefile" ||
   fail "managed restore scenario Make target is missing"
+grep -Fq 'previous_encryption_keys=' "${restore_driver}" ||
+  fail "restore scenario does not configure a previous encryption key"
+grep -Fq 'encryption=previous_key' "${restore_driver}" ||
+  fail "old-schema restore does not verify previous-key decryption"
 image_build_block="$(sed -n '/name: Build platform image once/,/name: Start PostgreSQL for smoke test/p' "${repo_root}/.github/workflows/ci-image.yml")"
 if grep -Fq 'io.knowsky.n2api.resource=test' <<<"${image_build_block}"; then
   fail "publishable image config contains a test resource label"

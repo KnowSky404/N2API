@@ -12,6 +12,8 @@ compose_file="${repo_root}/deploy/compose.e2e.yaml"
 fixture_admin_username="admin"
 fixture_admin_password="e2e-admin-password"
 fixture_encryption_secret="e2e-encryption-secret-with-enough-length"
+rotated_encryption_secret="e2e-rotated-encryption-secret-with-enough-length"
+previous_encryption_keys='[{"id":"default","secret":"e2e-encryption-secret-with-enough-length"}]'
 wrong_encryption_secret="wrong-restore-encryption-secret-with-enough-length"
 historical_schema_version=47
 current_schema_version=50
@@ -110,6 +112,8 @@ run_restore() {
   local scenario=$1
   local dump=$2
   local encryption_secret=$3
+  local encryption_key_id=${4:-default}
+  local encryption_previous_keys=${5:-[]}
   local stdout_file="${scenario_root}/${scenario}.stdout"
   local stderr_file="${scenario_root}/${scenario}.stderr"
   local marker_root="${scenario_root}/${scenario}-markers"
@@ -124,8 +128,8 @@ run_restore() {
     N2API_RESTORE_ADMIN_USERNAME="${fixture_admin_username}" \
     N2API_RESTORE_ADMIN_PASSWORD="${fixture_admin_password}" \
     N2API_RESTORE_ENCRYPTION_SECRET="${encryption_secret}" \
-    N2API_RESTORE_ENCRYPTION_KEY_ID="default" \
-    N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS="[]" \
+    N2API_RESTORE_ENCRYPTION_KEY_ID="${encryption_key_id}" \
+    N2API_RESTORE_ENCRYPTION_PREVIOUS_KEYS="${encryption_previous_keys}" \
     "${restore_script}" "${dump}" >"${stdout_file}" 2>"${stderr_file}"
   status=$?
   set -e
@@ -200,9 +204,14 @@ assert_passed_restore "${current_schema_version}"
 echo "restore_scenario_status=passed scenario=${active_scenario}"
 
 active_scenario="older_schema"
-run_restore "${active_scenario}" "${older_dump}" "${fixture_encryption_secret}"
+run_restore \
+  "${active_scenario}" \
+  "${older_dump}" \
+  "${rotated_encryption_secret}" \
+  "rotated" \
+  "${previous_encryption_keys}"
 assert_passed_restore "${current_schema_version}"
-echo "restore_scenario_status=passed scenario=${active_scenario} source_schema=${historical_schema_version}"
+echo "restore_scenario_status=passed scenario=${active_scenario} source_schema=${historical_schema_version} encryption=previous_key"
 
 active_scenario="wrong_key"
 run_restore "${active_scenario}" "${current_dump}" "${wrong_encryption_secret}"
