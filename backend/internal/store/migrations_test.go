@@ -1066,7 +1066,7 @@ func TestAlertRuleTemplateKeyMigrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create migration provider: %v", err)
 	}
-	for _, wantVersion := range []int64{49, 48, 47, 46, 45, 44, 43} {
+	for _, wantVersion := range []int64{50, 49, 48, 47, 46, 45, 44, 43} {
 		result, err := provider.Down(ctx)
 		if err != nil {
 			t.Fatalf("roll back migration %d: %v", wantVersion, err)

@@ -912,7 +912,7 @@ func TestAdminRepositoryAPIKeyBudgetUsageReadsDurableLedgerState(t *testing.T) {
 		INSERT INTO api_key_budget_admissions (
 			admission_id, client_key_id, source, status, settlement_outcome, usage_known,
 			admitted_at, settled_at, request_24h_expires_at, request_30d_expires_at
-		) VALUES ($1, $2, 'live', 'settled', 'missing', false, $3, $3, $3 + INTERVAL '24 hours', $3 + INTERVAL '30 days')
+		) VALUES ($1, $2, 'live', 'settled', 'missing', false, $3::timestamptz, $3::timestamptz, $3::timestamptz + INTERVAL '24 hours', $3::timestamptz + INTERVAL '30 days')
 	`, budgetLedgerAdmissionID(9000), key.ID, now.Add(-31*24*time.Hour)); err != nil {
 		t.Fatalf("insert overdue ledger admission: %v", err)
 	}
