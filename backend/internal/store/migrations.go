@@ -170,9 +170,34 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 }
 
 func runMigrations(ctx context.Context, db *sql.DB) error {
-	migrations, err := migrationDirFS()
+	provider, err := newMigrationProvider(db)
 	if err != nil {
 		return err
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		return fmt.Errorf("run migrations: %w", err)
+	}
+	return nil
+}
+
+// RunMigrationsDownTo rolls back applied migrations newer than targetVersion.
+func RunMigrationsDownTo(ctx context.Context, pool *pgxpool.Pool, targetVersion int64) error {
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	provider, err := newMigrationProvider(db)
+	if err != nil {
+		return err
+	}
+	if _, err := provider.DownTo(ctx, targetVersion); err != nil {
+		return fmt.Errorf("roll back migrations to version %d: %w", targetVersion, err)
+	}
+	return nil
+}
+
+func newMigrationProvider(db *sql.DB) (*goose.Provider, error) {
+	migrations, err := migrationDirFS()
+	if err != nil {
+		return nil, err
 	}
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
@@ -182,12 +207,9 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 		goose.WithDisableGlobalRegistry(true),
 	)
 	if err != nil {
-		return fmt.Errorf("create migration provider: %w", err)
+		return nil, fmt.Errorf("create migration provider: %w", err)
 	}
-	if _, err := provider.Up(ctx); err != nil {
-		return fmt.Errorf("run migrations: %w", err)
-	}
-	return nil
+	return provider, nil
 }
 
 func migrationDirFS() (fs.FS, error) {

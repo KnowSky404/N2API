@@ -1,11 +1,14 @@
 package e2e_test
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/KnowSky404/N2API/backend/internal/store"
 )
 
 func TestCreateRestoreBackupFixture(t *testing.T) {
@@ -30,6 +33,28 @@ func TestCreateRestoreBackupFixture(t *testing.T) {
 	}, &response, http.StatusCreated)
 	if response.Key.ID <= 0 || response.Secret == "" {
 		t.Fatal("stage=restore_fixture field=credentials")
+	}
+}
+
+func TestDowngradeRestoreBackupFixture(t *testing.T) {
+	if os.Getenv("N2API_E2E_DOWNGRADE_RESTORE_FIXTURE") != "1" {
+		t.Skip("set N2API_E2E_DOWNGRADE_RESTORE_FIXTURE=1 only for an isolated fixture database")
+	}
+	databaseURL := strings.TrimSpace(os.Getenv("N2API_E2E_DATABASE_URL"))
+	targetVersion, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("N2API_E2E_RESTORE_TARGET_SCHEMA")), 10, 64)
+	if databaseURL == "" || err != nil || targetVersion < 0 {
+		t.Fatal("stage=restore_fixture_downgrade field=config")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+	pool, err := store.OpenMigrationPool(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("stage=restore_fixture_downgrade action=open_database error=%v", err)
+	}
+	defer pool.Close()
+	if err := store.RunMigrationsDownTo(ctx, pool, targetVersion); err != nil {
+		t.Fatalf("stage=restore_fixture_downgrade action=migrate error=%v", err)
 	}
 }
 
