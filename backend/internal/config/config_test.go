@@ -998,7 +998,7 @@ func TestLoadRequiresExplicitRiskAcceptance(t *testing.T) {
 		{
 			name:       "database plaintext fallback",
 			overrides:  map[string]string{"DATABASE_URL": "postgres://owner:database-secret@db.internal/n2api?sslmode=prefer"},
-			risk:       "database-plaintext",
+			risk:       "database-plaintext,database-unverified-tls",
 			secretText: "database-secret",
 		},
 	}
@@ -1086,31 +1086,59 @@ func TestLoadRejectsUnsafeDatabaseConfiguration(t *testing.T) {
 }
 
 func TestLoadDatabaseTLSModes(t *testing.T) {
-	for _, sslMode := range []string{"disable", "allow", "prefer"} {
-		t.Run("risk_"+sslMode, func(t *testing.T) {
-			databaseURL := "postgres://owner:database-secret@db.internal/n2api?sslmode=" + sslMode
-			_, err := Load(strictConfigLookup(map[string]string{"DATABASE_URL": databaseURL}))
+	tests := []struct {
+		name          string
+		databaseURL   string
+		requiredRisks string
+	}{
+		{name: "disable", databaseURL: "postgres://owner:database-secret@db.internal/n2api?sslmode=disable", requiredRisks: "database-plaintext"},
+		{name: "allow", databaseURL: "postgres://owner:database-secret@db.internal/n2api?sslmode=allow", requiredRisks: "database-plaintext,database-unverified-tls"},
+		{name: "prefer", databaseURL: "postgres://owner:database-secret@db.internal/n2api?sslmode=prefer", requiredRisks: "database-plaintext,database-unverified-tls"},
+		{name: "url require", databaseURL: "postgres://owner:database-secret@db.internal/n2api?sslmode=require", requiredRisks: "database-unverified-tls"},
+		{name: "keyword require", databaseURL: "host=db.internal user=owner password=database-secret dbname=n2api sslmode=require", requiredRisks: "database-unverified-tls"},
+		{name: "verify ca", databaseURL: "postgres://owner:database-secret@db.internal/n2api?sslmode=verify-ca", requiredRisks: "database-unverified-tls"},
+		{name: "verify full", databaseURL: "postgres://owner:database-secret@db.internal/n2api?sslmode=verify-full"},
+		{name: "verify full fallback hosts", databaseURL: "host=db-a.internal,db-b.internal user=owner password=database-secret dbname=n2api sslmode=verify-full"},
+		{name: "require system roots becomes verify full", databaseURL: "postgres://owner:database-secret@db.internal/n2api?sslmode=require&sslrootcert=system"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Load(strictConfigLookup(map[string]string{"DATABASE_URL": test.databaseURL}))
+			if test.requiredRisks == "" {
+				if err != nil {
+					t.Fatalf("Load verified configuration returned error: %v", err)
+				}
+				return
+			}
 			assertSafeConfigError(t, err, "N2API_ACCEPT_RISKS", "database-secret")
-
 			if _, err := Load(strictConfigLookup(map[string]string{
-				"DATABASE_URL":       databaseURL,
-				"N2API_ACCEPT_RISKS": "database-plaintext",
+				"DATABASE_URL":       test.databaseURL,
+				"N2API_ACCEPT_RISKS": test.requiredRisks,
 			})); err != nil {
-				t.Fatalf("Load with accepted database risk returned error: %v", err)
+				t.Fatalf("Load with accepted database risks returned error: %v", err)
 			}
 		})
 	}
 
-	for name, databaseURL := range map[string]string{
-		"url require":     "postgres://owner:database-secret@db.internal/n2api?sslmode=require",
-		"keyword require": "host=db.internal user=owner password=database-secret dbname=n2api sslmode=require",
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := Load(strictConfigLookup(map[string]string{"DATABASE_URL": databaseURL})); err != nil {
-				t.Fatalf("Load returned error: %v", err)
-			}
-		})
-	}
+	t.Run("allow requires risks independently", func(t *testing.T) {
+		databaseURL := "postgres://owner:database-secret@db.internal/n2api?sslmode=allow"
+		for acceptedRisk, missingRisk := range map[string]string{
+			"database-plaintext":      "database-unverified-tls",
+			"database-unverified-tls": "database-plaintext",
+		} {
+			_, err := Load(strictConfigLookup(map[string]string{
+				"DATABASE_URL":       databaseURL,
+				"N2API_ACCEPT_RISKS": acceptedRisk,
+			}))
+			assertSafeConfigError(t, err, missingRisk, "database-secret")
+		}
+	})
+
+	t.Run("missing root certificate is sanitized", func(t *testing.T) {
+		databaseURL := "postgres://owner:database-secret@db.internal/n2api?sslmode=verify-full&sslrootcert=/missing/database-root-canary.pem"
+		_, err := Load(strictConfigLookup(map[string]string{"DATABASE_URL": databaseURL}))
+		assertSafeConfigError(t, err, "DATABASE_URL", "database-root-canary")
+	})
 }
 
 func TestLoadRejectsUnsafeUpstreamURLs(t *testing.T) {
@@ -1210,7 +1238,7 @@ func strictConfigLookup(overrides map[string]string) func(string) string {
 		"N2API_HOST":              "127.0.0.1",
 		"N2API_PUBLIC_URL":        "https://n2api.knowsky.uk",
 		"N2API_ACCEPT_RISKS":      "",
-		"DATABASE_URL":            "postgres://owner:database-secret@db.internal/n2api?sslmode=require",
+		"DATABASE_URL":            "postgres://owner:database-secret@db.internal/n2api?sslmode=verify-full",
 		"N2API_ADMIN_PASSWORD":    "strong-admin-password",
 		"N2API_ENCRYPTION_SECRET": "strong-encryption-secret-at-least-32-bytes",
 	}
@@ -1239,7 +1267,7 @@ func mapLookup(values map[string]string) func(string) string {
 			if value, ok := values[key]; ok {
 				return value
 			}
-			return "public-bind,database-plaintext"
+			return "public-bind,database-plaintext,database-unverified-tls"
 		}
 		return values[key]
 	}

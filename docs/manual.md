@@ -48,6 +48,8 @@ must be acknowledged individually in the comma-separated
 - `public-bind` permits `N2API_HOST` to listen on a non-loopback address.
 - `database-plaintext` permits a PostgreSQL primary or fallback connection
   without TLS.
+- `database-unverified-tls` permits a PostgreSQL primary or fallback TLS
+  connection that does not verify both the certificate chain and hostname.
 
 Unknown values, empty list elements, and a blanket `all` value are rejected.
 These acknowledgements never bypass malformed URLs or connection strings,
@@ -456,7 +458,10 @@ Replace every `change-me` value before starting the stack. At minimum, set:
 - `N2API_ACCEPT_RISKS=public-bind,database-plaintext` when using the bundled
   release topology. The application must listen on the container network, and
   the bundled PostgreSQL service does not enable TLS. For an external
-  TLS-required PostgreSQL service, omit `database-plaintext`.
+  PostgreSQL service, use `sslmode=verify-full` with a trusted root certificate
+  and omit both database transport risks. `sslmode=require` and
+  `sslmode=verify-ca` require the independent `database-unverified-tls`
+  acknowledgement because they do not verify the server hostname.
 
 ### Encrypted Secret Envelope
 

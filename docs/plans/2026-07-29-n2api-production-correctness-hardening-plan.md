@@ -19,7 +19,7 @@ review, and atomic commit are complete.
 | API key authentication touch | pending | Current successful authentication writes every request |
 | Durable budget ledger | pending | Current budget reads aggregate Request Logs |
 | Bounded admin lists | pending | Current key list has N+1 budget reads and both lists are unbounded |
-| Database TLS identity | pending | Current check only detects possible plaintext |
+| Database TLS identity | completed | Parsed pgx primary and fallback attempts are classified as plaintext, unverified TLS, or verified-full with independent accepted-risk gates |
 | Secret reveal step-up | pending | Current GET returns the full secret for an ordinary session |
 | Password hash migration | pending | Current PBKDF2 verifier is fixed-parameter and passwords are trimmed |
 | Secondary deployment and CI work | pending | Existing hardening is partial; required gates and resource bounds are absent |
@@ -215,7 +215,7 @@ Commit: `perf(admin): batch and paginate management queries`
 
 ## Task 8: Enforce Database TLS Identity Policy
 
-Status: pending
+Status: completed
 Dependencies: Task 2
 
 Implementation:
@@ -229,6 +229,15 @@ Tests and acceptance:
 - Cover all sslmodes, URL and keyword DSNs, fallback hosts, missing roots,
   hostname verification, and both accepted-risk paths.
 - Errors contain no DSN, password, or certificate content.
+
+Evidence:
+
+- Config tests cover URL and keyword DSNs, every pgx SSL mode, multi-host
+  fallbacks, system roots, missing root files, and independent plaintext and
+  unverified-TLS acknowledgements.
+- Focused config tests, race checks, and `go vet` passed; the full `make test`
+  gate also passed with the Task 8 changes present.
+- `git diff --check` passed before the atomic Task 8 commit.
 
 Commit: `fix(security): require verified database tls or explicit risk`
 

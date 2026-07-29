@@ -114,9 +114,10 @@ const (
 )
 
 const (
-	riskPublicHTTP        = "public-http"
-	riskPublicBind        = "public-bind"
-	riskDatabasePlaintext = "database-plaintext"
+	riskPublicHTTP            = "public-http"
+	riskPublicBind            = "public-bind"
+	riskDatabasePlaintext     = "database-plaintext"
+	riskDatabaseUnverifiedTLS = "database-unverified-tls"
 )
 
 func Load(lookup func(string) string) (Config, error) {
@@ -604,9 +605,10 @@ func parseAcceptedRisks(value string) (map[string]struct{}, error) {
 		return accepted, nil
 	}
 	allowed := map[string]struct{}{
-		riskPublicHTTP:        {},
-		riskPublicBind:        {},
-		riskDatabasePlaintext: {},
+		riskPublicHTTP:            {},
+		riskPublicBind:            {},
+		riskDatabasePlaintext:     {},
+		riskDatabaseUnverifiedTLS: {},
 	}
 	for _, raw := range strings.Split(value, ",") {
 		risk := strings.TrimSpace(raw)
@@ -734,15 +736,12 @@ func validateDatabaseURL(value string, acceptedRisks map[string]struct{}) error 
 	if isKnownPlaceholder(poolConfig.ConnConfig.Password) {
 		return errors.New("DATABASE_URL must not contain a placeholder password")
 	}
-	permitsPlaintext := poolConfig.ConnConfig.TLSConfig == nil
-	for _, fallback := range poolConfig.ConnConfig.Fallbacks {
-		if fallback.TLSConfig == nil {
-			permitsPlaintext = true
-			break
-		}
-	}
-	if permitsPlaintext && !acceptsRisk(acceptedRisks, riskDatabasePlaintext) {
+	transportRisks := classifyDatabaseTransport(poolConfig.ConnConfig)
+	if transportRisks.plaintext && !acceptsRisk(acceptedRisks, riskDatabasePlaintext) {
 		return errors.New("N2API_ACCEPT_RISKS must include database-plaintext when DATABASE_URL permits a plaintext connection")
+	}
+	if transportRisks.unverifiedTLS && !acceptsRisk(acceptedRisks, riskDatabaseUnverifiedTLS) {
+		return errors.New("N2API_ACCEPT_RISKS must include database-unverified-tls when DATABASE_URL permits TLS without certificate and hostname verification")
 	}
 	return nil
 }
