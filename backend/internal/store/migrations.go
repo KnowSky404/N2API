@@ -124,6 +124,7 @@ func (l *MigrationLock) Close() error {
 		return nil
 	}
 	l.closed = true
+	lost := l.isLost()
 	if l.conn.IsClosed() {
 		l.markLost()
 		return ErrMigrationLockLost
@@ -139,7 +140,19 @@ func (l *MigrationLock) Close() error {
 	if !unlocked {
 		return errors.Join(errors.New("migration advisory lock was not held"), closeErr)
 	}
+	if lost {
+		return errors.Join(ErrMigrationLockLost, closeErr)
+	}
 	return closeErr
+}
+
+func (l *MigrationLock) isLost() bool {
+	select {
+	case <-l.lost:
+		return true
+	default:
+		return false
+	}
 }
 
 func MigrationSQL(name string) (string, error) {

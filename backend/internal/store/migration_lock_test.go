@@ -76,15 +76,15 @@ func TestMigrationLockReportsConnectionLoss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect migration lock connection: %v", err)
 	}
+	var backendPID int32
+	if err := conn.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&backendPID); err != nil {
+		t.Fatalf("read migration lock backend PID: %v", err)
+	}
 	lock, err := acquireMigrationLockWithID(ctx, conn, testMigrationAdvisoryLockID)
 	if err != nil {
 		t.Fatalf("acquire migration lock: %v", err)
 	}
 
-	var backendPID int32
-	if err := conn.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&backendPID); err != nil {
-		t.Fatalf("read migration lock backend PID: %v", err)
-	}
 	var terminated bool
 	if err := repository.pool.QueryRow(ctx, `SELECT pg_terminate_backend($1)`, backendPID).Scan(&terminated); err != nil || !terminated {
 		t.Fatalf("terminate migration lock backend = terminated:%v err:%v", terminated, err)
@@ -127,5 +127,25 @@ func TestMigrationLockClosesConnectionWhenAcquireFails(t *testing.T) {
 	}
 	if !secondConn.IsClosed() {
 		t.Fatal("failed migration lock connection remained open")
+	}
+}
+
+func TestMigrationLockCloseReportsObservedLoss(t *testing.T) {
+	repository := newTestAdminRepository(t)
+	ctx := context.Background()
+	conn, err := connectTestControlConnection(ctx, repository.pool, PostgresApplicationNameMigrationLock)
+	if err != nil {
+		t.Fatalf("connect migration connection: %v", err)
+	}
+	lock, err := acquireMigrationLockWithID(ctx, conn, testMigrationAdvisoryLockID)
+	if err != nil {
+		t.Fatalf("acquire migration lock: %v", err)
+	}
+	lock.markLost()
+	if err := lock.Close(); !errors.Is(err, ErrMigrationLockLost) {
+		t.Fatalf("Close after observed loss error = %v, want ErrMigrationLockLost", err)
+	}
+	if !conn.IsClosed() {
+		t.Fatal("observed-loss migration connection remained open")
 	}
 }
