@@ -9,6 +9,11 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf -- "$tmp_dir"' EXIT
 digest="sha256:$(printf 'a%.0s' {1..64})"
 image="ghcr.io/knowsky404/n2api:2026.07.29@$digest"
+
+development_compose=(docker compose -f deploy/compose.yaml)
+"${development_compose[@]}" config --quiet
+"${development_compose[@]}" -f deploy/compose.metrics.yaml config --quiet
+
 for name in database-url admin-password encryption-secret postgres-password metrics-token; do
   printf 'safe-test-%s\n' "$name" >"$tmp_dir/$name"
 done

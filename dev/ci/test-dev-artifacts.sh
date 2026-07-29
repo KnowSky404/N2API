@@ -7,6 +7,7 @@ common="${repo_root}/dev/lib/test-resources.sh"
 cleaner="${repo_root}/dev/maintenance/clean-dev-artifacts.sh"
 disk_check="${repo_root}/dev/maintenance/disk-check.sh"
 restore_driver="${repo_root}/dev/verification/test-restore-backup.sh"
+production_deploy_test="${repo_root}/dev/ci/test-production-deploy.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/n2api-dev-artifact-test.XXXXXXXX")"
 
 cleanup_fixture() {
@@ -329,6 +330,10 @@ N2API_TEST_RUN_ID=contract-test docker compose \
   -f "${repo_root}/deploy/compose.e2e.yaml" config >/dev/null
 grep -Fq 'io.knowsky.n2api.resource: test' "${repo_root}/deploy/compose.e2e.yaml" ||
   fail "E2E Compose lacks test resource labels"
+grep -Fq 'development_compose=(docker compose -f deploy/compose.yaml)' "${production_deploy_test}" ||
+  fail "production deployment test does not validate development Compose"
+grep -Fq '"${development_compose[@]}" -f deploy/compose.metrics.yaml config --quiet' "${production_deploy_test}" ||
+  fail "production deployment test does not validate development Compose with metrics"
 grep -Fq 'N2API_REQUEST_LOG_QUERY_PROFILE=1' "${repo_root}/dev/testing/run.sh" ||
   fail "request log profile runner does not enable the opt-in profile"
 grep -Fq "run_compose ps -q postgres" "${repo_root}/dev/testing/run.sh" ||
