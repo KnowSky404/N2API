@@ -274,8 +274,11 @@ func TestGatewayDocumentationMentionsAPIKeyBudgets(t *testing.T) {
 		text := string(content)
 		for _, want := range []string{
 			"API key budgets",
-			"request, token, and estimated cost budgets over rolling 24h and 30d windows",
-			"cost budgets use stored estimated request cost",
+			"Request budgets are strict rolling 24h and 30d limits",
+			"observed-usage budgets",
+			"atomic PostgreSQL admission",
+			"`budget_initializing`",
+			"idempotent observed-usage settlement",
 			"`0` disables a budget field",
 			"`api_key_request_budget_exceeded`",
 			"`api_key_token_budget_exceeded`",

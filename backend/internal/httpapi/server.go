@@ -145,6 +145,10 @@ type RequestLogWriteStatusSource interface {
 	RequestLogWriteStatus() requestlog.WriteStatus
 }
 
+type APIKeyBudgetMaintenanceStatusSource interface {
+	APIKeyBudgetMaintenanceStatus() admin.APIKeyBudgetMaintenanceStatus
+}
+
 type ReadinessMetricsObserver interface {
 	SetReadiness(component string, ready bool)
 }
@@ -249,6 +253,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	responseAffinityRetentionStatusSource := responseAffinityRetentionStatusSourceFromOptions(options...)
 	alertDeliveryStatusSource := alertDeliveryStatusSourceFromOptions(options...)
 	requestLogWriteStatusSource := requestLogWriteStatusSourceFromOptions(options...)
+	apiKeyBudgetMaintenanceStatusSource := apiKeyBudgetMaintenanceStatusSourceFromOptions(options...)
 	alertingAdminService := alertingAdminServiceFromOptions(options...)
 	alertActionTester := alertActionTesterFromOptions(options...)
 	readinessMetrics := readinessMetricsObserverFromOptions(options...)
@@ -355,6 +360,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			if requestLogWriteStatusSource != nil {
 				tasks["requestLogWrite"] = requestLogWriteStatusSource.RequestLogWriteStatus()
+			}
+			if apiKeyBudgetMaintenanceStatusSource != nil {
+				tasks["apiKeyBudgetMaintenance"] = apiKeyBudgetMaintenanceStatusSource.APIKeyBudgetMaintenanceStatus()
 			}
 			if gatewaySettingsRuntime != nil {
 				tasks["gatewaySettings"] = gatewaySettingsRuntime.GatewaySettingsRuntimeStatus()
@@ -3175,6 +3183,15 @@ func alertDeliveryStatusSourceFromOptions(options ...any) AlertDeliveryStatusSou
 func requestLogWriteStatusSourceFromOptions(options ...any) RequestLogWriteStatusSource {
 	for _, option := range options {
 		if source, ok := option.(RequestLogWriteStatusSource); ok {
+			return source
+		}
+	}
+	return nil
+}
+
+func apiKeyBudgetMaintenanceStatusSourceFromOptions(options ...any) APIKeyBudgetMaintenanceStatusSource {
+	for _, option := range options {
+		if source, ok := option.(APIKeyBudgetMaintenanceStatusSource); ok {
 			return source
 		}
 	}

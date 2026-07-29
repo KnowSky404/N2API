@@ -153,6 +153,8 @@ type RoutingPoolAccount struct {
 
 type APIKeyBudgetUsage struct {
 	KeyID                    int64  `json:"-"`
+	InitializationStatus     string `json:"budgetInitializationStatus"`
+	Stale                    bool   `json:"budgetUsageStale"`
 	RequestsUsed24h          int64  `json:"requestsUsed24h"`
 	TokensUsed24h            int64  `json:"tokensUsed24h"`
 	CostMicrousd24h          int64  `json:"costMicrousd24h"`
@@ -436,6 +438,7 @@ type Service struct {
 	defaultGatewaySettings  GatewaySettings
 	gatewaySettingsRuntime  *GatewaySettingsRuntime
 	apiKeyAuthObserver      APIKeyAuthenticationObserver
+	budgetLedger            APIKeyBudgetAdmissionStore
 	passwordHasher          secret.PasswordHasher
 	logger                  *slog.Logger
 	officialDocumentFetcher OfficialDocumentFetcher
@@ -457,6 +460,7 @@ func NewService(repo Repository, cfg Config) *Service {
 		logger = slog.Default()
 	}
 
+	budgetLedger, _ := repo.(APIKeyBudgetAdmissionStore)
 	return &Service{
 		repo:                    repo,
 		sessionTTL:              sessionTTL,
@@ -465,6 +469,7 @@ func NewService(repo Repository, cfg Config) *Service {
 		defaultGatewaySettings:  cfg.DefaultGatewaySettings,
 		gatewaySettingsRuntime:  cfg.GatewaySettingsRuntime,
 		apiKeyAuthObserver:      cfg.APIKeyAuthObserver,
+		budgetLedger:            budgetLedger,
 		passwordHasher:          passwordHasher,
 		logger:                  logger,
 		officialDocumentFetcher: NewHTTPOfficialDocumentFetcher(30 * time.Second),

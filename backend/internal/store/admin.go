@@ -574,15 +574,19 @@ func (r *AdminRepository) DeleteRevokedAPIKey(ctx context.Context, id int64) err
 	defer tx.Rollback(ctx)
 	var name string
 	err = tx.QueryRow(ctx, `
-		DELETE FROM client_api_keys
+		SELECT name
+		FROM client_api_keys
 		WHERE id = $1
 			AND revoked_at IS NOT NULL
-		RETURNING name
+		FOR UPDATE
 	`, id).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admin.ErrNotFound
 	}
 	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM client_api_keys WHERE id = $1`, id); err != nil {
 		return err
 	}
 	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(id, 10), Name: name}, nil); err != nil {
@@ -598,9 +602,17 @@ func (r *AdminRepository) PurgeRevokedAPIKeys(ctx context.Context, cutoff time.T
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `
-		DELETE FROM client_api_keys
-		WHERE revoked_at IS NOT NULL
-			AND revoked_at <= $1
+		WITH candidates AS MATERIALIZED (
+			SELECT id
+			FROM client_api_keys
+			WHERE revoked_at IS NOT NULL
+				AND revoked_at <= $1
+			ORDER BY id ASC
+			FOR UPDATE
+		)
+		DELETE FROM client_api_keys keys
+		USING candidates
+		WHERE keys.id = candidates.id
 	`, cutoff)
 	if err != nil {
 		return 0, err
@@ -799,9 +811,28 @@ func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, req
 		return admin.APIKey{}, err
 	}
 	defer tx.Rollback(ctx)
-	var updatedID int64
 	var name string
+	var previous apiKeyBudgetLimits
 	err = tx.QueryRow(ctx, `
+		SELECT name,
+			request_budget_24h, token_budget_24h, cost_budget_microusd_24h,
+			request_budget_30d, token_budget_30d, cost_budget_microusd_30d
+		FROM client_api_keys
+		WHERE id = $1
+			AND revoked_at IS NULL
+		FOR UPDATE
+	`, id).Scan(
+		&name,
+		&previous.Request24h, &previous.Token24h, &previous.Cost24h,
+		&previous.Request30d, &previous.Token30d, &previous.Cost30d,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKey{}, admin.ErrNotFound
+	}
+	if err != nil {
+		return admin.APIKey{}, err
+	}
+	if _, err := tx.Exec(ctx, `
 		UPDATE client_api_keys
 		SET request_budget_24h = $2,
 			token_budget_24h = $3,
@@ -811,21 +842,51 @@ func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, req
 			cost_budget_microusd_30d = $7
 		WHERE id = $1
 			AND revoked_at IS NULL
-		RETURNING id, name
-	`, id, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d).Scan(&updatedID, &name)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return admin.APIKey{}, admin.ErrNotFound
-	}
-	if err != nil {
+	`, id, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d); err != nil {
 		return admin.APIKey{}, err
 	}
-	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(updatedID, 10), Name: name}, nil); err != nil {
+	current := apiKeyBudgetLimits{
+		Request24h: int64(requestBudget24h), Token24h: int64(tokenBudget24h), Cost24h: costBudgetMicrousd24h,
+		Request30d: int64(requestBudget30d), Token30d: int64(tokenBudget30d), Cost30d: costBudgetMicrousd30d,
+	}
+	switch {
+	case budgetLimitsDisabled(previous) && !budgetLimitsDisabled(current):
+		_, err := tx.Exec(ctx, `
+			UPDATE api_key_budget_states
+			SET initialization_status = 'pending',
+				initialization_window_start = now() - INTERVAL '30 days',
+				initialization_window_end = now(),
+				initialization_cursor_created_at = NULL,
+				initialization_cursor_request_log_id = NULL,
+				initialized_at = NULL,
+				version = version + 1,
+				updated_at = now()
+			WHERE client_key_id = $1
+				AND initialization_status = 'ready'
+				AND EXISTS (
+					SELECT 1
+					FROM request_logs logs
+					WHERE logs.client_key_id = $1
+						AND logs.created_at >= now() - INTERVAL '30 days'
+						AND logs.budget_backfill_eligible
+						AND NOT EXISTS (
+							SELECT 1
+							FROM api_key_budget_admissions admissions
+							WHERE admissions.admission_id = 'legacy:' || logs.id::text
+						)
+				)
+		`, id)
+		if err != nil {
+			return admin.APIKey{}, err
+		}
+	}
+	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "client_api_key", ID: strconv.FormatInt(id, 10), Name: name}, nil); err != nil {
 		return admin.APIKey{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return admin.APIKey{}, err
 	}
-	return r.loadAPIKey(ctx, updatedID)
+	return r.loadAPIKey(ctx, id)
 }
 
 func (r *AdminRepository) ListRoutingPools(ctx context.Context) ([]admin.RoutingPool, error) {
@@ -1100,19 +1161,34 @@ func (r *AdminRepository) getRoutingPool(ctx context.Context, id int64) (admin.R
 }
 
 func (r *AdminRepository) GetAPIKeyBudgetUsage(ctx context.Context, keyID int64, now time.Time) (admin.APIKeyBudgetUsage, error) {
+	if r == nil || r.pool == nil || keyID < 1 || now.IsZero() {
+		return admin.APIKeyBudgetUsage{}, admin.ErrInvalidInput
+	}
+	now = now.UTC()
 	usage := admin.APIKeyBudgetUsage{KeyID: keyID}
 	err := r.pool.QueryRow(ctx, `
 		SELECT
-			COALESCE(COUNT(*) FILTER (WHERE created_at >= $2), 0),
-			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $2), 0),
-			COALESCE(SUM(estimated_cost_microusd) FILTER (WHERE created_at >= $2), 0),
-			COALESCE(COUNT(*) FILTER (WHERE created_at >= $3), 0),
-			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $3), 0),
-			COALESCE(SUM(estimated_cost_microusd) FILTER (WHERE created_at >= $3), 0)
-		FROM request_logs
+			initialization_status,
+			initialization_status <> 'ready' OR EXISTS (
+				SELECT 1
+				FROM api_key_budget_admissions admissions
+				WHERE admissions.client_key_id = api_key_budget_states.client_key_id
+					AND (
+						(NOT admissions.request_24h_expired AND admissions.request_24h_expires_at <= $2)
+						OR (NOT admissions.request_30d_expired AND admissions.request_30d_expires_at <= $2)
+					)
+			),
+			requests_used_24h,
+			observed_tokens_used_24h,
+			observed_cost_microusd_used_24h,
+			requests_used_30d,
+			observed_tokens_used_30d,
+			observed_cost_microusd_used_30d
+		FROM api_key_budget_states
 		WHERE client_key_id = $1
-			AND created_at >= $3
-	`, keyID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(
+	`, keyID, now).Scan(
+		&usage.InitializationStatus,
+		&usage.Stale,
 		&usage.RequestsUsed24h,
 		&usage.TokensUsed24h,
 		&usage.CostMicrousd24h,
@@ -1120,6 +1196,9 @@ func (r *AdminRepository) GetAPIKeyBudgetUsage(ctx context.Context, keyID int64,
 		&usage.TokensUsed30d,
 		&usage.CostMicrousd30d,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admin.APIKeyBudgetUsage{}, admin.ErrNotFound
+	}
 	if err != nil {
 		return admin.APIKeyBudgetUsage{}, err
 	}

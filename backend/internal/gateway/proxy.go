@@ -38,6 +38,7 @@ const defaultUpstreamSSEIdleTimeout = 60 * time.Second
 const maxReplayableAttempts = 5
 const maxFailureBody = 64 << 10
 const requestLogWriteTimeout = 5 * time.Second
+const budgetSettlementWriteTimeout = 2 * time.Second
 const accountRecoveryWriteTimeout = 2 * time.Second
 const responseAffinityWriteTimeout = 2 * time.Second
 const defaultResponseAffinityTTL = 30 * 24 * time.Hour
@@ -169,7 +170,8 @@ type ErrorPassthroughRulesProvider interface {
 }
 
 type BudgetProvider interface {
-	GetAPIKeyBudgetUsage(ctx context.Context, key admin.APIKey, now time.Time) (admin.APIKeyBudgetUsage, error)
+	AdmitAPIKeyBudget(ctx context.Context, keyID int64, admittedAt time.Time) (admin.APIKeyBudgetAdmission, error)
+	SettleAPIKeyBudgetUsage(ctx context.Context, request admin.APIKeyBudgetSettlementRequest) (admin.APIKeyBudgetSettlement, error)
 }
 
 type UsageCostEstimate struct {
@@ -211,6 +213,7 @@ type RequestLog struct {
 	PricingSnapshot          map[string]any
 	GatewayAttemptCount      int
 	GatewayFallbackCount     int
+	BudgetBackfillEligible   bool
 	CreatedAt                time.Time
 }
 
@@ -453,6 +456,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestModel := ""
 	requestSessionID := ""
 	observedUsage := Usage{Source: "missing"}
+	budgetAdmission := admin.APIKeyBudgetAdmission{}
 	upstreamRequestID := ""
 	gatewayAttemptCount := 0
 	gatewayFallbackCount := 0
@@ -461,11 +465,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			observedUsage.Model = requestModel
 		}
 		p.recordAPIKeyUsage(key.ID, observedUsage.TotalTokens, effectiveAPIKeyLimit(key.TokensPerMinute, settings.TokensPerMinutePerKey))
-		costEstimate := p.estimateUsageCost(r.Context(), observedUsage)
+		pricingCtx, cancelPricing := context.WithTimeout(context.WithoutCancel(r.Context()), budgetSettlementWriteTimeout)
+		costEstimate := p.estimateUsageCost(pricingCtx, observedUsage)
+		cancelPricing()
 		if p.metrics != nil {
 			p.metrics.ObserveUsage(observedUsage.Source, costEstimate.Matched, observedUsage.InputTokens, observedUsage.OutputTokens, observedUsage.CachedInputTokens, observedUsage.ReasoningTokens, costEstimate.CostMicrousd)
 		}
 		finishMetrics()
+		if budgetAdmission.ID != "" && p.budgets != nil {
+			settlementCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), budgetSettlementWriteTimeout)
+			_, settlementErr := p.budgets.SettleAPIKeyBudgetUsage(settlementCtx, admin.APIKeyBudgetSettlementRequest{
+				AdmissionID:          budgetAdmission.ID,
+				ObservedTokens:       int64(max(observedUsage.TotalTokens, 0)),
+				ObservedCostMicrousd: max(costEstimate.CostMicrousd, 0),
+				UsageKnown:           observedUsage.Source != "missing",
+				SettledAt:            time.Now().UTC(),
+			})
+			cancel()
+			if settlementErr != nil {
+				p.processLogger.Warn("API key budget settlement failed", "error_code", "api_key_budget_settlement_failed")
+			}
+		}
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:                requestID,
 			UpstreamRequestID:        upstreamRequestID,
@@ -496,20 +516,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			PricingSnapshot:          costEstimate.Snapshot,
 			GatewayAttemptCount:      gatewayAttemptCount,
 			GatewayFallbackCount:     gatewayFallbackCount,
+			BudgetBackfillEligible:   false,
 			CreatedAt:                startedAt,
 		})
 	}()
 
-	if budgetErrorCode, err := p.apiKeyBudgetErrorCode(r.Context(), key, startedAt); err != nil {
-		errorCode = "internal_error"
-		writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not check api key budget")
-		return
-	} else if budgetErrorCode != "" {
-		errorCode = budgetErrorCode
-		p.observeLimitRejection("api_key", budgetMetricReason(budgetErrorCode))
-		writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
-		return
-	}
 	if retryAfter, ok := p.allowAPIKeyRequest(key.ID, key.RequestsPerMinute, settings.RequestsPerMinutePerKey); !ok {
 		errorCode = "api_key_request_rate_limited"
 		p.observeLimitRejection("api_key", "request_rate")
@@ -611,6 +622,30 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if affinitySelection.enabled() {
 		maxAttempts = 1
+	}
+	if p.budgets != nil {
+		budgetAdmission, err = p.budgets.AdmitAPIKeyBudget(r.Context(), key.ID, time.Now().UTC())
+		if err != nil {
+			switch {
+			case errors.Is(err, admin.ErrAPIKeyRequestBudgetExceeded):
+				errorCode = "api_key_request_budget_exceeded"
+			case errors.Is(err, admin.ErrAPIKeyTokenBudgetExceeded):
+				errorCode = "api_key_token_budget_exceeded"
+			case errors.Is(err, admin.ErrAPIKeyCostBudgetExceeded):
+				errorCode = "api_key_cost_budget_exceeded"
+			case errors.Is(err, admin.ErrBudgetInitializing):
+				errorCode = "budget_initializing"
+				writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "api key budget is initializing")
+				return
+			default:
+				errorCode = "internal_error"
+				writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not admit api key budget")
+				return
+			}
+			p.observeLimitRejection("api_key", budgetMetricReason(errorCode))
+			writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
+			return
+		}
 	}
 
 	failedAccountIDs := []int64{}
@@ -940,29 +975,6 @@ func (p *Proxy) allowAPIKeyTokens(keyID int64, tokensPerMinute, defaultTokensPer
 		return 0, true
 	}
 	return p.tokenLimiter.Allow(keyID, effectiveAPIKeyLimit(tokensPerMinute, defaultTokensPerMinute))
-}
-
-func (p *Proxy) apiKeyBudgetErrorCode(ctx context.Context, key admin.APIKey, now time.Time) (string, error) {
-	if p.budgets == nil {
-		return "", nil
-	}
-	if key.RequestBudget24h <= 0 && key.TokenBudget24h <= 0 && key.CostBudgetMicrousd24h <= 0 && key.RequestBudget30d <= 0 && key.TokenBudget30d <= 0 && key.CostBudgetMicrousd30d <= 0 {
-		return "", nil
-	}
-	usage, err := p.budgets.GetAPIKeyBudgetUsage(ctx, key, now)
-	if err != nil {
-		return "", err
-	}
-	if usage.RequestBudgetExceeded {
-		return "api_key_request_budget_exceeded", nil
-	}
-	if usage.TokenBudgetExceeded {
-		return "api_key_token_budget_exceeded", nil
-	}
-	if usage.CostBudgetExceeded {
-		return "api_key_cost_budget_exceeded", nil
-	}
-	return "", nil
 }
 
 func effectiveAPIKeyLimit(keyLimit, defaultLimit int) int {

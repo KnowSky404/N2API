@@ -39,6 +39,8 @@ import { copyText } from '$lib/clipboard.js';
  * @property {number} requestsUsed30d
  * @property {number} tokensUsed30d
  * @property {number} costMicrousd30d
+ * @property {'pending' | 'ready'} budgetInitializationStatus
+ * @property {boolean} budgetUsageStale
  * @property {number | null} requestsRemaining24h
  * @property {number | null} tokensRemaining24h
  * @property {number | null} costRemainingMicrousd24h

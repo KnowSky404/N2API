@@ -1050,7 +1050,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
-                Token budget 24h
+                Observed token budget 24h
                 <input
                   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                   type="number"
@@ -1061,7 +1061,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
-                Cost budget 24h (microusd)
+                Observed cost budget 24h (microusd)
                 <input
                   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                   type="number"
@@ -1083,7 +1083,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
-                Token budget 30d
+                Observed token budget 30d
                 <input
                   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                   type="number"
@@ -1094,7 +1094,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]">
-                Cost budget 30d (microusd)
+                Observed cost budget 30d (microusd)
                 <input
                   class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
                   type="number"
@@ -1329,7 +1329,16 @@
 
           <!-- Budgets section -->
           <div class="rounded-lg border border-[#ededed] bg-[#fafafa] p-4">
-            <h4 class="text-sm font-semibold text-[#0d0d0d]">Key budgets</h4>
+            <h4 class="text-sm font-semibold text-[#0d0d0d]">Request and observed usage budgets</h4>
+            {#if editingKey.budgetInitializationStatus === 'pending'}
+              <p class="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                Budget history is initializing. Budgeted gateway requests fail closed until it is ready.
+              </p>
+            {:else if editingKey.budgetUsageStale}
+              <p class="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                Budget usage is temporarily stale while rolling-window expiry catches up.
+              </p>
+            {/if}
             <div class="mt-2 grid gap-3 sm:grid-cols-2">
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-request-budget-24h-${editingKey.id}`}>
                 Requests 24h
@@ -1347,7 +1356,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-token-budget-24h-${editingKey.id}`}>
-                Tokens 24h
+                Observed tokens 24h
                 <input
                   id={`edit-api-key-token-budget-24h-${editingKey.id}`}
                   class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
@@ -1362,7 +1371,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-cost-budget-24h-${editingKey.id}`}>
-                Cost 24h
+                Observed cost 24h
                 <input
                   id={`edit-api-key-cost-budget-24h-${editingKey.id}`}
                   class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
@@ -1392,7 +1401,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-token-budget-30d-${editingKey.id}`}>
-                Tokens 30d
+                Observed tokens 30d
                 <input
                   id={`edit-api-key-token-budget-30d-${editingKey.id}`}
                   class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
@@ -1407,7 +1416,7 @@
                 />
               </label>
               <label class="grid gap-1 text-xs font-medium text-[#6e6e6e]" for={`edit-api-key-cost-budget-30d-${editingKey.id}`}>
-                Cost 30d
+                Observed cost 30d
                 <input
                   id={`edit-api-key-cost-budget-30d-${editingKey.id}`}
                   class="rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[13px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
@@ -1430,13 +1439,13 @@
                 {/if}
               </p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
-                Tokens 24h {formatTokens(editingKey.tokensUsed24h || 0)} / {editingKey.tokenBudget24h > 0 ? formatTokens(editingKey.tokenBudget24h) : 'unlimited'}
+                Observed tokens 24h {formatTokens(editingKey.tokensUsed24h || 0)} / {editingKey.tokenBudget24h > 0 ? formatTokens(editingKey.tokenBudget24h) : 'unlimited'}
                 {#if editingKey.tokensRemaining24h !== null && editingKey.tokensRemaining24h !== undefined}
                   <span>({formatTokens(editingKey.tokensRemaining24h)} remaining)</span>
                 {/if}
               </p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
-                Cost 24h {formatCostMicrousd(editingKey.costMicrousd24h || 0)} / {editingKey.costBudgetMicrousd24h > 0 ? formatCostMicrousd(editingKey.costBudgetMicrousd24h) : 'unlimited'}
+                Observed cost 24h {formatCostMicrousd(editingKey.costMicrousd24h || 0)} / {editingKey.costBudgetMicrousd24h > 0 ? formatCostMicrousd(editingKey.costBudgetMicrousd24h) : 'unlimited'}
                 {#if editingKey.costRemainingMicrousd24h !== null && editingKey.costRemainingMicrousd24h !== undefined}
                   <span>({formatCostMicrousd(editingKey.costRemainingMicrousd24h)} remaining)</span>
                 {/if}
@@ -1448,13 +1457,13 @@
                 {/if}
               </p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
-                Tokens 30d {formatTokens(editingKey.tokensUsed30d || 0)} / {editingKey.tokenBudget30d > 0 ? formatTokens(editingKey.tokenBudget30d) : 'unlimited'}
+                Observed tokens 30d {formatTokens(editingKey.tokensUsed30d || 0)} / {editingKey.tokenBudget30d > 0 ? formatTokens(editingKey.tokenBudget30d) : 'unlimited'}
                 {#if editingKey.tokensRemaining30d !== null && editingKey.tokensRemaining30d !== undefined}
                   <span>({formatTokens(editingKey.tokensRemaining30d)} remaining)</span>
                 {/if}
               </p>
               <p class="mt-1 text-xs text-[#6e6e6e]">
-                Cost 30d {formatCostMicrousd(editingKey.costMicrousd30d || 0)} / {editingKey.costBudgetMicrousd30d > 0 ? formatCostMicrousd(editingKey.costBudgetMicrousd30d) : 'unlimited'}
+                Observed cost 30d {formatCostMicrousd(editingKey.costMicrousd30d || 0)} / {editingKey.costBudgetMicrousd30d > 0 ? formatCostMicrousd(editingKey.costBudgetMicrousd30d) : 'unlimited'}
                 {#if editingKey.costRemainingMicrousd30d !== null && editingKey.costRemainingMicrousd30d !== undefined}
                   <span>({formatCostMicrousd(editingKey.costRemainingMicrousd30d)} remaining)</span>
                 {/if}
@@ -1463,10 +1472,10 @@
                 <p class="mt-1 text-xs font-medium text-amber-700">Request budget exceeded</p>
               {/if}
               {#if editingKey.tokenBudgetExceeded}
-                <p class="mt-1 text-xs font-medium text-amber-700">Token budget exceeded</p>
+                <p class="mt-1 text-xs font-medium text-amber-700">Observed token budget exceeded</p>
               {/if}
               {#if editingKey.costBudgetExceeded}
-                <p class="mt-1 text-xs font-medium text-amber-700">Cost budget exceeded</p>
+                <p class="mt-1 text-xs font-medium text-amber-700">Observed cost budget exceeded</p>
               {/if}
             </div>
           </div>

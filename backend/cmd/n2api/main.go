@@ -476,6 +476,10 @@ func runServer() int {
 	if metricsRegistry != nil {
 		apiKeyBudgetMonitor.SetMetricsObserver(metricsRegistry)
 	}
+	apiKeyBudgetMaintenance := admin.NewAPIKeyBudgetMaintenance(adminRepo, admin.APIKeyBudgetMaintenanceConfig{}, slog.Default())
+	if metricsRegistry != nil {
+		apiKeyBudgetMaintenance.SetMetricsObserver(metricsRegistry)
+	}
 	routingExhaustionProjector := admin.NewRoutingExhaustionProjector(adminRepo, admin.RoutingExhaustionProjectorConfig{}, slog.Default())
 	if metricsRegistry != nil {
 		routingExhaustionProjector.SetMetricsObserver(metricsRegistry)
@@ -534,7 +538,7 @@ func runServer() int {
 
 	server := newHTTPServer(
 		cfg,
-		requestTracker.Wrap(httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry, runtimeReadiness, gatewaySettingsRuntime)),
+		requestTracker.Wrap(httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, apiKeyBudgetMaintenance, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry, runtimeReadiness, gatewaySettingsRuntime)),
 		requestRootCtx,
 	)
 	var metricsServer *http.Server
@@ -624,6 +628,9 @@ func runServer() int {
 	}
 	if backgroundStartErr == nil && cfg.ResponseAffinityRetentionRunnerEnabled {
 		backgroundStartErr = startBackground("response_affinity_retention", responseAffinityRetentionRunner.Run)
+	}
+	if backgroundStartErr == nil {
+		backgroundStartErr = startBackground("api_key_budget_maintenance", apiKeyBudgetMaintenance.Run)
 	}
 	if backgroundStartErr == nil {
 		backgroundStartErr = startBackground("api_key_budget_monitor", apiKeyBudgetMonitor.Run)

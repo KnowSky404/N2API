@@ -104,9 +104,12 @@ func (r *AdminRepository) evaluateAPIKeyBudgetThresholds(ctx context.Context, ke
 	if err != nil {
 		return 0, err
 	}
-	usage, err := loadAPIKeyBudgetUsageTx(ctx, tx, keyID, now)
+	usage, err := loadAPIKeyBudgetUsageTx(ctx, tx, keyID)
 	if err != nil {
 		return 0, err
+	}
+	if usage.InitializationStatus != admin.APIKeyBudgetInitializationReady && apiKeyBudgetSnapshotHasLimit(snapshot) {
+		return 0, nil
 	}
 	current, err := loadAPIKeyBudgetThresholdStatesTx(ctx, tx, keyID)
 	if err != nil {
@@ -185,23 +188,31 @@ func loadAPIKeyBudgetSnapshotForUpdate(ctx context.Context, tx pgx.Tx, keyID int
 	return snapshot, err
 }
 
-func loadAPIKeyBudgetUsageTx(ctx context.Context, tx pgx.Tx, keyID int64, now time.Time) (admin.APIKeyBudgetUsage, error) {
+func loadAPIKeyBudgetUsageTx(ctx context.Context, tx pgx.Tx, keyID int64) (admin.APIKeyBudgetUsage, error) {
 	usage := admin.APIKeyBudgetUsage{KeyID: keyID}
 	err := tx.QueryRow(ctx, `
 		SELECT
-			COALESCE(COUNT(*) FILTER (WHERE created_at >= $2), 0),
-			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $2), 0),
-			COALESCE(SUM(estimated_cost_microusd) FILTER (WHERE created_at >= $2), 0),
-			COALESCE(COUNT(*) FILTER (WHERE created_at >= $3), 0),
-			COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= $3), 0),
-			COALESCE(SUM(estimated_cost_microusd) FILTER (WHERE created_at >= $3), 0)
-		FROM request_logs
-		WHERE client_key_id = $1 AND created_at >= $3
-	`, keyID, now.Add(-24*time.Hour), now.Add(-30*24*time.Hour)).Scan(
+			initialization_status,
+			requests_used_24h,
+			observed_tokens_used_24h,
+			observed_cost_microusd_used_24h,
+			requests_used_30d,
+			observed_tokens_used_30d,
+			observed_cost_microusd_used_30d
+		FROM api_key_budget_states
+		WHERE client_key_id = $1
+		FOR UPDATE
+	`, keyID).Scan(
+		&usage.InitializationStatus,
 		&usage.RequestsUsed24h, &usage.TokensUsed24h, &usage.CostMicrousd24h,
 		&usage.RequestsUsed30d, &usage.TokensUsed30d, &usage.CostMicrousd30d,
 	)
 	return usage, err
+}
+
+func apiKeyBudgetSnapshotHasLimit(snapshot apiKeyBudgetSnapshot) bool {
+	return snapshot.RequestBudget24h > 0 || snapshot.TokenBudget24h > 0 || snapshot.CostBudgetMicrousd24h > 0 ||
+		snapshot.RequestBudget30d > 0 || snapshot.TokenBudget30d > 0 || snapshot.CostBudgetMicrousd30d > 0
 }
 
 func loadAPIKeyBudgetThresholdStatesTx(ctx context.Context, tx pgx.Tx, keyID int64) (map[apiKeyBudgetThresholdKey]struct{}, error) {
@@ -311,7 +322,7 @@ func recoverAPIKeyBudgetThresholdsForRevocation(ctx context.Context, tx pgx.Tx, 
 	if len(current) == 0 {
 		return nil
 	}
-	usage, err := loadAPIKeyBudgetUsageTx(ctx, tx, snapshot.ID, now)
+	usage, err := loadAPIKeyBudgetUsageTx(ctx, tx, snapshot.ID)
 	if err != nil {
 		return err
 	}

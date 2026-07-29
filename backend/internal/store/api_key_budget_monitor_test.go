@@ -20,9 +20,7 @@ func TestAdminRepositoryAPIKeyBudgetMonitorCrossingLifecycle(t *testing.T) {
 	if _, err := repo.UpdateAPIKeyBudgets(ctx, key.ID, 10, 100, 1000, 10, 100, 1000); err != nil {
 		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
 	}
-	for index := range 8 {
-		insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour+time.Duration(index)*time.Nanosecond), 200, 10, 100)
-	}
+	setBudgetLedgerUsage(t, repo, key.ID, 8, 80, 800, 8, 80, 800)
 
 	result, err := repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
 	if err != nil || result.Processed != 1 || result.Transitions != 6 || result.NextAfterID != 0 {
@@ -41,32 +39,21 @@ func TestAdminRepositoryAPIKeyBudgetMonitorCrossingLifecycle(t *testing.T) {
 		systemevent.ActionAPIKeyBudgetThreshold80Crossed: 6,
 	})
 
-	for index := range 2 {
-		insertRequestLog(t, repo.pool, key.ID, now.Add(-30*time.Minute+time.Duration(index)*time.Nanosecond), 200, 10, 100)
-	}
+	setBudgetLedgerUsage(t, repo, key.ID, 10, 100, 1000, 10, 100, 1000)
 	result, err = repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
 	if err != nil || result.Transitions != 6 {
 		t.Fatalf("100 percent cycle = %+v, err=%v", result, err)
 	}
 	assertBudgetThresholdStateCount(t, repo, key.ID, 12)
 
-	if _, err := repo.pool.Exec(ctx, `DELETE FROM request_logs WHERE client_key_id = $1 AND created_at >= $2`, key.ID, now.Add(-45*time.Minute)); err != nil {
-		t.Fatalf("delete newest request logs: %v", err)
-	}
+	setBudgetLedgerUsage(t, repo, key.ID, 8, 80, 800, 8, 80, 800)
 	result, err = repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
 	if err != nil || result.Transitions != 6 {
 		t.Fatalf("100 percent recovery cycle = %+v, err=%v", result, err)
 	}
 	assertBudgetThresholdStateCount(t, repo, key.ID, 6)
 
-	if _, err := repo.pool.Exec(ctx, `
-		DELETE FROM request_logs
-		WHERE id = (
-			SELECT id FROM request_logs WHERE client_key_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1
-		)
-	`, key.ID); err != nil {
-		t.Fatalf("delete request log below 80 percent: %v", err)
-	}
+	setBudgetLedgerUsage(t, repo, key.ID, 7, 70, 700, 7, 70, 700)
 	result, err = repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
 	if err != nil || result.Transitions != 6 {
 		t.Fatalf("80 percent recovery cycle = %+v, err=%v", result, err)
@@ -89,14 +76,12 @@ func TestAdminRepositoryAPIKeyBudgetMonitorDirectJumpAndIntegerBoundary(t *testi
 	if _, err := repo.UpdateAPIKeyBudgets(ctx, key.ID, 3, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
 	}
-	for index := range 2 {
-		insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour+time.Duration(index)*time.Nanosecond), 200, 0, 0)
-	}
+	setBudgetLedgerUsage(t, repo, key.ID, 2, 0, 0, 2, 0, 0)
 	result, err := repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
 	if err != nil || result.Transitions != 0 {
 		t.Fatalf("below ceil boundary cycle = %+v, err=%v", result, err)
 	}
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-30*time.Minute), 200, 0, 0)
+	setBudgetLedgerUsage(t, repo, key.ID, 3, 0, 0, 3, 0, 0)
 	result, err = repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
 	if err != nil || result.Transitions != 2 {
 		t.Fatalf("direct 100 percent cycle = %+v, err=%v", result, err)
@@ -107,6 +92,33 @@ func TestAdminRepositoryAPIKeyBudgetMonitorDirectJumpAndIntegerBoundary(t *testi
 	})
 }
 
+func TestAdminRepositoryAPIKeyBudgetMonitorSkipsPendingInitialization(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	key := createBudgetMonitorKey(t, repo, "pending-initialization")
+	if _, err := repo.UpdateAPIKeyBudgets(ctx, key.ID, 10, 0, 0, 10, 0, 0); err != nil {
+		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
+	}
+	setBudgetLedgerUsage(t, repo, key.ID, 10, 0, 0, 10, 0, 0)
+	if _, err := repo.pool.Exec(ctx, `
+		UPDATE api_key_budget_states
+		SET initialization_status = 'pending', initialized_at = NULL,
+			initialization_window_start = now() - INTERVAL '30 days',
+			initialization_window_end = now()
+		WHERE client_key_id = $1
+	`, key.ID); err != nil {
+		t.Fatalf("mark budget initialization pending: %v", err)
+	}
+
+	result, err := repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
+	if err != nil || result.Processed != 1 || result.Transitions != 0 {
+		t.Fatalf("pending initialization cycle = %+v, err=%v", result, err)
+	}
+	assertBudgetThresholdStateCount(t, repo, key.ID, 0)
+	assertBudgetEventCounts(t, repo, key.ID, nil)
+}
+
 func TestAdminRepositoryAPIKeyBudgetMonitorZeroBudgetRecoversWithExactEvents(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()
@@ -115,7 +127,7 @@ func TestAdminRepositoryAPIKeyBudgetMonitorZeroBudgetRecoversWithExactEvents(t *
 	if _, err := repo.UpdateAPIKeyBudgets(ctx, key.ID, 1, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
 	}
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 0, 0)
+	setBudgetLedgerUsage(t, repo, key.ID, 1, 0, 0, 1, 0, 0)
 	result, err := repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now)
 	if err != nil || result.Transitions != 2 {
 		t.Fatalf("crossing cycle = %+v, err=%v", result, err)
@@ -194,9 +206,7 @@ func TestAdminRepositoryAPIKeyBudgetMonitorBoundsCursorAndSerializes(t *testing.
 	}
 
 	key := keys[0]
-	for index := range 8 {
-		insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour+time.Duration(index)*time.Nanosecond), 200, 0, 0)
-	}
+	setBudgetLedgerUsage(t, repo, key.ID, 8, 0, 0, 8, 0, 0)
 	var wg sync.WaitGroup
 	results := make(chan admin.APIKeyBudgetMonitorCycleResult, 2)
 	errors := make(chan error, 2)
@@ -237,7 +247,7 @@ func TestAdminRepositoryAPIKeyBudgetMonitorRollsBackStateWhenEventInsertFails(t 
 	if _, err := repo.UpdateAPIKeyBudgets(ctx, key.ID, 1, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
 	}
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 0, 0)
+	setBudgetLedgerUsage(t, repo, key.ID, 1, 0, 0, 1, 0, 0)
 	if _, err := repo.pool.Exec(ctx, `
 		CREATE OR REPLACE FUNCTION reject_budget_threshold_event() RETURNS trigger AS $$
 		BEGIN
@@ -272,7 +282,7 @@ func TestAdminRepositoryRevokeAPIKeyRecoversBudgetThresholds(t *testing.T) {
 	if _, err := repo.UpdateAPIKeyBudgets(ctx, key.ID, 1, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("UpdateAPIKeyBudgets returned error: %v", err)
 	}
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 0, 0)
+	setBudgetLedgerUsage(t, repo, key.ID, 1, 0, 0, 1, 0, 0)
 	if _, err := repo.RunAPIKeyBudgetMonitorCycle(ctx, 0, 100, now); err != nil {
 		t.Fatalf("RunAPIKeyBudgetMonitorCycle returned error: %v", err)
 	}
@@ -309,6 +319,20 @@ func createBudgetMonitorKey(t *testing.T, repo *AdminRepository, name string) ad
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
 	return key
+}
+
+func setBudgetLedgerUsage(t *testing.T, repo *AdminRepository, keyID, requests24h, tokens24h, cost24h, requests30d, tokens30d, cost30d int64) {
+	t.Helper()
+	if _, err := repo.pool.Exec(context.Background(), `
+		UPDATE api_key_budget_states
+		SET initialization_status = 'ready', initialized_at = COALESCE(initialized_at, now()),
+			requests_used_24h = $2, observed_tokens_used_24h = $3, observed_cost_microusd_used_24h = $4,
+			requests_used_30d = $5, observed_tokens_used_30d = $6, observed_cost_microusd_used_30d = $7,
+			version = version + 1, updated_at = now()
+		WHERE client_key_id = $1
+	`, keyID, requests24h, tokens24h, cost24h, requests30d, tokens30d, cost30d); err != nil {
+		t.Fatalf("set durable budget ledger usage: %v", err)
+	}
 }
 
 func assertBudgetThresholdStateCount(t *testing.T, repo *AdminRepository, keyID int64, want int) {

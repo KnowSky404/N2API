@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -704,11 +705,211 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 48 {
-		t.Fatalf("migration sources = %d, want 48", len(sources))
+	if len(sources) != 49 {
+		t.Fatalf("migration sources = %d, want 49", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[47].Path != "00048_request_log_upstream_request_id.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[48].Path != "00049_api_key_budget_ledger.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestAPIKeyBudgetLedgerMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00049_api_key_budget_ledger.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ADD COLUMN budget_backfill_eligible BOOLEAN NOT NULL DEFAULT true",
+		"CREATE TABLE api_key_budget_states",
+		"initialization_status IN ('pending', 'ready')",
+		"initialization_window_start TIMESTAMPTZ",
+		"CREATE TABLE api_key_budget_admissions",
+		"admission_id TEXT NOT NULL UNIQUE",
+		"source IN ('live', 'legacy')",
+		"status IN ('admitted', 'settlement_pending', 'settled', 'abandoned')",
+		"request_24h_expires_at TIMESTAMPTZ NOT NULL",
+		"request_30d_expires_at TIMESTAMPTZ NOT NULL",
+		"api_key_budget_states_pending_idx",
+		"api_key_budget_admissions_unsettled_idx",
+		"api_key_budget_admissions_settlement_pending_idx",
+		"api_key_budget_admissions_expiry_24h_idx",
+		"api_key_budget_admissions_expiry_30d_idx",
+		"client_api_keys_initialize_budget_state",
+		"AND NOT budget_backfill_eligible",
+		"cannot remove authoritative API key budget ledger after post-ledger activity",
+		"DROP TABLE IF EXISTS api_key_budget_admissions",
+		"DROP TABLE IF EXISTS api_key_budget_states",
+		"ALTER TABLE request_logs DROP COLUMN IF EXISTS budget_backfill_eligible",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
+func TestAPIKeyBudgetLedgerMigrationRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	provider := newStoreMigrationTestProvider(t, repo)
+
+	result, err := provider.Down(ctx)
+	if err != nil {
+		t.Fatalf("roll back API key budget ledger migration: %v", err)
+	}
+	if result == nil || result.Source.Version != 49 {
+		t.Fatalf("migration down result = %+v, want version 49", result)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 48)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_admissions", false)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_states", false)
+	assertStoreColumnExists(t, ctx, repo, "request_logs", "budget_backfill_eligible", false)
+
+	results, err := provider.Up(ctx)
+	if err != nil {
+		t.Fatalf("reapply API key budget ledger migration: %v", err)
+	}
+	if len(results) != 1 || results[0].Source.Version != 49 {
+		t.Fatalf("migration up results = %+v, want only version 49", results)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 49)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_admissions", true)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_states", true)
+	assertStoreColumnExists(t, ctx, repo, "request_logs", "budget_backfill_eligible", true)
+}
+
+func TestAPIKeyBudgetLedgerMigrationDownRejectsLiveAdmissions(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	provider := newStoreMigrationTestProvider(t, repo)
+	adminRepo := NewAdminRepository(repo.pool, "migration-budget-test")
+	key, err := adminRepo.CreateAPIKey(ctx, "migration budget key", "migration-budget-hash", "n2api_", "encrypted", nil)
+	if err != nil {
+		t.Fatalf("create API key: %v", err)
+	}
+	if _, err := adminRepo.AdmitAPIKeyBudget(ctx, key.ID, "00000000000000000000000000000049", time.Now().UTC()); err != nil {
+		t.Fatalf("create live budget admission: %v", err)
+	}
+
+	result, err := provider.Down(ctx)
+	if err == nil || !strings.Contains(err.Error(), "cannot remove authoritative API key budget ledger after post-ledger activity") {
+		t.Fatalf("migration down result = %+v, error = %v, want live admission guard", result, err)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 49)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_admissions", true)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_states", true)
+	assertStoreColumnExists(t, ctx, repo, "request_logs", "budget_backfill_eligible", true)
+
+	var liveAdmissions int
+	if err := repo.pool.QueryRow(ctx, `SELECT count(*) FROM api_key_budget_admissions WHERE source = 'live'`).Scan(&liveAdmissions); err != nil {
+		t.Fatalf("count live budget admissions: %v", err)
+	}
+	if liveAdmissions != 1 {
+		t.Fatalf("live budget admissions = %d, want 1", liveAdmissions)
+	}
+}
+
+func TestAPIKeyBudgetLedgerMigrationDownRejectsPostLedgerRequestLogs(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestAlertingRepository(t, ctx)
+	provider := newStoreMigrationTestProvider(t, repo)
+	adminRepo := NewAdminRepository(repo.pool, "migration-budget-test")
+	key, err := adminRepo.CreateAPIKey(ctx, "migration rejected request key", "migration-rejected-request-hash", "n2api_", "encrypted", nil)
+	if err != nil {
+		t.Fatalf("create API key: %v", err)
+	}
+	if _, err := repo.pool.Exec(ctx, `
+		INSERT INTO request_logs (
+			request_id, client_key_id, provider, route, method, status_code, latency_ms,
+			usage_source, budget_backfill_eligible, error, created_at
+		) VALUES (
+			'migration-rejected-request', $1, 'openai', '/v1/responses', 'POST', 429, 1,
+			'none', false, 'api_key_request_rate_limited', now()
+		)
+	`, key.ID); err != nil {
+		t.Fatalf("create post-ledger request log: %v", err)
+	}
+
+	result, err := provider.Down(ctx)
+	if err == nil || !strings.Contains(err.Error(), "cannot remove authoritative API key budget ledger after post-ledger activity") {
+		t.Fatalf("migration down result = %+v, error = %v, want post-ledger request guard", result, err)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 49)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_admissions", true)
+	assertStoreRelationExists(t, ctx, repo, "api_key_budget_states", true)
+	assertStoreColumnExists(t, ctx, repo, "request_logs", "budget_backfill_eligible", true)
+
+	var eligible bool
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT budget_backfill_eligible
+		FROM request_logs
+		WHERE request_id = 'migration-rejected-request'
+	`).Scan(&eligible); err != nil {
+		t.Fatalf("load post-ledger request log: %v", err)
+	}
+	if eligible {
+		t.Fatal("post-ledger request log became eligible after rejected migration down")
+	}
+}
+
+func newStoreMigrationTestProvider(t *testing.T, repo *AlertingRepository) *goose.Provider {
+	t.Helper()
+	migrations, err := migrationDirFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := stdlib.OpenDBFromPool(repo.pool)
+	t.Cleanup(func() { _ = db.Close() })
+	provider, err := goose.NewProvider(
+		goose.DialectPostgres,
+		db,
+		migrations,
+		goose.WithTableName("schema_migrations"),
+		goose.WithDisableGlobalRegistry(true),
+	)
+	if err != nil {
+		t.Fatalf("create migration provider: %v", err)
+	}
+	return provider
+}
+
+func assertStoreMigrationVersion(t *testing.T, ctx context.Context, provider *goose.Provider, want int64) {
+	t.Helper()
+	got, err := provider.GetDBVersion(ctx)
+	if err != nil {
+		t.Fatalf("get migration version: %v", err)
+	}
+	if got != want {
+		t.Fatalf("migration version = %d, want %d", got, want)
+	}
+}
+
+func assertStoreRelationExists(t *testing.T, ctx context.Context, repo *AlertingRepository, relation string, want bool) {
+	t.Helper()
+	var exists bool
+	if err := repo.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, relation).Scan(&exists); err != nil {
+		t.Fatalf("inspect relation %q: %v", relation, err)
+	}
+	if exists != want {
+		t.Fatalf("relation %q exists = %t, want %t", relation, exists, want)
+	}
+}
+
+func assertStoreColumnExists(t *testing.T, ctx context.Context, repo *AlertingRepository, table, column string, want bool) {
+	t.Helper()
+	var exists bool
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = current_schema()
+				AND table_name = $1
+				AND column_name = $2
+		)
+	`, table, column).Scan(&exists); err != nil {
+		t.Fatalf("inspect column %s.%s: %v", table, column, err)
+	}
+	if exists != want {
+		t.Fatalf("column %s.%s exists = %t, want %t", table, column, exists, want)
 	}
 }
 
@@ -831,7 +1032,7 @@ func TestAlertRuleTemplateKeyMigrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create migration provider: %v", err)
 	}
-	for _, wantVersion := range []int64{48, 47, 46, 45, 44, 43} {
+	for _, wantVersion := range []int64{49, 48, 47, 46, 45, 44, 43} {
 		result, err := provider.Down(ctx)
 		if err != nil {
 			t.Fatalf("roll back migration %d: %v", wantVersion, err)

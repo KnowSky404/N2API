@@ -359,10 +359,16 @@ func (p *fakeErrorPassthroughRuleProvider) ListErrorPassthroughRules(context.Con
 }
 
 type fakeBudgetProvider struct {
-	usage admin.APIKeyBudgetUsage
-	err   error
-	calls int
-	key   admin.APIKey
+	admitErr         error
+	settleErr        error
+	admitCalls       int
+	settleCalls      int
+	keyID            int64
+	admission        admin.APIKeyBudgetAdmission
+	settlementID     string
+	settlementTokens int64
+	settlementCost   int64
+	settlementKnown  bool
 }
 
 type captureMetricsObserver struct {
@@ -412,13 +418,28 @@ func (m *captureMetricsObserver) ObserveUsage(source string, priced bool, input,
 	m.usage = append(m.usage, capturedUsage{source: source, priced: priced, input: input, output: output, cachedInput: cachedInput, reasoning: reasoning, costMicrousd: costMicrousd})
 }
 
-func (p *fakeBudgetProvider) GetAPIKeyBudgetUsage(_ context.Context, key admin.APIKey, _ time.Time) (admin.APIKeyBudgetUsage, error) {
-	p.calls++
-	p.key = key
-	if p.err != nil {
-		return admin.APIKeyBudgetUsage{}, p.err
+func (p *fakeBudgetProvider) AdmitAPIKeyBudget(_ context.Context, keyID int64, admittedAt time.Time) (admin.APIKeyBudgetAdmission, error) {
+	p.admitCalls++
+	p.keyID = keyID
+	if p.admitErr != nil {
+		return admin.APIKeyBudgetAdmission{}, p.admitErr
 	}
-	return p.usage, nil
+	if p.admission.ID == "" {
+		p.admission = admin.APIKeyBudgetAdmission{ID: "budget-admission-1", KeyID: keyID, AdmittedAt: admittedAt}
+	}
+	return p.admission, nil
+}
+
+func (p *fakeBudgetProvider) SettleAPIKeyBudgetUsage(_ context.Context, request admin.APIKeyBudgetSettlementRequest) (admin.APIKeyBudgetSettlement, error) {
+	p.settleCalls++
+	p.settlementID = request.AdmissionID
+	p.settlementTokens = request.ObservedTokens
+	p.settlementCost = request.ObservedCostMicrousd
+	p.settlementKnown = request.UsageKnown
+	if p.settleErr != nil {
+		return admin.APIKeyBudgetSettlement{}, p.settleErr
+	}
+	return admin.APIKeyBudgetSettlement{AdmissionID: request.AdmissionID, ObservedTokens: request.ObservedTokens, ObservedCostMicrousd: request.ObservedCostMicrousd, Outcome: "observed"}, nil
 }
 
 func TestProxyRequiresBearerAPIKey(t *testing.T) {
@@ -3715,9 +3736,10 @@ func TestProxyLogsPreciseAPIKeyTokenRateLimitReason(t *testing.T) {
 
 func TestProxyRejectsWhenAPIKeyBudgetIsExceeded(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	budgets := &fakeBudgetProvider{usage: admin.APIKeyBudgetUsage{RequestBudgetExceeded: true}}
+	budgets := &fakeBudgetProvider{admitErr: admin.ErrAPIKeyRequestBudgetExceeded}
+	routingPoolID := int64(1)
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", RequestBudget24h: 1}}, tokens, Config{
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", RequestBudget24h: 1, RoutingPoolID: &routingPoolID}}, tokens, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		Logger:          logger,
 		BudgetProvider:  budgets,
@@ -3731,8 +3753,8 @@ func TestProxyRejectsWhenAPIKeyBudgetIsExceeded(t *testing.T) {
 	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
 		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
 	}
-	if budgets.calls != 1 || budgets.key.ID != 42 {
-		t.Fatalf("budget calls/key = %d/%+v, want one call for key 42", budgets.calls, budgets.key)
+	if budgets.admitCalls != 1 || budgets.keyID != 42 {
+		t.Fatalf("budget calls/key = %d/%d, want one call for key 42", budgets.admitCalls, budgets.keyID)
 	}
 	if tokens.calls != 0 {
 		t.Fatalf("account calls = %d, want 0 when key budget is exceeded", tokens.calls)
@@ -3740,11 +3762,12 @@ func TestProxyRejectsWhenAPIKeyBudgetIsExceeded(t *testing.T) {
 	assertLastLoggedError(t, logger, "api_key_request_budget_exceeded")
 }
 
-func TestProxyChecksAPIKeyBudgetBeforeRequestRateWindow(t *testing.T) {
+func TestProxyChecksRequestRateBeforeAPIKeyBudgetAdmission(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	budgets := &fakeBudgetProvider{usage: admin.APIKeyBudgetUsage{RequestBudgetExceeded: true}}
+	budgets := &fakeBudgetProvider{admitErr: admin.ErrAPIKeyRequestBudgetExceeded}
+	routingPoolID := int64(1)
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", RequestsPerMinute: 1, RequestBudget24h: 1}}, tokens, Config{
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", RequestsPerMinute: 1, RequestBudget24h: 1, RoutingPoolID: &routingPoolID}}, tokens, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		Logger:          logger,
 		BudgetProvider:  budgets,
@@ -3758,17 +3781,18 @@ func TestProxyChecksAPIKeyBudgetBeforeRequestRateWindow(t *testing.T) {
 	if recorder.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, body = %s, want 429", recorder.Code, recorder.Body.String())
 	}
-	if got := proxy.APIKeyRequestRateSnapshot(); len(got) != 0 {
-		t.Fatalf("request rate snapshot = %+v, want no request-window usage for budget rejection", got)
+	if got := proxy.APIKeyRequestRateSnapshot(); got[42] != 1 {
+		t.Fatalf("request rate snapshot = %+v, want local rate admission before budget", got)
 	}
 	assertLastLoggedError(t, logger, "api_key_request_budget_exceeded")
 }
 
 func TestProxyLogsPreciseAPIKeyTokenBudgetReason(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	budgets := &fakeBudgetProvider{usage: admin.APIKeyBudgetUsage{TokenBudgetExceeded: true}}
+	budgets := &fakeBudgetProvider{admitErr: admin.ErrAPIKeyTokenBudgetExceeded}
+	routingPoolID := int64(1)
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", TokenBudget30d: 1}}, tokens, Config{
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", TokenBudget30d: 1, RoutingPoolID: &routingPoolID}}, tokens, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		Logger:          logger,
 		BudgetProvider:  budgets,
@@ -3787,9 +3811,10 @@ func TestProxyLogsPreciseAPIKeyTokenBudgetReason(t *testing.T) {
 
 func TestProxyLogsPreciseAPIKeyCostBudgetReason(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	budgets := &fakeBudgetProvider{usage: admin.APIKeyBudgetUsage{CostBudgetExceeded: true}}
+	budgets := &fakeBudgetProvider{admitErr: admin.ErrAPIKeyCostBudgetExceeded}
+	routingPoolID := int64(1)
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", CostBudgetMicrousd24h: 1}}, tokens, Config{
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", CostBudgetMicrousd24h: 1, RoutingPoolID: &routingPoolID}}, tokens, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		Logger:          logger,
 		BudgetProvider:  budgets,
@@ -3811,9 +3836,10 @@ func TestProxyLogsPreciseAPIKeyCostBudgetReason(t *testing.T) {
 
 func TestProxyFailsClosedWhenAPIKeyBudgetUsageCannotBeChecked(t *testing.T) {
 	logger := &fakeRequestLogger{}
-	budgets := &fakeBudgetProvider{err: errors.New("budget store unavailable")}
+	budgets := &fakeBudgetProvider{admitErr: errors.New("budget store unavailable")}
+	routingPoolID := int64(1)
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", RequestBudget24h: 1}}, tokens, Config{
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, Name: "budgeted key", RequestBudget24h: 1, RoutingPoolID: &routingPoolID}}, tokens, Config{
 		UpstreamBaseURL: "https://upstream.example.test",
 		Logger:          logger,
 		BudgetProvider:  budgets,
@@ -3831,6 +3857,161 @@ func TestProxyFailsClosedWhenAPIKeyBudgetUsageCannotBeChecked(t *testing.T) {
 		t.Fatalf("account calls = %d, want 0 when budget usage cannot be checked", tokens.calls)
 	}
 	assertLastLoggedError(t, logger, "internal_error")
+}
+
+func TestProxyReturnsBudgetInitializingWithoutUpstreamSelection(t *testing.T) {
+	logger := &fakeRequestLogger{}
+	budgets := &fakeBudgetProvider{admitErr: admin.ErrBudgetInitializing}
+	routingPoolID := int64(1)
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, RequestBudget24h: 1, RoutingPoolID: &routingPoolID}}, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		Logger:          logger,
+		BudgetProvider:  budgets,
+	}, http.DefaultClient)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "budget_initializing") {
+		t.Fatalf("status/body = %d/%s, want 503 budget_initializing", recorder.Code, recorder.Body.String())
+	}
+	if accounts.calls != 0 || budgets.settleCalls != 0 {
+		t.Fatalf("account/settlement calls = %d/%d, want 0/0", accounts.calls, budgets.settleCalls)
+	}
+	assertLastLoggedError(t, logger, "budget_initializing")
+}
+
+func TestProxySettlesBudgetWhenRequestLogWriteFails(t *testing.T) {
+	logger := &fakeRequestLogger{err: errors.New("request log unavailable")}
+	budgets := &fakeBudgetProvider{}
+	pricer := &fakeUsagePricer{estimate: UsageCostEstimate{Matched: true, CostMicrousd: 123}}
+	routingPoolID := int64(1)
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"usage":{"prompt_tokens":8,"completion_tokens":7,"total_tokens":15}}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, TokenBudget24h: 1_000, RoutingPoolID: &routingPoolID}}, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		Logger:          logger,
+		BudgetProvider:  budgets,
+		UsagePricer:     pricer,
+	}, client)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if budgets.admitCalls != 1 || budgets.settleCalls != 1 {
+		t.Fatalf("budget admit/settle calls = %d/%d, want 1/1", budgets.admitCalls, budgets.settleCalls)
+	}
+	if budgets.settlementID != "budget-admission-1" || budgets.settlementTokens != 15 || budgets.settlementCost != 123 || !budgets.settlementKnown {
+		t.Fatalf("settlement = id:%q tokens:%d cost:%d known:%v", budgets.settlementID, budgets.settlementTokens, budgets.settlementCost, budgets.settlementKnown)
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("request log attempts = %d, want 1", len(logger.entries))
+	}
+}
+
+func TestProxySettlesMissingUsageAsUnknown(t *testing.T) {
+	budgets := &fakeBudgetProvider{}
+	routingPoolID := int64(1)
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"response-without-usage"}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, TokenBudget24h: 1_000, RoutingPoolID: &routingPoolID}}, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		Logger:          &fakeRequestLogger{},
+		BudgetProvider:  budgets,
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if budgets.settleCalls != 1 || budgets.settlementTokens != 0 || budgets.settlementCost != 0 || budgets.settlementKnown {
+		t.Fatalf("missing usage settlement = calls:%d tokens:%d cost:%d known:%v", budgets.settleCalls, budgets.settlementTokens, budgets.settlementCost, budgets.settlementKnown)
+	}
+}
+
+func TestProxyDoesNotAdmitBudgetForStructurallyInvalidRequest(t *testing.T) {
+	budgets := &fakeBudgetProvider{}
+	routingPoolID := int64(1)
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, RoutingPoolID: &routingPoolID}}, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		BudgetProvider:  budgets,
+	}, http.DefaultClient)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":`))
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+	}
+	if budgets.admitCalls != 0 || budgets.settleCalls != 0 {
+		t.Fatalf("budget admit/settle calls = %d/%d, want 0/0", budgets.admitCalls, budgets.settleCalls)
+	}
+}
+
+func TestProxyTracksBudgetLedgerForUnbudgetedKey(t *testing.T) {
+	budgets := &fakeBudgetProvider{}
+	logger := &fakeRequestLogger{}
+	routingPoolID := int64(1)
+	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"unbudgeted"}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, RoutingPoolID: &routingPoolID}}, accounts, Config{
+		UpstreamBaseURL: "https://upstream.example.test",
+		Logger:          logger,
+		BudgetProvider:  budgets,
+	}, client)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
+	req.Header.Set("Authorization", "Bearer n2api_client_secret")
+	recorder := httptest.NewRecorder()
+
+	proxy.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if budgets.admitCalls != 1 || budgets.settleCalls != 1 {
+		t.Fatalf("unbudgeted ledger calls = admit:%d settle:%d, want one each", budgets.admitCalls, budgets.settleCalls)
+	}
+	if len(logger.entries) != 1 || logger.entries[0].BudgetBackfillEligible {
+		t.Fatalf("unbudgeted request log = %+v, want ledger-backed request excluded from legacy backfill", logger.entries)
+	}
 }
 
 func TestProxyLogsPreciseGatewayConcurrencyLimitReason(t *testing.T) {

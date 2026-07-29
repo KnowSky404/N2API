@@ -729,11 +729,12 @@ deduplication. Circuit-open state remains active through credential or proxy
 edits; a confirmed 2xx gateway/account-probe response or explicit **Reset local
 status** operator override supplies the recovery event.
 
-API Key budget threshold source events are projected from Request Logs by an
-always-on monitor that runs once at startup and every five minutes. Each cycle
-processes at most 100 keys and each key is locked and evaluated in its own
-PostgreSQL transaction. Request-count, token-count, and estimated-cost budgets
-for rolling 24-hour and 30-day windows are independent. Crossing 80 percent
+API Key budget threshold source events are projected from the durable budget
+ledger by an always-on monitor that runs once at startup and every five minutes.
+Each cycle processes at most 100 keys and each key is locked and evaluated in
+its own PostgreSQL transaction. Strict request-count budgets and observed token
+and estimated-cost budgets for rolling 24-hour and 30-day windows are
+independent. Crossing 80 percent
 emits `api_key.budget.threshold_80.crossed`; crossing 100 percent emits
 `api_key.budget.threshold_100.crossed`. A direct jump to 100 percent emits both.
 The corresponding `.recovered` action is emitted only when that exact stream
@@ -1209,7 +1210,7 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - API key names can be renamed from the API Keys page without rotating the secret, so labels can be kept in sync with devices, agents, or usage purpose.
 - New API keys are stored with an encrypted reusable secret. The Prefix column on the API Keys page can copy the full API key again after creation for active or disabled keys; older keys created before encrypted secret storage may need to be rotated if their full value was not saved.
 - API keys have three visible states: active, disabled, and deleted. Active and disabled keys can be toggled directly from the API Keys table status column, and disabled keys cannot authenticate gateway requests. Deleting an active or disabled key performs an irreversible logical delete immediately, keeps the row visible during its 7 day retention window, and exposes the scheduled physical deletion time in the deleted status tooltip. Deleted keys can be physically deleted immediately with a second confirmed Delete action. Keys past the retention window are physically removed by startup and hourly cleanup, with API key listing cleanup as a fallback.
-- API key budgets are personal operational safeguards, not billing balances. Each key can have request, token, and estimated cost budgets over rolling 24h and 30d windows; cost budgets use stored estimated request cost, and `0` disables a budget field. When a key is over budget, clients receive OpenAI-compatible `rate_limit_exceeded` responses while Request Logs store the precise local reason as `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, or `api_key_cost_budget_exceeded`.
+- API key budgets are personal operational safeguards, not billing balances. Request budgets are strict rolling 24h and 30d limits backed by atomic PostgreSQL admission. Token and estimated cost limits are explicitly observed-usage budgets: admission rejects once settled observed usage has reached the limit, but one request or concurrent requests can cross it because no trustworthy universal pre-request upper bound exists. `0` disables a budget field. Existing budgeted keys fail closed with `budget_initializing` while the bounded upgrade backfill initializes their ledger from Request Logs. When a ready key is over budget, clients receive OpenAI-compatible `rate_limit_exceeded` responses while Request Logs store the precise local reason as `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, or `api_key_cost_budget_exceeded`.
 - Use **Refresh** to force a token refresh for one account. Saving fresh OAuth credentials preserves the account's current health state; only the follow-up account probe or a later gateway request with a 2xx upstream response confirms recovery and clears stale transient health state.
 - Use **Reauthorize** on an existing row to bind a fresh OAuth login back to that account instead of creating a second row. Reauthorization replaces the saved OAuth credentials but preserves current account health until a later 2xx account probe or an explicit local-status reset.
 - API upstream credentials can be updated from the account row. Rotating the encrypted API key, base URL, or per-account outbound proxy URL preserves current account health; run **Test account** to confirm the new settings before an expired or circuit-open account becomes schedulable again. Proxy URLs are stored encrypted because they may include credentials, and the admin UI only shows a redacted proxy summary.
@@ -1343,7 +1344,10 @@ and responses without a valid upstream ID leave the field empty.
 
 Request Log persistence is best effort. A write failure does not replace or
 otherwise change the gateway response, including an already successful upstream
-response. N2API records the stable process-log `error_code`
+response. Budget admission and idempotent observed-usage settlement happen
+independently before the best-effort Request Log write, so a logging failure
+cannot refund a request or lose already settled budget usage. N2API records the
+stable process-log `error_code`
 `request_log_write_failed` with the same `correlation_id`, without logging the
 database error detail. Use authenticated `GET /api/admin/health` and inspect
 `tasks.requestLogWrite` to distinguish an isolated failure from consecutive

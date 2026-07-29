@@ -67,6 +67,10 @@ type fakeRequestLogWriteStatusSource struct {
 	status requestlog.WriteStatus
 }
 
+type fakeAPIKeyBudgetMaintenanceStatusSource struct {
+	status admin.APIKeyBudgetMaintenanceStatus
+}
+
 type fakeGatewaySettingsRuntimeStatusSource struct {
 	status admin.GatewaySettingsRuntimeStatus
 }
@@ -84,6 +88,10 @@ func (s fakeAlertDeliveryStatusSource) AlertDeliveryStatus() alerting.DeliverySt
 }
 
 func (s fakeRequestLogWriteStatusSource) RequestLogWriteStatus() requestlog.WriteStatus {
+	return s.status
+}
+
+func (s fakeAPIKeyBudgetMaintenanceStatusSource) APIKeyBudgetMaintenanceStatus() admin.APIKeyBudgetMaintenanceStatus {
 	return s.status
 }
 
@@ -1605,10 +1613,19 @@ func TestAdminHealthIncludesAlertDeliveryTaskOnlyForAuthenticatedSession(t *test
 }
 
 func TestAdminHealthMergesBackgroundTaskStatuses(t *testing.T) {
+	budgetSource := fakeAPIKeyBudgetMaintenanceStatusSource{status: admin.APIKeyBudgetMaintenanceStatus{
+		LastErrorCode: "api_key_budget_maintenance_failed", InitializationPending: true,
+	}}
 	server := NewServer(
 		config.Config{}, staticHealth{}, newFakeAdminService(), nil,
 		fakeRequestLogRetentionStatusSource{}, fakeAlertDeliveryStatusSource{},
+		budgetSource,
 	)
+	publicRecorder := httptest.NewRecorder()
+	server.ServeHTTP(publicRecorder, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
+	if strings.Contains(publicRecorder.Body.String(), "apiKeyBudgetMaintenance") || strings.Contains(publicRecorder.Body.String(), "api_key_budget_maintenance_failed") {
+		t.Fatalf("public health leaked budget maintenance status: %s", publicRecorder.Body.String())
+	}
 	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
 	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
 	recorder := httptest.NewRecorder()
@@ -1625,6 +1642,16 @@ func TestAdminHealthMergesBackgroundTaskStatuses(t *testing.T) {
 	}
 	if _, ok := body.Tasks["alertDelivery"]; !ok {
 		t.Fatalf("health tasks = %s, want alertDelivery", recorder.Body.String())
+	}
+	if _, ok := body.Tasks["apiKeyBudgetMaintenance"]; !ok {
+		t.Fatalf("health tasks = %s, want apiKeyBudgetMaintenance", recorder.Body.String())
+	}
+	var budgetStatus admin.APIKeyBudgetMaintenanceStatus
+	if err := json.Unmarshal(body.Tasks["apiKeyBudgetMaintenance"], &budgetStatus); err != nil {
+		t.Fatalf("decode budget maintenance status: %v", err)
+	}
+	if !budgetStatus.InitializationPending || budgetStatus.LastErrorCode != "api_key_budget_maintenance_failed" {
+		t.Fatalf("budget maintenance status = %+v", budgetStatus)
 	}
 }
 

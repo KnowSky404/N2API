@@ -824,6 +824,45 @@ func TestAPIKeyBudgetUsageComputesRemainingAndExceeded(t *testing.T) {
 	}
 }
 
+func TestAPIKeyBudgetAdmissionAndSettlementValidateAndNormalizeInputs(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{})
+	admittedAt := time.Date(2026, 7, 29, 12, 0, 0, 0, time.FixedZone("test", 2*60*60))
+
+	admission, err := service.AdmitAPIKeyBudget(context.Background(), 42, admittedAt)
+	if err != nil {
+		t.Fatalf("AdmitAPIKeyBudget returned error: %v", err)
+	}
+	if len(admission.ID) != 32 || admission.KeyID != 42 || !admission.AdmittedAt.Equal(admittedAt) || admission.AdmittedAt.Location() != time.UTC {
+		t.Fatalf("admission = %+v, want generated ID, key 42, UTC timestamp", admission)
+	}
+
+	settledAt := admittedAt.Add(time.Minute)
+	settlement, err := service.SettleAPIKeyBudget(context.Background(), "  "+admission.ID+"  ", 15, 123, settledAt)
+	if err != nil {
+		t.Fatalf("SettleAPIKeyBudget returned error: %v", err)
+	}
+	if settlement.AdmissionID != admission.ID || settlement.ObservedTokens != 15 || settlement.ObservedCostMicrousd != 123 {
+		t.Fatalf("settlement = %+v", settlement)
+	}
+	missing, err := service.SettleAPIKeyBudgetUsage(context.Background(), APIKeyBudgetSettlementRequest{
+		AdmissionID: admission.ID, ObservedTokens: 99, ObservedCostMicrousd: 88, UsageKnown: false, SettledAt: settledAt,
+	})
+	if err != nil {
+		t.Fatalf("SettleAPIKeyBudgetUsage missing returned error: %v", err)
+	}
+	if missing.ObservedTokens != 0 || missing.ObservedCostMicrousd != 0 {
+		t.Fatalf("missing settlement = %+v, want zero usage", missing)
+	}
+
+	if _, err := service.AdmitAPIKeyBudget(context.Background(), 0, admittedAt); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid admission error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := service.SettleAPIKeyBudget(context.Background(), admission.ID, -1, 0, settledAt); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("invalid settlement error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestAuthenticateAPIKeyUsesOneUTCInstantAndReportsBoundedTouchOutcomes(t *testing.T) {
 	repo := newMemoryRepo()
 	observer := &captureAPIKeyAuthenticationObserver{}
@@ -2143,6 +2182,7 @@ type memoryRepo struct {
 	lastStreamMaxRows              int
 	streamCalls                    int
 	budgetUsage                    map[int64]APIKeyBudgetUsage
+	budgetAdmissions               map[string]APIKeyBudgetAdmission
 	routingPools                   map[int64]RoutingPool
 	usageSummary                   UsageSummary
 	lastUsageSince                 time.Time
@@ -2249,13 +2289,14 @@ func (r *passwordChangeRaceRepo) CreateSessionIfAdminPasswordHashMatches(ctx con
 
 func newMemoryRepo() *memoryRepo {
 	return &memoryRepo{
-		nextAdminID:   1,
-		nextSessionID: 1,
-		sessions:      map[string]memorySession{},
-		keys:          map[int64]memoryAPIKey{},
-		budgetUsage:   map[int64]APIKeyBudgetUsage{},
-		routingPools:  map[int64]RoutingPool{},
-		nextAPIKeyID:  1,
+		nextAdminID:      1,
+		nextSessionID:    1,
+		sessions:         map[string]memorySession{},
+		keys:             map[int64]memoryAPIKey{},
+		budgetUsage:      map[int64]APIKeyBudgetUsage{},
+		budgetAdmissions: map[string]APIKeyBudgetAdmission{},
+		routingPools:     map[int64]RoutingPool{},
+		nextAPIKeyID:     1,
 	}
 }
 
@@ -2654,6 +2695,27 @@ func (r *memoryRepo) GetAPIKeyBudgetUsage(_ context.Context, keyID int64, _ time
 	usage := r.budgetUsage[keyID]
 	usage.KeyID = keyID
 	return usage, nil
+}
+
+func (r *memoryRepo) AdmitAPIKeyBudget(_ context.Context, keyID int64, admissionID string, admittedAt time.Time) (APIKeyBudgetAdmission, error) {
+	admission := APIKeyBudgetAdmission{ID: admissionID, KeyID: keyID, AdmittedAt: admittedAt}
+	r.budgetAdmissions[admissionID] = admission
+	return admission, nil
+}
+
+func (r *memoryRepo) SettleAPIKeyBudget(_ context.Context, admissionID string, observedTokens, observedCostMicrousd int64, _ time.Time) (APIKeyBudgetSettlement, error) {
+	return r.SettleAPIKeyBudgetUsage(context.Background(), APIKeyBudgetSettlementRequest{
+		AdmissionID: admissionID, ObservedTokens: observedTokens, ObservedCostMicrousd: observedCostMicrousd, UsageKnown: true,
+	})
+}
+
+func (r *memoryRepo) SettleAPIKeyBudgetUsage(_ context.Context, request APIKeyBudgetSettlementRequest) (APIKeyBudgetSettlement, error) {
+	if _, ok := r.budgetAdmissions[request.AdmissionID]; !ok {
+		return APIKeyBudgetSettlement{}, ErrNotFound
+	}
+	return APIKeyBudgetSettlement{
+		AdmissionID: request.AdmissionID, ObservedTokens: request.ObservedTokens, ObservedCostMicrousd: request.ObservedCostMicrousd, Outcome: "observed",
+	}, nil
 }
 
 func (r *memoryRepo) ListAPIKeyModels(_ context.Context, id int64) ([]string, error) {

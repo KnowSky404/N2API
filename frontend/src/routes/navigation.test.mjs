@@ -1326,6 +1326,10 @@ test('api keys page renames keys without rotating secrets', () => {
   assert.match(apiKeysPage, /snap\.requestBudget30d/);
   assert.match(apiKeysPage, /snap\.tokenBudget30d/);
   assert.match(apiKeysPage, /snap\.costBudgetMicrousd30d/);
+  assert.match(apiKeysPage, /editingKey\.budgetInitializationStatus === 'pending'/);
+  assert.match(apiKeysPage, /editingKey\.budgetUsageStale/);
+  assert.match(apiKeysPage, /Observed token budget/);
+  assert.match(apiKeysPage, /Observed cost budget/);
   // Limits section regressions: original labels, state rows, blocked text
   assert.match(apiKeysPage, /Requests window/);
   assert.match(apiKeysPage, /Tokens window/);

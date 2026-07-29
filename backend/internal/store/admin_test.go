@@ -825,7 +825,7 @@ func TestDeleteRevokedAPIKeyRejectsActiveAndDeletesRevokedKey(t *testing.T) {
 	}
 }
 
-func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
+func TestAdminRepositoryAPIKeyBudgetUsageReadsDurableLedgerState(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()
 	now := time.Unix(20_000, 0).UTC()
@@ -834,22 +834,33 @@ func TestAdminRepositoryAPIKeyBudgetUsageAggregatesWindows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
 	}
-	other, err := repo.CreateAPIKey(ctx, "other", "hash-other", "n2api_", "encrypted-other", nil)
-	if err != nil {
-		t.Fatalf("CreateAPIKey other returned error: %v", err)
-	}
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 40, 400)
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-23*time.Hour), 200, 60, 600)
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-25*time.Hour), 200, 90, 900)
-	insertRequestLog(t, repo.pool, key.ID, now.Add(-31*24*time.Hour), 200, 900, 9000)
-	insertRequestLog(t, repo.pool, other.ID, now.Add(-time.Hour), 200, 700, 7000)
+	setBudgetLedgerUsage(t, repo, key.ID, 2, 100, 1000, 3, 190, 1900)
+	insertRequestLog(t, repo.pool, key.ID, now.Add(-time.Hour), 200, 700, 7000)
 
 	usage, err := repo.GetAPIKeyBudgetUsage(ctx, key.ID, now)
 	if err != nil {
 		t.Fatalf("GetAPIKeyBudgetUsage returned error: %v", err)
 	}
 	if usage.KeyID != key.ID || usage.RequestsUsed24h != 2 || usage.TokensUsed24h != 100 || usage.CostMicrousd24h != 1000 || usage.RequestsUsed30d != 3 || usage.TokensUsed30d != 190 || usage.CostMicrousd30d != 1900 {
-		t.Fatalf("usage = %+v, want key usage across 24h and 30d windows", usage)
+		t.Fatalf("usage = %+v, want durable ledger counters", usage)
+	}
+	if usage.InitializationStatus != admin.APIKeyBudgetInitializationReady || usage.Stale {
+		t.Fatalf("usage state = %+v, want ready and current", usage)
+	}
+	if _, err := repo.pool.Exec(ctx, `
+		INSERT INTO api_key_budget_admissions (
+			admission_id, client_key_id, source, status, settlement_outcome, usage_known,
+			admitted_at, settled_at, request_24h_expires_at, request_30d_expires_at
+		) VALUES ($1, $2, 'live', 'settled', 'missing', false, $3, $3, $3 + INTERVAL '24 hours', $3 + INTERVAL '30 days')
+	`, budgetLedgerAdmissionID(9000), key.ID, now.Add(-31*24*time.Hour)); err != nil {
+		t.Fatalf("insert overdue ledger admission: %v", err)
+	}
+	stale, err := repo.GetAPIKeyBudgetUsage(ctx, key.ID, now)
+	if err != nil {
+		t.Fatalf("GetAPIKeyBudgetUsage overdue returned error: %v", err)
+	}
+	if !stale.Stale {
+		t.Fatalf("overdue usage = %+v, want stale", stale)
 	}
 }
 

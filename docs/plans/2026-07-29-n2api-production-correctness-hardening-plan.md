@@ -17,7 +17,7 @@ review, and atomic commit are complete.
 | Lifecycle and graceful drain | completed | Separate contexts, supervised listeners/runners, ordered Alert drain, one 30-second maximum deadline, real request/SSE tests, race/vet, and 144 ms clean container SIGTERM |
 | Gateway Settings runtime | completed | Atomic validated snapshots, startup gating, supervised refresh, immediate committed publication, LKG stale state, bounded health/metrics, and zero request-path settings loads implemented in Task 4 |
 | API key authentication touch | completed | One active-state statement returns the key and selected models while conditionally touching at most once per UTC minute, with bounded metrics and stable failure behavior |
-| Durable budget ledger | pending | Current budget reads aggregate Request Logs |
+| Durable budget ledger | completed | Migration 49, atomic zero-budget-aware admission, durable settlement recovery, bounded initialization/expiry/abandonment, downgrade guards, Store race/process tests, and rendered desktop/mobile UI evidence |
 | Bounded admin lists | pending | Current key list has N+1 budget reads and both lists are unbounded |
 | Database TLS identity | completed | Parsed pgx primary and fallback attempts are classified as plaintext, unverified TLS, or verified-full with independent accepted-risk gates |
 | Secret reveal step-up | completed | Password-bearing POST, bounded three-dimensional throttling, sanitized auditing, no-store responses, and dialog-local secret state are implemented and verified |
@@ -180,7 +180,7 @@ Commit: `perf(auth): bound api key last-used writes`
 
 ## Task 6: Add Durable Budget Admission And Settlement
 
-Status: pending
+Status: completed
 Dependencies: Tasks 2, 4, and 5
 
 Implementation:
@@ -202,6 +202,41 @@ Tests and acceptance:
 - Crash-between-admit-and-settle, cleanup idempotency, revoke, modification,
   24h/30d expiry, legacy initialization, and database failure are covered.
 - Admission work/query count is independent of Request Log history size.
+
+Evidence:
+
+- Migration 49 adds constrained budget state and admission tables, initializes
+  new keys as ready, marks pre-migration Request Logs as eligible for bounded
+  legacy backfill, and prevents downgrade after either live admissions or
+  post-ledger keyed Request Logs would make the classification lossy.
+- Every externally executed request that passes local validation, rate limits,
+  and concurrency limits receives an admission, including keys whose current
+  budgets are all zero. Enabling a budget later backfills only eligible legacy
+  logs without an existing `legacy:*` admission, so Request Logs written after
+  ledger admission are never a second budget authority.
+- Settlement uses the admission row as a durable two-phase outbox:
+  `admitted -> settlement_pending -> settled`. The first payload wins,
+  maintenance recovers committed pending payloads one transaction at a time,
+  and expiry-before-settlement does not restore expired 24h or 30d usage.
+- Initialization and key deletion share key-first locking; expiry prelocks
+  budget states in `client_key_id` order. Tests cover strict 10-of-100 admission
+  in one process and separate processes, zero-budget tracking, restart recovery,
+  idempotency, exact window boundaries, revoke/disable/restart behavior,
+  initialization/delete ordering, and cross-key expiry ordering.
+- `make test` passed all Go packages, Svelte with zero errors and warnings, 204
+  Bun tests, and the production frontend build.
+- `make test-control-connections` passed the Store integration group (`9.933s`),
+  Store race group (`10.587s`), and real process lifecycle group (`8.834s`),
+  including the migration 49 round trip and both downgrade guards.
+- `cd backend && env GOMODCACHE=/root/Clouds/N2API/.cache/go-mod GOCACHE=/root/Clouds/N2API/.cache/go-build go test -race -count=1 -run 'Test(APIKeyBudget|Proxy.*Budget|Proxy.*RequestLogWrite)' ./internal/admin ./internal/gateway`
+  passed.
+- `cd backend && env GOMODCACHE=/root/Clouds/N2API/.cache/go-mod GOCACHE=/root/Clouds/N2API/.cache/go-build go vet ./internal/admin ./internal/gateway ./internal/httpapi ./internal/store ./cmd/n2api`,
+  `bash -n dev/testing/run.sh`, and `git diff --check` passed.
+- Browser plugin was unavailable. A temporary `/tmp` Playwright 1.62.0 suite,
+  after `bunx playwright@1.62.0 install chromium`, passed two tests covering
+  pending and stale edit modals at 1440x1000 and 390x844. Four screenshots and
+  geometry assertions confirmed the observed token/cost wording, no framework
+  overlay, console error, horizontal overflow, or title/control overlap.
 
 Commit: `feat(budget): add atomic budget admission and settlement`
 

@@ -633,30 +633,41 @@ func assertProcessReady(t *testing.T, port int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/readyz", port), nil)
-	if err != nil {
-		t.Fatalf("create readiness request: %v", err)
+	lastResult := "no readiness response"
+	for ctx.Err() == nil {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/readyz", port), nil)
+		if err != nil {
+			t.Fatalf("create readiness request: %v", err)
+		}
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			lastResult = err.Error()
+		} else {
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+			_ = response.Body.Close()
+			if readErr != nil {
+				lastResult = readErr.Error()
+			} else {
+				var readiness struct {
+					Status       string `json:"status"`
+					Database     string `json:"database"`
+					StaticAssets string `json:"staticAssets"`
+				}
+				if decodeErr := json.Unmarshal(body, &readiness); decodeErr != nil {
+					lastResult = decodeErr.Error()
+				} else if response.StatusCode == http.StatusOK && readiness.Status == "ok" && readiness.Database == "ok" && readiness.StaticAssets == "ok" {
+					return
+				} else {
+					lastResult = fmt.Sprintf("status %d and state %+v: %s", response.StatusCode, readiness, strings.TrimSpace(string(body)))
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(25 * time.Millisecond):
+		}
 	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("request readiness on port %d: %v", port, err)
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		t.Fatalf("read readiness on port %d: %v", port, err)
-	}
-	var readiness struct {
-		Status       string `json:"status"`
-		Database     string `json:"database"`
-		StaticAssets string `json:"staticAssets"`
-	}
-	if err := json.Unmarshal(body, &readiness); err != nil {
-		t.Fatalf("decode readiness on port %d: %v", port, err)
-	}
-	if response.StatusCode != http.StatusOK || readiness.Status != "ok" || readiness.Database != "ok" || readiness.StaticAssets != "ok" {
-		t.Fatalf("readiness on port %d returned status %d and state %+v: %s", port, response.StatusCode, readiness, strings.TrimSpace(string(body)))
-	}
+	t.Fatalf("readiness on port %d did not become ready: %s", port, lastResult)
 }
 
 func assertPostgresApplicationConnectionCount(t *testing.T, pool *pgxpool.Pool, applicationName string, maximum int) {
