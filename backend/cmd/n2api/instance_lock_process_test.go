@@ -89,6 +89,8 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		process := startN2APIProcess(t, binaryPath, limitedURL, adminUsername, adminPassword, encryptionSecret, port)
 		waitForProcessListener(t, process, port, limitedURL, adminPassword, encryptionSecret)
 		assertProcessReady(t, port)
+		sessionToken := createProcessTestAdminSession(t, pool)
+		assertAuthenticatedManagementQuery(t, port, sessionToken)
 		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 1)
 		stopN2APIProcess(t, process, limitedURL, adminPassword, encryptionSecret)
 	})
@@ -115,6 +117,8 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		waitForProcessListener(t, process, port, limitedURL, adminPassword, encryptionSecret)
 		assertProcessReady(t, port)
 		listenerPID := waitForPostgresApplicationBackend(t, pool, store.PostgresApplicationNameSystemEventListener, 0)
+		sessionToken := createProcessTestAdminSession(t, pool)
+		assertAuthenticatedManagementQuery(t, port, sessionToken)
 		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 2)
 		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameSystemEventListener, 1)
 
@@ -132,6 +136,7 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 			}
 			listenerPID = nextPID
 			assertProcessReady(t, port)
+			assertAuthenticatedManagementQuery(t, port, sessionToken)
 			assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 2)
 			assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameSystemEventListener, 1)
 		}
@@ -915,6 +920,28 @@ func createProcessTestAdminSession(t *testing.T, pool *pgxpool.Pool) string {
 		}
 	})
 	return sessionToken
+}
+
+func assertAuthenticatedManagementQuery(t *testing.T, port int, sessionToken string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/admin/keys?limit=1", port), nil)
+	if err != nil {
+		t.Fatal("create authenticated management request")
+	}
+	request.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: sessionToken})
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("request authenticated management API on port %d: %v", port, err)
+	}
+	defer response.Body.Close()
+	if _, err := io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20)); err != nil {
+		t.Fatalf("read authenticated management response on port %d: %v", port, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated management API on port %d returned status %d", port, response.StatusCode)
+	}
 }
 
 func assertUnsafeMultiInstanceHealthWarning(t *testing.T, port int, sessionToken string) {
