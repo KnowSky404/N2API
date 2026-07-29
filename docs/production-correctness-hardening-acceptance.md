@@ -1,7 +1,7 @@
 # Production Correctness Hardening Acceptance
 
 - Date: 2026-07-29
-- Implementation head tested: `7eab2c9`
+- Implementation head tested: `49115db`
 - Baseline: `4037187c36198bf50b9c328a557a29a7ca413e56`
 
 ## Result
@@ -21,8 +21,10 @@ Unrun Checks remain open.
 - System Event `LISTEN` owns a dedicated connection and reconnects after
   connection loss. See `backend/internal/store/system_event_subscription.go`.
 - `make test-control-connections` passed the pool-size 1 and 2 cases, Alert
-  enabled and disabled cases, business queries while controls are held, lock
-  termination, LISTEN reconnect, and real process lifecycle tests.
+  enabled and disabled cases, authenticated API Key management queries while
+  controls are held, lock termination, LISTEN reconnect, and real process
+  lifecycle tests. The management query also passed after each of two LISTEN
+  reconnections with a two-connection business pool.
 - The unsafe cold-start process test proves migration and bootstrap are
   serialized. The safe process test proves that the losing instance does not
   bind its listener. See `backend/cmd/n2api/instance_lock_process_test.go`.
@@ -40,7 +42,8 @@ Unrun Checks remain open.
   drain, and ordered Alert queue shutdown.
 - Background components run through a supervisor and are waited before the
   Alert dispatcher and shared resources close. Close paths are idempotent and
-  race-tested.
+  race-tested. Supervisor tests wait for every owned component; slow-upload and
+  deadline tests wait for deferred handler cleanup before shutdown returns.
 - The application shutdown maximum is 30 seconds. Development, E2E, and
   release Compose use a 35-second stop grace period.
 - The Task 3 container SIGTERM check exited cleanly in 144 ms with exit code 0
@@ -109,7 +112,9 @@ Unrun Checks remain open.
   Routing Pools. First and deep pages used the management indexes without a
   Sort node, and association batches used their expected indexes.
 - `make test-request-log-profile` passed against 1,000,000 rows. The fixed-row
-  profile also validated the 10,000,000-row equivalent projection.
+  page was exercised at 100,000 and 1,000,000 physical rows: both returned 51
+  rows through `request_logs_created_at_idx`, used 88 and 89 shared buffers,
+  and avoided a Request Log sequential scan.
 - Migration 50 provides `client_api_keys_management_page_idx` and
   `routing_pools_management_page_idx`; both are present in the refreshed
   development database.
@@ -144,19 +149,22 @@ The following local commands passed on 2026-07-29:
   boundary, and affinity scenarios.
 - `make test-contracts`: OpenAI JavaScript and Python SDK contracts.
 - `make test-request-log-profile`: 1,000,000-row profile; the main profile test
-  completed in 97.78 seconds.
+  completed in 87.04 seconds and enforced the 10x physical-scale contract.
 - `make test-management-list-profile`: 10,000 keys, 1,000 pools, fixed query
-  counts, first/deep keyset pages, and index-plan assertions.
+  counts, 100,001 budget admissions, first/deep keyset pages, and index-plan
+  assertions.
 - `make test-restore-backup`: schema 50 current restore, real migration Down to
   schema 47 and Up to 50, wrong-key, corrupt-archive, termination cleanup, and
   test-resource cleanup.
 - `make test-dev-artifacts`: managed artifact lifecycle and PostgreSQL backup
   script tests.
 - `make test-go-quality`: pinned Staticcheck 2026.1 (`v0.7.0`) and `go vet`.
-- `make test-critical-race`: Admin, Alerting, HTTP API, Store, and main-process
-  race suites with isolated PostgreSQL.
+- `make test-critical-race`: main-process, Admin, Gateway, HTTP API, Provider,
+  Store, and Alerting race suites with isolated PostgreSQL.
 - `make test-control-connections`: Store, Store race, and real process fault
-  injection suites.
+  injection suites completed in 13.093s, 9.094s, and 10.341s.
+- `make test-postgres-faults`: real PostgreSQL container pause produced
+  `/readyz=503` while `/livez=200`; unpause recovered `/readyz=200`.
 - `make test-production-deploy`: plaintext, core-secret, metrics plaintext,
   metrics-secret, default/custom resource, invalid-value, and release-image
   verification cases.
@@ -168,19 +176,15 @@ The following local commands passed on 2026-07-29:
   `config --quiet` commands.
 - Actionlint `v1.7.12` and `dev/ci/verify-pinned-dependencies.sh`.
 
-One initial full critical-race run observed a non-reproduced immediate
-advisory-lock reacquire contention in the OAuth cleanup test. The same focused
-race test passed in a new isolated database, and an unchanged full critical
-race rerun passed all five packages. No code was changed to hide the signal.
-
 ## Refreshed Development Runtime
 
-- Pre-build `docker builder prune --all --force` reclaimed 3.051 GB.
+- Pre-build `docker builder prune --all --force` reclaimed 4.18 GB.
 - `docker compose -f deploy/compose.yaml build --no-cache` succeeded.
 - `docker compose -f deploy/compose.yaml up -d --force-recreate` recreated the
   stack while preserving the development PostgreSQL volume.
 - `n2api`, `postgres`, and `postgres-backup` are healthy. N2API is bound on
-  `0.0.0.0:3000` and `[::]:3000`.
+  `0.0.0.0:3000` and `[::]:3000`; all report restart count 0 and
+  `OOMKilled=false`.
 - Container-local `/healthz` returned `{"status":"ok"}`. `/readyz` reported
   database, Gateway Settings, runtime, and static assets ready. Bootstrap
   reported administrator `admin` and the configured public URL.

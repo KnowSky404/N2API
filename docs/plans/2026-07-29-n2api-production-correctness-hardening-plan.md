@@ -13,7 +13,7 @@ review, and atomic commit are complete.
 | Area | Status | Current evidence |
 | --- | --- | --- |
 | Design and implementation plan | completed | Required documents created, reviewed, and committed as the first atomic change |
-| PostgreSQL control connections | completed | Dedicated connections, serialized startup, bounded-pool process tests, LISTEN reconnect, vet, and race verification committed in Task 2 |
+| PostgreSQL control connections | completed | Dedicated connections, serialized startup, authenticated management queries with one- and two-connection business pools, LISTEN reconnect, vet, and race verification |
 | Lifecycle and graceful drain | completed | Separate contexts, supervised listeners/runners, ordered Alert drain, one 30-second maximum deadline, real request/SSE tests, race/vet, and 144 ms clean container SIGTERM |
 | Gateway Settings runtime | completed | Atomic validated snapshots, startup gating, supervised refresh, immediate committed publication, LKG stale state, bounded health/metrics, and zero request-path settings loads implemented in Task 4 |
 | API key authentication touch | completed | One active-state statement returns the key and selected models while conditionally touching at most once per UTC minute, with bounded metrics and stable failure behavior |
@@ -22,7 +22,7 @@ review, and atomic commit are complete.
 | Database TLS identity | completed | Parsed pgx primary and fallback attempts are classified as plaintext, unverified TLS, or verified-full with independent accepted-risk gates |
 | Secret reveal step-up | completed | Password-bearing POST, bounded three-dimensional throttling, sanitized auditing, no-store responses, and dialog-local secret state are implemented and verified |
 | Password hash migration | completed | Bounded Argon2id hashing, legacy PBKDF2 compare-and-swap migration, exact password bytes, and dummy verification are implemented and verified |
-| Secondary deployment and CI work | completed | Release resources, secret-file overrides, immutable running-image verification, operational state, pinned Staticcheck/vet, critical race, control-connection, query-profile, and Compose gates are committed and locally verified |
+| Secondary deployment and CI work | completed | Release resources, secret-file overrides, immutable running-image verification, operational state, pinned Staticcheck/vet, critical race, control-connection, PostgreSQL pause/recovery, query-profile, and Compose gates are committed and locally verified |
 | Final acceptance | completed locally | Full local suite, schema 50/47 restore drill, 18.1-18.7 evidence report, and refreshed healthy Compose runtime; remote/operator checks are explicitly unrun |
 
 ## Task 1: Commit Design And Plan
@@ -259,8 +259,9 @@ Tests and acceptance:
 - Tampered and filter-mismatched cursors fail with `invalid_cursor`.
 - API key and routing-pool query counts remain constant as page size grows.
 - Frontend does not assume one response contains every row.
-- Profiles cover 10,000 keys, 1,000 pools, and scalable 10,000,000-log
-  equivalents with stable `EXPLAIN (ANALYZE, BUFFERS)` assertions.
+- Profiles cover 10,000 keys, 1,000 pools, and a physical Request Log scale
+  increase from 100,000 to 1,000,000 rows with stable
+  `EXPLAIN (ANALYZE, BUFFERS)` assertions.
 
 Evidence:
 
@@ -277,8 +278,10 @@ Evidence:
 - `make test-management-list-profile` passed with 10,000 API Keys and 1,000
   Routing Pools. First and deep pages used the new management indexes with no
   Sort node and 2-5 shared buffers; association batches used their expected
-  model, budget-state, and membership indexes. The existing fixed-row request
-  log keyset profile supplies the 10x/10,000,000-row equivalent projection.
+  model, budget-state, and membership indexes. The Request Log profile
+  separately proved a fixed 51-row page at 100,000 and 1,000,000 physical rows,
+  using `request_logs_created_at_idx` with 88 and 89 shared buffers and no
+  Request Log sequential scan.
 - Frontend state appends unique rows, preserves partial data after append
   failure, prevents old-cursor append during refresh, clears explicit API Key
   selection on a successful fresh load, and never implies selection of
@@ -453,7 +456,13 @@ Commits:
 Evidence:
 
 - `make test-go-quality`, `make test-critical-race`,
-  `make test-control-connections`, and `make test-production-deploy` passed.
+  `make test-control-connections`, `make test-postgres-faults`, and
+  `make test-production-deploy` passed.
+- The PostgreSQL fault gate used a real container pause and observed
+  `/readyz=503`, `/livez=200`, and `/readyz=200` after unpause. The control
+  connection gate executed authenticated API Key management queries with a
+  one-connection pool and after each Alert LISTEN reconnect with a
+  two-connection pool.
 - Exact actionlint `v1.7.12`, pinned-dependency validation, focused Go tests,
   `go vet`, `git diff --check`, and rendered desktop/mobile operational views
   passed locally.
@@ -481,8 +490,14 @@ make test
 make test-e2e
 make test-contracts
 make test-request-log-profile
+make test-management-list-profile
 make test-restore-backup
 make test-dev-artifacts
+make test-production-deploy
+make test-go-quality
+make test-critical-race
+make test-control-connections
+make test-postgres-faults
 cd backend && go test -count=1 ./...
 cd backend && go vet ./...
 cd frontend && bun install --frozen-lockfile
