@@ -363,8 +363,11 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"instanceLockLost = instanceLock.Lost()",
 		"<-instanceLockLost",
 		"unsafe_multi_instance_enabled",
+		"admin.NewGatewaySettingsRuntime",
+		"GatewaySettingsRuntime: gatewaySettingsRuntime",
+		"gatewaySettingsRuntime.LoadInitial(startupCtx)",
 		"provider.NewAutoTestRunnerWithConfigSource",
-		"adminService.GetGatewaySettings",
+		"gatewaySettingsRuntime.GetGatewaySettings",
 		"admin.NewRequestLogRetentionRunner",
 		"requestLogRetentionRunner.Run",
 		"store.NewResponseAffinityRepository",
@@ -383,6 +386,9 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"ProviderAccountAutoTestEnabled",
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",
+		"SettingsProvider:                gatewaySettingsRuntime",
+		"runtimeReadiness, gatewaySettingsRuntime",
+		"startBackground(\"gateway_settings_refresh\", gatewaySettingsRuntime.Run)",
 		"startBackground(\"provider_account_auto_test\", autoTestRunner.Run)",
 		"startBackground(\"api_key_cleanup\"",
 		"service.PurgeExpiredAPIKeys(ctx)",
@@ -405,10 +411,18 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"go responseAffinityRetentionRunner.Run(",
 		"go apiKeyBudgetMonitor.Run(",
 		"go routingExhaustionProjector.Run(",
+		"go gatewaySettingsRuntime.Run(",
 	} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("main.go contains unsupervised runner %q", forbidden)
 		}
+	}
+	bootstrap := strings.Index(text, "adminService.BootstrapAdmin")
+	loadSettings := strings.Index(text, "gatewaySettingsRuntime.LoadInitial(startupCtx)")
+	listener := strings.Index(text, "net.Listen(\"tcp\", cfg.Addr())")
+	ready := strings.Index(text, "runtimeReadiness.MarkReady()")
+	if bootstrap < 0 || loadSettings < 0 || listener < 0 || ready < 0 || !(bootstrap < loadSettings && loadSettings < listener && listener < ready) {
+		t.Fatalf("startup order invalid: bootstrap=%d load_settings=%d listener=%d ready=%d", bootstrap, loadSettings, listener, ready)
 	}
 }
 

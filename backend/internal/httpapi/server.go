@@ -150,6 +150,10 @@ type RuntimeReadinessSource interface {
 	Snapshot() lifecycle.ReadinessSnapshot
 }
 
+type GatewaySettingsRuntimeStatusSource interface {
+	GatewaySettingsRuntimeStatus() admin.GatewaySettingsRuntimeStatus
+}
+
 type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
@@ -240,6 +244,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	alertActionTester := alertActionTesterFromOptions(options...)
 	readinessMetrics := readinessMetricsObserverFromOptions(options...)
 	runtimeReadiness := runtimeReadinessSourceFromOptions(options...)
+	gatewaySettingsRuntime := gatewaySettingsRuntimeStatusSourceFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -255,10 +260,11 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		response := map[string]string{
-			"status":       "not_ready",
-			"database":     "not_configured",
-			"staticAssets": "error",
-			"runtime":      "ready",
+			"status":          "not_ready",
+			"database":        "not_configured",
+			"staticAssets":    "error",
+			"runtime":         "ready",
+			"gatewaySettings": "ready",
 		}
 		runtimeReady := true
 		if runtimeReadiness != nil {
@@ -267,6 +273,17 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			runtimeReady = snapshot.Ready()
 			if snapshot.Reason != "" {
 				response["runtimeReason"] = snapshot.Reason
+			}
+		}
+		gatewaySettingsReady := true
+		if gatewaySettingsRuntime != nil {
+			status := gatewaySettingsRuntime.GatewaySettingsRuntimeStatus()
+			gatewaySettingsReady = status.Valid
+			switch {
+			case !status.Valid:
+				response["gatewaySettings"] = "invalid"
+			case status.Stale:
+				response["gatewaySettings"] = "stale"
 			}
 		}
 
@@ -286,9 +303,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			readinessMetrics.SetReadiness("database", response["database"] == "ok")
 			readinessMetrics.SetReadiness("static_assets", response["staticAssets"] == "ok")
 			readinessMetrics.SetReadiness("runtime", runtimeReady)
-			readinessMetrics.SetReadiness("overall", response["database"] == "ok" && response["staticAssets"] == "ok" && runtimeReady)
+			readinessMetrics.SetReadiness("gateway_settings", gatewaySettingsReady)
+			readinessMetrics.SetReadiness("overall", response["database"] == "ok" && response["staticAssets"] == "ok" && runtimeReady && gatewaySettingsReady)
 		}
-		if response["database"] == "ok" && response["staticAssets"] == "ok" && runtimeReady {
+		if response["database"] == "ok" && response["staticAssets"] == "ok" && runtimeReady && gatewaySettingsReady {
 			response["status"] = "ok"
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -328,6 +346,9 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			}
 			if requestLogWriteStatusSource != nil {
 				tasks["requestLogWrite"] = requestLogWriteStatusSource.RequestLogWriteStatus()
+			}
+			if gatewaySettingsRuntime != nil {
+				tasks["gatewaySettings"] = gatewaySettingsRuntime.GatewaySettingsRuntimeStatus()
 			}
 			if len(tasks) > 0 {
 				body["tasks"] = tasks
@@ -3135,6 +3156,15 @@ func readinessMetricsObserverFromOptions(options ...any) ReadinessMetricsObserve
 func runtimeReadinessSourceFromOptions(options ...any) RuntimeReadinessSource {
 	for _, option := range options {
 		if source, ok := option.(RuntimeReadinessSource); ok {
+			return source
+		}
+	}
+	return nil
+}
+
+func gatewaySettingsRuntimeStatusSourceFromOptions(options ...any) GatewaySettingsRuntimeStatusSource {
+	for _, option := range options {
+		if source, ok := option.(GatewaySettingsRuntimeStatusSource); ok {
 			return source
 		}
 	}

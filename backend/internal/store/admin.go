@@ -1832,52 +1832,59 @@ func (r *AdminRepository) SaveModelSettings(ctx context.Context, settings admin.
 	return settings, nil
 }
 
-func (r *AdminRepository) GetGatewaySettings(ctx context.Context) (admin.GatewaySettings, error) {
+func (r *AdminRepository) LoadGatewaySettings(ctx context.Context) (admin.GatewaySettingsRecord, error) {
 	var raw []byte
+	var updatedAt time.Time
 	err := r.pool.QueryRow(ctx, `
-		SELECT value
+		SELECT value, updated_at
 		FROM settings
 		WHERE key = $1
-	`, gatewaySettingsKey).Scan(&raw)
+	`, gatewaySettingsKey).Scan(&raw, &updatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return admin.GatewaySettings{}, admin.ErrNotFound
+		return admin.GatewaySettingsRecord{}, admin.ErrNotFound
 	}
 	if err != nil {
-		return admin.GatewaySettings{}, err
+		return admin.GatewaySettingsRecord{}, err
 	}
 
-	var settings admin.GatewaySettings
-	if err := json.Unmarshal(raw, &settings); err != nil {
-		return admin.GatewaySettings{}, err
-	}
-	return settings, nil
+	return decodeGatewaySettingsRecord(raw, updatedAt)
 }
 
-func (r *AdminRepository) SaveGatewaySettings(ctx context.Context, settings admin.GatewaySettings) (admin.GatewaySettings, error) {
+func decodeGatewaySettingsRecord(raw []byte, updatedAt time.Time) (admin.GatewaySettingsRecord, error) {
+	var settings admin.GatewaySettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return admin.GatewaySettingsRecord{}, admin.ErrGatewaySettingsInvalid
+	}
+	return admin.GatewaySettingsRecord{Settings: settings, UpdatedAt: updatedAt.UTC()}, nil
+}
+
+func (r *AdminRepository) SaveGatewaySettings(ctx context.Context, settings admin.GatewaySettings) (admin.GatewaySettingsRecord, error) {
 	value, err := json.Marshal(settings)
 	if err != nil {
-		return admin.GatewaySettings{}, err
+		return admin.GatewaySettingsRecord{}, err
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return admin.GatewaySettings{}, err
+		return admin.GatewaySettingsRecord{}, err
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `
+	var updatedAt time.Time
+	err = tx.QueryRow(ctx, `
 		INSERT INTO settings (key, value, updated_at)
-		VALUES ($1, $2, now())
+		VALUES ($1, $2, clock_timestamp())
 		ON CONFLICT (key) DO UPDATE
 		SET value = EXCLUDED.value,
-			updated_at = now()
-	`, gatewaySettingsKey, value)
+			updated_at = clock_timestamp()
+		RETURNING updated_at
+	`, gatewaySettingsKey, value).Scan(&updatedAt)
 	if err != nil {
-		return admin.GatewaySettings{}, err
+		return admin.GatewaySettingsRecord{}, err
 	}
 	if err := insertIntentSystemEvent(ctx, tx, systemevent.Target{Type: "gateway_settings", ID: "default"}, nil); err != nil {
-		return admin.GatewaySettings{}, err
+		return admin.GatewaySettingsRecord{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return admin.GatewaySettings{}, err
+		return admin.GatewaySettingsRecord{}, err
 	}
-	return settings, nil
+	return admin.GatewaySettingsRecord{Settings: settings, UpdatedAt: updatedAt.UTC()}, nil
 }

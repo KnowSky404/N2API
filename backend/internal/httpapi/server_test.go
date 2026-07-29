@@ -67,6 +67,10 @@ type fakeRequestLogWriteStatusSource struct {
 	status requestlog.WriteStatus
 }
 
+type fakeGatewaySettingsRuntimeStatusSource struct {
+	status admin.GatewaySettingsRuntimeStatus
+}
+
 func (s fakeRequestLogRetentionStatusSource) RequestLogRetentionStatus() admin.RequestLogRetentionStatus {
 	return s.status
 }
@@ -80,6 +84,10 @@ func (s fakeAlertDeliveryStatusSource) AlertDeliveryStatus() alerting.DeliverySt
 }
 
 func (s fakeRequestLogWriteStatusSource) RequestLogWriteStatus() requestlog.WriteStatus {
+	return s.status
+}
+
+func (s fakeGatewaySettingsRuntimeStatusSource) GatewaySettingsRuntimeStatus() admin.GatewaySettingsRuntimeStatus {
 	return s.status
 }
 
@@ -1271,6 +1279,40 @@ func TestReadyzReportsRuntimeLifecycleState(t *testing.T) {
 	}
 }
 
+func TestReadyzRequiresValidGatewaySettingsButAllowsStaleLastKnownGood(t *testing.T) {
+	webFS := fstest.MapFS{"200.html": {Data: []byte("ready")}}
+	for _, test := range []struct {
+		name       string
+		status     admin.GatewaySettingsRuntimeStatus
+		wantCode   int
+		wantState  string
+		wantMetric bool
+	}{
+		{name: "invalid", status: admin.GatewaySettingsRuntimeStatus{Valid: false}, wantCode: http.StatusServiceUnavailable, wantState: "invalid"},
+		{name: "stale last known good", status: admin.GatewaySettingsRuntimeStatus{Valid: true, Stale: true, Source: admin.GatewaySettingsSourceLastKnownGood}, wantCode: http.StatusOK, wantState: "stale", wantMetric: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metrics := &captureReadinessMetrics{}
+			server := NewServer(config.Config{}, staticHealth{}, nil, nil, webFS, metrics, fakeGatewaySettingsRuntimeStatusSource{status: test.status})
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			if recorder.Code != test.wantCode {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.wantCode)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["gatewaySettings"] != test.wantState {
+				t.Fatalf("gatewaySettings = %q, want %q", body["gatewaySettings"], test.wantState)
+			}
+			if metrics.values["gateway_settings"] != test.wantMetric || metrics.values["overall"] != test.wantMetric {
+				t.Fatalf("readiness metrics = %+v", metrics.values)
+			}
+		})
+	}
+}
+
 func TestAdminHealthIncludesDatabaseStatus(t *testing.T) {
 	build := buildinfo.Info{Version: "sha-0123456789ab", Commit: "secret-detailed-commit", BuiltAt: "2026-07-21T08:30:00Z"}
 	server := NewServer(config.Config{}, staticHealth{err: nil}, newFakeAdminService(), nil, build)
@@ -1329,6 +1371,40 @@ func TestAdminHealthIncludesBuildIdentityForAuthenticatedSession(t *testing.T) {
 	}
 	if body.Build == nil || *body.Build != build {
 		t.Fatalf("Build = %+v, want %+v", body.Build, build)
+	}
+}
+
+func TestAdminHealthExposesBoundedGatewaySettingsStatusOnlyAfterAuthentication(t *testing.T) {
+	loadedAt := time.Date(2026, time.July, 29, 10, 0, 0, 0, time.UTC)
+	source := fakeGatewaySettingsRuntimeStatusSource{status: admin.GatewaySettingsRuntimeStatus{
+		LoadedAt: &loadedAt, LastErrorCode: admin.GatewaySettingsLoadFailedErrorCode,
+		ConsecutiveFailures: 2, Source: admin.GatewaySettingsSourceLastKnownGood, Valid: true, Stale: true,
+	}}
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, source)
+
+	unauthenticated := httptest.NewRecorder()
+	server.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/admin/health", nil))
+	if strings.Contains(unauthenticated.Body.String(), "gatewaySettings") {
+		t.Fatalf("unauthenticated health leaked gateway settings status: %s", unauthenticated.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	request.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{"gatewaySettings", admin.GatewaySettingsLoadFailedErrorCode, admin.GatewaySettingsSourceLastKnownGood} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("authenticated health missing %q: %s", want, body)
+		}
+	}
+	for _, prohibited := range []string{"maxConcurrentGatewayRequests", "providerAccountAutoTestEnabled", "requestLogRetentionDays"} {
+		if strings.Contains(body, prohibited) {
+			t.Fatalf("authenticated health leaked setting value field %q: %s", prohibited, body)
+		}
 	}
 }
 

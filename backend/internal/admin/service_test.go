@@ -1944,40 +1944,45 @@ func requireBootstrap(t *testing.T, service *Service, username, password string)
 }
 
 type memoryRepo struct {
-	admin                     Admin
-	nextAdminID               int64
-	nextSessionID             int64
-	sessions                  map[string]memorySession
-	keys                      map[int64]memoryAPIKey
-	nextAPIKeyID              int64
-	touchErr                  error
-	logs                      []RequestLog
-	lastLogFilter             RequestLogFilter
-	lastStreamMaxRows         int
-	streamCalls               int
-	budgetUsage               map[int64]APIKeyBudgetUsage
-	routingPools              map[int64]RoutingPool
-	usageSummary              UsageSummary
-	lastUsageSince            time.Time
-	lastUsageGroupBy          string
-	modelSettings             ModelSettings
-	gatewaySettings           GatewaySettings
-	deletedRequestLogsBefore  time.Time
-	deletedRequestLogCount    int64
-	requestLogRetentionLease  RequestLogRetentionLease
-	requestLogRetentionStats  RequestLogRetentionStats
-	requestLogRetentionBusy   bool
-	usagePricing              UsagePricing
-	usagePricingSaveCount     int
-	opsAccountHealth          OpsAccountHealth
-	lastOpsAccountHealthSince time.Time
-	opsAccountTests           []OpsAccountTest
-	lastOpsAccountTestsSince  time.Time
-	lastOpsAccountTestsLimit  int
-	opsCostBreakdown          OpsCostBreakdown
-	lastOpsCostSince          time.Time
-	lastFingerprintInput      FingerprintProfileInput
-	lastFingerprintUpdateID   int64
+	admin                          Admin
+	nextAdminID                    int64
+	nextSessionID                  int64
+	sessions                       map[string]memorySession
+	keys                           map[int64]memoryAPIKey
+	nextAPIKeyID                   int64
+	touchErr                       error
+	logs                           []RequestLog
+	lastLogFilter                  RequestLogFilter
+	lastStreamMaxRows              int
+	streamCalls                    int
+	budgetUsage                    map[int64]APIKeyBudgetUsage
+	routingPools                   map[int64]RoutingPool
+	usageSummary                   UsageSummary
+	lastUsageSince                 time.Time
+	lastUsageGroupBy               string
+	modelSettings                  ModelSettings
+	gatewaySettings                GatewaySettings
+	gatewaySettingsUpdatedAt       time.Time
+	gatewaySettingsLoadErr         error
+	gatewaySettingsSaveErr         error
+	gatewaySettingsLoadCount       int
+	gatewaySettingsZeroSaveVersion bool
+	deletedRequestLogsBefore       time.Time
+	deletedRequestLogCount         int64
+	requestLogRetentionLease       RequestLogRetentionLease
+	requestLogRetentionStats       RequestLogRetentionStats
+	requestLogRetentionBusy        bool
+	usagePricing                   UsagePricing
+	usagePricingSaveCount          int
+	opsAccountHealth               OpsAccountHealth
+	lastOpsAccountHealthSince      time.Time
+	opsAccountTests                []OpsAccountTest
+	lastOpsAccountTestsSince       time.Time
+	lastOpsAccountTestsLimit       int
+	opsCostBreakdown               OpsCostBreakdown
+	lastOpsCostSince               time.Time
+	lastFingerprintInput           FingerprintProfileInput
+	lastFingerprintUpdateID        int64
 }
 
 type memorySession struct {
@@ -2521,16 +2526,30 @@ func (r *memoryRepo) SaveModelSettings(_ context.Context, settings ModelSettings
 	return settings, nil
 }
 
-func (r *memoryRepo) GetGatewaySettings(_ context.Context) (GatewaySettings, error) {
-	if r.gatewaySettings == (GatewaySettings{}) {
-		return GatewaySettings{}, ErrNotFound
+func (r *memoryRepo) LoadGatewaySettings(_ context.Context) (GatewaySettingsRecord, error) {
+	r.gatewaySettingsLoadCount++
+	if r.gatewaySettingsLoadErr != nil {
+		return GatewaySettingsRecord{}, r.gatewaySettingsLoadErr
 	}
-	return r.gatewaySettings, nil
+	if r.gatewaySettings == (GatewaySettings{}) {
+		return GatewaySettingsRecord{}, ErrNotFound
+	}
+	return GatewaySettingsRecord{Settings: r.gatewaySettings, UpdatedAt: r.gatewaySettingsUpdatedAt}, nil
 }
 
-func (r *memoryRepo) SaveGatewaySettings(_ context.Context, settings GatewaySettings) (GatewaySettings, error) {
+func (r *memoryRepo) SaveGatewaySettings(_ context.Context, settings GatewaySettings) (GatewaySettingsRecord, error) {
+	if r.gatewaySettingsSaveErr != nil {
+		return GatewaySettingsRecord{}, r.gatewaySettingsSaveErr
+	}
 	r.gatewaySettings = settings
-	return settings, nil
+	if r.gatewaySettingsUpdatedAt.IsZero() {
+		r.gatewaySettingsUpdatedAt = time.Now().UTC()
+	}
+	updatedAt := r.gatewaySettingsUpdatedAt
+	if r.gatewaySettingsZeroSaveVersion {
+		updatedAt = time.Time{}
+	}
+	return GatewaySettingsRecord{Settings: settings, UpdatedAt: updatedAt}, nil
 }
 
 func (r *memoryRepo) GetUsagePricing(_ context.Context) (UsagePricing, error) {

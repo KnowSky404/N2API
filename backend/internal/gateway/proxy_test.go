@@ -278,11 +278,70 @@ type fakeGatewaySettingsProvider struct {
 	err      error
 }
 
+type countingGatewaySettingsLoader struct {
+	record admin.GatewaySettingsRecord
+	calls  atomic.Int32
+}
+
+func (l *countingGatewaySettingsLoader) LoadGatewaySettings(context.Context) (admin.GatewaySettingsRecord, error) {
+	l.calls.Add(1)
+	return l.record, nil
+}
+
 func (p *fakeGatewaySettingsProvider) GetGatewaySettings(context.Context) (admin.GatewaySettings, error) {
 	if p.err != nil {
 		return admin.GatewaySettings{}, p.err
 	}
 	return p.settings, nil
+}
+
+func TestProxyGatewayRequestsDoNotReloadRuntimeSettings(t *testing.T) {
+	loader := &countingGatewaySettingsLoader{record: admin.GatewaySettingsRecord{
+		Settings:  admin.GatewaySettings{MaxConcurrentGatewayRequests: 10},
+		UpdatedAt: time.Date(2026, time.July, 29, 10, 0, 0, 0, time.UTC),
+	}}
+	runtime, err := admin.NewGatewaySettingsRuntime(loader, admin.GatewaySettings{}, admin.GatewaySettingsRuntimeConfig{})
+	if err != nil {
+		t.Fatalf("NewGatewaySettingsRuntime: %v", err)
+	}
+	if err := runtime.LoadInitial(context.Background()); err != nil {
+		t.Fatalf("LoadInitial: %v", err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"id":"chatcmpl_test","choices":[]}`)),
+			Request:    r,
+		}, nil
+	})}
+	proxy := NewProxyWithClient(
+		&fakeAPIKeyAuthenticator{},
+		&fakeSelectedAccountProvider{accounts: []SelectedAccount{
+			{AccountID: 1, AuthorizationToken: "upstream-token"},
+			{AccountID: 1, AuthorizationToken: "upstream-token"},
+			{AccountID: 1, AuthorizationToken: "upstream-token"},
+			{AccountID: 1, AuthorizationToken: "upstream-token"},
+			{AccountID: 1, AuthorizationToken: "upstream-token"},
+		}},
+		Config{UpstreamBaseURL: "https://upstream.example.test", SettingsProvider: runtime},
+		client,
+	)
+	defer proxy.Close()
+	loadCount := loader.calls.Load()
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
+		req.Header.Set("Authorization", "Bearer n2api_client_secret")
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		proxy.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("request %d status = %d body=%s", i, recorder.Code, recorder.Body.String())
+		}
+	}
+	if got := loader.calls.Load(); got != loadCount {
+		t.Fatalf("gateway requests reloaded settings: before=%d after=%d", loadCount, got)
+	}
 }
 
 type fakeErrorPassthroughRuleProvider struct {

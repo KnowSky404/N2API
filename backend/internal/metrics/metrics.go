@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,7 +16,7 @@ import (
 const (
 	MaxOwnedSeries            = 1600
 	MaxScrapeSeries           = 2000
-	MaxInitializedOwnedSeries = 1518
+	MaxInitializedOwnedSeries = 1525
 )
 
 var (
@@ -37,40 +38,46 @@ var (
 	refreshModes      = []string{"manual", "automatic", "rejected_token", "other"}
 	refreshOutcomes   = []string{"success", "failure", "skipped", "other"}
 	persistenceStates = []string{"success", "failure"}
+	settingsOutcomes  = []string{"success", "failure", "other"}
 	alertAdapters     = []string{"generic_webhook", "ntfy", "gotify", "other"}
 	alertOutcomes     = []string{"delivered", "failed", "dropped", "deduplicated", "recovery", "other"}
-	readinessParts    = []string{"overall", "database", "static_assets", "runtime", "other"}
+	readinessParts    = []string{"overall", "database", "static_assets", "runtime", "gateway_settings", "other"}
 )
 
 type Registry struct {
 	registry *prometheus.Registry
 
-	gatewayRequests    *prometheus.CounterVec
-	gatewayDuration    *prometheus.HistogramVec
-	gatewayActive      prometheus.Gauge
-	upstreamAttempts   *prometheus.CounterVec
-	fallbacks          *prometheus.CounterVec
-	routingFailures    *prometheus.CounterVec
-	limitRejections    *prometheus.CounterVec
-	streams            *prometheus.CounterVec
-	usageObservations  *prometheus.CounterVec
-	tokens             *prometheus.CounterVec
-	estimatedCost      prometheus.Counter
-	providerAccounts   *prometheus.GaugeVec
-	providerRefreshes  *prometheus.CounterVec
-	requestLogWrites   *prometheus.CounterVec
-	systemEventWrites  *prometheus.CounterVec
-	taskRuns           *prometheus.CounterVec
-	taskDuration       *prometheus.HistogramVec
-	taskRunning        *prometheus.GaugeVec
-	taskLastSuccess    *prometheus.GaugeVec
-	taskLastFailure    *prometheus.GaugeVec
-	alertQueueDepth    prometheus.Gauge
-	alertNotifications *prometheus.CounterVec
-	alertDuration      *prometheus.HistogramVec
-	readiness          *prometheus.GaugeVec
-	draining           prometheus.Gauge
-	providerAccountsMu sync.Mutex
+	gatewayRequests          *prometheus.CounterVec
+	gatewayDuration          *prometheus.HistogramVec
+	gatewayActive            prometheus.Gauge
+	upstreamAttempts         *prometheus.CounterVec
+	fallbacks                *prometheus.CounterVec
+	routingFailures          *prometheus.CounterVec
+	limitRejections          *prometheus.CounterVec
+	streams                  *prometheus.CounterVec
+	usageObservations        *prometheus.CounterVec
+	tokens                   *prometheus.CounterVec
+	estimatedCost            prometheus.Counter
+	providerAccounts         *prometheus.GaugeVec
+	providerRefreshes        *prometheus.CounterVec
+	requestLogWrites         *prometheus.CounterVec
+	systemEventWrites        *prometheus.CounterVec
+	taskRuns                 *prometheus.CounterVec
+	taskDuration             *prometheus.HistogramVec
+	taskRunning              *prometheus.GaugeVec
+	taskLastSuccess          *prometheus.GaugeVec
+	taskLastFailure          *prometheus.GaugeVec
+	alertQueueDepth          prometheus.Gauge
+	alertNotifications       *prometheus.CounterVec
+	alertDuration            *prometheus.HistogramVec
+	readiness                *prometheus.GaugeVec
+	draining                 prometheus.Gauge
+	gatewaySettingsValid     prometheus.Gauge
+	gatewaySettingsStale     prometheus.Gauge
+	gatewaySettingsRefreshes *prometheus.CounterVec
+	gatewaySettingsAge       prometheus.GaugeFunc
+	gatewaySettingsLoadedAt  atomic.Int64
+	providerAccountsMu       sync.Mutex
 }
 
 type ProviderAccount struct {
@@ -105,6 +112,20 @@ func New(pool *pgxpool.Pool) *Registry {
 	r.alertDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "n2api_alert_delivery_duration_seconds", Help: "Alert destination delivery duration.", Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30}}, []string{"adapter"})
 	r.readiness = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "n2api_readiness", Help: "Last observed readiness result by fixed component."}, []string{"component"})
 	r.draining = prometheus.NewGauge(prometheus.GaugeOpts{Name: "n2api_draining", Help: "Whether the process is draining and no longer ready."})
+	r.gatewaySettingsValid = prometheus.NewGauge(prometheus.GaugeOpts{Name: "n2api_gateway_settings_snapshot_valid", Help: "Whether the gateway settings runtime has a valid snapshot."})
+	r.gatewaySettingsStale = prometheus.NewGauge(prometheus.GaugeOpts{Name: "n2api_gateway_settings_snapshot_stale", Help: "Whether the gateway settings runtime is serving a last-known-good snapshot after a refresh failure."})
+	r.gatewaySettingsRefreshes = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "n2api_gateway_settings_refresh_total", Help: "Total gateway settings runtime refresh outcomes."}, []string{"outcome"})
+	r.gatewaySettingsAge = prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "n2api_gateway_settings_snapshot_age_seconds", Help: "Age of the active gateway settings snapshot in seconds."}, func() float64 {
+		loadedAt := r.gatewaySettingsLoadedAt.Load()
+		if loadedAt == 0 {
+			return 0
+		}
+		age := time.Since(time.Unix(0, loadedAt)).Seconds()
+		if age < 0 {
+			return 0
+		}
+		return age
+	})
 
 	r.registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -116,6 +137,7 @@ func New(pool *pgxpool.Pool) *Registry {
 		r.providerRefreshes, r.requestLogWrites, r.systemEventWrites, r.taskRuns,
 		r.taskDuration, r.taskRunning, r.taskLastSuccess, r.taskLastFailure,
 		r.alertQueueDepth, r.alertNotifications, r.alertDuration, r.readiness, r.draining,
+		r.gatewaySettingsValid, r.gatewaySettingsStale, r.gatewaySettingsRefreshes, r.gatewaySettingsAge,
 		newPoolCollector(pool),
 	)
 	r.initializeBoundedSeries()
@@ -191,6 +213,11 @@ func (r *Registry) initializeBoundedSeries() {
 	for _, component := range readinessParts {
 		r.readiness.WithLabelValues(component).Set(0)
 	}
+	for _, outcome := range settingsOutcomes {
+		r.gatewaySettingsRefreshes.WithLabelValues(outcome)
+	}
+	r.gatewaySettingsValid.Set(0)
+	r.gatewaySettingsStale.Set(0)
 	r.draining.Set(0)
 }
 
@@ -272,6 +299,32 @@ func (r *Registry) ObserveProviderRefresh(mode, outcome string) {
 	if r != nil {
 		r.providerRefreshes.WithLabelValues(normalize(mode, refreshModes), normalize(outcome, refreshOutcomes)).Inc()
 	}
+}
+
+func (r *Registry) ObserveGatewaySettingsRefresh(outcome string) {
+	if r != nil {
+		r.gatewaySettingsRefreshes.WithLabelValues(normalize(outcome, settingsOutcomes)).Inc()
+	}
+}
+
+func (r *Registry) SetGatewaySettingsSnapshot(valid, stale bool, loadedAt time.Time) {
+	if r == nil {
+		return
+	}
+	r.gatewaySettingsValid.Set(boolFloat(valid))
+	r.gatewaySettingsStale.Set(boolFloat(stale))
+	loadedAtUnixNano := int64(0)
+	if !loadedAt.IsZero() {
+		loadedAtUnixNano = loadedAt.UTC().UnixNano()
+	}
+	r.gatewaySettingsLoadedAt.Store(loadedAtUnixNano)
+}
+
+func boolFloat(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (r *Registry) ObserveRequestLogWrite(err error) {

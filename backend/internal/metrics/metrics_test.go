@@ -47,6 +47,8 @@ func TestRegistryStaysWithinSeriesBudgetsAndExcludesCanaries(t *testing.T) {
 	r.ObserveAlertDeliveryDuration("secret-adapter-canary", time.Millisecond)
 	r.SetReadiness("secret-component-canary", true)
 	r.SetDraining(true)
+	r.SetGatewaySettingsSnapshot(true, true, time.Now().Add(-time.Second))
+	r.ObserveGatewaySettingsRefresh("secret-settings-outcome-canary")
 	families, err := r.Gatherer().Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -72,9 +74,35 @@ func TestRegistryStaysWithinSeriesBudgetsAndExcludesCanaries(t *testing.T) {
 	if !strings.Contains(body, "n2api_draining 1") {
 		t.Fatal("scrape does not expose draining state")
 	}
-	for _, canary := range []string{"resp_canary", "owner@example.com", "secret-source-canary", "secret-account-canary", "secret-state-canary", "secret-adapter-canary", "secret-outcome-canary", "secret-component-canary"} {
+	for _, canary := range []string{"resp_canary", "owner@example.com", "secret-source-canary", "secret-account-canary", "secret-state-canary", "secret-adapter-canary", "secret-outcome-canary", "secret-component-canary", "secret-settings-outcome-canary"} {
 		if strings.Contains(body, canary) {
 			t.Fatalf("scrape contains prohibited canary %q", canary)
+		}
+	}
+}
+
+func TestGatewaySettingsMetricsExposeOnlyBoundedRuntimeState(t *testing.T) {
+	r := New(nil)
+	r.SetGatewaySettingsSnapshot(true, true, time.Now().Add(-5*time.Second))
+	r.ObserveGatewaySettingsRefresh("success")
+	r.ObserveGatewaySettingsRefresh("failure")
+	recorder := httptest.NewRecorder()
+	r.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := recorder.Body.String()
+	for _, want := range []string{
+		"n2api_gateway_settings_snapshot_valid 1",
+		"n2api_gateway_settings_snapshot_stale 1",
+		"n2api_gateway_settings_refresh_total{outcome=\"success\"} 1",
+		"n2api_gateway_settings_refresh_total{outcome=\"failure\"} 1",
+		"n2api_gateway_settings_snapshot_age_seconds ",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("metrics missing %q", want)
+		}
+	}
+	for _, prohibited := range []string{"maxConcurrentGatewayRequests", "gateway_settings_load_failed"} {
+		if strings.Contains(body, prohibited) {
+			t.Fatalf("metrics leaked runtime detail %q", prohibited)
 		}
 	}
 }

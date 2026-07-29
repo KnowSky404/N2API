@@ -55,6 +55,7 @@ type Config struct {
 	EncryptionSecret       string
 	EncryptionKeyring      *secret.Keyring
 	DefaultGatewaySettings GatewaySettings
+	GatewaySettingsRuntime *GatewaySettingsRuntime
 	SystemEvents           SystemEventRepository
 }
 
@@ -393,8 +394,8 @@ type Repository interface {
 	SaveUsagePricing(ctx context.Context, pricing UsagePricing) (UsagePricing, error)
 	GetModelSettings(ctx context.Context) (ModelSettings, error)
 	SaveModelSettings(ctx context.Context, settings ModelSettings) (ModelSettings, error)
-	GetGatewaySettings(ctx context.Context) (GatewaySettings, error)
-	SaveGatewaySettings(ctx context.Context, settings GatewaySettings) (GatewaySettings, error)
+	LoadGatewaySettings(ctx context.Context) (GatewaySettingsRecord, error)
+	SaveGatewaySettings(ctx context.Context, settings GatewaySettings) (GatewaySettingsRecord, error)
 	GetOpsErrorStats(ctx context.Context, since time.Time) (OpsErrorStats, error)
 	GetOpsThroughputTrend(ctx context.Context, since time.Time, interval string) (OpsThroughputTrend, error)
 	GetOpsErrorTrend(ctx context.Context, since time.Time, interval string) (OpsErrorTrend, error)
@@ -418,6 +419,7 @@ type Service struct {
 	encryptionSecret        string
 	encryptionKeyring       *secret.Keyring
 	defaultGatewaySettings  GatewaySettings
+	gatewaySettingsRuntime  *GatewaySettingsRuntime
 	officialDocumentFetcher OfficialDocumentFetcher
 	now                     func() time.Time
 	systemEvents            SystemEventRepository
@@ -435,6 +437,7 @@ func NewService(repo Repository, cfg Config) *Service {
 		encryptionSecret:        cfg.EncryptionSecret,
 		encryptionKeyring:       cfg.EncryptionKeyring,
 		defaultGatewaySettings:  cfg.DefaultGatewaySettings,
+		gatewaySettingsRuntime:  cfg.GatewaySettingsRuntime,
 		officialDocumentFetcher: NewHTTPOfficialDocumentFetcher(30 * time.Second),
 		now:                     time.Now,
 		systemEvents:            cfg.SystemEvents,
@@ -1292,9 +1295,12 @@ func (s *Service) UpdateModelSettings(ctx context.Context, settings ModelSetting
 }
 
 func (s *Service) GetGatewaySettings(ctx context.Context) (GatewaySettings, error) {
-	settings, err := s.repo.GetGatewaySettings(ctx)
+	if s.gatewaySettingsRuntime != nil {
+		return s.gatewaySettingsRuntime.GetGatewaySettings(ctx)
+	}
+	record, err := s.repo.LoadGatewaySettings(ctx)
 	if err == nil {
-		return normalizeGatewaySettings(settings)
+		return normalizeGatewaySettings(record.Settings)
 	}
 	if errors.Is(err, ErrNotFound) {
 		return normalizeGatewaySettings(s.defaultGatewaySettings)
@@ -1308,7 +1314,17 @@ func (s *Service) UpdateGatewaySettings(ctx context.Context, settings GatewaySet
 		return GatewaySettings{}, err
 	}
 	ctx = withAuditIntent(ctx, systemevent.ActionGatewaySettingsUpdated, "gateway_settings", "default", "", changedFields("limits", "auto_test", "request_log_retention"))
-	return s.repo.SaveGatewaySettings(ctx, normalized)
+	record, err := s.repo.SaveGatewaySettings(ctx, normalized)
+	if err != nil {
+		return GatewaySettings{}, err
+	}
+	if s.gatewaySettingsRuntime != nil {
+		if err := s.gatewaySettingsRuntime.PublishPersisted(record); err != nil {
+			s.gatewaySettingsRuntime.ScheduleRefresh()
+			return GatewaySettings{}, err
+		}
+	}
+	return record.Settings, nil
 }
 
 func (s *Service) CleanupRequestLogs(ctx context.Context, now time.Time) (RequestLogCleanupResult, error) {

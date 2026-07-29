@@ -268,11 +268,13 @@ func runServer() int {
 	var taskMetrics backgroundTaskObserver
 	var gatewayMetrics gateway.MetricsObserver
 	var providerMetrics provider.MetricsObserver
+	var gatewaySettingsObserver admin.GatewaySettingsRuntimeObserver
 	if cfg.MetricsEnabled {
 		metricsRegistry = metrics.New(pool)
 		taskMetrics = metricsRegistry
 		gatewayMetrics = metricsRegistry
 		providerMetrics = metricsRegistry
+		gatewaySettingsObserver = metricsRegistry
 	}
 	startupCtx := signalCtx
 	if metricsRegistry != nil {
@@ -330,20 +332,29 @@ func runServer() int {
 		systemEventRepo.SetWriteObserver(metricsRegistry)
 	}
 	adminRepo := store.NewAdminRepository(pool, cfg.EncryptionSecret)
+	defaultGatewaySettings := admin.GatewaySettings{
+		MaxConcurrentGatewayRequests:           cfg.GatewayMaxConcurrentRequests,
+		MaxConcurrentRequestsPerAccount:        cfg.GatewayMaxConcurrentRequestsPerAccount,
+		MaxConcurrentRequestsPerKey:            cfg.GatewayMaxConcurrentRequestsPerKey,
+		RequestsPerMinutePerKey:                cfg.GatewayRequestsPerMinutePerKey,
+		TokensPerMinutePerKey:                  cfg.GatewayTokensPerMinutePerKey,
+		ProviderAccountAutoTestEnabled:         cfg.ProviderAccountAutoTestEnabled,
+		ProviderAccountAutoTestIntervalSeconds: int(cfg.ProviderAccountAutoTestInterval / time.Second),
+	}
+	gatewaySettingsRuntime, err := admin.NewGatewaySettingsRuntime(adminRepo, defaultGatewaySettings, admin.GatewaySettingsRuntimeConfig{
+		Logger: slog.Default(), Observer: gatewaySettingsObserver,
+	})
+	if err != nil {
+		slog.Error("gateway settings runtime configuration invalid", "error_code", "gateway_settings_runtime_invalid")
+		return 1
+	}
 	adminService := admin.NewService(adminRepo, admin.Config{
-		SessionTTL:        cfg.AdminSessionTTL,
-		EncryptionSecret:  cfg.EncryptionSecret,
-		EncryptionKeyring: cfg.EncryptionKeyring,
-		SystemEvents:      systemEventRepo,
-		DefaultGatewaySettings: admin.GatewaySettings{
-			MaxConcurrentGatewayRequests:           cfg.GatewayMaxConcurrentRequests,
-			MaxConcurrentRequestsPerAccount:        cfg.GatewayMaxConcurrentRequestsPerAccount,
-			MaxConcurrentRequestsPerKey:            cfg.GatewayMaxConcurrentRequestsPerKey,
-			RequestsPerMinutePerKey:                cfg.GatewayRequestsPerMinutePerKey,
-			TokensPerMinutePerKey:                  cfg.GatewayTokensPerMinutePerKey,
-			ProviderAccountAutoTestEnabled:         cfg.ProviderAccountAutoTestEnabled,
-			ProviderAccountAutoTestIntervalSeconds: int(cfg.ProviderAccountAutoTestInterval / time.Second),
-		},
+		SessionTTL:             cfg.AdminSessionTTL,
+		EncryptionSecret:       cfg.EncryptionSecret,
+		EncryptionKeyring:      cfg.EncryptionKeyring,
+		SystemEvents:           systemEventRepo,
+		DefaultGatewaySettings: defaultGatewaySettings,
+		GatewaySettingsRuntime: gatewaySettingsRuntime,
 	})
 	if err := adminService.BootstrapAdmin(migrationCriticalCtx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
 		if migrationCriticalCtx.Err() != nil && signalCtx.Err() == nil {
@@ -375,6 +386,13 @@ func runServer() int {
 			slog.Error("alert delivery listener unavailable", "error_code", "alert_delivery_listener_unavailable")
 			return 1
 		}
+	}
+	if err := gatewaySettingsRuntime.LoadInitial(startupCtx); err != nil {
+		if initialAlertSubscription != nil {
+			initialAlertSubscription.Close()
+		}
+		slog.Error("gateway settings initial load failed", "error_code", "gateway_settings_initial_load_failed")
+		return 1
 	}
 	alertDispatcher := alerting.NewDispatcher(alerting.DispatcherConfig{
 		Enabled: cfg.AlertDeliveryEnabled, Service: alertingService, Recorder: systemEventRepo,
@@ -420,7 +438,7 @@ func runServer() int {
 		Metrics:               providerMetrics,
 	})
 	autoTestRunner := provider.NewAutoTestRunnerWithConfigSource(providerService, func(ctx context.Context) (provider.AutoTestRunnerConfig, error) {
-		settings, err := adminService.GetGatewaySettings(ctx)
+		settings, err := gatewaySettingsRuntime.GetGatewaySettings(ctx)
 		if err != nil {
 			return provider.AutoTestRunnerConfig{}, err
 		}
@@ -475,7 +493,7 @@ func runServer() int {
 		UpstreamConnectTimeout:          cfg.UpstreamConnectTimeout,
 		UpstreamTLSHandshakeTimeout:     cfg.UpstreamTLSHandshakeTimeout,
 		UpstreamSSEIdleTimeout:          cfg.UpstreamSSEIdleTimeout,
-		SettingsProvider:                adminService,
+		SettingsProvider:                gatewaySettingsRuntime,
 		BudgetProvider:                  adminService,
 		ErrorPassthroughRulesProvider:   adminService,
 		ResponseAffinityStore:           responseAffinityRepo,
@@ -513,7 +531,7 @@ func runServer() int {
 
 	server := newHTTPServer(
 		cfg,
-		requestTracker.Wrap(httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry, runtimeReadiness)),
+		requestTracker.Wrap(httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry, runtimeReadiness, gatewaySettingsRuntime)),
 		requestRootCtx,
 	)
 	var metricsServer *http.Server
@@ -584,9 +602,12 @@ func runServer() int {
 			return nil
 		})
 	}
-	backgroundStartErr := startBackground("api_key_cleanup", func(ctx context.Context) {
-		runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)
-	})
+	backgroundStartErr := startBackground("gateway_settings_refresh", gatewaySettingsRuntime.Run)
+	if backgroundStartErr == nil {
+		backgroundStartErr = startBackground("api_key_cleanup", func(ctx context.Context) {
+			runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)
+		})
+	}
 	if backgroundStartErr == nil && cfg.SystemEventRetentionDays > 0 {
 		backgroundStartErr = startBackground("system_event_retention", func(ctx context.Context) {
 			runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour, taskMetrics)
