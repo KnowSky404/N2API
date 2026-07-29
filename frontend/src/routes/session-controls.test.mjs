@@ -360,6 +360,30 @@ test('password change reports the number of other sessions revoked', async () =>
   assert.equal(changePasswordForm.newPassword, '');
 });
 
+test('password change preserves surrounding whitespace and unicode bytes', async () => {
+  const currentPassword = ' \u00a0current-password\u3000 ';
+  const newPassword = ' \u00a0new-password\u3000 ';
+  let request = null;
+  Object.assign(changePasswordForm, {
+    currentPassword,
+    newPassword,
+    submitting: false,
+    error: '',
+    saved: false,
+    revokedOtherSessions: 0
+  });
+  globalThis.fetch = async (path, options = {}) => {
+    request = { path: String(path), options };
+    return Response.json({ ok: true, revokedOtherSessions: 0 });
+  };
+
+  await changePassword({ preventDefault() {} });
+
+  assert.equal(request.path, '/api/admin/change-password');
+  assert.equal(request.options.method, 'POST');
+  assert.deepEqual(JSON.parse(request.options.body), { currentPassword, newPassword });
+});
+
 test('change password rejects a new password shorter than the shared byte minimum', async () => {
   let fetchCalls = 0;
   Object.assign(changePasswordForm, {

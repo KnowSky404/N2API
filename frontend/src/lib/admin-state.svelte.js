@@ -2020,8 +2020,8 @@ export async function changePassword(event) {
   changePasswordForm.saved = false;
   changePasswordForm.revokedOtherSessions = 0;
 
-  const currentPassword = changePasswordForm.currentPassword.trim();
-  const newPassword = changePasswordForm.newPassword.trim();
+  const currentPassword = changePasswordForm.currentPassword;
+  const newPassword = changePasswordForm.newPassword;
   if (!currentPassword || !newPassword) {
     changePasswordForm.error = 'Both fields are required.';
     return;
