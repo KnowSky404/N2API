@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -14,7 +15,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const requestLogProfileRows = 1_000_000
+const (
+	requestLogProfileScaleRows = 100_000
+	requestLogProfileRows      = 1_000_000
+)
 
 func TestRequestLogQueryProfile(t *testing.T) {
 	if os.Getenv("N2API_REQUEST_LOG_QUERY_PROFILE") != "1" {
@@ -28,7 +32,14 @@ func TestRequestLogQueryProfile(t *testing.T) {
 	ctx := context.Background()
 	pool := newRequestLogProfilePool(t, ctx, dsn)
 	dropRequestLogProfileSecondaryIndexes(t, ctx, pool)
-	seedRequestLogProfile(t, ctx, pool, requestLogProfileRows)
+	seedRequestLogProfileDimensions(t, ctx, pool)
+	seedRequestLogProfileRows(t, ctx, pool, 1, requestLogProfileScaleRows)
+	applyCandidateRequestLogIndexes(t, ctx, pool)
+	mustExecProfile(t, ctx, pool, "ANALYZE request_logs")
+	smallPage := explainScalableRequestLogPage(t, ctx, pool, requestLogProfileScaleRows)
+
+	dropRequestLogProfileSecondaryIndexes(t, ctx, pool)
+	seedRequestLogProfileRows(t, ctx, pool, requestLogProfileScaleRows+1, requestLogProfileRows)
 
 	applyLegacyRequestLogIndexes(t, ctx, pool)
 	mustExecProfile(t, ctx, pool, "ANALYZE request_logs")
@@ -46,6 +57,8 @@ func TestRequestLogQueryProfile(t *testing.T) {
 		t.Fatalf("candidate duplicate index groups = %d, want 0", duplicates)
 	}
 	runRequestLogQueryProfile(t, ctx, pool, "candidate")
+	largePage := explainScalableRequestLogPage(t, ctx, pool, requestLogProfileRows)
+	assertScalableRequestLogPages(t, smallPage, largePage)
 	runRequestLogWriteProfile(t, ctx, pool)
 }
 
@@ -88,7 +101,7 @@ func newRequestLogProfilePool(t *testing.T, ctx context.Context, dsn string) *pg
 	return pool
 }
 
-func seedRequestLogProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool, rowCount int) {
+func seedRequestLogProfileDimensions(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	mustExecProfile(t, ctx, pool, `
 		INSERT INTO client_api_keys (id, name, key_hash, prefix)
@@ -105,7 +118,10 @@ func seedRequestLogProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		SELECT id, 'profile-pool-' || id
 		FROM generate_series(1, 5) AS pools(id)
 	`)
+}
 
+func seedRequestLogProfileRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, first, last int) {
+	t.Helper()
 	started := time.Now()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO request_logs (
@@ -143,11 +159,11 @@ func seedRequestLogProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 			'profile-pool-' || CASE WHEN n % 10 < 6 THEN 1 ELSE (n % 5) + 1 END,
 			CASE WHEN n % 50 = 0 THEN 2 ELSE 1 END,
 			CASE WHEN n % 50 = 0 THEN 1 ELSE 0 END
-		FROM generate_series(1, $1::bigint) AS rows(n)
-	`, rowCount); err != nil {
-		t.Fatalf("seed %d request logs: %v", rowCount, err)
+		FROM generate_series($1::bigint, $2::bigint) AS rows(n)
+	`, first, last); err != nil {
+		t.Fatalf("seed request logs %d..%d: %v", first, last, err)
 	}
-	t.Logf("PROFILE seed rows=%d elapsed_ms=%.3f", rowCount, float64(time.Since(started).Microseconds())/1000)
+	t.Logf("PROFILE seed first=%d last=%d rows=%d elapsed_ms=%.3f", first, last, last-first+1, float64(time.Since(started).Microseconds())/1000)
 }
 
 func dropRequestLogProfileSecondaryIndexes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -204,6 +220,10 @@ func applyCandidateRequestLogIndexes(t *testing.T, ctx context.Context, pool *pg
 		"DROP INDEX IF EXISTS request_logs_provider_account_usage_idx",
 		"DROP INDEX IF EXISTS request_logs_model_usage_idx",
 		"DROP INDEX IF EXISTS request_logs_provider_created_at_idx",
+		"CREATE INDEX IF NOT EXISTS request_logs_created_at_idx ON request_logs (created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS request_logs_provider_account_created_at_idx ON request_logs (provider_account_id, created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS request_logs_model_created_at_idx ON request_logs (model, created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS request_logs_routing_pool_created_at_idx ON request_logs (routing_pool_id, created_at DESC)",
 		"CREATE INDEX request_logs_client_key_created_at_id_idx ON request_logs (client_key_id, created_at DESC, id DESC)",
 	} {
 		mustExecProfile(t, ctx, pool, statement)
@@ -279,13 +299,67 @@ type requestLogExplainEnvelope struct {
 
 type requestLogExplainPlan struct {
 	NodeType          string                  `json:"Node Type"`
+	RelationName      string                  `json:"Relation Name"`
 	IndexName         string                  `json:"Index Name"`
 	SortMethod        string                  `json:"Sort Method"`
+	ActualRows        float64                 `json:"Actual Rows"`
+	ActualLoops       float64                 `json:"Actual Loops"`
+	RowsRemoved       float64                 `json:"Rows Removed by Filter"`
 	SharedHitBlocks   int64                   `json:"Shared Hit Blocks"`
 	SharedReadBlocks  int64                   `json:"Shared Read Blocks"`
 	TempReadBlocks    int64                   `json:"Temp Read Blocks"`
 	TempWrittenBlocks int64                   `json:"Temp Written Blocks"`
 	Plans             []requestLogExplainPlan `json:"Plans"`
+}
+
+func explainScalableRequestLogPage(t *testing.T, ctx context.Context, pool *pgxpool.Pool, physicalRows int) requestLogExplainEnvelope {
+	t.Helper()
+	query := requestLogProfileListQuery("", 51)
+	_ = explainRequestLogProfile(t, ctx, pool, "scale", fmt.Sprintf("default_page_%d", physicalRows), query, false)
+	return explainRequestLogProfile(t, ctx, pool, "scale", fmt.Sprintf("default_page_%d", physicalRows), query, true)
+}
+
+func assertScalableRequestLogPages(t *testing.T, small, large requestLogExplainEnvelope) {
+	t.Helper()
+	for _, profile := range []struct {
+		name     string
+		envelope requestLogExplainEnvelope
+	}{
+		{name: "100k", envelope: small},
+		{name: "1m", envelope: large},
+	} {
+		_, indexes, _ := collectRequestLogPlanDetails(profile.envelope.Plan)
+		if !slices.Contains(indexes, "request_logs_created_at_idx") {
+			t.Fatalf("scalable page %s indexes = %v, want request_logs_created_at_idx", profile.name, indexes)
+		}
+		if profile.envelope.Plan.ActualRows != 51 {
+			t.Fatalf("scalable page %s rows = %.0f, want 51", profile.name, profile.envelope.Plan.ActualRows)
+		}
+		if hasRequestLogSequentialScan(profile.envelope.Plan) {
+			t.Fatalf("scalable page %s used a sequential scan on request_logs", profile.name)
+		}
+		buffers := profile.envelope.Plan.SharedHitBlocks + profile.envelope.Plan.SharedReadBlocks
+		if buffers > 256 {
+			t.Fatalf("scalable page %s shared buffers = %d, max 256", profile.name, buffers)
+		}
+	}
+	t.Log("PROFILE scalable_contract=10x_physical_rows fixed_page_rows=51 max_shared_buffers=256 no_request_logs_seq_scan=true")
+}
+
+func hasRequestLogSequentialScan(plan requestLogExplainPlan) bool {
+	return hasRelationSequentialScan(plan, "request_logs")
+}
+
+func hasRelationSequentialScan(plan requestLogExplainPlan, relation string) bool {
+	if plan.NodeType == "Seq Scan" && plan.RelationName == relation {
+		return true
+	}
+	for _, child := range plan.Plans {
+		if hasRelationSequentialScan(child, relation) {
+			return true
+		}
+	}
+	return false
 }
 
 func explainRequestLogProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool, phase, name, query string, logResult bool) requestLogExplainEnvelope {
@@ -300,12 +374,15 @@ func explainRequestLogProfile(t *testing.T, ctx context.Context, pool *pgxpool.P
 	}
 	if logResult {
 		nodes, indexes, sorts := collectRequestLogPlanDetails(envelopes[0].Plan)
-		t.Logf("PROFILE phase=%s query=%s execution_ms=%.3f planning_ms=%.3f root=%s nodes=%s indexes=%s sorts=%s shared_hit=%d shared_read=%d temp_read=%d temp_written=%d",
+		t.Logf("PROFILE phase=%s query=%s execution_ms=%.3f planning_ms=%.3f root=%s actual_rows=%.0f actual_loops=%.0f rows_removed=%.0f nodes=%s indexes=%s sorts=%s shared_hit=%d shared_read=%d temp_read=%d temp_written=%d",
 			phase,
 			name,
 			envelopes[0].ExecutionTime,
 			envelopes[0].PlanningTime,
 			envelopes[0].Plan.NodeType,
+			envelopes[0].Plan.ActualRows,
+			envelopes[0].Plan.ActualLoops,
+			envelopes[0].Plan.RowsRemoved,
 			strings.Join(nodes, ","),
 			strings.Join(indexes, ","),
 			strings.Join(sorts, ","),

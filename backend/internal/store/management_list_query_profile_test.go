@@ -26,11 +26,14 @@ func TestManagementListQueryProfile(t *testing.T) {
 	mustExecProfile(t, ctx, pool, "ANALYZE client_api_key_models")
 	mustExecProfile(t, ctx, pool, "ANALYZE routing_pools")
 	mustExecProfile(t, ctx, pool, "ANALYZE routing_pool_accounts")
+	mustExecProfile(t, ctx, pool, "ANALYZE api_key_budget_admissions")
 
 	profiles := []struct {
 		name       string
 		query      string
 		wantIndex  string
+		wantAny    []string
+		noSeqScan  string
 		maxBuffers int64
 	}{
 		{
@@ -58,6 +61,24 @@ func TestManagementListQueryProfile(t *testing.T) {
 			wantIndex: "api_key_budget_states_pkey", maxBuffers: 256,
 		},
 		{
+			name: "budget_state_production", query: `
+				SELECT states.client_key_id,
+					states.initialization_status <> 'ready' OR EXISTS (
+						SELECT 1 FROM api_key_budget_admissions admissions
+						WHERE admissions.client_key_id = states.client_key_id
+							AND ((NOT admissions.request_24h_expired AND admissions.request_24h_expires_at <= TIMESTAMPTZ '2026-07-29 12:00:00+00')
+								OR (NOT admissions.request_30d_expired AND admissions.request_30d_expires_at <= TIMESTAMPTZ '2026-07-29 12:00:00+00'))
+					)
+				FROM api_key_budget_states states
+				WHERE states.client_key_id = ANY(ARRAY(SELECT generate_series(9901, 10000)))`,
+			wantIndex: "api_key_budget_states_pkey",
+			wantAny: []string{
+				"api_key_budget_admissions_expiry_24h_idx",
+				"api_key_budget_admissions_expiry_30d_idx",
+			},
+			noSeqScan: "api_key_budget_admissions", maxBuffers: 512,
+		},
+		{
 			name: "pool_members_batch", query: "SELECT pool_id, account_id, priority FROM routing_pool_accounts WHERE pool_id = ANY(ARRAY(SELECT generate_series(901, 1000))) ORDER BY pool_id, priority, account_id",
 			wantIndex: "routing_pool_accounts_pool_priority_idx", maxBuffers: 256,
 		},
@@ -67,6 +88,12 @@ func TestManagementListQueryProfile(t *testing.T) {
 		_, indexes, sorts := collectRequestLogPlanDetails(envelope.Plan)
 		if !slices.Contains(indexes, profile.wantIndex) {
 			t.Fatalf("profile %s indexes = %v, want %s", profile.name, indexes, profile.wantIndex)
+		}
+		if len(profile.wantAny) > 0 && !slices.ContainsFunc(profile.wantAny, func(name string) bool { return slices.Contains(indexes, name) }) {
+			t.Fatalf("profile %s indexes = %v, want one of %v", profile.name, indexes, profile.wantAny)
+		}
+		if profile.noSeqScan != "" && hasRelationSequentialScan(envelope.Plan, profile.noSeqScan) {
+			t.Fatalf("profile %s used a sequential scan on %s", profile.name, profile.noSeqScan)
 		}
 		if strings.Contains(profile.name, "first") || strings.Contains(profile.name, "deep") {
 			if len(sorts) != 0 {
@@ -79,10 +106,7 @@ func TestManagementListQueryProfile(t *testing.T) {
 		}
 	}
 
-	// Request-log pagination already has a dedicated one-million-row physical
-	// profile. Its keyset query reads a fixed page and is the 10x scalable
-	// equivalent used for the 10,000,000-row acceptance projection.
-	t.Log("PROFILE request_log_equivalent_rows=10000000 basis=keyset_page_fixed_row_work scale_factor=10")
+	t.Log("PROFILE management_rows api_keys=10000 routing_pools=1000 budget_admissions=100001")
 }
 
 func seedManagementListProfile(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -118,5 +142,36 @@ func seedManagementListProfile(t *testing.T, ctx context.Context, pool *pgxpool.
 		SELECT id, model
 		FROM generate_series(10, 10000, 10) AS keys(id)
 		CROSS JOIN (VALUES ('gpt-5'), ('gpt-5-mini')) AS models(model)
+	`)
+	mustExecProfile(t, ctx, pool, `
+		INSERT INTO api_key_budget_admissions (
+			admission_id, client_key_id, source, status, settlement_outcome,
+			usage_known, observed_tokens, observed_cost_microusd, admitted_at,
+			settled_at, request_24h_expires_at, request_30d_expires_at,
+			request_24h_expired, request_30d_expired
+		)
+		SELECT
+			'profile-history-' || id,
+			((id - 1) % 10000) + 1,
+			'legacy', 'settled', 'observed', true, 1, 1,
+			TIMESTAMPTZ '2026-06-01 12:00:00+00' - id * INTERVAL '1 second',
+			TIMESTAMPTZ '2026-06-01 12:00:00+00' - id * INTERVAL '1 second',
+			TIMESTAMPTZ '2026-06-02 12:00:00+00' - id * INTERVAL '1 second',
+			TIMESTAMPTZ '2026-07-01 12:00:00+00' - id * INTERVAL '1 second',
+			true, true
+		FROM generate_series(1, 100000) AS admissions(id)
+	`)
+	mustExecProfile(t, ctx, pool, `
+		INSERT INTO api_key_budget_admissions (
+			admission_id, client_key_id, source, status, settlement_outcome,
+			usage_known, observed_tokens, observed_cost_microusd, admitted_at,
+			settled_at, request_24h_expires_at, request_30d_expires_at,
+			request_24h_expired, request_30d_expired
+		) VALUES (
+			'profile-overdue', 9999, 'live', 'settled', 'observed', true, 1, 1,
+			TIMESTAMPTZ '2026-06-28 12:00:00+00', TIMESTAMPTZ '2026-06-28 12:01:00+00',
+			TIMESTAMPTZ '2026-06-29 12:00:00+00', TIMESTAMPTZ '2026-07-28 12:00:00+00',
+			false, false
+		)
 	`)
 }
