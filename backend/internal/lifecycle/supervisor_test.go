@@ -82,6 +82,33 @@ func TestSupervisorKeepsFailureAfterNotificationIsConsumed(t *testing.T) {
 	supervisor.Stop()
 }
 
+func TestSupervisorPreservesCriticalFailureAfterStopBegins(t *testing.T) {
+	supervisor := NewSupervisor(context.Background())
+	release := make(chan struct{})
+	if err := supervisor.Start("critical", func(context.Context) error {
+		<-release
+		return errors.New("critical failure")
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	supervisor.Stop()
+	close(release)
+	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := supervisor.Wait(waitCtx)
+	if err == nil || !strings.Contains(err.Error(), "critical failure") {
+		t.Fatalf("Wait = %v, want critical failure", err)
+	}
+	select {
+	case failure := <-supervisor.Failures():
+		if !strings.Contains(failure.Error(), "critical failure") {
+			t.Fatalf("failure = %v, want critical failure", failure)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("critical failure was suppressed after Stop")
+	}
+}
+
 func TestSupervisorWaitUsesCallerDeadline(t *testing.T) {
 	supervisor := NewSupervisor(context.Background())
 	release := make(chan struct{})
@@ -101,7 +128,7 @@ func TestSupervisorWaitUsesCallerDeadline(t *testing.T) {
 	}
 }
 
-func TestSupervisorBeginStopSuppressesExpectedExitWithoutCanceling(t *testing.T) {
+func TestSupervisorBeginStopPreventsStartsWithoutSuppressingUnexpectedExit(t *testing.T) {
 	supervisor := NewSupervisor(context.Background())
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -116,9 +143,12 @@ func TestSupervisorBeginStopSuppressesExpectedExitWithoutCanceling(t *testing.T)
 	supervisor.BeginStop()
 	close(release)
 	select {
-	case <-supervisor.Failures():
-		t.Fatal("BeginStop reported a component failure")
-	case <-time.After(20 * time.Millisecond):
+	case failure := <-supervisor.Failures():
+		if !errors.Is(failure, ErrComponentStopped) {
+			t.Fatalf("failure = %v, want ErrComponentStopped", failure)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("BeginStop suppressed an unexpected component exit")
 	}
 	if err := supervisor.Start("late", func(context.Context) error { return nil }); !errors.Is(err, ErrSupervisorStopping) {
 		t.Fatalf("late Start = %v, want ErrSupervisorStopping", err)
@@ -126,7 +156,7 @@ func TestSupervisorBeginStopSuppressesExpectedExitWithoutCanceling(t *testing.T)
 	supervisor.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := supervisor.Wait(ctx); err != nil {
-		t.Fatalf("Wait: %v", err)
+	if err := supervisor.Wait(ctx); !errors.Is(err, ErrComponentStopped) {
+		t.Fatalf("Wait = %v, want ErrComponentStopped", err)
 	}
 }

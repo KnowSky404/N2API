@@ -568,10 +568,9 @@ func runServer() int {
 			}
 			return serveErr
 		}); err != nil {
-			serverSupervisor.BeginStop()
+			serverSupervisor.Stop()
 			_ = server.Close()
 			_ = metricsListener.Close()
-			serverSupervisor.Stop()
 			cancelRequests()
 			cancelMetricsRoot()
 			slog.Error("metrics server stopped", "error_code", "metrics_server_stopped")

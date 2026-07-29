@@ -119,7 +119,7 @@ func (runtime *runtimeShutdown) run(reason string) error {
 		runtime.metrics.SetReadiness("overall", false)
 	}
 	if runtime.servers != nil {
-		runtime.servers.BeginStop()
+		runtime.servers.Stop()
 	}
 
 	var shutdownErrors []error

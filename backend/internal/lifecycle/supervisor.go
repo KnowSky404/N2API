@@ -75,21 +75,16 @@ func (s *Supervisor) Start(name string, run func(context.Context) error) error {
 		defer s.wg.Done()
 		close(started)
 		componentErr := runComponent(s.ctx, run)
-		if !s.isStopping() {
-			if componentErr == nil {
-				componentErr = ErrComponentStopped
+		if componentErr == nil {
+			if s.ctx.Err() != nil {
+				return
 			}
-			s.reportFailure(ComponentError{Name: name, Err: componentErr})
+			componentErr = ErrComponentStopped
 		}
+		s.reportFailure(ComponentError{Name: name, Err: componentErr})
 	}()
 	<-started
 	return nil
-}
-
-func (s *Supervisor) isStopping() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.stopping
 }
 
 func runComponent(ctx context.Context, run func(context.Context) error) (componentErr error) {
@@ -161,7 +156,7 @@ func (s *Supervisor) Wait(ctx context.Context) error {
 	s.Stop()
 	select {
 	case <-s.done:
-		return nil
+		return s.LastFailure()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
