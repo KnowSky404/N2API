@@ -1,10 +1,7 @@
 package secret
 
 import (
-	"crypto/pbkdf2"
-	"crypto/sha256"
 	"encoding/base64"
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -23,46 +20,6 @@ func TestHashAPIKeyVerifiesOriginalKey(t *testing.T) {
 	}
 	if VerifyAPIKey(hash, "different") {
 		t.Fatal("VerifyAPIKey returned true for different API key")
-	}
-}
-
-func TestPasswordHashVerifiesOriginalPassword(t *testing.T) {
-	hash, err := HashPassword("owner-password")
-	if err != nil {
-		t.Fatalf("HashPassword returned error: %v", err)
-	}
-	if hash == "" || hash == "owner-password" {
-		t.Fatalf("HashPassword returned unsafe hash %q", hash)
-	}
-	if !VerifyPassword(hash, "owner-password") {
-		t.Fatal("VerifyPassword returned false for original password")
-	}
-	if VerifyPassword(hash, "wrong-password") {
-		t.Fatal("VerifyPassword returned true for wrong password")
-	}
-}
-
-func TestVerifyPasswordRejectsUnexpectedIterationCount(t *testing.T) {
-	hash := passwordHashForTest(t, "owner-password", []byte("1234567890abcdef"), passwordIterations-1, passwordKeyBytes)
-
-	if VerifyPassword(hash, "owner-password") {
-		t.Fatal("VerifyPassword returned true for unexpected iteration count")
-	}
-}
-
-func TestVerifyPasswordRejectsUnexpectedSaltLength(t *testing.T) {
-	hash := passwordHashForTest(t, "owner-password", []byte("short-salt-1234"), passwordIterations, passwordKeyBytes)
-
-	if VerifyPassword(hash, "owner-password") {
-		t.Fatal("VerifyPassword returned true for unexpected salt length")
-	}
-}
-
-func TestVerifyPasswordRejectsUnexpectedKeyLength(t *testing.T) {
-	hash := passwordHashForTest(t, "owner-password", []byte("1234567890abcdef"), passwordIterations, passwordKeyBytes-1)
-
-	if VerifyPassword(hash, "owner-password") {
-		t.Fatal("VerifyPassword returned true for unexpected key length")
 	}
 }
 
@@ -517,21 +474,4 @@ func TestEncryptionErrorsDoNotLeakSensitiveValues(t *testing.T) {
 			t.Fatalf("DecryptString error leaked sensitive value: %q", err)
 		}
 	}
-}
-
-func passwordHashForTest(t *testing.T, password string, salt []byte, iterations, keyBytes int) string {
-	t.Helper()
-
-	key, err := pbkdf2.Key(sha256.New, password, salt, iterations, keyBytes)
-	if err != nil {
-		t.Fatalf("pbkdf2.Key returned error: %v", err)
-	}
-
-	return fmt.Sprintf(
-		"%s$%d$%s$%s",
-		passwordHashVersion,
-		iterations,
-		base64.RawStdEncoding.EncodeToString(salt),
-		base64.RawStdEncoding.EncodeToString(key),
-	)
 }

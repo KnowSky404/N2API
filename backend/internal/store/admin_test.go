@@ -1437,6 +1437,85 @@ func TestUpdateAdminPasswordRevokesOtherSessionsAtomically(t *testing.T) {
 	}
 }
 
+func TestCompareAndSwapAdminPasswordHashOnlyUpdatesVerifiedHash(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	owner, err := repo.CreateAdmin(ctx, "rehash-owner", "legacy-hash")
+	if err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+	updated, err := repo.CompareAndSwapAdminPasswordHash(ctx, owner.ID, "wrong-hash", "argon2-hash")
+	if err != nil || updated {
+		t.Fatalf("wrong-hash CAS = updated:%t err:%v, want false/nil", updated, err)
+	}
+	updated, err = repo.CompareAndSwapAdminPasswordHash(ctx, owner.ID, "legacy-hash", "argon2-hash")
+	if err != nil || !updated {
+		t.Fatalf("matching CAS = updated:%t err:%v, want true/nil", updated, err)
+	}
+	updated, err = repo.CompareAndSwapAdminPasswordHash(ctx, owner.ID, "legacy-hash", "second-hash")
+	if err != nil || updated {
+		t.Fatalf("stale CAS = updated:%t err:%v, want false/nil", updated, err)
+	}
+	found, err := repo.FindBootstrapAdmin(ctx)
+	if err != nil || found.PasswordHash != "argon2-hash" {
+		t.Fatalf("admin after CAS = %+v err:%v", found, err)
+	}
+}
+
+func TestCompareAndSwapAdminPasswordHashPreservesConcurrentChange(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	owner, err := repo.CreateAdmin(ctx, "concurrent-rehash-owner", "legacy-hash")
+	if err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+	passwordTx, err := repo.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin password transaction: %v", err)
+	}
+	defer passwordTx.Rollback(ctx)
+	if _, err := passwordTx.Exec(ctx, `
+		UPDATE admins
+		SET password_hash = 'changed-hash', updated_at = now()
+		WHERE id = $1
+	`, owner.ID); err != nil {
+		t.Fatalf("update password while holding row lock: %v", err)
+	}
+
+	type swapResult struct {
+		updated bool
+		err     error
+	}
+	started := make(chan struct{})
+	result := make(chan swapResult, 1)
+	go func() {
+		close(started)
+		updated, swapErr := repo.CompareAndSwapAdminPasswordHash(ctx, owner.ID, "legacy-hash", "argon2-hash")
+		result <- swapResult{updated: updated, err: swapErr}
+	}()
+	<-started
+	select {
+	case got := <-result:
+		t.Fatalf("CAS completed before password transaction committed: %+v", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := passwordTx.Commit(ctx); err != nil {
+		t.Fatalf("commit password transaction: %v", err)
+	}
+	select {
+	case got := <-result:
+		if got.err != nil || got.updated {
+			t.Fatalf("CAS after concurrent change = %+v, want updated=false without error", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CAS remained blocked after password transaction committed")
+	}
+	found, err := repo.FindBootstrapAdmin(ctx)
+	if err != nil || found.PasswordHash != "changed-hash" {
+		t.Fatalf("admin after concurrent change = %+v err:%v", found, err)
+	}
+}
+
 func TestCreateSessionWaitsForPasswordUpdateAndRejectsOldHash(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()

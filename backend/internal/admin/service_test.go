@@ -1,10 +1,12 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -128,6 +130,36 @@ func TestBootstrapRenamesExistingAdminAndPreservesPasswordHash(t *testing.T) {
 	}
 	if _, err := service.Login(context.Background(), "owner", "first-password", SessionMetadata{}); err != nil {
 		t.Fatalf("new username login returned error: %v", err)
+	}
+}
+
+func TestAdminPasswordsPreserveSpacesAndUnicode(t *testing.T) {
+	repo := newMemoryRepo()
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	password := "  密碼 current  "
+	if err := service.BootstrapAdmin(context.Background(), " admin ", password); err != nil {
+		t.Fatalf("BootstrapAdmin returned error: %v", err)
+	}
+	if repo.admin.Username != "admin" {
+		t.Fatalf("normalized username = %q, want admin", repo.admin.Username)
+	}
+	current, err := service.Login(context.Background(), " admin ", password, SessionMetadata{})
+	if err != nil {
+		t.Fatalf("Login exact password returned error: %v", err)
+	}
+	if _, err := service.Login(context.Background(), "admin", strings.TrimSpace(password), SessionMetadata{}); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Login trimmed password error = %v, want ErrUnauthorized", err)
+	}
+
+	newPassword := "  新しい password  "
+	if _, err := service.ChangePassword(context.Background(), repo.admin.ID, current.Token, password, newPassword); err != nil {
+		t.Fatalf("ChangePassword exact password returned error: %v", err)
+	}
+	if _, err := service.Login(context.Background(), "admin", newPassword, SessionMetadata{}); err != nil {
+		t.Fatalf("Login changed exact password returned error: %v", err)
+	}
+	if _, err := service.Login(context.Background(), "admin", strings.TrimSpace(newPassword), SessionMetadata{}); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("Login trimmed changed password error = %v, want ErrUnauthorized", err)
 	}
 }
 
@@ -264,12 +296,99 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestLoginUsesCurrentDummyHashForEmptyAndUnknownUsernames(t *testing.T) {
+	hasher := &capturePasswordHasher{}
+	service := NewService(newMemoryRepo(), Config{SessionTTL: time.Hour, PasswordHasher: hasher})
+	for _, username := range []string{"", "missing"} {
+		if _, err := service.Login(context.Background(), username, "password", SessionMetadata{}); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("Login(%q) error = %v, want ErrUnauthorized", username, err)
+		}
+	}
+	if len(hasher.verifiedHashes) != 2 {
+		t.Fatalf("dummy verification count = %d, want 2", len(hasher.verifiedHashes))
+	}
+	for _, encoded := range hasher.verifiedHashes {
+		if encoded != dummyAdminPasswordHash {
+			t.Fatalf("verified hash = %q, want process dummy hash", encoded)
+		}
+	}
+}
+
 func TestDummyAdminPasswordHashMatchesProductionWorkFactor(t *testing.T) {
-	if !strings.HasPrefix(dummyAdminPasswordHash, "pbkdf2-sha256$210000$") {
+	if !strings.HasPrefix(dummyAdminPasswordHash, "$argon2id$v=19$m=65536,t=2,p=1$") {
 		t.Fatalf("dummy password hash uses unexpected work factor: %q", dummyAdminPasswordHash)
 	}
-	if !secret.VerifyPassword(dummyAdminPasswordHash, "n2api-dummy-password") {
-		t.Fatal("dummy admin password hash is not a valid production password hash")
+	valid, needsRehash := secret.NewPasswordHasher().Verify(dummyAdminPasswordHash, "n2api-dummy-password")
+	if !valid || needsRehash {
+		t.Fatalf("dummy hash verification = valid:%t needsRehash:%t, want true/false", valid, needsRehash)
+	}
+}
+
+func TestLegacyPasswordLoginUpgradesHashAfterCreatingOneSession(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.admin = Admin{
+		ID: 1, Username: "admin",
+		PasswordHash: "pbkdf2-sha256$210000$AAECAwQFBgcICQoLDA0ODw$6M7ZGtW4Xq6fsrLYeKn/xgsZw5E2huTtOgwzsiPv+Vk",
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	session, err := service.Login(context.Background(), "admin", "n2api-dummy-password", SessionMetadata{})
+	if err != nil {
+		t.Fatalf("Login returned error: %v", err)
+	}
+	if session.Token == "" || len(repo.sessions) != 1 {
+		t.Fatalf("session = %+v count=%d, want one created session", session, len(repo.sessions))
+	}
+	if !strings.HasPrefix(repo.admin.PasswordHash, "$argon2id$") {
+		t.Fatalf("upgraded password hash = %q, want Argon2id", repo.admin.PasswordHash)
+	}
+	valid, needsRehash := secret.NewPasswordHasher().Verify(repo.admin.PasswordHash, "n2api-dummy-password")
+	if !valid || needsRehash {
+		t.Fatalf("upgraded hash verification = valid:%t needsRehash:%t, want true/false", valid, needsRehash)
+	}
+}
+
+func TestLegacyPasswordUpgradeDoesNotOverwriteConcurrentPasswordChange(t *testing.T) {
+	baseRepo := newMemoryRepo()
+	baseRepo.admin = Admin{
+		ID: 1, Username: "admin",
+		PasswordHash: "pbkdf2-sha256$210000$AAECAwQFBgcICQoLDA0ODw$6M7ZGtW4Xq6fsrLYeKn/xgsZw5E2huTtOgwzsiPv+Vk",
+	}
+	repo := &passwordRehashRepo{memoryRepo: baseRepo}
+	repo.beforeCAS = func() {
+		baseRepo.admin.PasswordHash = "concurrent-password-change"
+	}
+	service := NewService(repo, Config{SessionTTL: time.Hour})
+	if _, err := service.Login(context.Background(), "admin", "n2api-dummy-password", SessionMetadata{}); err != nil {
+		t.Fatalf("Login returned error: %v", err)
+	}
+	if baseRepo.admin.PasswordHash != "concurrent-password-change" {
+		t.Fatalf("password hash = %q, want concurrent change", baseRepo.admin.PasswordHash)
+	}
+}
+
+func TestLegacyPasswordRehashFailureIsObservableAndDoesNotFailLogin(t *testing.T) {
+	baseRepo := newMemoryRepo()
+	baseRepo.admin = Admin{
+		ID: 1, Username: "admin",
+		PasswordHash: "pbkdf2-sha256$210000$AAECAwQFBgcICQoLDA0ODw$6M7ZGtW4Xq6fsrLYeKn/xgsZw5E2huTtOgwzsiPv+Vk",
+	}
+	repo := &passwordRehashRepo{memoryRepo: baseRepo, casErr: errors.New("database-password-canary")}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	service := NewService(repo, Config{SessionTTL: time.Hour, Logger: logger})
+	session, err := service.Login(context.Background(), "admin", "n2api-dummy-password", SessionMetadata{})
+	if err != nil || session.Token == "" {
+		t.Fatalf("Login = %+v/%v, want successful session", session, err)
+	}
+	if len(baseRepo.sessions) != 1 {
+		t.Fatalf("session count = %d, want exactly one", len(baseRepo.sessions))
+	}
+	output := logs.String()
+	if !strings.Contains(output, `"error_code":"admin_password_rehash_failed"`) || !strings.Contains(output, `"stage":"store"`) {
+		t.Fatalf("rehash failure log = %s", output)
+	}
+	if strings.Contains(output, "database-password-canary") {
+		t.Fatalf("rehash failure log leaked store error: %s", output)
 	}
 }
 
@@ -2046,6 +2165,36 @@ type passwordChangeRaceRepo struct {
 	beforeSessionCreate func()
 }
 
+type capturePasswordHasher struct {
+	verifiedHashes []string
+}
+
+func (h *capturePasswordHasher) Hash(string) (string, error) {
+	return "unused", nil
+}
+
+func (h *capturePasswordHasher) Verify(encoded, _ string) (bool, bool) {
+	h.verifiedHashes = append(h.verifiedHashes, encoded)
+	return false, false
+}
+
+type passwordRehashRepo struct {
+	*memoryRepo
+	beforeCAS func()
+	casErr    error
+}
+
+func (r *passwordRehashRepo) CompareAndSwapAdminPasswordHash(ctx context.Context, id int64, oldHash, newHash string) (bool, error) {
+	if r.beforeCAS != nil {
+		r.beforeCAS()
+		r.beforeCAS = nil
+	}
+	if r.casErr != nil {
+		return false, r.casErr
+	}
+	return r.memoryRepo.CompareAndSwapAdminPasswordHash(ctx, id, oldHash, newHash)
+}
+
 func (r *passwordChangeRaceRepo) CreateSessionIfAdminPasswordHashMatches(ctx context.Context, adminID int64, passwordHash, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) (bool, error) {
 	if r.beforeSessionCreate != nil {
 		r.beforeSessionCreate()
@@ -2113,6 +2262,14 @@ func (r *memoryRepo) UpdateAdminPasswordAndRevokeOtherSessions(_ context.Context
 		revoked++
 	}
 	return revoked, nil
+}
+
+func (r *memoryRepo) CompareAndSwapAdminPasswordHash(_ context.Context, id int64, oldHash, newHash string) (bool, error) {
+	if r.admin.ID != id || r.admin.PasswordHash != oldHash {
+		return false, nil
+	}
+	r.admin.PasswordHash = newHash
+	return true, nil
 }
 
 func (r *memoryRepo) CreateSession(_ context.Context, adminID int64, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) error {

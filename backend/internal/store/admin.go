@@ -225,6 +225,18 @@ func (r *AdminRepository) UpdateAdminPasswordAndRevokeOtherSessions(ctx context.
 	return revoked, nil
 }
 
+func (r *AdminRepository) CompareAndSwapAdminPasswordHash(ctx context.Context, id int64, oldHash, newHash string) (bool, error) {
+	result, err := r.pool.Exec(ctx, `
+		UPDATE admins
+		SET password_hash = $3, updated_at = now()
+		WHERE id = $1 AND password_hash = $2
+	`, id, oldHash, newHash)
+	if err != nil {
+		return false, err
+	}
+	return result.RowsAffected() == 1, nil
+}
+
 func (r *AdminRepository) CreateSession(ctx context.Context, adminID int64, tokenHash string, metadata admin.SessionMetadata, createdAt, expiresAt time.Time) error {
 	_, err := createSession(ctx, r.pool, adminID, "", tokenHash, metadata, createdAt, expiresAt, false)
 	return err

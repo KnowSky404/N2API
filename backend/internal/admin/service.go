@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"slices"
 	"sort"
@@ -34,7 +35,7 @@ const (
 	RequestLogStatusSuccess       = "success"
 	RequestLogStatusClientError   = "client_error"
 	RequestLogStatusServerError   = "server_error"
-	dummyAdminPasswordHash        = "pbkdf2-sha256$210000$AAECAwQFBgcICQoLDA0ODw$6M7ZGtW4Xq6fsrLYeKn/xgsZw5E2huTtOgwzsiPv+Vk"
+	dummyAdminPasswordHash        = "$argon2id$v=19$m=65536,t=2,p=1$AAECAwQFBgcICQoLDA0ODw$4+l33+PIVDfT0JxKceGyoMV79LaP0UukE46kTIFpaps"
 )
 
 const DefaultRequestLogRetentionBatchSize = 1000
@@ -69,6 +70,8 @@ type Config struct {
 	GatewaySettingsRuntime *GatewaySettingsRuntime
 	APIKeyAuthObserver     APIKeyAuthenticationObserver
 	SystemEvents           SystemEventRepository
+	PasswordHasher         secret.PasswordHasher
+	Logger                 *slog.Logger
 }
 
 type SystemEventFilter = systemevent.Filter
@@ -370,6 +373,7 @@ type Repository interface {
 	CreateAdmin(ctx context.Context, username, passwordHash string) (Admin, error)
 	UpdateAdminUsername(ctx context.Context, id int64, username string) (Admin, error)
 	UpdateAdminPasswordAndRevokeOtherSessions(ctx context.Context, id int64, passwordHash, currentSessionHash string, revokedAt time.Time) (int64, error)
+	CompareAndSwapAdminPasswordHash(ctx context.Context, id int64, oldHash, newHash string) (bool, error)
 	CreateSessionIfAdminPasswordHashMatches(ctx context.Context, adminID int64, passwordHash, tokenHash string, metadata SessionMetadata, createdAt, expiresAt time.Time) (bool, error)
 	FindAdminBySessionHash(ctx context.Context, tokenHash string, now time.Time) (Admin, error)
 	RevokeSession(ctx context.Context, tokenHash string, revokedAt time.Time) error
@@ -432,6 +436,8 @@ type Service struct {
 	defaultGatewaySettings  GatewaySettings
 	gatewaySettingsRuntime  *GatewaySettingsRuntime
 	apiKeyAuthObserver      APIKeyAuthenticationObserver
+	passwordHasher          secret.PasswordHasher
+	logger                  *slog.Logger
 	officialDocumentFetcher OfficialDocumentFetcher
 	now                     func() time.Time
 	systemEvents            SystemEventRepository
@@ -442,6 +448,14 @@ func NewService(repo Repository, cfg Config) *Service {
 	if sessionTTL <= 0 {
 		sessionTTL = defaultSessionTTL
 	}
+	passwordHasher := cfg.PasswordHasher
+	if passwordHasher == nil {
+		passwordHasher = secret.NewPasswordHasher()
+	}
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	return &Service{
 		repo:                    repo,
@@ -451,6 +465,8 @@ func NewService(repo Repository, cfg Config) *Service {
 		defaultGatewaySettings:  cfg.DefaultGatewaySettings,
 		gatewaySettingsRuntime:  cfg.GatewaySettingsRuntime,
 		apiKeyAuthObserver:      cfg.APIKeyAuthObserver,
+		passwordHasher:          passwordHasher,
+		logger:                  logger,
 		officialDocumentFetcher: NewHTTPOfficialDocumentFetcher(30 * time.Second),
 		now:                     time.Now,
 		systemEvents:            cfg.SystemEvents,
@@ -490,7 +506,6 @@ func (s *Service) ListSystemEvents(ctx context.Context, filter SystemEventFilter
 
 func (s *Service) BootstrapAdmin(ctx context.Context, username, password string) error {
 	username = strings.TrimSpace(username)
-	password = strings.TrimSpace(password)
 	if username == "" || password == "" {
 		return ErrInvalidInput
 	}
@@ -508,7 +523,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, username, password string)
 		return err
 	}
 
-	hash, err := secret.HashPassword(password)
+	hash, err := s.passwordHasher.Hash(password)
 	if err != nil {
 		return fmt.Errorf("hash admin password: %w", err)
 	}
@@ -520,21 +535,21 @@ func (s *Service) BootstrapAdmin(ctx context.Context, username, password string)
 
 func (s *Service) Login(ctx context.Context, username, password string, metadata SessionMetadata) (Session, error) {
 	username = strings.TrimSpace(username)
-	password = strings.TrimSpace(password)
 	if username == "" || password == "" {
-		secret.VerifyPassword(dummyAdminPasswordHash, password)
+		s.passwordHasher.Verify(dummyAdminPasswordHash, password)
 		return Session{}, ErrUnauthorized
 	}
 
 	admin, err := s.repo.FindAdminByUsername(ctx, username)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			secret.VerifyPassword(dummyAdminPasswordHash, password)
+			s.passwordHasher.Verify(dummyAdminPasswordHash, password)
 			return Session{}, ErrUnauthorized
 		}
 		return Session{}, err
 	}
-	if !secret.VerifyPassword(admin.PasswordHash, password) {
+	valid, needsRehash := s.passwordHasher.Verify(admin.PasswordHash, password)
+	if !valid {
 		return Session{}, ErrUnauthorized
 	}
 	ctx = withAuthenticatedActor(ctx, admin)
@@ -556,8 +571,22 @@ func (s *Service) Login(ctx context.Context, username, password string, metadata
 	if !created {
 		return Session{}, ErrUnauthorized
 	}
+	if needsRehash {
+		s.rehashAdminPassword(ctx, admin, password)
+	}
 
 	return Session{Token: token, AdminID: admin.ID, ExpiresAt: expiresAt}, nil
+}
+
+func (s *Service) rehashAdminPassword(ctx context.Context, admin Admin, password string) {
+	newHash, err := s.passwordHasher.Hash(password)
+	if err != nil {
+		s.logger.WarnContext(ctx, "admin password rehash failed", "error_code", "admin_password_rehash_failed", "stage", "hash", "admin_id", admin.ID)
+		return
+	}
+	if _, err := s.repo.CompareAndSwapAdminPasswordHash(ctx, admin.ID, admin.PasswordHash, newHash); err != nil {
+		s.logger.WarnContext(ctx, "admin password rehash failed", "error_code", "admin_password_rehash_failed", "stage", "store", "admin_id", admin.ID)
+	}
 }
 
 func (s *Service) ValidateSession(ctx context.Context, token string) (Admin, error) {
@@ -579,8 +608,6 @@ func (s *Service) ValidateSession(ctx context.Context, token string) (Admin, err
 // ChangePassword updates the password and atomically revokes every other session.
 func (s *Service) ChangePassword(ctx context.Context, adminID int64, currentToken, currentPassword, newPassword string) (int64, error) {
 	currentToken = strings.TrimSpace(currentToken)
-	currentPassword = strings.TrimSpace(currentPassword)
-	newPassword = strings.TrimSpace(newPassword)
 	if currentToken == "" || currentPassword == "" || newPassword == "" {
 		return 0, ErrInvalidInput
 	}
@@ -594,10 +621,11 @@ func (s *Service) ChangePassword(ctx context.Context, adminID int64, currentToke
 	if adminRecord.ID != adminID {
 		return 0, ErrUnauthorized
 	}
-	if !secret.VerifyPassword(adminRecord.PasswordHash, currentPassword) {
+	valid, _ := s.passwordHasher.Verify(adminRecord.PasswordHash, currentPassword)
+	if !valid {
 		return 0, ErrUnauthorized
 	}
-	newHash, hashErr := secret.HashPassword(newPassword)
+	newHash, hashErr := s.passwordHasher.Hash(newPassword)
 	if hashErr != nil {
 		return 0, fmt.Errorf("hash new password: %w", hashErr)
 	}

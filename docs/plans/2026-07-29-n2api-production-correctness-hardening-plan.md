@@ -282,7 +282,7 @@ Commit: `fix(security): require step-up for api key reveal`
 
 ## Task 10: Migrate Administrator Password Hashes
 
-Status: pending
+Status: completed
 Dependencies: Task 2
 
 Implementation:
@@ -300,6 +300,25 @@ Tests and acceptance:
   spaces, Unicode, concurrent migration/password change, malformed and
   excessive PHC parameters, dummy verification, and race behavior.
 - Record a small-VPS benchmark without making wall-clock timing a flaky gate.
+
+Evidence:
+
+- New and changed passwords use a process-wide, concurrency-bounded Argon2id
+  hasher with a strict PHC parser. Legacy PBKDF2 remains verifiable, and login
+  upgrades it only through a hash compare-and-swap after one session is
+  created against the verified hash.
+- Tests cover exact leading/trailing whitespace and Unicode bytes, the current
+  dummy path, wrong passwords, legacy upgrade, concurrent password changes,
+  observable rehash failure, malformed versions/parameters/Base64, bounded
+  salt/output lengths, and concurrent derivation.
+- An isolated PostgreSQL row-lock test proved that a committed password change
+  wins over a waiting legacy rehash CAS. `make test-control-connections` passed
+  the Store suite, Store race checks, and real-process lifecycle tests.
+- Focused Secret/Admin race tests and focused `go vet` passed. `make test`
+  passed all Go packages, Svelte diagnostics with 0 errors and 0 warnings,
+  198 Bun tests, and the production frontend build.
+- The non-gating arm64 small-VPS benchmark recorded 164,039,951 ns/op,
+  64 MiB-memory/op, 67,112,082 B/op, and 37 allocs/op over three iterations.
 
 Commit: `feat(auth): migrate administrator password hashing`
 
