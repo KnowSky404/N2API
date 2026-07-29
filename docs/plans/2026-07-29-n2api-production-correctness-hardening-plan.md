@@ -1,6 +1,6 @@
 # N2API Production Correctness Hardening Plan
 
-Status: in progress
+Status: completed locally on 2026-07-29; remote and operator checks remain unrun
 Design: `docs/specs/2026-07-29-n2api-production-correctness-hardening.md`
 Baseline: `4037187c36198bf50b9c328a557a29a7ca413e56`
 
@@ -23,7 +23,7 @@ review, and atomic commit are complete.
 | Secret reveal step-up | completed | Password-bearing POST, bounded three-dimensional throttling, sanitized auditing, no-store responses, and dialog-local secret state are implemented and verified |
 | Password hash migration | completed | Bounded Argon2id hashing, legacy PBKDF2 compare-and-swap migration, exact password bytes, and dummy verification are implemented and verified |
 | Secondary deployment and CI work | completed | Release resources, secret-file overrides, immutable running-image verification, operational state, pinned Staticcheck/vet, critical race, control-connection, query-profile, and Compose gates are committed and locally verified |
-| Final acceptance | pending | Task 2 passed `make test`, `make test-control-connections`, focused `go vet`, Store race tests, `bash -n`, and `git diff --check` |
+| Final acceptance | completed locally | Full local suite, schema 50/47 restore drill, 18.1-18.7 evidence report, and refreshed healthy Compose runtime; remote/operator checks are explicitly unrun |
 
 ## Task 1: Commit Design And Plan
 
@@ -462,7 +462,7 @@ Evidence:
 
 ## Task 12: Full Acceptance And Runtime Refresh
 
-Status: pending
+Status: completed locally on 2026-07-29; remote and operator checks remain unrun
 Dependencies: Tasks 2-11
 
 Implementation:
@@ -507,3 +507,21 @@ Acceptance:
 - GitHub-hosted CI, real OAuth, real reverse proxy, real release, and real
   production backup restore are reported as unrun unless actually performed
   with owner authorization.
+
+Evidence:
+
+- `docs/production-correctness-hardening-acceptance.md` maps every source brief
+  item in Sections 18.1-18.7 to source, tests, profiles, or runtime evidence.
+- All required commands passed locally, including the managed unit, E2E,
+  contract, race, control-connection, restore, query-profile, artifact,
+  quality, and production Compose gates plus the direct backend and frontend
+  commands.
+- The final no-cache Compose image was force-recreated after builder cleanup.
+  All three services are healthy; liveness, readiness, bootstrap, public-host
+  liveness, schema 50, and both migration 50 indexes were verified. A second
+  builder cleanup completed after verification.
+- No push, GitHub-hosted CI, real OAuth/Codex traffic, external reverse proxy,
+  release, current real production-backup restore, or remote production
+  mutation was performed.
+
+Commit: `docs: record production correctness acceptance`
