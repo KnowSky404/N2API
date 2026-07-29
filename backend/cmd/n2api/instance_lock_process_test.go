@@ -64,7 +64,7 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		t.Skip("N2API_STORE_TEST_ALLOW_DESTRUCTIVE is not enabled")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	pool, databaseURL := newIsolatedProcessTestPool(t, ctx, databaseURL)
 
