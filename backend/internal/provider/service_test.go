@@ -3438,6 +3438,9 @@ func TestPreviewAccountSelectionIncludesScheduleReasons(t *testing.T) {
 	if len(want) > 0 {
 		t.Fatalf("missing candidates: %+v", want)
 	}
+	if repo.listAccountModelsBatchCalls != 1 || repo.listAccountModelsCalls != 0 {
+		t.Fatalf("model batch/single calls = %d/%d, want 1/0", repo.listAccountModelsBatchCalls, repo.listAccountModelsCalls)
+	}
 }
 
 func TestPreviewAccountSelectionReportsStoredStickyBindingWithoutMutation(t *testing.T) {
@@ -4512,6 +4515,8 @@ type memoryRepo struct {
 	markAccountErrorErr                  error
 	markAccountUsedErr                   error
 	replaceModelsErr                     error
+	listAccountModelsCalls               int
+	listAccountModelsBatchCalls          int
 	lastSavedAccount                     Account
 	intents                              []systemevent.EventIntent
 }
@@ -4986,6 +4991,7 @@ func (r *memoryRepo) ListAccountTestResults(ctx context.Context, providerName st
 }
 
 func (r *memoryRepo) ListAccountModels(ctx context.Context, providerName string, accountID int64) ([]AccountModel, error) {
+	r.listAccountModelsCalls++
 	models := append([]AccountModel(nil), r.accountModels[accountID]...)
 	filtered := models[:0]
 	for _, model := range models {
@@ -4997,6 +5003,22 @@ func (r *memoryRepo) ListAccountModels(ctx context.Context, providerName string,
 		return filtered[i].Model < filtered[j].Model
 	})
 	return filtered, nil
+}
+
+func (r *memoryRepo) ListAccountModelsForAccounts(_ context.Context, providerName string, accountIDs []int64) (map[int64][]AccountModel, error) {
+	r.listAccountModelsBatchCalls++
+	modelsByAccount := make(map[int64][]AccountModel, len(accountIDs))
+	for _, accountID := range accountIDs {
+		for _, model := range r.accountModels[accountID] {
+			if model.Provider == providerName && model.AccountID == accountID {
+				modelsByAccount[accountID] = append(modelsByAccount[accountID], model)
+			}
+		}
+		sort.SliceStable(modelsByAccount[accountID], func(i, j int) bool {
+			return modelsByAccount[accountID][i].Model < modelsByAccount[accountID][j].Model
+		})
+	}
+	return modelsByAccount, nil
 }
 
 func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput) ([]AccountModel, error) {

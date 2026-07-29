@@ -1215,6 +1215,61 @@ func TestListAccountModelsDistinguishesMissingAccountFromNoModels(t *testing.T) 
 	}
 }
 
+func TestListAccountModelsForAccountsUsesOneQuery(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	accountIDs := make([]int64, 0, 100)
+	for i := 0; i < 100; i++ {
+		account := saveProviderTestAccount(t, repo, provider.Account{
+			Provider:              "openai",
+			Subject:               "batch-models-" + strconv.Itoa(i),
+			DisplayName:           "Batch models " + strconv.Itoa(i),
+			EncryptedAccessToken:  "access",
+			EncryptedRefreshToken: "refresh",
+			Enabled:               true,
+			Priority:              10,
+			Status:                provider.AccountStatusActive,
+		})
+		accountIDs = append(accountIDs, account.ID)
+		if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{{Model: "gpt-5", Enabled: true}}); err != nil {
+			t.Fatalf("ReplaceAccountModels(%d) returned error: %v", account.ID, err)
+		}
+	}
+
+	counter := &managementQueryCounter{}
+	config := repo.pool.Config().Copy()
+	config.ConnConfig.Tracer = counter
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("create traced pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	traced := NewProviderRepository(pool)
+
+	for _, ids := range [][]int64{accountIDs[:1], accountIDs} {
+		counter.count.Store(0)
+		modelsByAccount, err := traced.ListAccountModelsForAccounts(ctx, "openai", ids)
+		if err != nil {
+			t.Fatalf("ListAccountModelsForAccounts(%d) returned error: %v", len(ids), err)
+		}
+		if len(modelsByAccount) != len(ids) {
+			t.Fatalf("model groups for %d accounts = %d, want %d", len(ids), len(modelsByAccount), len(ids))
+		}
+		if got := counter.count.Load(); got != 1 {
+			t.Fatalf("model query count for %d accounts = %d, want 1", len(ids), got)
+		}
+	}
+
+	counter.count.Store(0)
+	modelsByAccount, err := traced.ListAccountModelsForAccounts(ctx, "openai", nil)
+	if err != nil || len(modelsByAccount) != 0 || counter.count.Load() != 0 {
+		t.Fatalf("empty batch = groups:%d queries:%d error:%v, want 0/0/nil", len(modelsByAccount), counter.count.Load(), err)
+	}
+}
+
 func TestRecordAccountModelTestResultPersistsLatestFields(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

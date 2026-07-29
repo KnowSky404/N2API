@@ -233,6 +233,8 @@ type fakeProviderService struct {
 	createdAPIUpstream     provider.APIUpstreamInput
 	accounts               []provider.Account
 	accountModels          map[int64][]provider.AccountModel
+	accountModelListCalls  int
+	accountModelBatchCalls int
 	accountTestResults     []provider.AccountTestResult
 	accountModelTestResult provider.AccountModelTestResult
 	accountModelTestErr    error
@@ -913,6 +915,7 @@ func (s *fakeProviderService) CreateAPIUpstreamAccount(_ context.Context, input 
 }
 
 func (s *fakeProviderService) ListAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, error) {
+	s.accountModelListCalls++
 	if s.accountModelsErr != nil {
 		return nil, s.accountModelsErr
 	}
@@ -921,6 +924,18 @@ func (s *fakeProviderService) ListAccountModels(_ context.Context, accountID int
 		return nil, provider.ErrNotConnected
 	}
 	return append([]provider.AccountModel(nil), models...), nil
+}
+
+func (s *fakeProviderService) ListAccountModelsForAccounts(_ context.Context, accountIDs []int64) (map[int64][]provider.AccountModel, error) {
+	s.accountModelBatchCalls++
+	if s.accountModelsErr != nil {
+		return nil, s.accountModelsErr
+	}
+	modelsByAccount := make(map[int64][]provider.AccountModel, len(accountIDs))
+	for _, accountID := range accountIDs {
+		modelsByAccount[accountID] = append([]provider.AccountModel(nil), s.accountModels[accountID]...)
+	}
+	return modelsByAccount, nil
 }
 
 func (s *fakeProviderService) ListAccountTestResults(_ context.Context, accountID int64, limit int) ([]provider.AccountTestResult, error) {
@@ -6444,6 +6459,9 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 	}
 	if len(body.Warnings) != 2 {
 		t.Fatalf("warnings = %+v, want warnings for both unschedulable models", body.Warnings)
+	}
+	if providers.accountModelBatchCalls != 1 || providers.accountModelListCalls != 0 {
+		t.Fatalf("model batch/single calls = %d/%d, want 1/0", providers.accountModelBatchCalls, providers.accountModelListCalls)
 	}
 }
 

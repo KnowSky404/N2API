@@ -112,6 +112,7 @@ type ProviderService interface {
 	CompleteCallback(ctx context.Context, code, state string) (provider.Account, error)
 	UpdateAccount(ctx context.Context, id int64, update provider.AccountUpdate) (provider.Account, error)
 	ListAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, error)
+	ListAccountModelsForAccounts(ctx context.Context, accountIDs []int64) (map[int64][]provider.AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
 	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
@@ -2934,6 +2935,14 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 		return admin.ModelRoutingStatus{}, err
 	}
 	accountRoutingPoolIDs := routingPoolIDsByAccount(routingPools)
+	accountIDs := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		accountIDs = append(accountIDs, account.ID)
+	}
+	modelsByAccount, err := providers.ListAccountModelsForAccounts(ctx, accountIDs)
+	if err != nil {
+		return admin.ModelRoutingStatus{}, err
+	}
 
 	status := admin.ModelRoutingStatus{
 		DefaultModel: defaultModel,
@@ -2942,12 +2951,8 @@ func modelRoutingStatus(ctx context.Context, admins AdminService, providers Prov
 	modelIndexes := map[string]int{}
 	now := time.Now()
 	for _, account := range accounts {
-		models, err := providers.ListAccountModels(ctx, account.ID)
-		if err != nil {
-			return admin.ModelRoutingStatus{}, err
-		}
 		accountReady := provider.AccountSchedulable(account, now)
-		for _, model := range models {
+		for _, model := range modelsByAccount[account.ID] {
 			modelEnabled := model.Enabled
 			index, ok := modelIndexes[model.Model]
 			if !ok {

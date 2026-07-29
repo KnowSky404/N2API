@@ -591,6 +591,7 @@ type Repository interface {
 	RecordAccountTestResult(ctx context.Context, provider string, id int64, status, message string, at time.Time) error
 	ListAccountTestResults(ctx context.Context, provider string, accountID int64, limit int) ([]AccountTestResult, error)
 	ListAccountModels(ctx context.Context, provider string, accountID int64) ([]AccountModel, error)
+	ListAccountModelsForAccounts(ctx context.Context, provider string, accountIDs []int64) (map[int64][]AccountModel, error)
 	RecordAccountModelTestResult(ctx context.Context, provider string, result AccountModelTestResult) error
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	SyncAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
@@ -1691,6 +1692,22 @@ func (s *Service) ListAccountModels(ctx context.Context, accountID int64) ([]Acc
 	return s.repo.ListAccountModels(ctx, s.cfg.Provider, accountID)
 }
 
+func (s *Service) ListAccountModelsForAccounts(ctx context.Context, accountIDs []int64) (map[int64][]AccountModel, error) {
+	unique := make([]int64, 0, len(accountIDs))
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			return nil, ErrInvalidInput
+		}
+		if _, ok := seen[accountID]; ok {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		unique = append(unique, accountID)
+	}
+	return s.repo.ListAccountModelsForAccounts(ctx, s.cfg.Provider, unique)
+}
+
 func (s *Service) TestAccountModel(ctx context.Context, accountID int64, model string) (AccountModelTestResult, error) {
 	model = strings.TrimSpace(model)
 	if accountID <= 0 || model == "" || len(model) > maxModelNameLen {
@@ -2582,8 +2599,9 @@ func (s *Service) SelectSingleAccountInRoutingPoolChain(ctx context.Context, pri
 		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, false, ErrAccountsUnavailable
 	}
 	now := time.Now()
+	modelsByAccount, modelsAvailable := s.accountModelsForCandidates(ctx, model, []Account{topology[0].account})
 	for _, candidate := range topology {
-		if !candidate.pool.Enabled || s.selectionUnschedulableReason(ctx, candidate.account, model, nil, now) != "" {
+		if !candidate.pool.Enabled || selectionUnschedulableReason(candidate.account, model, nil, now, modelsByAccount[candidate.account.ID], modelsAvailable) != "" {
 			continue
 		}
 		selected, err := s.selectedResponseAffinityAccount(ctx, candidate, chainLabel)
@@ -2820,6 +2838,7 @@ func (s *Service) unschedulableSelectionCandidates(ctx context.Context, model st
 	if err != nil {
 		return nil
 	}
+	modelsByAccount, modelsAvailable := s.accountModelsForCandidates(ctx, model, accounts)
 	selectedIDs := make(map[int64]struct{}, len(selected))
 	for _, account := range selected {
 		selectedIDs[account.ID] = struct{}{}
@@ -2836,7 +2855,7 @@ func (s *Service) unschedulableSelectionCandidates(ctx context.Context, model st
 		if _, ok := selectedIDs[account.ID]; ok {
 			continue
 		}
-		reason := s.selectionUnschedulableReason(ctx, account, model, excluded, now)
+		reason := selectionUnschedulableReason(account, model, excluded, now, modelsByAccount[account.ID], modelsAvailable)
 		if reason == "" {
 			continue
 		}
@@ -2850,6 +2869,7 @@ func (s *Service) unschedulableSelectionCandidatesInRoutingPool(ctx context.Cont
 	if err != nil {
 		return nil
 	}
+	modelsByAccount, modelsAvailable := s.accountModelsForCandidates(ctx, model, accounts)
 	selectedIDs := make(map[int64]struct{}, len(selected))
 	for _, account := range selected {
 		selectedIDs[account.ID] = struct{}{}
@@ -2866,7 +2886,7 @@ func (s *Service) unschedulableSelectionCandidatesInRoutingPool(ctx context.Cont
 		if _, ok := selectedIDs[account.ID]; ok {
 			continue
 		}
-		reason := s.selectionUnschedulableReason(ctx, account, model, excluded, now)
+		reason := selectionUnschedulableReason(account, model, excluded, now, modelsByAccount[account.ID], modelsAvailable)
 		if reason == "" {
 			continue
 		}
@@ -2875,7 +2895,19 @@ func (s *Service) unschedulableSelectionCandidatesInRoutingPool(ctx context.Cont
 	return candidates
 }
 
-func (s *Service) selectionUnschedulableReason(ctx context.Context, account Account, model string, excluded map[int64]struct{}, now time.Time) string {
+func (s *Service) accountModelsForCandidates(ctx context.Context, model string, accounts []Account) (map[int64][]AccountModel, bool) {
+	if strings.TrimSpace(model) == "" {
+		return nil, true
+	}
+	accountIDs := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		accountIDs = append(accountIDs, account.ID)
+	}
+	modelsByAccount, err := s.repo.ListAccountModelsForAccounts(ctx, s.cfg.Provider, accountIDs)
+	return modelsByAccount, err == nil
+}
+
+func selectionUnschedulableReason(account Account, model string, excluded map[int64]struct{}, now time.Time, models []AccountModel, modelsAvailable bool) string {
 	if _, ok := excluded[account.ID]; ok {
 		return "account excluded"
 	}
@@ -2888,8 +2920,7 @@ func (s *Service) selectionUnschedulableReason(ctx context.Context, account Acco
 	if strings.TrimSpace(model) == "" {
 		return ""
 	}
-	models, err := s.repo.ListAccountModels(ctx, s.cfg.Provider, account.ID)
-	if err != nil {
+	if !modelsAvailable {
 		return "model not configured"
 	}
 	hasModel := false

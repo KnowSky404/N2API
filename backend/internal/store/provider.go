@@ -1594,6 +1594,37 @@ func (r *ProviderRepository) ListAccountModels(ctx context.Context, providerName
 	return models, rows.Err()
 }
 
+func (r *ProviderRepository) ListAccountModelsForAccounts(ctx context.Context, providerName string, accountIDs []int64) (map[int64][]provider.AccountModel, error) {
+	modelsByAccount := make(map[int64][]provider.AccountModel, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return modelsByAccount, nil
+	}
+	for _, accountID := range accountIDs {
+		modelsByAccount[accountID] = []provider.AccountModel{}
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+providerAccountModelColumns+`
+		FROM provider_account_models
+		WHERE provider = $1
+			AND account_id = ANY($2::bigint[])
+		ORDER BY account_id ASC, model ASC
+	`, providerName, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		model, err := scanProviderAccountModel(rows)
+		if err != nil {
+			return nil, err
+		}
+		modelsByAccount[model.AccountID] = append(modelsByAccount[model.AccountID], model)
+	}
+	return modelsByAccount, rows.Err()
+}
+
 func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput) ([]provider.AccountModel, error) {
 	started := time.Now()
 	models, err := normalizeAccountModelInputs(inputs)
