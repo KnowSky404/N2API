@@ -242,7 +242,7 @@ jobs:
           test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$n2api_container")" = "true"
           test "$(docker inspect -f '{{.HostConfig.SecurityOpt}}' "$n2api_container")" = "[no-new-privileges:true]"
           test "$(docker inspect -f '{{.HostConfig.CapDrop}}' "$n2api_container")" = "[ALL]"
-          test "$(docker inspect -f '{{.Config.StopTimeout}}' "$n2api_container")" = "10"
+          test "$(docker inspect -f '{{.Config.StopTimeout}}' "$n2api_container")" = "35"
           tmpfs_options="$(docker inspect -f '{{index .HostConfig.Tmpfs "/tmp"}}' "$n2api_container")"
           for option in rw noexec nosuid nodev size=16m mode=1777 uid=10001 gid=10001; do
             case ",$tmpfs_options," in
@@ -419,10 +419,41 @@ jobs:
           -f deploy/compose.e2e.yaml
           down --volumes --remove-orphans --rmi local --timeout 10
 
+  correctness:
+    name: Correctness (${{ matrix.gate }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        gate:
+          - test-go-quality
+          - test-critical-race
+          - test-control-connections
+          - test-request-log-profile
+          - test-management-list-profile
+          - test-production-deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Run correctness gate
+        env:
+          N2API_TEST_RUN_ID: gha-${{ matrix.gate }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: make "${{ matrix.gate }}"
+
   image:
     name: Build and smoke test image (${{ matrix.platform }})
     runs-on: ubuntu-latest
-    needs: test
+    needs:
+      - test
+      - correctness
     env:
       N2API_TEST_RUN_ID: gha-image-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}
       LOCAL_IMAGE: n2api:ci-${{ matrix.suffix }}-${{ github.run_id }}-${{ github.run_attempt }}

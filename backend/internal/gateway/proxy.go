@@ -1827,11 +1827,6 @@ func (r *prefixedReadCloser) Close() error {
 	return r.closer.Close()
 }
 
-func captureFailureMessage(resp *http.Response) string {
-	message, _ := captureFailure(resp)
-	return message
-}
-
 func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, body io.ReadCloser) (*http.Request, error) {
 	useCodexEndpoint := usesCodexResponsesEndpoint(r, selected)
 	upstreamPath := r.URL.Path

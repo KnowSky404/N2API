@@ -297,7 +297,7 @@ func validateDestination(kind ActionKind, destination string) error {
 		return ErrInvalidInput
 	}
 	parsed, err := url.Parse(destination)
-	if err != nil || parsed.IsAbs() == false || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" {
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" {
 		return ErrInvalidInput
 	}
 	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopbackHost(parsed.Hostname())) {

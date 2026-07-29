@@ -10,11 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const (
-	managementProfileAPIKeys      = 10_000
-	managementProfileRoutingPools = 1_000
-)
-
 func TestManagementListQueryProfile(t *testing.T) {
 	if os.Getenv("N2API_MANAGEMENT_LIST_QUERY_PROFILE") != "1" {
 		t.Skip("set N2API_MANAGEMENT_LIST_QUERY_PROFILE=1 to run the destructive synthetic profile in an isolated schema")

@@ -123,6 +123,15 @@ if ! grep -Fq 'image: ${N2API_IMAGE:?' deploy/compose.release.yaml; then
   exit 1
 fi
 
+if ! grep -Fq 'go install honnef.co/go/tools/cmd/staticcheck@v0.7.0' dev/testing/run.sh; then
+  echo "Staticcheck must be pinned to v0.7.0" >&2
+  exit 1
+fi
+if grep -Eq 'honnef\.co/go/tools/cmd/staticcheck@(latest|master|main)' dev/testing/run.sh .github/workflows/*.yml; then
+  echo "Staticcheck must not use a moving version" >&2
+  exit 1
+fi
+
 bun_version="$(sed -n 's/.*"packageManager": "bun@\([^"]*\)".*/\1/p' frontend/package.json)"
 ci_bun_version="$(awk '$1 == "bun-version:" { print $2 }' .github/workflows/ci-image.yml)"
 docker_bun_count="$(awk '$1 == "FROM" && $2 ~ /^oven\/bun:/ { count++ } END { print count + 0 }' deploy/Dockerfile deploy/Dockerfile.e2e)"
