@@ -575,7 +575,8 @@ func TestLoadGatewayResourceBoundaryDefaultsAndOverrides(t *testing.T) {
 	if defaultCfg.HTTPIdleTimeout != 60*time.Second || defaultCfg.HTTPMaxHeaderBytes != 1<<20 ||
 		defaultCfg.HTTPRequestBodyTimeout != 30*time.Second || defaultCfg.UpstreamResponseHeaderTimeout != 30*time.Second ||
 		defaultCfg.UpstreamConnectTimeout != 10*time.Second || defaultCfg.UpstreamTLSHandshakeTimeout != 10*time.Second ||
-		defaultCfg.UpstreamSSEIdleTimeout != 60*time.Second {
+		defaultCfg.UpstreamSSEIdleTimeout != 60*time.Second || defaultCfg.ShutdownTimeout != 25*time.Second ||
+		defaultCfg.RequestDrainTimeout != 20*time.Second {
 		t.Fatalf("timeout defaults = %+v", defaultCfg)
 	}
 
@@ -586,6 +587,8 @@ func TestLoadGatewayResourceBoundaryDefaultsAndOverrides(t *testing.T) {
 		"N2API_HTTP_IDLE_TIMEOUT_SECONDS":                "90",
 		"N2API_HTTP_MAX_HEADER_BYTES":                    "524288",
 		"N2API_HTTP_REQUEST_BODY_TIMEOUT_SECONDS":        "45",
+		"N2API_SHUTDOWN_TIMEOUT_SECONDS":                 "30",
+		"N2API_REQUEST_DRAIN_TIMEOUT_SECONDS":            "25",
 		"N2API_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS": "20",
 		"N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS":         "8",
 		"N2API_UPSTREAM_TLS_HANDSHAKE_TIMEOUT_SECONDS":   "9",
@@ -596,8 +599,20 @@ func TestLoadGatewayResourceBoundaryDefaultsAndOverrides(t *testing.T) {
 	}
 	if cfg.GatewayMaxAcceptedRequestBodyBytes != 8388608 || cfg.GatewayMaxInMemoryReplayBodyBytes != 2097152 || cfg.GatewayMaxUpstreamResponseBodyBytes != 16777216 ||
 		cfg.HTTPIdleTimeout != 90*time.Second || cfg.HTTPMaxHeaderBytes != 524288 || cfg.HTTPRequestBodyTimeout != 45*time.Second ||
-		cfg.UpstreamResponseHeaderTimeout != 20*time.Second || cfg.UpstreamConnectTimeout != 8*time.Second || cfg.UpstreamTLSHandshakeTimeout != 9*time.Second || cfg.UpstreamSSEIdleTimeout != 120*time.Second {
+		cfg.UpstreamResponseHeaderTimeout != 20*time.Second || cfg.UpstreamConnectTimeout != 8*time.Second || cfg.UpstreamTLSHandshakeTimeout != 9*time.Second || cfg.UpstreamSSEIdleTimeout != 120*time.Second ||
+		cfg.ShutdownTimeout != 30*time.Second || cfg.RequestDrainTimeout != 25*time.Second {
 		t.Fatalf("resource overrides = %+v", cfg)
+	}
+
+	minimumCfg, err := Load(strictConfigLookup(map[string]string{
+		"N2API_SHUTDOWN_TIMEOUT_SECONDS":      "6",
+		"N2API_REQUEST_DRAIN_TIMEOUT_SECONDS": "1",
+	}))
+	if err != nil {
+		t.Fatalf("Load minimum shutdown boundary returned error: %v", err)
+	}
+	if minimumCfg.ShutdownTimeout != 6*time.Second || minimumCfg.RequestDrainTimeout != time.Second {
+		t.Fatalf("minimum shutdown boundary = total:%s drain:%s", minimumCfg.ShutdownTimeout, minimumCfg.RequestDrainTimeout)
 	}
 }
 
@@ -613,6 +628,10 @@ func TestLoadRejectsUnsafeGatewayResourceBoundariesWithoutEchoingValues(t *testi
 		{name: "oversized response", overrides: map[string]string{"N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES": "999999999"}, wantName: "N2API_GATEWAY_MAX_UPSTREAM_RESPONSE_BODY_BYTES", forbidden: "999999999"},
 		{name: "invalid header", overrides: map[string]string{"N2API_HTTP_MAX_HEADER_BYTES": "header-canary"}, wantName: "N2API_HTTP_MAX_HEADER_BYTES", forbidden: "header-canary"},
 		{name: "zero timeout", overrides: map[string]string{"N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS": "0"}, wantName: "N2API_UPSTREAM_SSE_IDLE_TIMEOUT_SECONDS", forbidden: "0"},
+		{name: "short shutdown", overrides: map[string]string{"N2API_SHUTDOWN_TIMEOUT_SECONDS": "5"}, wantName: "N2API_SHUTDOWN_TIMEOUT_SECONDS", forbidden: "5"},
+		{name: "long shutdown", overrides: map[string]string{"N2API_SHUTDOWN_TIMEOUT_SECONDS": "31"}, wantName: "N2API_SHUTDOWN_TIMEOUT_SECONDS", forbidden: "31"},
+		{name: "drain not below shutdown", overrides: map[string]string{"N2API_SHUTDOWN_TIMEOUT_SECONDS": "20", "N2API_REQUEST_DRAIN_TIMEOUT_SECONDS": "20"}, wantName: "N2API_REQUEST_DRAIN_TIMEOUT_SECONDS", forbidden: "20"},
+		{name: "drain leaves too little finalization time", overrides: map[string]string{"N2API_SHUTDOWN_TIMEOUT_SECONDS": "20", "N2API_REQUEST_DRAIN_TIMEOUT_SECONDS": "16"}, wantName: "N2API_REQUEST_DRAIN_TIMEOUT_SECONDS", forbidden: "16"},
 		{name: "replay exceeds accepted", overrides: map[string]string{"N2API_GATEWAY_MAX_ACCEPTED_REQUEST_BODY_BYTES": "1048576", "N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES": "2097152"}, wantName: "N2API_GATEWAY_MAX_IN_MEMORY_REPLAY_BODY_BYTES", forbidden: "2097152"},
 	}
 	for _, test := range tests {

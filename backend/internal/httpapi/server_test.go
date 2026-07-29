@@ -21,6 +21,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
+	"github.com/KnowSky404/N2API/backend/internal/lifecycle"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 )
@@ -1229,6 +1230,44 @@ func TestReadyzReportsMissingStaticAssets(t *testing.T) {
 	}
 	if body["status"] != "not_ready" || body["database"] != "ok" || body["staticAssets"] != "error" {
 		t.Fatalf("body = %+v, want static asset error only", body)
+	}
+}
+
+func TestReadyzReportsRuntimeLifecycleState(t *testing.T) {
+	webFS := fstest.MapFS{"200.html": {Data: []byte("ready")}}
+	readiness := lifecycle.NewReadiness()
+	metrics := &captureReadinessMetrics{}
+	server := NewServer(config.Config{}, staticHealth{err: nil}, nil, nil, webFS, readiness, metrics)
+
+	for _, test := range []struct {
+		name       string
+		transition func()
+		status     int
+		phase      string
+		reason     string
+	}{
+		{name: "starting", transition: func() {}, status: http.StatusServiceUnavailable, phase: "starting"},
+		{name: "ready", transition: func() { readiness.MarkReady() }, status: http.StatusOK, phase: "ready"},
+		{name: "draining", transition: func() { readiness.BeginDrain("signal") }, status: http.StatusServiceUnavailable, phase: "draining", reason: "signal"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.transition()
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+			if recorder.Code != test.status {
+				t.Fatalf("status = %d, want %d", recorder.Code, test.status)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["runtime"] != test.phase || body["runtimeReason"] != test.reason {
+				t.Fatalf("runtime body = %+v", body)
+			}
+		})
+	}
+	if metrics.values["overall"] || metrics.values["runtime"] {
+		t.Fatalf("draining readiness metrics = %+v", metrics.values)
 	}
 }
 

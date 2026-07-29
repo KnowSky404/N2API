@@ -1289,6 +1289,15 @@ every path still releases both admission slots. A slow upload that reaches the
 deadline returns `408` with `request_body_timeout`. N2API does not set a global HTTP `WriteTimeout`,
 because that would truncate healthy long SSE responses.
 
+Graceful shutdown uses one deadline across the entire process.
+`N2API_SHUTDOWN_TIMEOUT_SECONDS` defaults to 25 seconds and is bounded to
+6-30 seconds so it always remains below the fixed 35-second Compose grace.
+`N2API_REQUEST_DRAIN_TIMEOUT_SECONDS` defaults to 20 seconds, is bounded to
+1-25 seconds, and must reserve at least five seconds for
+background tasks, Alert Delivery, and the Metrics listener. The development,
+E2E, and release Compose services use a 35-second stop grace period, which must
+remain greater than the configured application deadline.
+
 Outbound gateway connections use
 `N2API_UPSTREAM_CONNECT_TIMEOUT_SECONDS` (10 seconds by default),
 `N2API_UPSTREAM_TLS_HANDSHAKE_TIMEOUT_SECONDS` (10 seconds), and
@@ -1301,9 +1310,10 @@ continuous no-data limit. Each received chunk resets the limit. When it expires,
 N2API closes the upstream body and records `upstream_sse_idle_timeout`; because
 the SSE headers are already committed, the stream closes without appending a
 JSON error object. Client disconnects also close the upstream body immediately.
-The HTTP server derives every request context from the process lifecycle context,
-so graceful shutdown cancels active uploads and SSE streams before waiting for
-connections to drain.
+HTTP request contexts are separate from the signal and background-task
+contexts. Graceful shutdown first stops accepting new requests and lets active
+uploads, upstream waits, and SSE streams finish. Only the request-drain deadline
+cancels remaining request contexts and closes their connections.
 
 ### Gateway Request Correlation
 

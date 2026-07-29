@@ -606,6 +606,70 @@ func TestDispatcherShutdownCancelsBlockedDelivery(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return !dispatcher.AlertDeliveryStatus().Running })
 }
 
+func TestDispatcherShutdownDrainsNonEmptyQueues(t *testing.T) {
+	service, _ := dispatcherService(t, 1)
+	adapter := &orderedBlockingAdapter{
+		firstStarted: make(chan struct{}), secondStarted: make(chan struct{}), releaseFirst: make(chan struct{}),
+	}
+	dispatcher := NewDispatcher(DispatcherConfig{
+		Enabled: true, Service: service, Adapter: adapter, EventQueueCapacity: 2,
+		DeliveryQueueCapacity: 2, WorkerCount: 1,
+	})
+	dispatcher.Start()
+	first := triggerEvent()
+	first.ID = 51
+	second := first
+	second.ID = 52
+	second.Action = systemevent.ActionOAuthRefreshAutomaticSucceeded
+	second.Outcome = systemevent.OutcomeSuccess
+	second.Severity = systemevent.SeverityInfo
+	if !dispatcher.tryEnqueue(first) {
+		t.Fatal("dispatcher rejected first event")
+	}
+	select {
+	case <-adapter.firstStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first delivery did not start")
+	}
+	if !dispatcher.tryEnqueue(second) {
+		t.Fatal("dispatcher rejected second event")
+	}
+	waitFor(t, time.Second, func() bool { return dispatcher.AlertDeliveryStatus().QueueDepth == 1 })
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		shutdownDone <- dispatcher.Shutdown(ctx)
+	}()
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("Shutdown returned before queued delivery drained: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if dispatcher.tryEnqueue(triggerEvent()) {
+		t.Fatal("dispatcher accepted an event after shutdown began")
+	}
+	close(adapter.releaseFirst)
+	select {
+	case <-adapter.secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("queued delivery did not start during shutdown")
+	}
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown did not finish after queue drained")
+	}
+	status := dispatcher.AlertDeliveryStatus()
+	if status.Running || status.QueueDepth != 0 || status.DeliveredCount != 2 {
+		t.Fatalf("delivery status = %+v", status)
+	}
+}
+
 func TestRetryDelayUsesExponentialCapAndBoundedRetryAfter(t *testing.T) {
 	if got := retryDelay(100*time.Millisecond, time.Second, 1, 0); got != 100*time.Millisecond {
 		t.Fatalf("attempt 1 delay = %s", got)

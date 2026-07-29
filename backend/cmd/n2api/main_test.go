@@ -15,11 +15,34 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
+	"github.com/KnowSky404/N2API/backend/internal/lifecycle"
 	"github.com/KnowSky404/N2API/backend/internal/metrics"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 )
 
 type captureMainTaskMetrics struct{ runs [][2]string }
+
+func TestPreferCriticalRuntimeFailureOverridesSignalExit(t *testing.T) {
+	servers := lifecycle.NewSupervisor(context.Background())
+	if err := servers.Start("http_server", func(context.Context) error {
+		return errors.New("listener failed")
+	}); err != nil {
+		t.Fatalf("start listener: %v", err)
+	}
+	<-servers.Failures()
+	reason, exitCode := preferCriticalRuntimeFailure("signal", 0, servers, nil, nil)
+	if reason != "listener_failure" || exitCode != 1 {
+		t.Fatalf("result = (%q, %d), want listener_failure and 1", reason, exitCode)
+	}
+	servers.Stop()
+
+	lockLost := make(chan struct{})
+	close(lockLost)
+	reason, exitCode = preferCriticalRuntimeFailure("signal", 0, nil, nil, lockLost)
+	if reason != "instance_lock_lost" || exitCode != 1 {
+		t.Fatalf("lock result = (%q, %d), want instance_lock_lost and 1", reason, exitCode)
+	}
+}
 
 func (m *captureMainTaskMetrics) BeginBackgroundTask(task string) func(string) {
 	return func(outcome string) { m.runs = append(m.runs, [2]string{task, outcome}) }
@@ -352,28 +375,39 @@ func TestMainWiresProviderAccountAutoTestRunner(t *testing.T) {
 		"ResponseAffinityStore:           responseAffinityRepo",
 		"ResponseAffinityTTL:             cfg.ResponseAffinityTTL",
 		"admin.NewAPIKeyBudgetMonitor",
-		"go apiKeyBudgetMonitor.Run(ctx)",
+		"startBackground(\"api_key_budget_monitor\", apiKeyBudgetMonitor.Run)",
 		"admin.NewRoutingExhaustionProjector",
-		"go routingExhaustionProjector.Run(ctx)",
-		"initialAlertSubscription, err = systemEventRepo.Subscribe(ctx)",
+		"startBackground(\"routing_exhaustion_projector\", routingExhaustionProjector.Run)",
+		"initialAlertSubscription, err = systemEventRepo.Subscribe(startupCtx)",
 		"InitialSubscription: initialAlertSubscription",
 		"ProviderAccountAutoTestEnabled",
 		"ProviderAccountAutoTestInterval",
 		"ProviderAccountAutoTestIntervalSeconds",
-		"go autoTestRunner.Run(ctx)",
-		"go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)",
+		"startBackground(\"provider_account_auto_test\", autoTestRunner.Run)",
+		"startBackground(\"api_key_cleanup\"",
 		"service.PurgeExpiredAPIKeys(ctx)",
-		"go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour, taskMetrics)",
+		"startBackground(\"system_event_retention\"",
 		"runSystemEventCleanupCycle(ctx, events, retentionDays, slog.Default(), time.Now, observers...)",
 		"autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS(\"frontend/build\")",
-		"server.Shutdown",
+		"lifecycle.NewSupervisor",
+		"runtime.run(shutdownReason)",
 		"metrics.NewHTTPServer",
-		"metricsServer.Shutdown",
 		"updateProviderAccountMetrics",
 		"systemEventRepo.SetWriteObserver(metricsRegistry)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("main.go missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"go autoTestRunner.Run(",
+		"go requestLogRetentionRunner.Run(",
+		"go responseAffinityRetentionRunner.Run(",
+		"go apiKeyBudgetMonitor.Run(",
+		"go routingExhaustionProjector.Run(",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("main.go contains unsupervised runner %q", forbidden)
 		}
 	}
 }
@@ -383,7 +417,12 @@ func TestMainWiresAlertDispatcherAfterDatabaseCommitNotifications(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ReadFile main.go returned error: %v", err)
 	}
+	shutdownSource, err := os.ReadFile("runtime_shutdown.go")
+	if err != nil {
+		t.Fatalf("ReadFile runtime_shutdown.go returned error: %v", err)
+	}
 	text := string(source)
+	shutdownText := string(shutdownSource)
 	for _, want := range []string{
 		"store.NewAlertingRepository",
 		"alerting.NewService",
@@ -395,14 +434,19 @@ func TestMainWiresAlertDispatcherAfterDatabaseCommitNotifications(t *testing.T) 
 		"systemEventRepo.GetByID",
 		"alertDispatcher.Start()",
 		"build, alertDispatcher, alertingService, alertActionTester",
-		"server.Shutdown",
-		"alertDispatcher.Shutdown",
+		"alerts: alertDispatcher",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("main.go missing alert dispatcher wiring %q", want)
 		}
 	}
-	if strings.Index(text, "server.Shutdown") > strings.Index(text, "alertDispatcher.Shutdown") {
+	if strings.Index(shutdownText, "mainServer.Shutdown") > strings.Index(shutdownText, "alerts.Shutdown") {
 		t.Fatal("alert dispatcher shutdown must follow HTTP shutdown")
+	}
+	if strings.Index(shutdownText, "background.Wait") > strings.Index(shutdownText, "alerts.Shutdown") {
+		t.Fatal("alert dispatcher shutdown must follow background producer shutdown")
+	}
+	if strings.Index(shutdownText, "alerts.Shutdown") > strings.Index(shutdownText, "metricsServer.Shutdown") {
+		t.Fatal("metrics shutdown must follow alert dispatcher shutdown")
 	}
 }

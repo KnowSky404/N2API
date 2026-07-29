@@ -114,7 +114,9 @@ Three roots have separate ownership:
 
 - `signalCtx` receives SIGINT/SIGTERM and is never an HTTP base context.
 - `requestRootCtx` owns accepted HTTP requests and remains live during drain.
-- `backgroundCtx` owns periodic runners and dispatch work.
+- `backgroundCtx` owns periodic runners. Alert Delivery remains an explicitly
+  ordered, self-supervised consumer so its in-memory queue can drain after the
+  supervised producers have stopped.
 
 A small supervisor owns component start, unexpected-exit reporting, stop, and
 wait. Components have narrow `Start`, `Stop`, and `Wait` behavior; cleanup is
@@ -122,8 +124,9 @@ idempotent. No unobserved `go runner.Run(ctx)` remains in `main.go`.
 
 Shutdown uses one absolute deadline. Default internal timeout is 25 seconds,
 with a 20-second request-drain allocation. Both are range-validated, and the
-request-drain timeout cannot exceed the global timeout. Compose uses a
-35-second grace period.
+request-drain timeout must reserve at least five seconds for final cleanup.
+Final resource release is monitored by the same global deadline, including
+the context-free `pgxpool.Close`. Compose uses a 35-second grace period.
 
 ```text
 signal or critical failure

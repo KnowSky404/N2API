@@ -45,6 +45,8 @@ type Config struct {
 	HTTPIdleTimeout                        time.Duration
 	HTTPMaxHeaderBytes                     int
 	HTTPRequestBodyTimeout                 time.Duration
+	ShutdownTimeout                        time.Duration
+	RequestDrainTimeout                    time.Duration
 	UpstreamResponseHeaderTimeout          time.Duration
 	UpstreamConnectTimeout                 time.Duration
 	UpstreamTLSHandshakeTimeout            time.Duration
@@ -102,6 +104,8 @@ const (
 	defaultHTTPIdleTimeoutSeconds             = 60
 	defaultHTTPMaxHeaderBytes                 = 1 << 20
 	defaultHTTPRequestBodyTimeoutSeconds      = 30
+	defaultShutdownTimeoutSeconds             = 25
+	defaultRequestDrainTimeoutSeconds         = 20
 	defaultUpstreamResponseHeaderSeconds      = 30
 	defaultUpstreamConnectTimeoutSeconds      = 10
 	defaultUpstreamTLSHandshakeSeconds        = 10
@@ -411,6 +415,19 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.HTTPRequestBodyTimeout = time.Duration(requestBodySeconds) * time.Second
+	shutdownSeconds, err := parseStrictPositiveInt(lookup("N2API_SHUTDOWN_TIMEOUT_SECONDS"), "N2API_SHUTDOWN_TIMEOUT_SECONDS", defaultShutdownTimeoutSeconds, 6, 30)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ShutdownTimeout = time.Duration(shutdownSeconds) * time.Second
+	requestDrainSeconds, err := parseStrictPositiveInt(lookup("N2API_REQUEST_DRAIN_TIMEOUT_SECONDS"), "N2API_REQUEST_DRAIN_TIMEOUT_SECONDS", defaultRequestDrainTimeoutSeconds, 1, 25)
+	if err != nil {
+		return Config{}, err
+	}
+	if requestDrainSeconds > shutdownSeconds-5 {
+		return Config{}, errors.New("N2API_REQUEST_DRAIN_TIMEOUT_SECONDS must reserve at least 5 seconds for final shutdown")
+	}
+	cfg.RequestDrainTimeout = time.Duration(requestDrainSeconds) * time.Second
 	responseHeaderSeconds, err := parseStrictPositiveInt(lookup("N2API_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS"), "N2API_UPSTREAM_RESPONSE_HEADER_TIMEOUT_SECONDS", defaultUpstreamResponseHeaderSeconds, 1, 300)
 	if err != nil {
 		return Config{}, err

@@ -14,7 +14,7 @@ review, and atomic commit are complete.
 | --- | --- | --- |
 | Design and implementation plan | completed | Required documents created, reviewed, and committed as the first atomic change |
 | PostgreSQL control connections | completed | Dedicated connections, serialized startup, bounded-pool process tests, LISTEN reconnect, vet, and race verification committed in Task 2 |
-| Lifecycle and graceful drain | pending | Current signal context cancels requests before `Shutdown` |
+| Lifecycle and graceful drain | completed | Separate contexts, supervised listeners/runners, ordered Alert drain, one 30-second maximum deadline, real request/SSE tests, race/vet, and 144 ms clean container SIGTERM |
 | Gateway Settings runtime | pending | Current request path calls `GetGatewaySettings` |
 | API key authentication touch | pending | Current successful authentication writes every request |
 | Durable budget ledger | pending | Current budget reads aggregate Request Logs |
@@ -72,14 +72,15 @@ Commit: `fix(store): isolate postgres control connections`
 
 ## Task 3: Add Supervised Graceful Draining
 
-Status: pending
+Status: completed
 Dependencies: Task 2
 
 Implementation:
 
 - Add readiness state and a lifecycle supervisor with separate signal,
   request, and background contexts.
-- Register every background runner and listener as a supervised component.
+- Register periodic runners and HTTP listeners as supervised components;
+  retain Alert Delivery as the explicitly ordered, self-supervised consumer.
 - Implement one global deadline and request-drain allocation.
 - Keep metrics alive through main-server drain and close resources once.
 - Add validated shutdown configuration and set Compose grace to 35 seconds.
@@ -92,6 +93,18 @@ Tests and acceptance:
 - Metrics exposes draining during main drain; queued alerts stop predictably.
 - Lock loss uses the same path and exits nonzero.
 - Container exits within Compose grace.
+
+Evidence:
+
+- `make test` passed all Go packages, Svelte diagnostics with 0 errors and 0
+  warnings, 198 Bun tests, and the production frontend build.
+- `make test-control-connections` passed the Store suite in 2.862 seconds and
+  the real-process suite in 7.929 seconds.
+- Focused race and vet checks passed for lifecycle, alerting, config, HTTP,
+  metrics, and the main process packages; all three Compose files rendered.
+- A no-cache Compose rebuild was recreated and smoked from inside the
+  container. `docker stop --timeout 35 deploy-n2api-1` completed in 144 ms with
+  exit code 0 and `OOMKilled=false`; the service was restored healthy.
 
 Commit: `fix(runtime): implement graceful request draining`
 

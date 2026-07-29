@@ -10,7 +10,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    stop_grace_period: 10s
+    stop_grace_period: 35s
     env_file:
       - path: ../.env
         required: true

@@ -17,6 +17,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/httpapi"
+	"github.com/KnowSky404/N2API/backend/internal/lifecycle"
 	"github.com/KnowSky404/N2API/backend/internal/metrics"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
@@ -207,8 +208,8 @@ func runServer() int {
 		return 1
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	connectionFactory, err := store.NewPostgresConnectionFactory(cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("database configuration unavailable", "error_code", "database_configuration_unavailable")
@@ -220,13 +221,13 @@ func runServer() int {
 	if cfg.AllowUnsafeMultiInstance {
 		slog.Warn("unsafe multi-instance operation enabled", "error_code", "unsafe_multi_instance_enabled")
 	} else {
-		instanceConnection, connectErr := connectionFactory.Connect(ctx, store.PostgresApplicationNameInstanceLock)
+		instanceConnection, connectErr := connectionFactory.Connect(signalCtx, store.PostgresApplicationNameInstanceLock)
 		if connectErr != nil {
 			slog.Error("instance lock unavailable", "error_code", "instance_lock_unavailable")
 			return 1
 		}
 		var acquired bool
-		instanceLock, acquired, err = store.TryAcquireInstanceLock(ctx, instanceConnection)
+		instanceLock, acquired, err = store.TryAcquireInstanceLock(signalCtx, instanceConnection)
 		if err != nil {
 			slog.Error("instance lock unavailable", "error_code", "instance_lock_unavailable")
 			return 1
@@ -238,7 +239,7 @@ func runServer() int {
 		instanceLockLost = instanceLock.Lost()
 	}
 
-	pool, err := store.OpenPool(ctx, cfg.DatabaseURL)
+	pool, err := store.OpenPool(signalCtx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("database unavailable", "error_code", "database_unavailable")
 		if instanceLock != nil {
@@ -246,9 +247,18 @@ func runServer() int {
 		}
 		return 1
 	}
-	defer pool.Close()
+	poolOwnedByRuntime := false
+	defer func() {
+		if !poolOwnedByRuntime {
+			pool.Close()
+		}
+	}()
+	instanceLockOwnedByRuntime := false
 	if instanceLock != nil {
 		defer func() {
+			if instanceLockOwnedByRuntime {
+				return
+			}
 			if err := instanceLock.Close(); err != nil {
 				slog.Error("instance lock release failed", "error_code", "instance_lock_release_failed")
 			}
@@ -263,15 +273,18 @@ func runServer() int {
 		taskMetrics = metricsRegistry
 		gatewayMetrics = metricsRegistry
 		providerMetrics = metricsRegistry
-		ctx = systemevent.WithWriteObserver(ctx, metricsRegistry)
+	}
+	startupCtx := signalCtx
+	if metricsRegistry != nil {
+		startupCtx = systemevent.WithWriteObserver(startupCtx, metricsRegistry)
 	}
 
-	migrationConnection, err := connectionFactory.Connect(ctx, store.PostgresApplicationNameMigrationLock)
+	migrationConnection, err := connectionFactory.Connect(startupCtx, store.PostgresApplicationNameMigrationLock)
 	if err != nil {
 		slog.Error("database migration lock unavailable", "error_code", "database_migration_lock_unavailable")
 		return 1
 	}
-	migrationLock, err := store.AcquireMigrationLock(ctx, migrationConnection)
+	migrationLock, err := store.AcquireMigrationLock(startupCtx, migrationConnection)
 	if err != nil {
 		slog.Error("database migration lock unavailable", "error_code", "database_migration_lock_unavailable")
 		return 1
@@ -281,7 +294,7 @@ func runServer() int {
 			slog.Error("database migration lock release failed", "error_code", "database_migration_lock_release_failed")
 		}
 	}()
-	migrationCriticalCtx, cancelMigrationCritical := context.WithCancel(ctx)
+	migrationCriticalCtx, cancelMigrationCritical := context.WithCancel(startupCtx)
 	migrationWatchCtx, stopMigrationWatch := context.WithCancel(context.Background())
 	go func() {
 		select {
@@ -299,7 +312,7 @@ func runServer() int {
 	}
 	if err := store.RunMigrations(migrationCriticalCtx, migrationPool); err != nil {
 		migrationPool.Close()
-		if migrationCriticalCtx.Err() != nil && ctx.Err() == nil {
+		if migrationCriticalCtx.Err() != nil && signalCtx.Err() == nil {
 			slog.Error("database migration lock lost", "error_code", "database_migration_lock_lost")
 			return 1
 		}
@@ -333,7 +346,7 @@ func runServer() int {
 		},
 	})
 	if err := adminService.BootstrapAdmin(migrationCriticalCtx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
-		if migrationCriticalCtx.Err() != nil && ctx.Err() == nil {
+		if migrationCriticalCtx.Err() != nil && signalCtx.Err() == nil {
 			slog.Error("database migration lock lost", "error_code", "database_migration_lock_lost")
 			return 1
 		}
@@ -357,7 +370,7 @@ func runServer() int {
 	alertActionTester := alerting.NewActionTester(alertingService, alertHTTPAdapter)
 	var initialAlertSubscription alerting.EventSubscription
 	if cfg.AlertDeliveryEnabled {
-		initialAlertSubscription, err = systemEventRepo.Subscribe(ctx)
+		initialAlertSubscription, err = systemEventRepo.Subscribe(startupCtx)
 		if err != nil {
 			slog.Error("alert delivery listener unavailable", "error_code", "alert_delivery_listener_unavailable")
 			return 1
@@ -371,12 +384,18 @@ func runServer() int {
 		},
 		GetEvent: systemEventRepo.GetByID,
 	})
-
 	alertDispatcher.Start()
-	go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)
-	if cfg.SystemEventRetentionDays > 0 {
-		go runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour, taskMetrics)
-	}
+	alertShutdownHandled := false
+	defer func() {
+		if alertShutdownHandled {
+			return
+		}
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancelCleanup()
+		if err := alertDispatcher.Shutdown(cleanupCtx); err != nil {
+			slog.Error("alert delivery startup cleanup failed", "error_code", "alert_delivery_startup_cleanup_failed")
+		}
+	}()
 
 	providerRepo := store.NewProviderRepository(pool)
 	requestLogRepo := store.NewGatewayRepository(pool)
@@ -414,7 +433,6 @@ func runServer() int {
 	if metricsRegistry != nil {
 		autoTestRunner.SetMetricsObserver(metricsRegistry)
 	}
-	go autoTestRunner.Run(ctx)
 	requestLogRetentionRunner := admin.NewRequestLogRetentionRunner(adminService, admin.RequestLogRetentionRunnerConfig{
 		Enabled: cfg.RequestLogRetentionRunnerEnabled, Interval: cfg.RequestLogRetentionInterval, BatchSize: cfg.RequestLogRetentionBatchSize,
 	}, slog.Default())
@@ -422,7 +440,6 @@ func runServer() int {
 	if metricsRegistry != nil {
 		requestLogRetentionRunner.SetMetricsObserver(metricsRegistry)
 	}
-	go requestLogRetentionRunner.Run(ctx)
 	responseAffinityRetentionRunner := gateway.NewResponseAffinityRetentionRunner(
 		responseAffinityRetentionStore{repository: responseAffinityRepo},
 		gateway.ResponseAffinityRetentionRunnerConfig{
@@ -434,17 +451,14 @@ func runServer() int {
 	if metricsRegistry != nil {
 		responseAffinityRetentionRunner.SetMetricsObserver(metricsRegistry)
 	}
-	go responseAffinityRetentionRunner.Run(ctx)
 	apiKeyBudgetMonitor := admin.NewAPIKeyBudgetMonitor(adminRepo, admin.APIKeyBudgetMonitorConfig{}, slog.Default())
 	if metricsRegistry != nil {
 		apiKeyBudgetMonitor.SetMetricsObserver(metricsRegistry)
 	}
-	go apiKeyBudgetMonitor.Run(ctx)
 	routingExhaustionProjector := admin.NewRoutingExhaustionProjector(adminRepo, admin.RoutingExhaustionProjectorConfig{}, slog.Default())
 	if metricsRegistry != nil {
 		routingExhaustionProjector.SetMetricsObserver(metricsRegistry)
 	}
-	go routingExhaustionProjector.Run(ctx)
 
 	gatewayProxy := gateway.NewProxy(adminService, gatewayAccountProvider{service: providerService}, gateway.Config{
 		UpstreamBaseURL:                 cfg.OpenAIAPIBaseURL,
@@ -477,72 +491,209 @@ func runServer() int {
 		UsagePricer: gatewayUsagePricer{admins: adminService},
 	})
 	providerService.SetAccountTransportInvalidator(gatewayProxy)
-	defer gatewayProxy.Close()
+	gatewayOwnedByRuntime := false
+	defer func() {
+		if !gatewayOwnedByRuntime {
+			gatewayProxy.Close()
+		}
+	}()
 	if metricsRegistry != nil {
-		updateProviderAccountMetrics(ctx, providerService, metricsRegistry)
-		go runProviderAccountMetrics(ctx, providerService, metricsRegistry, time.Minute)
+		updateProviderAccountMetrics(startupCtx, providerService, metricsRegistry)
 	}
+	requestBaseCtx, cancelRequests := context.WithCancel(context.Background())
+	requestRootCtx := requestBaseCtx
+	backgroundRootCtx := context.Background()
+	if metricsRegistry != nil {
+		requestRootCtx = systemevent.WithWriteObserver(requestRootCtx, metricsRegistry)
+		backgroundRootCtx = systemevent.WithWriteObserver(backgroundRootCtx, metricsRegistry)
+	}
+	metricsRootCtx, cancelMetricsRoot := context.WithCancel(context.Background())
+	runtimeReadiness := lifecycle.NewReadiness()
+	requestTracker := newRuntimeRequestTracker()
 
 	server := newHTTPServer(
 		cfg,
-		httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry),
-		ctx,
+		requestTracker.Wrap(httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry, runtimeReadiness)),
+		requestRootCtx,
 	)
-
-	serverErrors := make(chan error, 1)
-	go func() {
-		slog.Info("starting n2api", "addr", cfg.Addr(), "version", build.Version, "commit", build.Commit, "built_at", build.BuiltAt)
-		serverErrors <- server.ListenAndServe()
-	}()
 	var metricsServer *http.Server
-	var metricsServerErrors <-chan error
 	if metricsRegistry != nil {
-		metricsServer = metrics.NewHTTPServer(cfg.MetricsAddr(), cfg.MetricsBearerToken, metricsRegistry.Handler(), ctx)
-		errors := make(chan error, 1)
-		metricsServerErrors = errors
-		go func() {
+		metricsServer = metrics.NewHTTPServer(cfg.MetricsAddr(), cfg.MetricsBearerToken, metricsRegistry.Handler(), metricsRootCtx)
+	}
+
+	mainListener, err := net.Listen("tcp", cfg.Addr())
+	if err != nil {
+		cancelRequests()
+		cancelMetricsRoot()
+		slog.Error("server listener unavailable", "error_code", "server_listener_unavailable")
+		return 1
+	}
+	var metricsListener net.Listener
+	if metricsServer != nil {
+		metricsListener, err = net.Listen("tcp", cfg.MetricsAddr())
+		if err != nil {
+			_ = mainListener.Close()
+			cancelRequests()
+			cancelMetricsRoot()
+			slog.Error("metrics server stopped", "error_code", "metrics_server_stopped")
+			return 1
+		}
+	}
+
+	serverSupervisor := lifecycle.NewSupervisor(context.Background())
+	backgroundSupervisor := lifecycle.NewSupervisor(backgroundRootCtx)
+	if err := serverSupervisor.Start("http_server", func(context.Context) error {
+		slog.Info("starting n2api", "addr", cfg.Addr(), "version", build.Version, "commit", build.Commit, "built_at", build.BuiltAt)
+		serveErr := server.Serve(mainListener)
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			return nil
+		}
+		return serveErr
+	}); err != nil {
+		_ = mainListener.Close()
+		if metricsListener != nil {
+			_ = metricsListener.Close()
+		}
+		cancelRequests()
+		cancelMetricsRoot()
+		slog.Error("server startup failed", "error_code", "server_startup_failed")
+		return 1
+	}
+	if metricsServer != nil {
+		if err := serverSupervisor.Start("metrics_server", func(context.Context) error {
 			slog.Info("starting n2api metrics", "addr", cfg.MetricsAddr())
-			errors <- metricsServer.ListenAndServe()
-		}()
+			serveErr := metricsServer.Serve(metricsListener)
+			if errors.Is(serveErr, http.ErrServerClosed) {
+				return nil
+			}
+			return serveErr
+		}); err != nil {
+			serverSupervisor.BeginStop()
+			_ = server.Close()
+			_ = metricsListener.Close()
+			serverSupervisor.Stop()
+			cancelRequests()
+			cancelMetricsRoot()
+			slog.Error("metrics server stopped", "error_code", "metrics_server_stopped")
+			return 1
+		}
+	}
+
+	startBackground := func(name string, run func(context.Context)) error {
+		return backgroundSupervisor.Start(name, func(ctx context.Context) error {
+			run(ctx)
+			return nil
+		})
+	}
+	backgroundStartErr := startBackground("api_key_cleanup", func(ctx context.Context) {
+		runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)
+	})
+	if backgroundStartErr == nil && cfg.SystemEventRetentionDays > 0 {
+		backgroundStartErr = startBackground("system_event_retention", func(ctx context.Context) {
+			runSystemEventCleanup(ctx, systemEventRepo, cfg.SystemEventRetentionDays, 24*time.Hour, taskMetrics)
+		})
+	}
+	if backgroundStartErr == nil {
+		backgroundStartErr = startBackground("provider_account_auto_test", autoTestRunner.Run)
+	}
+	if backgroundStartErr == nil && cfg.RequestLogRetentionRunnerEnabled {
+		backgroundStartErr = startBackground("request_log_retention", requestLogRetentionRunner.Run)
+	}
+	if backgroundStartErr == nil && cfg.ResponseAffinityRetentionRunnerEnabled {
+		backgroundStartErr = startBackground("response_affinity_retention", responseAffinityRetentionRunner.Run)
+	}
+	if backgroundStartErr == nil {
+		backgroundStartErr = startBackground("api_key_budget_monitor", apiKeyBudgetMonitor.Run)
+	}
+	if backgroundStartErr == nil {
+		backgroundStartErr = startBackground("routing_exhaustion_projector", routingExhaustionProjector.Run)
+	}
+	if backgroundStartErr == nil && metricsRegistry != nil {
+		backgroundStartErr = startBackground("provider_account_metrics", func(ctx context.Context) {
+			runProviderAccountMetrics(ctx, providerService, metricsRegistry, time.Minute)
+		})
+	}
+
+	runtime := runtimeShutdown{
+		mainServer: server, metricsServer: metricsServer, readiness: runtimeReadiness,
+		metrics: metricsRegistry, background: backgroundSupervisor, servers: serverSupervisor,
+		alerts: alertDispatcher, requests: requestTracker, cancelRequests: cancelRequests, cancelMetricsRoot: cancelMetricsRoot,
+		finalizeResources: func(context.Context) error {
+			gatewayProxy.Close()
+			var closeErr error
+			if instanceLock != nil {
+				closeErr = instanceLock.Close()
+			}
+			pool.Close()
+			return closeErr
+		},
+		totalTimeout: cfg.ShutdownTimeout, requestDrain: cfg.RequestDrainTimeout,
+	}
+	gatewayOwnedByRuntime = true
+	instanceLockOwnedByRuntime = true
+	poolOwnedByRuntime = true
+	if backgroundStartErr != nil {
+		slog.Error("background component startup failed", "error_code", "background_component_startup_failed")
+		_ = runtime.run("startup_failure")
+		alertShutdownHandled = true
+		return 1
+	}
+	runtimeReadiness.MarkReady()
+	if metricsRegistry != nil {
+		metricsRegistry.SetReadiness("runtime", true)
 	}
 
 	exitCode := 0
+	shutdownReason := "signal"
 	select {
-	case err := <-serverErrors:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("server stopped", "error", err)
-			exitCode = 1
-		}
-	case err := <-metricsServerErrors:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("metrics server stopped", "error_code", "metrics_server_stopped")
-			exitCode = 1
-		}
+	case <-serverSupervisor.Failures():
+		slog.Error("listener stopped unexpectedly", "error_code", "listener_stopped")
+		shutdownReason = "listener_failure"
+		exitCode = 1
+	case <-backgroundSupervisor.Failures():
+		slog.Error("background component stopped unexpectedly", "error_code", "background_component_stopped")
+		shutdownReason = "background_failure"
+		exitCode = 1
 	case <-instanceLockLost:
 		slog.Error("instance lock connection lost", "error_code", "instance_lock_lost")
+		shutdownReason = "instance_lock_lost"
 		exitCode = 1
-	case <-ctx.Done():
+	case <-signalCtx.Done():
 	}
-	stop()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		slog.Error("server shutdown failed", "error", err)
-		exitCode = 1
-	}
-	if metricsServer != nil {
-		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
-			slog.Error("metrics server shutdown failed", "error_code", "metrics_server_shutdown_failed")
-			exitCode = 1
-		}
-	}
-	cancel()
-	dispatcherShutdownCtx, cancelDispatcher := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := alertDispatcher.Shutdown(dispatcherShutdownCtx); err != nil {
-		slog.Error("alert delivery shutdown failed", "error_code", "alert_delivery_shutdown_failed")
+	shutdownReason, exitCode = preferCriticalRuntimeFailure(
+		shutdownReason,
+		exitCode,
+		serverSupervisor,
+		backgroundSupervisor,
+		instanceLockLost,
+	)
+	if err := runtime.run(shutdownReason); err != nil {
+		slog.Error("runtime shutdown failed", "error_code", "runtime_shutdown_failed")
 		exitCode = 1
 	}
-	cancelDispatcher()
+	alertShutdownHandled = true
 	return exitCode
+}
+
+func preferCriticalRuntimeFailure(
+	reason string,
+	exitCode int,
+	servers *lifecycle.Supervisor,
+	background *lifecycle.Supervisor,
+	instanceLockLost <-chan struct{},
+) (string, int) {
+	if servers.LastFailure() != nil {
+		return "listener_failure", 1
+	}
+	if background.LastFailure() != nil {
+		return "background_failure", 1
+	}
+	select {
+	case <-instanceLockLost:
+		return "instance_lock_lost", 1
+	default:
+		return reason, exitCode
+	}
 }
 
 type providerAccountMetricsSource interface {

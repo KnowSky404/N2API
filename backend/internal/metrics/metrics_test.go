@@ -46,6 +46,7 @@ func TestRegistryStaysWithinSeriesBudgetsAndExcludesCanaries(t *testing.T) {
 	r.ObserveAlertNotification("secret-adapter-canary", "secret-outcome-canary")
 	r.ObserveAlertDeliveryDuration("secret-adapter-canary", time.Millisecond)
 	r.SetReadiness("secret-component-canary", true)
+	r.SetDraining(true)
 	families, err := r.Gatherer().Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +69,9 @@ func TestRegistryStaysWithinSeriesBudgetsAndExcludesCanaries(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	r.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := recorder.Body.String()
+	if !strings.Contains(body, "n2api_draining 1") {
+		t.Fatal("scrape does not expose draining state")
+	}
 	for _, canary := range []string{"resp_canary", "owner@example.com", "secret-source-canary", "secret-account-canary", "secret-state-canary", "secret-adapter-canary", "secret-outcome-canary", "secret-component-canary"} {
 		if strings.Contains(body, canary) {
 			t.Fatalf("scrape contains prohibited canary %q", canary)

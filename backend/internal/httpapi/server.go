@@ -21,6 +21,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/buildinfo"
 	"github.com/KnowSky404/N2API/backend/internal/config"
 	gatewaypkg "github.com/KnowSky404/N2API/backend/internal/gateway"
+	"github.com/KnowSky404/N2API/backend/internal/lifecycle"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
@@ -145,6 +146,10 @@ type ReadinessMetricsObserver interface {
 	SetReadiness(component string, ready bool)
 }
 
+type RuntimeReadinessSource interface {
+	Snapshot() lifecycle.ReadinessSnapshot
+}
+
 type AccountConcurrencySnapshotProvider interface {
 	AccountConcurrencySnapshot() map[int64]int
 }
@@ -234,6 +239,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	alertingAdminService := alertingAdminServiceFromOptions(options...)
 	alertActionTester := alertActionTesterFromOptions(options...)
 	readinessMetrics := readinessMetricsObserverFromOptions(options...)
+	runtimeReadiness := runtimeReadinessSourceFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -252,6 +258,16 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			"status":       "not_ready",
 			"database":     "not_configured",
 			"staticAssets": "error",
+			"runtime":      "ready",
+		}
+		runtimeReady := true
+		if runtimeReadiness != nil {
+			snapshot := runtimeReadiness.Snapshot()
+			response["runtime"] = string(snapshot.Phase)
+			runtimeReady = snapshot.Ready()
+			if snapshot.Reason != "" {
+				response["runtimeReason"] = snapshot.Reason
+			}
 		}
 
 		if health != nil {
@@ -269,9 +285,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		if readinessMetrics != nil {
 			readinessMetrics.SetReadiness("database", response["database"] == "ok")
 			readinessMetrics.SetReadiness("static_assets", response["staticAssets"] == "ok")
-			readinessMetrics.SetReadiness("overall", response["database"] == "ok" && response["staticAssets"] == "ok")
+			readinessMetrics.SetReadiness("runtime", runtimeReady)
+			readinessMetrics.SetReadiness("overall", response["database"] == "ok" && response["staticAssets"] == "ok" && runtimeReady)
 		}
-		if response["database"] == "ok" && response["staticAssets"] == "ok" {
+		if response["database"] == "ok" && response["staticAssets"] == "ok" && runtimeReady {
 			response["status"] = "ok"
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -3110,6 +3127,15 @@ func readinessMetricsObserverFromOptions(options ...any) ReadinessMetricsObserve
 	for _, option := range options {
 		if observer, ok := option.(ReadinessMetricsObserver); ok {
 			return observer
+		}
+	}
+	return nil
+}
+
+func runtimeReadinessSourceFromOptions(options ...any) RuntimeReadinessSource {
+	for _, option := range options {
+		if source, ok := option.(RuntimeReadinessSource); ok {
+			return source
 		}
 	}
 	return nil

@@ -15,7 +15,7 @@ import (
 const (
 	MaxOwnedSeries            = 1600
 	MaxScrapeSeries           = 2000
-	MaxInitializedOwnedSeries = 1516
+	MaxInitializedOwnedSeries = 1518
 )
 
 var (
@@ -39,7 +39,7 @@ var (
 	persistenceStates = []string{"success", "failure"}
 	alertAdapters     = []string{"generic_webhook", "ntfy", "gotify", "other"}
 	alertOutcomes     = []string{"delivered", "failed", "dropped", "deduplicated", "recovery", "other"}
-	readinessParts    = []string{"overall", "database", "static_assets", "other"}
+	readinessParts    = []string{"overall", "database", "static_assets", "runtime", "other"}
 )
 
 type Registry struct {
@@ -69,6 +69,7 @@ type Registry struct {
 	alertNotifications *prometheus.CounterVec
 	alertDuration      *prometheus.HistogramVec
 	readiness          *prometheus.GaugeVec
+	draining           prometheus.Gauge
 	providerAccountsMu sync.Mutex
 }
 
@@ -103,6 +104,7 @@ func New(pool *pgxpool.Pool) *Registry {
 	r.alertNotifications = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "n2api_alert_notifications_total", Help: "Total bounded alert notification outcomes."}, []string{"adapter", "outcome"})
 	r.alertDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "n2api_alert_delivery_duration_seconds", Help: "Alert destination delivery duration.", Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30}}, []string{"adapter"})
 	r.readiness = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "n2api_readiness", Help: "Last observed readiness result by fixed component."}, []string{"component"})
+	r.draining = prometheus.NewGauge(prometheus.GaugeOpts{Name: "n2api_draining", Help: "Whether the process is draining and no longer ready."})
 
 	r.registry.MustRegister(
 		collectors.NewGoCollector(),
@@ -113,7 +115,7 @@ func New(pool *pgxpool.Pool) *Registry {
 		r.usageObservations, r.tokens, r.estimatedCost, r.providerAccounts,
 		r.providerRefreshes, r.requestLogWrites, r.systemEventWrites, r.taskRuns,
 		r.taskDuration, r.taskRunning, r.taskLastSuccess, r.taskLastFailure,
-		r.alertQueueDepth, r.alertNotifications, r.alertDuration, r.readiness,
+		r.alertQueueDepth, r.alertNotifications, r.alertDuration, r.readiness, r.draining,
 		newPoolCollector(pool),
 	)
 	r.initializeBoundedSeries()
@@ -189,6 +191,7 @@ func (r *Registry) initializeBoundedSeries() {
 	for _, component := range readinessParts {
 		r.readiness.WithLabelValues(component).Set(0)
 	}
+	r.draining.Set(0)
 }
 
 func (r *Registry) Handler() http.Handler {
@@ -373,6 +376,17 @@ func (r *Registry) SetReadiness(component string, ready bool) {
 		value = 1
 	}
 	r.readiness.WithLabelValues(normalize(component, readinessParts)).Set(value)
+}
+
+func (r *Registry) SetDraining(draining bool) {
+	if r == nil {
+		return
+	}
+	value := 0.0
+	if draining {
+		value = 1
+	}
+	r.draining.Set(value)
 }
 
 func persistenceOutcome(err error) string {
