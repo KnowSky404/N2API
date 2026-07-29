@@ -251,9 +251,20 @@ unprivileged application identity with `noexec`, `nosuid`, and `nodev`; it is
 ephemeral and must not be used for persistent data. PostgreSQL is intentionally
 excluded because its official image requires a persistent writable data path.
 
-N2API uses the `unless-stopped` restart policy and has ten seconds to exit after
-SIGTERM before Docker sends SIGKILL. Inspect the effective restrictions without
-printing container environment variables:
+N2API uses the `unless-stopped` restart policy. Compose allows 35 seconds after
+SIGTERM, longer than N2API's 25-second global shutdown deadline and 20-second
+request-drain allocation, before Docker sends SIGKILL. Release Compose also
+sets separate resource defaults:
+
+| Service | CPU | Memory | PIDs | `nofile` soft/hard | `/tmp` | JSON logs |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| N2API | 1.0 | 512 MiB | 256 | 4096/8192 | 16 MiB | 10 MiB x 3 |
+| PostgreSQL | 1.0 | 768 MiB | 256 | 4096/8192 | 64 MiB | 10 MiB x 3 |
+
+PostgreSQL additionally receives 128 MiB shared memory. Override the matching
+`N2API_*` and `POSTGRES_*` resource variables only after measuring the host;
+keep application and database budgets independent. Inspect the effective
+restrictions without printing container environment variables:
 
 ```bash
 docker inspect "$(docker compose -f deploy/compose.yaml ps -q n2api)" \
@@ -446,7 +457,8 @@ cd N2API || exit 1
 N2API_VERSION=YYYYMMDDNN
 git checkout "$N2API_VERSION"
 cp .env.example .env
-sed -i "s|^N2API_IMAGE=.*|N2API_IMAGE=ghcr.io/knowsky404/n2api:${N2API_VERSION}|" .env
+N2API_MANIFEST_DIGEST=sha256:<64-lowercase-hex-characters>
+sed -i "s|^N2API_IMAGE=.*|N2API_IMAGE=ghcr.io/knowsky404/n2api:${N2API_VERSION}@${N2API_MANIFEST_DIGEST}|" .env
 ```
 
 Replace every `change-me` value before starting the stack. At minimum, set:
@@ -466,6 +478,36 @@ Replace every `change-me` value before starting the stack. At minimum, set:
   and omit both database transport risks. `sslmode=require` and
   `sslmode=verify-ca` require the independent `database-unverified-tls`
   acknowledgement because they do not verify the server hostname.
+
+`N2API_IMAGE` must retain both the readable tag and immutable digest. Validate
+the reference before deployment without pulling or inspecting any secret:
+
+```bash
+IMAGE_REF="ghcr.io/knowsky404/n2api:${N2API_VERSION}@${N2API_MANIFEST_DIGEST}"
+dev/verification/verify-release-image.sh --syntax-only "$IMAGE_REF"
+```
+
+For file-backed core secrets, create owner-readable regular files outside the
+repository and set `N2API_DATABASE_URL_SOURCE_FILE`,
+`N2API_ADMIN_PASSWORD_SOURCE_FILE`, `N2API_ENCRYPTION_SECRET_SOURCE_FILE`, and
+`N2API_POSTGRES_PASSWORD_SOURCE_FILE` in `.env`. Then include the core override:
+
+```bash
+docker compose --env-file .env \
+  -f deploy/compose.release.yaml \
+  -f deploy/compose.release.secrets.yaml config --quiet
+docker compose --env-file .env \
+  -f deploy/compose.release.yaml \
+  -f deploy/compose.release.secrets.yaml up -d
+```
+
+Metrics file auth additionally requires `deploy/compose.metrics.yaml`,
+`deploy/compose.metrics.secrets.yaml`, and
+`N2API_METRICS_BEARER_TOKEN_SOURCE_FILE`. N2API also accepts custom mounts for
+`N2API_ENCRYPTION_PREVIOUS_KEYS_FILE` and
+`OPENAI_OAUTH_CLIENT_SECRET_FILE`. Never set a direct secret and its `_FILE`
+alternative together. Files are limited to 64 KiB, must be regular files rather
+than symlinks, pipes, or directories, and lose at most one final LF or CRLF.
 
 ### Encrypted Secret Envelope
 
@@ -974,11 +1016,15 @@ curl -fsS http://127.0.0.1:3000/livez
 curl -fsS http://127.0.0.1:3000/version
 curl -fsS http://127.0.0.1:3000/api/admin/health
 docker image inspect "ghcr.io/knowsky404/n2api:${N2API_VERSION}" --format '{{.Os}}/{{.Architecture}}'
+dev/verification/verify-release-image.sh --container \
+  "$(docker compose -f deploy/compose.release.yaml --env-file .env ps -q n2api)" \
+  "$IMAGE_REF"
 ```
 
-The final command must print `linux/arm64` on an ARM64 host. The release Compose
-file publishes port `3000` on host loopback unless `N2API_BIND_ADDRESS` changes
-it.
+The `docker image inspect` command must print `linux/arm64` on an ARM64 host.
+The release-image verifier must then confirm that the running container was
+created from the exact immutable reference. The release Compose file publishes
+port `3000` on host loopback unless `N2API_BIND_ADDRESS` changes it.
 
 After the stack is healthy, sign in, connect and test a provider account,
 enable its supported models, create a client API key, and verify `/v1/models`
@@ -1119,10 +1165,13 @@ N2API exposes separate process and dependency probes:
 
 - `GET /livez` reports only that the HTTP process can respond. It does not
   check PostgreSQL or provider accounts.
-- `GET /readyz` reports ready only when PostgreSQL responds and the static admin
-  build contains its application entry document. Migrations, administrator
-  bootstrap, and background runner construction finish before the HTTP server
-  starts listening. Provider account availability does not affect readiness.
+- `GET /readyz` reports ready only when PostgreSQL responds, the static admin
+  build contains its application entry document, runtime startup is complete,
+  and a valid Gateway Settings snapshot is available. A stale last-known-good
+  settings snapshot remains ready; an invalid initial snapshot does not.
+  Migrations, administrator bootstrap, and background runner construction
+  finish before the HTTP server starts listening. Provider account availability
+  does not affect readiness.
 - `GET /healthz` remains a compatibility alias for the liveness behavior.
 - `GET /version` is public and returns only the short build version, for
   example `{"version":"sha-0123456789ab"}`.
@@ -1130,6 +1179,15 @@ N2API exposes separate process and dependency probes:
   `status`/`database` response. With a valid administrator session cookie, it
   also includes the complete commit SHA and UTC build time under `build`, plus
   operational task details such as `tasks.requestLogWrite`.
+
+Authenticated health also exposes `tasks.gatewaySettings`,
+`tasks.requestLogRetention`, and `tasks.alertDelivery` without configuration
+values or destinations. Request Log retention reports whether a persisted
+policy is configured, `keep_all` or `delete_after_days`, oldest/newest times,
+bounded row estimates, eligible count, relation bytes, and disk risk
+`unknown`, `ok`, `watch`, or `high`. Alert delivery reports whether its LISTEN
+connection is currently connected and the process-local reconnect count in
+addition to queue, retry, drop, and delivery state.
 
 `tasks.requestLogWrite` is in-memory status for durable Request Log writes.
 `lastSucceededAt` and `lastFailedAt` are the UTC times of the latest successful
@@ -1400,6 +1458,18 @@ Run the SDK contracts locally through the managed lifecycle wrapper:
 
 ```bash
 make test-contracts
+```
+
+The CI correctness matrix also runs the following local entry points. Image
+build and publication jobs depend on every matrix member:
+
+```bash
+make test-go-quality
+make test-critical-race
+make test-control-connections
+make test-request-log-profile
+make test-management-list-profile
+make test-production-deploy
 ```
 
 Each runner creates its own account, routing pool, and client key through the

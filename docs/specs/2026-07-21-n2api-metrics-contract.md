@@ -66,7 +66,7 @@ request identifiers are explicitly prohibited.
 | `outcome` | Metric-specific fixed allowlist documented below | Never use raw errors. Unexpected values become `other`. |
 | `reason` | Metric-specific fixed allowlist documented below | Never use raw gateway, provider, or task error strings. |
 | `adapter` | `generic_webhook`, `ntfy`, `gotify`, `other` | Normalize the fixed alert delivery adapter kind; failures before action resolution use `other`. |
-| `component` | `overall`, `database`, `static_assets`, `other` | Fixed readiness components; no dependency, host, or database name is exposed. |
+| `component` | `overall`, `database`, `static_assets`, `runtime`, `gateway_settings`, `other` | Fixed readiness components; no dependency, host, or database name is exposed. |
 
 ## Gateway Metrics
 
@@ -123,11 +123,18 @@ The usage counters are updated only after the final observation is known.
 | `n2api_provider_refresh_attempts_total` | Counter, attempts | `mode`, `outcome` | 16 | Manual, automatic, and rejected-token refresh reliability. |
 | `n2api_request_log_writes_total` | Counter, writes | `outcome` | 2 | Detect loss of durable request attribution. |
 | `n2api_system_event_writes_total` | Counter, writes | `outcome` | 2 | Detect audit/event persistence failures. |
+| `n2api_gateway_settings_snapshot_valid` | Gauge, boolean `0` or `1` | none | 1 | Detect a missing or invalid runtime settings snapshot. |
+| `n2api_gateway_settings_snapshot_stale` | Gauge, boolean `0` or `1` | none | 1 | Detect last-known-good operation after refresh failure. |
+| `n2api_gateway_settings_refresh_total` | Counter, refreshes | `outcome` | 3 | Observe bounded settings refresh success or failure. |
+| `n2api_gateway_settings_snapshot_age_seconds` | Gauge, seconds | none | 1 | Alert on an unexpectedly old active snapshot. |
+| `n2api_api_key_last_used_total` | Counter, authentications | `outcome` | 4 | Observe updated, skipped, or failed last-used touches. |
 
 Refresh `mode` is `manual`, `automatic`, `rejected_token`, or `other`; refresh
 `outcome` is `success`, `failure`, `skipped`, or `other`. Persistence write
 `outcome` is only `success` or `failure`. Provider names, account IDs, model
 names, System Event categories/actions, and raw database errors are omitted.
+Gateway-settings refresh outcome is `success`, `failure`, or `other`; API-key
+last-used outcome is `updated`, `skipped`, `failure`, or `other`.
 
 ## Background Task Metrics
 
@@ -183,7 +190,8 @@ Alert `outcome` is `delivered`, `failed`, `dropped`,
 
 | Metric | Type and unit | Labels | Max series | Operator use case |
 | --- | --- | --- | ---: | --- |
-| `n2api_readiness` | Gauge, boolean `0` or `1` | `component` | 4 | Last observed overall, database, and static-asset readiness. |
+| `n2api_readiness` | Gauge, boolean `0` or `1` | `component` | 6 | Last observed overall, database, static-asset, runtime, and settings readiness. |
+| `n2api_draining` | Gauge, boolean `0` or `1` | none | 1 | Distinguish intentional request drain from dependency failure. |
 
 Readiness gauges initialize to `0` and are updated from the existing `/readyz`
 result. A metrics scrape reads only the gauges; it never performs a PostgreSQL
@@ -194,16 +202,16 @@ when they require an independently timed active probe.
 
 Every histogram label set includes its configured finite buckets, the implicit
 `+Inf` bucket, `_sum`, and `_count`. The worst-case active N2API-owned series is
-1,516:
+1,529:
 
 - gateway: 1,203;
-- provider and persistence: 44;
+- provider and persistence: 54;
 - background tasks: 176;
 - alerting: 77;
-- readiness: 4; and
+- readiness and lifecycle: 7; and
 - PostgreSQL pool: 12.
 
-This leaves 84 N2API-owned series below the 1,600 cap. Standard Go runtime and
+This leaves 71 N2API-owned series below the 1,600 cap. Standard Go runtime and
 process collectors must fit inside the separate 2,000-series complete-scrape
 cap. Tests must gather the registry after exercising every allowed label value,
 expand histograms to their actual exposition series, and fail when the exact

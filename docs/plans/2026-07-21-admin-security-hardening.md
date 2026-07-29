@@ -17,6 +17,12 @@ Data migration: additive session metadata in Task 4
 | `operator_acceptance` | pending | Validate the real reverse proxy, cookie/browser flows, and password-change session behavior in the deployed environment. |
 | `owner_decision` | partial | Password-change behavior is accepted. TOTP remains owner-blocked until recovery codes, key backup, and lost-device recovery are designed. |
 
+Production-correctness follow-up on 2026-07-29 added bounded `_FILE` secret
+loading, direct/file conflict rejection, regular-file and size checks,
+non-leaking failures, Argon2id password migration, exact password-byte
+preservation, and password step-up for full client-key reveal. Real proxy and
+browser acceptance remains pending.
+
 ## Current Baseline And Threat Decision
 
 Sessions are random, hashed in PostgreSQL, HttpOnly, SameSite=Lax, and scoped to

@@ -14,6 +14,7 @@ record.
 - [ ] Platforms are exactly `linux/amd64` and `linux/arm64`:
 - [ ] Release preview workflow run:
 - [ ] Required backend, frontend, and image checks passed:
+- [ ] All six `Correctness (...)` matrix checks passed for the exact commit:
 
 ## Supply Chain Evidence
 
@@ -83,8 +84,13 @@ until the owner records an explicit, time-bounded exception.
 
 - [ ] PostgreSQL backup for the deployment was created and retained:
 - [ ] Release Compose configuration validates without printing secrets:
+- [ ] Application/PostgreSQL CPU, memory, PID, `nofile`, tmpfs, shared-memory, and log bounds were reviewed for the host:
+- [ ] Direct secrets or file-backed secret overrides were selected without setting both forms:
+- [ ] `N2API_IMAGE` is a readable CalVer tag plus the exact `sha256` manifest digest:
 - [ ] The immutable image was pulled and the stack recreated:
+- [ ] `verify-release-image.sh --container` proved the running container reference and image ID match that digest:
 - [ ] `/readyz`, `/livez`, `/version`, and authenticated admin health passed:
+- [ ] Authenticated retention disk risk and alert LISTEN/reconnect state were reviewed:
 - [ ] Provider account test passed:
 - [ ] `/v1/models` and one streaming `/v1/responses` request passed:
 - [ ] Rollback image and backup identifiers are recorded:

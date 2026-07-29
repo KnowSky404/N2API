@@ -15,10 +15,8 @@ complete archive listing, restored row data, or complete storage object list.
 - Backup creation date and time (UTC):
 - Backup identifier (non-sensitive object or inventory reference):
 - Source deployment version or digest:
-- Current image tag:
-- Current image digest:
-- Candidate image tag (`not_applicable` when no candidate is tested):
-- Candidate image digest (`not_applicable` when no candidate is tested):
+- Current immutable image reference (`tag@sha256:digest`):
+- Candidate immutable image reference (`not_applicable` when no candidate is tested):
 - Restored schema version:
 - Planned drill window:
 - Measured duration:
@@ -41,6 +39,7 @@ Leave remote CI fields `pending` when no matching workflow has run.
 - Readiness status:
 - Restored-secret check status:
 - Mock gateway check status:
+- Immutable image syntax verification status:
 - Cleanup status:
 - Stable failure code, if any:
 
@@ -54,4 +53,3 @@ have been removed without changing the live deployment.
 - Exception owner, reason, and expiry (only when a failed or overdue gate is accepted):
 - Owner sign-off name or identifier:
 - Owner sign-off date (UTC):
-

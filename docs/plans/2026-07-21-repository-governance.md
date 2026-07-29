@@ -18,6 +18,12 @@ Data migration: none
 | `operator_acceptance` | pending | Review security evidence, apply the documented repository ruleset and protected release environment, and approve any expiring exception. |
 | `owner_decision` | pending | Select a license and explicitly authorize any GitHub ruleset/environment changes. Code-scanning alert protection must block new HIGH/CRITICAL findings. |
 
+Production-correctness follow-up on 2026-07-29 adds six concrete
+`Correctness (...)` check names. Both platform image jobs depend on the full
+matrix, and every external action remains pinned to a 40-character commit SHA.
+Ruleset activation and GitHub-hosted evidence remain pending owner-authorized
+push and remote configuration.
+
 ## Current Baseline
 
 The repository has CI Image and Release workflows with commit-pinned actions,

@@ -55,6 +55,20 @@ upgrade path.
 Security fixes must follow the same test, migration, image evidence, and
 release gates as other changes. See the [release checklist](docs/release-checklist.md).
 
+## Production Secret Handling
+
+N2API accepts bounded `_FILE` alternatives for the database URL,
+administrator password, encryption secret and previous-key JSON, OAuth client
+secret, and metrics bearer token. A direct value and its `_FILE` alternative
+must not both be set. Secret files must be regular files, not symlinks, pipes,
+or directories; reads are capped at 64 KiB and remove at most one trailing LF
+or CRLF. Startup errors identify only the configuration key and failure class,
+not the path or secret content.
+
+The release Compose secret overrides mount only declared files under
+`/run/secrets`. Keep source files owner-readable, outside the repository and
+backup archives, and never attach them to advisories or CI artifacts.
+
 ## Automated Security Checks
 
 The `Security` workflow runs on changes to `main`, pull requests, merge queue

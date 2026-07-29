@@ -11,7 +11,7 @@ Data migration: none
 | `design` | complete | Commit `20b42e6` defines the bounded metrics contract. The current iteration explicitly excludes OpenTelemetry tracing. |
 | `implementation` | complete | Local commits `39389e6` and `57029b9` implement the selected optional Prometheus scope, including alerting, readiness, and background-task state. |
 | `merged` | partial | The contract commit `20b42e6` is on GitHub `main` at `3664abe`; the two implementation commits remain local. |
-| `local_tests` | complete | Focused tests cover disabled mode, bind/auth policy, loopback listener, bind failure, concurrency, SSE lifetime, cancellation, shutdown, labels, secret canaries, readiness, alert queue/delivery, histogram output, and a measured 1,516-series owned budget below 1,600. Commits `ada47b4` and `bbb1a39` add real scrape behavior for SSE cancellation and unavailable PostgreSQL pools plus process-level disabled-listener and bind-failure exit tests. |
+| `local_tests` | complete | Focused tests cover disabled mode, bind/auth policy, loopback listener, bind failure, concurrency, SSE lifetime, cancellation, shutdown, labels, secret canaries, readiness, alert queue/delivery, histogram output, and a measured 1,529-series owned budget below 1,600. Commits `ada47b4` and `bbb1a39` add real scrape behavior for SSE cancellation and unavailable PostgreSQL pools plus process-level disabled-listener and bind-failure exit tests. |
 | `ci` | pending | No GitHub Actions run contains the metrics commits. |
 | `release_artifact` | pending | No published image digest contains the metrics listener. |
 | `operator_acceptance` | pending | Scrape the deployed loopback/private listener, verify bearer handling where applicable, and connect an external readiness monitor without exposing the listener publicly. |
@@ -23,6 +23,12 @@ The Operations page derives errors, throughput, latency, account health, and
 cost from PostgreSQL. There is no Prometheus endpoint or trace propagation.
 Request logs and System Events remain the durable records; metrics/traces must
 not duplicate their high-cardinality identifiers or sensitive content.
+
+Production-correctness follow-up on 2026-07-29 added fixed-label Gateway
+Settings validity/staleness/refresh/age, API-key last-used outcomes, runtime and
+settings readiness components, and draining state. The exact initialized
+N2API-owned budget is now 1,529 series; the listener remains opt-in and the
+remote scrape acceptance remains pending.
 
 ## Task 1: Define A Cardinality Budget
 

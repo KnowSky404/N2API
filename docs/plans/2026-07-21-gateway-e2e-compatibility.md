@@ -17,11 +17,20 @@ Data migration: none
 | `operator_acceptance` | pending | Exercise a real OpenAI OAuth account, Codex CLI, reverse proxy, streaming, and request-log attribution without exposing credentials. |
 | `owner_decision` | complete | Protected real-account checks remain manual and secret-safe; they must not upload tokens, bodies, dumps, or callback material. |
 
+Production-correctness follow-up on 2026-07-29 adds a six-way CI correctness
+matrix for pinned Staticcheck/vet, critical race tests, PostgreSQL control
+connections and process lifecycle, both scalable query profiles, and release
+Compose validation. The E2E Compose assertion now requires the 35-second stop
+timeout, while the platform image smoke retains its stricter ten-second clean
+exit gate. These changes are locally verified but have no GitHub-hosted run;
+real OAuth/Codex and reverse-proxy checks remain manual.
+
 ## Current Baseline
 
 `backend/internal/gateway/proxy_test.go` already covers most gateway branches
 with fake services and `httptest` upstreams. Store tests that need PostgreSQL
-skip unless `N2API_STORE_TEST_DATABASE_URL` is set, and CI does not set it. A
+skip unless `N2API_STORE_TEST_DATABASE_URL` is set; the existing `Test` job and
+new managed correctness gates provide isolated PostgreSQL in CI. A
 real Codex OAuth path was manually accepted in July 2026, but no ordinary CI
 test proves the full persisted loop. Real-account tests must remain manual.
 

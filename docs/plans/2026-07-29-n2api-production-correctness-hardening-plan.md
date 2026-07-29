@@ -22,7 +22,7 @@ review, and atomic commit are complete.
 | Database TLS identity | completed | Parsed pgx primary and fallback attempts are classified as plaintext, unverified TLS, or verified-full with independent accepted-risk gates |
 | Secret reveal step-up | completed | Password-bearing POST, bounded three-dimensional throttling, sanitized auditing, no-store responses, and dialog-local secret state are implemented and verified |
 | Password hash migration | completed | Bounded Argon2id hashing, legacy PBKDF2 compare-and-swap migration, exact password bytes, and dummy verification are implemented and verified |
-| Secondary deployment and CI work | pending | Existing hardening is partial; required gates and resource bounds are absent |
+| Secondary deployment and CI work | completed | Release resources, secret-file overrides, immutable running-image verification, operational state, pinned Staticcheck/vet, critical race, control-connection, query-profile, and Compose gates are committed and locally verified |
 | Final acceptance | pending | Task 2 passed `make test`, `make test-control-connections`, focused `go vet`, Store race tests, `bash -n`, and `git diff --check` |
 
 ## Task 1: Commit Design And Plan
@@ -422,7 +422,7 @@ Follow-up: `fix(auth): preserve administrator password bytes`
 
 ## Task 11: Complete Secondary Deployment And CI Gates
 
-Status: pending
+Status: completed locally on 2026-07-29; GitHub-hosted execution remains pending
 Dependencies: Tasks 2-10 complete
 
 Implementation:
@@ -449,6 +449,16 @@ Commits:
 - `chore(deploy): bound production resources and secrets`
 - `chore(ci): add correctness and race gates`
 - `docs(operations): document production correctness changes`
+
+Evidence:
+
+- `make test-go-quality`, `make test-critical-race`,
+  `make test-control-connections`, and `make test-production-deploy` passed.
+- Exact actionlint `v1.7.12`, pinned-dependency validation, focused Go tests,
+  `go vet`, `git diff --check`, and rendered desktop/mobile operational views
+  passed locally.
+- No push, GitHub-hosted workflow, release, or remote control-plane mutation
+  was performed.
 
 ## Task 12: Full Acceptance And Runtime Refresh
 

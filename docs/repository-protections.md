@@ -31,6 +31,12 @@ Select these exact GitHub Actions check names after each has completed at least
 once on GitHub:
 
 - `Test`
+- `Correctness (test-go-quality)`
+- `Correctness (test-critical-race)`
+- `Correctness (test-control-connections)`
+- `Correctness (test-request-log-profile)`
+- `Correctness (test-management-list-profile)`
+- `Correctness (test-production-deploy)`
 - `Build and smoke test image (linux/amd64)`
 - `Build and smoke test image (linux/arm64)`
 - `Security exception policy`
@@ -42,6 +48,12 @@ Both required workflows listen for `pull_request` and
 `merge_group: checks_requested`, so these checks can be used with GitHub's merge
 queue. If merge queue is enabled, verify a real queued pull request before
 treating the ruleset as complete.
+
+The image jobs depend on both `Test` and the entire `Correctness` matrix. The
+matrix pins Staticcheck, runs `go vet` and critical-package race coverage, and
+uses isolated PostgreSQL/Compose projects for control connections, query
+profiles, and release configuration. Do not replace the six concrete matrix
+check names with the matrix parent label when configuring the ruleset.
 
 ### Code Scanning Merge Protection
 

@@ -35,6 +35,8 @@ path; detailed usage and operations guidance belongs here.
 - [Reliability and operations design](specs/2026-07-21-n2api-reliability-and-operations-design.md)
 - [Reliability and operations acceptance report](reliability-operations-acceptance.md)
 - [Bounded metrics contract](specs/2026-07-21-n2api-metrics-contract.md)
+- [Production correctness design](specs/2026-07-29-n2api-production-correctness-hardening.md)
+- [Production correctness implementation plan](plans/2026-07-29-n2api-production-correctness-hardening-plan.md)
 - [Reliability and operations plans](plans/README.md)
 - [Historical implementation specifications](superpowers/specs/)
 - [Historical implementation plans](superpowers/plans/)

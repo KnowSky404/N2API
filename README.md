@@ -49,6 +49,13 @@ published-image deployments remain fail-closed until those risks are selected
 individually. See the [operator manual](docs/manual.md#host-binding-modes) for
 release loopback, LAN, IPv6, dual-stack, and Docker-network-only bindings.
 
+Production deployments must set `N2API_IMAGE` to a readable CalVer tag plus its
+exact manifest digest. The release Compose stack applies separate bounded
+application and PostgreSQL resources, and optional Compose overrides mount
+core and metrics secrets from regular files. See
+[Deploy a Published Image](docs/manual.md#deploy-a-published-image) for the
+validated combinations and running-image verification command.
+
 ## Basic Setup
 
 1. Add a Codex/OpenAI OAuth account or API-key upstream on **Provider

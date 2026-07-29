@@ -62,14 +62,24 @@ tests at the `deploy` Compose database.
 Run isolated Docker verification:
 
 ```bash
+make test-go-quality
+make test-critical-race
+make test-control-connections
 make test-e2e
 make test-contracts
 make test-request-log-profile
+make test-management-list-profile
+make test-production-deploy
 ```
 
-The Request Log profile starts its own labelled PostgreSQL Compose project
-without publishing the database port, loads one million synthetic rows, and
-removes the test database volume during managed cleanup.
+`test-go-quality` installs Staticcheck 2026.1 from the fixed Go module version
+`v0.7.0` into the run directory, then runs Staticcheck and `go vet` across the
+backend. `test-critical-race` and `test-control-connections` start isolated
+PostgreSQL projects and cover critical packages, real process lifecycle, locks,
+LISTEN reconnect, authentication, and budget concurrency. The Request Log and
+management-list profiles use separate labelled PostgreSQL projects without
+publishing the database port; the former loads one million synthetic rows.
+Managed cleanup removes every test database volume.
 
 ## Local Database Backups
 

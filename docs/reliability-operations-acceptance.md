@@ -34,6 +34,19 @@ HEAD GitHub workflows and image evidence, repository protections, the release
 environment, external readiness monitoring, encrypted off-host backup, and the
 license decision.
 
+## Production Correctness Addendum (2026-07-29)
+
+The later production-correctness iteration adds dedicated PostgreSQL control
+connections and lock-loss handling, bounded graceful drain, last-known-good
+Gateway Settings, durable API-key budget state, bounded management pagination,
+verified database TLS policy, password step-up and Argon2id migration, release
+resource/secret bounds, immutable running-image verification, and local
+correctness gates. Its exact final evidence is recorded separately in
+`production-correctness-hardening-acceptance.md`; until that record is complete,
+GitHub-hosted CI, real OAuth, real reverse proxy, real release, and real
+production restore remain pending and must not be inferred from this historical
+2026-07-23 report.
+
 ## M1: Recovery And Encryption Lifecycle
 
 - Original problem and root cause: reversible secrets had no complete lifecycle
