@@ -405,10 +405,16 @@ func runServer() int {
 		},
 		GetEvent: systemEventRepo.GetByID,
 	})
-	alertDispatcher.Start()
+	alertDispatcherStarted := false
 	alertShutdownHandled := false
 	defer func() {
 		if alertShutdownHandled {
+			return
+		}
+		if !alertDispatcherStarted {
+			if initialAlertSubscription != nil {
+				initialAlertSubscription.Close()
+			}
 			return
 		}
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Second)
@@ -602,6 +608,8 @@ func runServer() int {
 			return 1
 		}
 	}
+	alertDispatcher.Start()
+	alertDispatcherStarted = true
 
 	startBackground := func(name string, run func(context.Context)) error {
 		return backgroundSupervisor.Start(name, func(ctx context.Context) error {

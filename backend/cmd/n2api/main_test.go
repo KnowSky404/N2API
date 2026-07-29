@@ -467,4 +467,19 @@ func TestMainWiresAlertDispatcherAfterDatabaseCommitNotifications(t *testing.T) 
 	if strings.Index(shutdownText, "alerts.Shutdown") > strings.Index(shutdownText, "metricsServer.Shutdown") {
 		t.Fatal("metrics shutdown must follow alert dispatcher shutdown")
 	}
+	mainServerStart := strings.Index(text, `serverSupervisor.Start("http_server"`)
+	metricsServerStart := strings.Index(text, `serverSupervisor.Start("metrics_server"`)
+	alertStart := strings.Index(text, "alertDispatcher.Start()")
+	backgroundStart := strings.Index(text, `startBackground("gateway_settings_refresh"`)
+	if mainServerStart < 0 || metricsServerStart < 0 || alertStart < 0 || backgroundStart < 0 ||
+		!(mainServerStart < metricsServerStart && metricsServerStart < alertStart && alertStart < backgroundStart) {
+		t.Fatalf(
+			"alert startup order invalid: main=%d metrics=%d alert=%d background=%d",
+			mainServerStart, metricsServerStart, alertStart, backgroundStart,
+		)
+	}
+	if !strings.Contains(text, "if !alertDispatcherStarted") ||
+		!strings.Contains(text, "initialAlertSubscription.Close()") {
+		t.Fatal("listener startup failure must close the initial alert subscription without starting the dispatcher")
+	}
 }
