@@ -73,7 +73,7 @@ case "${mode}" in
       cd "$1/backend"
       export N2API_STORE_TEST_ALLOW_DESTRUCTIVE=1
       export N2API_STORE_TEST_DATABASE_URL="$2"
-      go test -race -count=1 ./internal/admin ./internal/alerting ./internal/httpapi ./internal/store ./cmd/n2api
+      go test -race -count=1 -p=1 ./cmd/n2api ./internal/admin ./internal/gateway ./internal/httpapi ./internal/provider ./internal/store ./internal/alerting
     ' _ "${repo_root}" "postgres://n2api:e2e-postgres-password@${postgres_host}:5432/n2api_e2e?sslmode=disable"
     ;;
   control-connections)

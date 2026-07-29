@@ -335,6 +335,18 @@ grep -Fq "run_compose ps -q postgres" "${repo_root}/dev/testing/run.sh" ||
   fail "request log profile runner does not select its isolated PostgreSQL container"
 grep -Fq '.NetworkSettings.Networks' "${repo_root}/dev/testing/run.sh" ||
   fail "request log profile runner does not use its isolated Docker network"
+critical_race_block="$(sed -n '/^  critical-race)/,/^    ;;/p' "${repo_root}/dev/testing/run.sh")"
+for package in \
+  ./cmd/n2api \
+  ./internal/admin \
+  ./internal/gateway \
+  ./internal/httpapi \
+  ./internal/provider \
+  ./internal/store \
+  ./internal/alerting; do
+  grep -Fq "${package}" <<<"${critical_race_block}" ||
+    fail "critical race runner does not cover ${package}"
+done
 grep -Fq -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore cleanup does not remove local test images"
 grep -Fq 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||
