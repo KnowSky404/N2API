@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -28,31 +28,55 @@ type SystemEventSubscription interface {
 }
 
 type postgresSystemEventSubscription struct {
-	conn      *pgxpool.Conn
+	conn      *pgx.Conn
+	release   func()
 	closeOnce sync.Once
 	closed    chan struct{}
 }
 
-// Subscribe reserves one pool connection until the returned subscription is
-// closed. Callers must leave enough pool capacity for ordinary application work.
+// Subscribe uses the injected dedicated connection factory when configured.
+// The pool fallback is retained for compatibility and should not be used by
+// production alert-delivery wiring.
 func (r *SystemEventRepository) Subscribe(ctx context.Context) (SystemEventSubscription, error) {
-	if r == nil || r.pool == nil {
+	if r == nil {
 		return nil, errors.New("system event repository is not configured")
 	}
-	if r.pool.Config().MaxConns < 2 {
-		return nil, ErrInsufficientSystemEventPoolCapacity
-	}
-	conn, err := r.pool.Acquire(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("acquire system event notification connection: %w", err)
+	var (
+		conn    *pgx.Conn
+		release func()
+	)
+	if r.subscriptionConnect != nil {
+		var err error
+		conn, err = r.subscriptionConnect(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("connect system event notification connection: %w", err)
+		}
+		if conn == nil {
+			return nil, errors.New("system event notification connection factory returned nil")
+		}
+		release = func() { closePostgresConnection(conn) }
+	} else {
+		if r.pool == nil {
+			return nil, errors.New("system event repository is not configured")
+		}
+		if r.pool.Config().MaxConns < 2 {
+			return nil, ErrInsufficientSystemEventPoolCapacity
+		}
+		poolConn, err := r.pool.Acquire(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("acquire system event notification connection: %w", err)
+		}
+		conn = poolConn.Conn()
+		release = poolConn.Release
 	}
 	if _, err := conn.Exec(ctx, "LISTEN "+systemEventNotificationChannel); err != nil {
-		conn.Release()
+		release()
 		return nil, fmt.Errorf("listen for system event notifications: %w", err)
 	}
 	return &postgresSystemEventSubscription{
-		conn:   conn,
-		closed: make(chan struct{}),
+		conn:    conn,
+		release: release,
+		closed:  make(chan struct{}),
 	}, nil
 }
 
@@ -67,7 +91,7 @@ func (s *postgresSystemEventSubscription) Wait(ctx context.Context) (int64, erro
 	}
 
 	for {
-		notification, err := s.conn.Conn().WaitForNotification(ctx)
+		notification, err := s.conn.WaitForNotification(ctx)
 		if err != nil {
 			return 0, fmt.Errorf("wait for system event notification: %w", err)
 		}
@@ -93,10 +117,13 @@ func (s *postgresSystemEventSubscription) Close() {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), systemEventUnlistenTimeout)
-		defer cancel()
 		_, _ = s.conn.Exec(ctx, "UNLISTEN "+systemEventNotificationChannel)
-		s.conn.Release()
+		cancel()
+		if s.release != nil {
+			s.release()
+		}
 		s.conn = nil
+		s.release = nil
 	})
 }
 

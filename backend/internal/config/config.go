@@ -616,7 +616,7 @@ func validateStartupSecurity(cfg *Config, acceptedRisks map[string]struct{}) err
 	if err := validateSecrets(cfg.AdminPassword, cfg.EncryptionSecret); err != nil {
 		return err
 	}
-	if err := validateDatabaseURL(cfg.DatabaseURL, acceptedRisks, cfg.AlertDeliveryEnabled); err != nil {
+	if err := validateDatabaseURL(cfg.DatabaseURL, acceptedRisks); err != nil {
 		return err
 	}
 	openAIAPIBaseURL, err := validateUpstreamURL("OPENAI_API_BASE_URL", cfg.OpenAIAPIBaseURL, cfg.AllowHTTPAPIUpstreams)
@@ -709,13 +709,10 @@ func validatePreviousEncryptionKeys(adminPassword, currentSecret string, keys []
 	return nil
 }
 
-func validateDatabaseURL(value string, acceptedRisks map[string]struct{}, alertDeliveryEnabled bool) error {
+func validateDatabaseURL(value string, acceptedRisks map[string]struct{}) error {
 	poolConfig, err := pgxpool.ParseConfig(value)
 	if err != nil {
 		return errors.New("DATABASE_URL must be a valid PostgreSQL connection string")
-	}
-	if alertDeliveryEnabled && poolConfig.MaxConns < 2 {
-		return errors.New("DATABASE_URL pool_max_conns must be at least 2 when N2API_ALERT_DELIVERY_ENABLED is true")
 	}
 	if isKnownPlaceholder(poolConfig.ConnConfig.Password) {
 		return errors.New("DATABASE_URL must not contain a placeholder password")

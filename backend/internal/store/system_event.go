@@ -21,14 +21,25 @@ type SystemEventFilter = systemevent.Filter
 type SystemEventPage = systemevent.Page
 
 type SystemEventRepository struct {
-	pool          *pgxpool.Pool
-	cursorSecret  []byte
-	writeObserver systemevent.WriteObserver
+	pool                *pgxpool.Pool
+	subscriptionConnect PostgresConnectFunc
+	cursorSecret        []byte
+	writeObserver       systemevent.WriteObserver
 }
 
 func NewSystemEventRepository(pool *pgxpool.Pool, cursorSecret string) *SystemEventRepository {
+	return newSystemEventRepository(pool, cursorSecret, nil)
+}
+
+// NewSystemEventRepositoryWithSubscriptionFactory keeps event queries on pool
+// while LISTEN uses a fresh dedicated connection from connect.
+func NewSystemEventRepositoryWithSubscriptionFactory(pool *pgxpool.Pool, cursorSecret string, connect PostgresConnectFunc) *SystemEventRepository {
+	return newSystemEventRepository(pool, cursorSecret, connect)
+}
+
+func newSystemEventRepository(pool *pgxpool.Pool, cursorSecret string, connect PostgresConnectFunc) *SystemEventRepository {
 	key := sha256.Sum256([]byte("n2api-system-event-cursor\x00" + cursorSecret))
-	return &SystemEventRepository{pool: pool, cursorSecret: key[:]}
+	return &SystemEventRepository{pool: pool, subscriptionConnect: connect, cursorSecret: key[:]}
 }
 
 func (r *SystemEventRepository) Insert(ctx context.Context, event systemevent.Event) error {

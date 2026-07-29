@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,6 +26,9 @@ func TestInstanceLockSerializesProcessesAndReleases(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatalf("close first lock: %v", err)
 	}
+	if !first.conn.IsClosed() {
+		t.Fatal("closed instance lock still owns an open connection")
+	}
 
 	third, acquired, err := acquireTestInstanceLock(ctx, repository.pool, instanceLockMonitorInterval)
 	if err != nil || !acquired || third == nil {
@@ -42,7 +46,7 @@ func TestInstanceLockConnectionLossReleasesPostgresLock(t *testing.T) {
 	if err != nil || !acquired {
 		t.Fatalf("first acquire = acquired:%v err:%v", acquired, err)
 	}
-	if err := first.conn.Conn().PgConn().Close(ctx); err != nil {
+	if err := first.conn.PgConn().Close(ctx); err != nil {
 		t.Fatalf("close lock connection: %v", err)
 	}
 	select {
@@ -77,6 +81,38 @@ func TestInstanceLockCloseDoesNotReportConnectionLoss(t *testing.T) {
 	}
 }
 
+func TestInstanceLockClosesConnectionWhenLockIsUnavailable(t *testing.T) {
+	repository := newTestAdminRepository(t)
+	ctx := context.Background()
+	first, acquired, err := acquireTestInstanceLock(ctx, repository.pool, instanceLockMonitorInterval)
+	if err != nil || !acquired {
+		t.Fatalf("first acquire = acquired:%v err:%v", acquired, err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+
+	secondConn, err := connectTestControlConnection(ctx, repository.pool, PostgresApplicationNameInstanceLock)
+	if err != nil {
+		t.Fatalf("connect second lock connection: %v", err)
+	}
+	second, acquired, err := tryAcquireInstanceLockWithID(ctx, secondConn, testInstanceAdvisoryLockID, instanceLockMonitorInterval)
+	if err != nil || acquired || second != nil {
+		t.Fatalf("second acquire = lock:%v acquired:%v err:%v", second, acquired, err)
+	}
+	if !secondConn.IsClosed() {
+		t.Fatal("unavailable instance lock connection remained open")
+	}
+}
+
 func acquireTestInstanceLock(ctx context.Context, pool *pgxpool.Pool, monitorInterval time.Duration) (*InstanceLock, bool, error) {
-	return tryAcquireInstanceLockWithID(ctx, pool, testInstanceAdvisoryLockID, monitorInterval)
+	conn, err := connectTestControlConnection(ctx, pool, PostgresApplicationNameInstanceLock)
+	if err != nil {
+		return nil, false, err
+	}
+	return tryAcquireInstanceLockWithID(ctx, conn, testInstanceAdvisoryLockID, monitorInterval)
+}
+
+func connectTestControlConnection(ctx context.Context, pool *pgxpool.Pool, applicationName string) (*pgx.Conn, error) {
+	config := pool.Config().ConnConfig.Copy()
+	config.RuntimeParams["application_name"] = applicationName
+	return pgx.ConnectConfig(ctx, config)
 }

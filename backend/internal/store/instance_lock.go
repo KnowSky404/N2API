@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -16,7 +16,7 @@ const (
 )
 
 type InstanceLock struct {
-	conn          *pgxpool.Conn
+	conn          *pgx.Conn
 	lockID        int64
 	acquireCtx    context.Context
 	monitorCancel context.CancelFunc
@@ -26,32 +26,30 @@ type InstanceLock struct {
 	closed        bool
 }
 
-func TryAcquireInstanceLock(ctx context.Context, pool *pgxpool.Pool) (*InstanceLock, bool, error) {
-	return tryAcquireInstanceLock(ctx, pool, instanceLockMonitorInterval)
+// TryAcquireInstanceLock takes ownership of conn on every return path. A
+// successful lock owns it until Close; failed acquisition closes it.
+func TryAcquireInstanceLock(ctx context.Context, conn *pgx.Conn) (*InstanceLock, bool, error) {
+	return tryAcquireInstanceLock(ctx, conn, instanceLockMonitorInterval)
 }
 
-func tryAcquireInstanceLock(ctx context.Context, pool *pgxpool.Pool, monitorInterval time.Duration) (*InstanceLock, bool, error) {
-	return tryAcquireInstanceLockWithID(ctx, pool, instanceAdvisoryLockID, monitorInterval)
+func tryAcquireInstanceLock(ctx context.Context, conn *pgx.Conn, monitorInterval time.Duration) (*InstanceLock, bool, error) {
+	return tryAcquireInstanceLockWithID(ctx, conn, instanceAdvisoryLockID, monitorInterval)
 }
 
-func tryAcquireInstanceLockWithID(ctx context.Context, pool *pgxpool.Pool, lockID int64, monitorInterval time.Duration) (*InstanceLock, bool, error) {
-	if pool == nil {
-		return nil, false, errors.New("instance lock pool is not configured")
+func tryAcquireInstanceLockWithID(ctx context.Context, conn *pgx.Conn, lockID int64, monitorInterval time.Duration) (*InstanceLock, bool, error) {
+	if conn == nil {
+		return nil, false, errors.New("instance lock connection is not configured")
 	}
 	if monitorInterval <= 0 {
 		monitorInterval = instanceLockMonitorInterval
 	}
-	conn, err := pool.Acquire(ctx)
-	if err != nil {
-		return nil, false, err
-	}
 	var acquired bool
 	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, lockID).Scan(&acquired); err != nil {
-		discardInstanceLockConnection(conn)
+		closePostgresConnection(conn)
 		return nil, false, err
 	}
 	if !acquired {
-		conn.Release()
+		closePostgresConnection(conn)
 		return nil, false, nil
 	}
 	monitorCtx, monitorCancel := context.WithCancel(context.Background())
@@ -78,7 +76,7 @@ func (l *InstanceLock) monitor(ctx context.Context, interval time.Duration) {
 	defer close(l.monitorDone)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	connectionClosed := l.conn.Conn().PgConn().CleanupDone()
+	connectionClosed := l.conn.PgConn().CleanupDone()
 	for {
 		select {
 		case <-ctx.Done():
@@ -95,7 +93,7 @@ func (l *InstanceLock) monitor(ctx context.Context, interval time.Duration) {
 			return
 		}
 		pingCtx, cancel := context.WithTimeout(ctx, instanceLockOperationTimeout)
-		err := l.conn.Conn().Ping(pingCtx)
+		err := l.conn.Ping(pingCtx)
 		cancel()
 		stopping := ctx.Err() != nil || l.closed
 		l.mu.Unlock()
@@ -121,28 +119,32 @@ func (l *InstanceLock) Close() error {
 		return nil
 	}
 	l.closed = true
-	if l.conn.Conn().IsClosed() {
-		l.conn.Release()
+	if l.conn.IsClosed() {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(l.acquireCtx), instanceLockOperationTimeout)
-	defer cancel()
 	var unlocked bool
 	err := l.conn.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, l.lockID).Scan(&unlocked)
-	if err == nil && unlocked {
-		l.conn.Release()
-		return nil
-	}
-	discardInstanceLockConnection(l.conn)
+	cancel()
+	closeErr := closePostgresConnectionWithError(l.conn)
 	if err != nil {
-		return err
+		return errors.Join(err, closeErr)
 	}
-	return errors.New("instance advisory lock was not held")
+	if !unlocked {
+		return errors.Join(errors.New("instance advisory lock was not held"), closeErr)
+	}
+	return closeErr
 }
 
-func discardInstanceLockConnection(poolConn *pgxpool.Conn) {
-	conn := poolConn.Hijack()
+func closePostgresConnection(conn *pgx.Conn) {
+	_ = closePostgresConnectionWithError(conn)
+}
+
+func closePostgresConnectionWithError(conn *pgx.Conn) error {
+	if conn == nil || conn.IsClosed() {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), instanceLockOperationTimeout)
 	defer cancel()
-	_ = conn.Close(ctx)
+	return conn.Close(ctx)
 }

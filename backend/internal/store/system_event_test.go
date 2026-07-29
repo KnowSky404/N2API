@@ -129,6 +129,88 @@ func TestSystemEventSubscriptionRejectsSingleConnectionPool(t *testing.T) {
 	}
 }
 
+func TestSystemEventSubscriptionUsesDedicatedConnectionWithSingleConnectionPool(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	baseRepository := newTestSystemEventRepository(t, ctx)
+
+	poolConfig := baseRepository.pool.Config()
+	poolConfig.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		t.Fatalf("open single-connection business pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	repository := NewSystemEventRepositoryWithSubscriptionFactory(
+		pool,
+		"dedicated-system-event-test-secret",
+		func(connectCtx context.Context) (*pgx.Conn, error) {
+			return connectTestControlConnection(connectCtx, pool, PostgresApplicationNameSystemEventListener)
+		},
+	)
+
+	subscription, err := repository.Subscribe(ctx)
+	if err != nil {
+		t.Fatalf("Subscribe returned error: %v", err)
+	}
+	postgresSubscription := subscription.(*postgresSystemEventSubscription)
+	dedicatedConn := postgresSubscription.conn
+	t.Cleanup(subscription.Close)
+	if acquired := pool.Stat().AcquiredConns(); acquired != 0 {
+		t.Fatalf("business pool acquired connections = %d, want 0 while LISTEN is active", acquired)
+	}
+	var applicationName string
+	if err := dedicatedConn.QueryRow(ctx, `SHOW application_name`).Scan(&applicationName); err != nil {
+		t.Fatalf("read listener application_name: %v", err)
+	}
+	if applicationName != PostgresApplicationNameSystemEventListener {
+		t.Fatalf("listener application_name = %q", applicationName)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("business pool Ping while LISTEN is active: %v", err)
+	}
+
+	event := testSystemEvent("dedicated-listener-event")
+	if err := repository.Insert(ctx, event); err != nil {
+		t.Fatalf("Insert returned error: %v", err)
+	}
+	if id, err := subscription.Wait(ctx); err != nil || id <= 0 {
+		t.Fatalf("Wait returned id:%d err:%v", id, err)
+	}
+	subscription.Close()
+	subscription.Close()
+	if !dedicatedConn.IsClosed() {
+		t.Fatal("dedicated LISTEN connection remained open after Close")
+	}
+}
+
+func TestSystemEventSubscriptionFactoryFailureCanBeRetried(t *testing.T) {
+	ctx := context.Background()
+	var attempts int
+	repository := NewSystemEventRepositoryWithSubscriptionFactory(nil, "cursor-secret", func(context.Context) (*pgx.Conn, error) {
+		attempts++
+		return nil, errors.New("connection unavailable")
+	})
+	if _, err := repository.Subscribe(ctx); err == nil {
+		t.Fatal("first Subscribe returned nil error")
+	}
+	if _, err := repository.Subscribe(ctx); err == nil {
+		t.Fatal("second Subscribe returned nil error")
+	}
+	if attempts != 2 {
+		t.Fatalf("subscription connection attempts = %d, want 2", attempts)
+	}
+}
+
+func TestSystemEventSubscriptionRejectsNilDedicatedConnection(t *testing.T) {
+	repository := NewSystemEventRepositoryWithSubscriptionFactory(nil, "cursor-secret", func(context.Context) (*pgx.Conn, error) {
+		return nil, nil
+	})
+	if _, err := repository.Subscribe(context.Background()); err == nil {
+		t.Fatal("Subscribe accepted a nil dedicated connection")
+	}
+}
+
 func TestSystemEventSubscriptionObservesCommitAndIgnoresRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

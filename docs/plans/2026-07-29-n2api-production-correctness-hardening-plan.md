@@ -13,7 +13,7 @@ review, and atomic commit are complete.
 | Area | Status | Current evidence |
 | --- | --- | --- |
 | Design and implementation plan | completed | Required documents created, reviewed, and committed as the first atomic change |
-| PostgreSQL control connections | pending | Current instance lock and LISTEN reserve business-pool connections |
+| PostgreSQL control connections | completed | Dedicated connections, serialized startup, bounded-pool process tests, LISTEN reconnect, vet, and race verification committed in Task 2 |
 | Lifecycle and graceful drain | pending | Current signal context cancels requests before `Shutdown` |
 | Gateway Settings runtime | pending | Current request path calls `GetGatewaySettings` |
 | API key authentication touch | pending | Current successful authentication writes every request |
@@ -23,7 +23,7 @@ review, and atomic commit are complete.
 | Secret reveal step-up | pending | Current GET returns the full secret for an ordinary session |
 | Password hash migration | pending | Current PBKDF2 verifier is fixed-parameter and passwords are trimmed |
 | Secondary deployment and CI work | pending | Existing hardening is partial; required gates and resource bounds are absent |
-| Final acceptance | pending | No commands for this change set have run yet |
+| Final acceptance | pending | Task 2 passed `make test`, `make test-control-connections`, focused `go vet`, Store race tests, `bash -n`, and `git diff --check` |
 
 ## Task 1: Commit Design And Plan
 
@@ -48,7 +48,7 @@ Commit: `docs: design production correctness hardening`
 
 ## Task 2: Isolate PostgreSQL Control Connections
 
-Status: pending
+Status: completed
 Dependencies: Task 1
 
 Implementation:

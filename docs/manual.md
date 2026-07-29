@@ -827,11 +827,26 @@ prevent recursive notifications.
 Bounded delivery is independently gated by
 `N2API_ALERT_DELIVERY_ENABLED=false`. When enabled, PostgreSQL publishes each
 committed System Event ID to a dedicated listener; events in rolled-back
-transactions are never sent. The listener reserves one pool connection, so an
-enabled deployment must configure at least two PostgreSQL pool connections.
+transactions are never sent. The listener uses a dedicated PostgreSQL
+connection and does not reserve capacity from the business pool.
 Startup establishes `LISTEN` synchronously before background source-event
 monitors run, so their first committed notifications are already queued for the
 dispatcher.
+
+Size the PostgreSQL server connection limit for the business pool plus control
+and operator connections:
+
+```text
+steady state = pool_max_conns + 1 instance-lock connection
+             + 1 LISTEN connection when alert delivery is enabled
+startup peak = steady state + 1 migration-lock connection
+             + 1 migration-executor connection + operator reserve
+```
+
+`pool_max_conns=1` is supported for the application pool, including when alert
+delivery is enabled. The separate control sessions use the same parsed TLS,
+authentication, fallback-host, timeout, and runtime settings as
+`DATABASE_URL` and publish distinct PostgreSQL `application_name` values.
 The listener, one ordered evaluator, and two HTTP workers run outside gateway
 request processing. Each rule/deduplication stream is stably assigned to one
 worker so its firing and recovery notifications remain ordered; unrelated

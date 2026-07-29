@@ -398,8 +398,8 @@ func TestLoadAlertDeliveryEnabled(t *testing.T) {
 		t.Fatalf("Load disabled with one pool connection returned error: %v", err)
 	}
 	limitedPool["N2API_ALERT_DELIVERY_ENABLED"] = "true"
-	if _, err := Load(mapLookup(limitedPool)); err == nil || !strings.Contains(err.Error(), "pool_max_conns") {
-		t.Fatalf("Load enabled with one pool connection error = %v, want pool_max_conns validation", err)
+	if _, err := Load(mapLookup(limitedPool)); err != nil {
+		t.Fatalf("Load enabled with one pool connection returned error: %v", err)
 	}
 }
 

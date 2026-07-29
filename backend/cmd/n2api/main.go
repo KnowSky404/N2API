@@ -194,25 +194,66 @@ func main() {
 		}
 		return
 	}
-	runServer()
+	if exitCode := runServer(); exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }
 
-func runServer() {
+func runServer() int {
 	build := buildinfo.Current()
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		slog.Error("invalid configuration", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	connectionFactory, err := store.NewPostgresConnectionFactory(cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("database configuration unavailable", "error_code", "database_configuration_unavailable")
+		return 1
+	}
+
+	var instanceLock *store.InstanceLock
+	var instanceLockLost <-chan struct{}
+	if cfg.AllowUnsafeMultiInstance {
+		slog.Warn("unsafe multi-instance operation enabled", "error_code", "unsafe_multi_instance_enabled")
+	} else {
+		instanceConnection, connectErr := connectionFactory.Connect(ctx, store.PostgresApplicationNameInstanceLock)
+		if connectErr != nil {
+			slog.Error("instance lock unavailable", "error_code", "instance_lock_unavailable")
+			return 1
+		}
+		var acquired bool
+		instanceLock, acquired, err = store.TryAcquireInstanceLock(ctx, instanceConnection)
+		if err != nil {
+			slog.Error("instance lock unavailable", "error_code", "instance_lock_unavailable")
+			return 1
+		}
+		if !acquired {
+			slog.Error("another n2api instance is active", "error_code", "instance_already_running")
+			return 1
+		}
+		instanceLockLost = instanceLock.Lost()
+	}
+
 	pool, err := store.OpenPool(ctx, cfg.DatabaseURL)
 	if err != nil {
-		slog.Error("database unavailable", "error", err)
-		os.Exit(1)
+		slog.Error("database unavailable", "error_code", "database_unavailable")
+		if instanceLock != nil {
+			_ = instanceLock.Close()
+		}
+		return 1
 	}
 	defer pool.Close()
+	if instanceLock != nil {
+		defer func() {
+			if err := instanceLock.Close(); err != nil {
+				slog.Error("instance lock release failed", "error_code", "instance_lock_release_failed")
+			}
+		}()
+	}
 	var metricsRegistry *metrics.Registry
 	var taskMetrics backgroundTaskObserver
 	var gatewayMetrics gateway.MetricsObserver
@@ -225,35 +266,56 @@ func runServer() {
 		ctx = systemevent.WithWriteObserver(ctx, metricsRegistry)
 	}
 
-	if err := store.RunMigrations(ctx, pool); err != nil {
-		slog.Error("database migration failed", "error", err)
-		os.Exit(1)
+	migrationConnection, err := connectionFactory.Connect(ctx, store.PostgresApplicationNameMigrationLock)
+	if err != nil {
+		slog.Error("database migration lock unavailable", "error_code", "database_migration_lock_unavailable")
+		return 1
 	}
-	systemEventRepo := store.NewSystemEventRepository(pool, cfg.EncryptionSecret)
+	migrationLock, err := store.AcquireMigrationLock(ctx, migrationConnection)
+	if err != nil {
+		slog.Error("database migration lock unavailable", "error_code", "database_migration_lock_unavailable")
+		return 1
+	}
+	defer func() {
+		if err := migrationLock.Close(); err != nil {
+			slog.Error("database migration lock release failed", "error_code", "database_migration_lock_release_failed")
+		}
+	}()
+	migrationCriticalCtx, cancelMigrationCritical := context.WithCancel(ctx)
+	migrationWatchCtx, stopMigrationWatch := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-migrationLock.Lost():
+			cancelMigrationCritical()
+		case <-migrationWatchCtx.Done():
+		}
+	}()
+	defer stopMigrationWatch()
+	defer cancelMigrationCritical()
+	migrationPool, err := store.OpenMigrationPool(migrationCriticalCtx, cfg.DatabaseURL)
+	if err != nil {
+		slog.Error("database migration connection unavailable", "error_code", "database_migration_connection_unavailable")
+		return 1
+	}
+	if err := store.RunMigrations(migrationCriticalCtx, migrationPool); err != nil {
+		migrationPool.Close()
+		if migrationCriticalCtx.Err() != nil && ctx.Err() == nil {
+			slog.Error("database migration lock lost", "error_code", "database_migration_lock_lost")
+			return 1
+		}
+		slog.Error("database migration failed", "error_code", "database_migration_failed")
+		return 1
+	}
+	migrationPool.Close()
+
+	systemEventRepo := store.NewSystemEventRepositoryWithSubscriptionFactory(
+		pool,
+		cfg.EncryptionSecret,
+		connectionFactory.Connector(store.PostgresApplicationNameSystemEventListener),
+	)
 	if metricsRegistry != nil {
 		systemEventRepo.SetWriteObserver(metricsRegistry)
 	}
-	alertingRepo := store.NewAlertingRepository(pool)
-	alertingService := alerting.NewService(alertingRepo, cfg.EncryptionKeyring)
-	alertHTTPAdapter := alerting.NewHTTPAdapter(nil)
-	alertActionTester := alerting.NewActionTester(alertingService, alertHTTPAdapter)
-	var initialAlertSubscription alerting.EventSubscription
-	if cfg.AlertDeliveryEnabled {
-		initialAlertSubscription, err = systemEventRepo.Subscribe(ctx)
-		if err != nil {
-			slog.Error("alert delivery listener unavailable", "error_code", "alert_delivery_listener_unavailable")
-			os.Exit(1)
-		}
-	}
-	alertDispatcher := alerting.NewDispatcher(alerting.DispatcherConfig{
-		Enabled: cfg.AlertDeliveryEnabled, Service: alertingService, Recorder: systemEventRepo,
-		Adapter: alertHTTPAdapter, Metrics: metricsRegistry, InitialSubscription: initialAlertSubscription,
-		Subscribe: func(ctx context.Context) (alerting.EventSubscription, error) {
-			return systemEventRepo.Subscribe(ctx)
-		},
-		GetEvent: systemEventRepo.GetByID,
-	})
-
 	adminRepo := store.NewAdminRepository(pool, cfg.EncryptionSecret)
 	adminService := admin.NewService(adminRepo, admin.Config{
 		SessionTTL:        cfg.AdminSessionTTL,
@@ -270,33 +332,46 @@ func runServer() {
 			ProviderAccountAutoTestIntervalSeconds: int(cfg.ProviderAccountAutoTestInterval / time.Second),
 		},
 	})
-	if err := adminService.BootstrapAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
-		slog.Error("admin bootstrap failed", "error", err)
-		os.Exit(1)
-	}
-	var instanceLock *store.InstanceLock
-	var instanceLockLost <-chan struct{}
-	if cfg.AllowUnsafeMultiInstance {
-		slog.Warn("unsafe multi-instance operation enabled", "error_code", "unsafe_multi_instance_enabled")
-	} else {
-		var acquired bool
-		var lockErr error
-		instanceLock, acquired, lockErr = store.TryAcquireInstanceLock(ctx, pool)
-		if lockErr != nil {
-			slog.Error("instance lock unavailable", "error_code", "instance_lock_unavailable")
-			os.Exit(1)
+	if err := adminService.BootstrapAdmin(migrationCriticalCtx, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+		if migrationCriticalCtx.Err() != nil && ctx.Err() == nil {
+			slog.Error("database migration lock lost", "error_code", "database_migration_lock_lost")
+			return 1
 		}
-		if !acquired {
-			slog.Error("another n2api instance is active", "error_code", "instance_already_running")
-			os.Exit(1)
-		}
-		instanceLockLost = instanceLock.Lost()
-		defer func() {
-			if err := instanceLock.Close(); err != nil {
-				slog.Error("instance lock release failed", "error_code", "instance_lock_release_failed")
-			}
-		}()
+		slog.Error("admin bootstrap failed", "error_code", "admin_bootstrap_failed")
+		return 1
 	}
+	if err := migrationLock.Close(); err != nil {
+		if errors.Is(err, store.ErrMigrationLockLost) {
+			slog.Error("database migration lock lost", "error_code", "database_migration_lock_lost")
+		} else {
+			slog.Error("database migration lock release failed", "error_code", "database_migration_lock_release_failed")
+		}
+		return 1
+	}
+	stopMigrationWatch()
+	cancelMigrationCritical()
+
+	alertingRepo := store.NewAlertingRepository(pool)
+	alertingService := alerting.NewService(alertingRepo, cfg.EncryptionKeyring)
+	alertHTTPAdapter := alerting.NewHTTPAdapter(nil)
+	alertActionTester := alerting.NewActionTester(alertingService, alertHTTPAdapter)
+	var initialAlertSubscription alerting.EventSubscription
+	if cfg.AlertDeliveryEnabled {
+		initialAlertSubscription, err = systemEventRepo.Subscribe(ctx)
+		if err != nil {
+			slog.Error("alert delivery listener unavailable", "error_code", "alert_delivery_listener_unavailable")
+			return 1
+		}
+	}
+	alertDispatcher := alerting.NewDispatcher(alerting.DispatcherConfig{
+		Enabled: cfg.AlertDeliveryEnabled, Service: alertingService, Recorder: systemEventRepo,
+		Adapter: alertHTTPAdapter, Metrics: metricsRegistry, InitialSubscription: initialAlertSubscription,
+		Subscribe: func(ctx context.Context) (alerting.EventSubscription, error) {
+			return systemEventRepo.Subscribe(ctx)
+		},
+		GetEvent: systemEventRepo.GetByID,
+	})
+
 	alertDispatcher.Start()
 	go runAPIKeyCleanup(ctx, adminService, systemEventRepo, time.Hour, taskMetrics)
 	if cfg.SystemEventRetentionDays > 0 {
@@ -467,15 +542,7 @@ func runServer() {
 		exitCode = 1
 	}
 	cancelDispatcher()
-	if exitCode != 0 {
-		if instanceLock != nil {
-			if err := instanceLock.Close(); err != nil {
-				slog.Error("instance lock release failed", "error_code", "instance_lock_release_failed")
-			}
-		}
-		pool.Close()
-		os.Exit(exitCode)
-	}
+	return exitCode
 }
 
 type providerAccountMetricsSource interface {

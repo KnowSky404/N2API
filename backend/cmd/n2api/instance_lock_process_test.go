@@ -26,7 +26,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const processTestInstanceLockID = int64(0x4e324150494e53)
+const (
+	processTestInstanceLockID  = int64(0x4e324150494e53)
+	processTestMigrationLockID = int64(0x4e324150494d47)
+)
 
 type lockedProcessLog struct {
 	mu     sync.Mutex
@@ -79,6 +82,129 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 	binaryPath := buildN2APIProcessTestBinary(t)
 	adminPassword := "process-test-admin-" + strings.Repeat("p", 24)
 	encryptionSecret := "process-test-encryption-" + strings.Repeat("e", 32)
+
+	t.Run("keeps a single-connection business pool available", func(t *testing.T) {
+		limitedURL := processTestDatabaseURLWithParam(t, databaseURL, "pool_max_conns", "1")
+		port := reserveProcessTestPort(t)
+		process := startN2APIProcess(t, binaryPath, limitedURL, adminUsername, adminPassword, encryptionSecret, port)
+		waitForProcessListener(t, process, port, limitedURL, adminPassword, encryptionSecret)
+		assertProcessReady(t, port)
+		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 1)
+		stopN2APIProcess(t, process, limitedURL, adminPassword, encryptionSecret)
+	})
+
+	t.Run("keeps a single-connection business pool available with alert delivery", func(t *testing.T) {
+		limitedURL := processTestDatabaseURLWithParam(t, databaseURL, "pool_max_conns", "1")
+		port := reserveProcessTestPort(t)
+		process := startN2APIProcess(t, binaryPath, limitedURL, adminUsername, adminPassword, encryptionSecret, port,
+			"N2API_ALERT_DELIVERY_ENABLED=true",
+		)
+		waitForProcessListener(t, process, port, limitedURL, adminPassword, encryptionSecret)
+		assertProcessReady(t, port)
+		waitForPostgresApplicationBackend(t, pool, store.PostgresApplicationNameSystemEventListener, 0)
+		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 1)
+		stopN2APIProcess(t, process, limitedURL, adminPassword, encryptionSecret)
+	})
+
+	t.Run("reconnects a dedicated alert listener without exhausting the business pool", func(t *testing.T) {
+		limitedURL := processTestDatabaseURLWithParam(t, databaseURL, "pool_max_conns", "2")
+		port := reserveProcessTestPort(t)
+		process := startN2APIProcess(t, binaryPath, limitedURL, adminUsername, adminPassword, encryptionSecret, port,
+			"N2API_ALERT_DELIVERY_ENABLED=true",
+		)
+		waitForProcessListener(t, process, port, limitedURL, adminPassword, encryptionSecret)
+		assertProcessReady(t, port)
+		listenerPID := waitForPostgresApplicationBackend(t, pool, store.PostgresApplicationNameSystemEventListener, 0)
+		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 2)
+
+		var terminated bool
+		terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := pool.QueryRow(terminateCtx, `SELECT pg_terminate_backend($1)`, listenerPID).Scan(&terminated)
+		terminateCancel()
+		if err != nil || !terminated {
+			t.Fatalf("terminate alert listener backend = terminated:%v err:%v", terminated, err)
+		}
+		waitForPostgresApplicationBackend(t, pool, store.PostgresApplicationNameSystemEventListener, listenerPID)
+		assertProcessReady(t, port)
+		stopN2APIProcess(t, process, limitedURL, adminPassword, encryptionSecret)
+	})
+
+	t.Run("serializes concurrent safe cold starts before schema changes", func(t *testing.T) {
+		coldPool, coldURL := newIsolatedProcessTestPoolWithMigrations(t, ctx, databaseURL, false)
+		username := "safe-cold-start-admin"
+		firstPort := reserveProcessTestPort(t)
+		secondPort := reserveProcessTestPort(t)
+		first := startN2APIProcess(t, binaryPath, coldURL, username, adminPassword, encryptionSecret, firstPort)
+		second := startN2APIProcess(t, binaryPath, coldURL, username, adminPassword, encryptionSecret, secondPort)
+
+		winner, loser, winnerPort := waitForSingleProcessWinner(t, first, firstPort, second, secondPort, coldURL, adminPassword, encryptionSecret)
+		if err := waitForProcessExit(t, loser, 10*time.Second); err == nil || loser.command.ProcessState.ExitCode() == 0 {
+			t.Fatalf("losing safe cold-start process exited successfully; logs: %s", processLogs(loser, coldURL, adminPassword, encryptionSecret))
+		}
+		if !strings.Contains(loser.logs.String(), "instance_already_running") {
+			t.Fatalf("losing safe cold-start process did not report instance_already_running; logs: %s", processLogs(loser, coldURL, adminPassword, encryptionSecret))
+		}
+		assertSingleBootstrapAdmin(t, coldPool, username)
+		stopN2APIProcess(t, winner, coldURL, adminPassword, encryptionSecret)
+		waitForProcessListenerClosed(t, winnerPort)
+	})
+
+	t.Run("serializes migrations for concurrent unsafe cold starts", func(t *testing.T) {
+		coldPool, coldURL := newIsolatedProcessTestPoolWithMigrations(t, ctx, databaseURL, false)
+		username := "unsafe-cold-start-admin"
+		firstPort := reserveProcessTestPort(t)
+		secondPort := reserveProcessTestPort(t)
+		first := startN2APIProcess(t, binaryPath, coldURL, username, adminPassword, encryptionSecret, firstPort,
+			"N2API_ALLOW_UNSAFE_MULTI_INSTANCE=true",
+		)
+		second := startN2APIProcess(t, binaryPath, coldURL, username, adminPassword, encryptionSecret, secondPort,
+			"N2API_ALLOW_UNSAFE_MULTI_INSTANCE=true",
+		)
+		waitForProcessListener(t, first, firstPort, coldURL, adminPassword, encryptionSecret)
+		waitForProcessListener(t, second, secondPort, coldURL, adminPassword, encryptionSecret)
+		assertProcessReady(t, firstPort)
+		assertProcessReady(t, secondPort)
+		assertSingleBootstrapAdmin(t, coldPool, username)
+		stopN2APIProcess(t, first, coldURL, adminPassword, encryptionSecret)
+		stopN2APIProcess(t, second, coldURL, adminPassword, encryptionSecret)
+	})
+
+	t.Run("blocks unsafe migration and bootstrap behind the migration lock", func(t *testing.T) {
+		coldPool, coldURL := newIsolatedProcessTestPoolWithMigrations(t, ctx, databaseURL, false)
+		lockConn, err := pgx.Connect(ctx, coldURL)
+		if err != nil {
+			t.Fatalf("connect migration lock holder: %v", err)
+		}
+		defer func() { _ = lockConn.Close(context.Background()) }()
+		if _, err := lockConn.Exec(ctx, `SELECT pg_advisory_lock($1)`, processTestMigrationLockID); err != nil {
+			t.Fatalf("hold migration advisory lock: %v", err)
+		}
+
+		username := "blocked-unsafe-cold-start-admin"
+		port := reserveProcessTestPort(t)
+		process := startN2APIProcess(t, binaryPath, coldURL, username, adminPassword, encryptionSecret, port,
+			"N2API_ALLOW_UNSAFE_MULTI_INSTANCE=true",
+		)
+		waitForMigrationLockWaiter(t, coldPool)
+		if processListenerOpen(port) {
+			t.Fatal("unsafe process opened its listener while the migration lock was held")
+		}
+		var adminsTable *string
+		if err := coldPool.QueryRow(ctx, `SELECT to_regclass('admins')::text`).Scan(&adminsTable); err != nil {
+			t.Fatalf("inspect schema while migration lock is held: %v", err)
+		}
+		if adminsTable != nil {
+			t.Fatalf("unsafe process migrated schema while migration lock was held: admins=%q", *adminsTable)
+		}
+		var unlocked bool
+		if err := lockConn.QueryRow(ctx, `SELECT pg_advisory_unlock($1)`, processTestMigrationLockID).Scan(&unlocked); err != nil || !unlocked {
+			t.Fatalf("release migration advisory lock = unlocked:%v err:%v", unlocked, err)
+		}
+		waitForProcessListener(t, process, port, coldURL, adminPassword, encryptionSecret)
+		assertProcessReady(t, port)
+		assertSingleBootstrapAdmin(t, coldPool, username)
+		stopN2APIProcess(t, process, coldURL, adminPassword, encryptionSecret)
+	})
 
 	t.Run("rejects a second process and releases on normal shutdown", func(t *testing.T) {
 		firstPort := reserveProcessTestPort(t)
@@ -232,6 +358,10 @@ func TestProcessTestDatabaseURLSetsSearchPath(t *testing.T) {
 }
 
 func newIsolatedProcessTestPool(t *testing.T, ctx context.Context, databaseURL string) (*pgxpool.Pool, string) {
+	return newIsolatedProcessTestPoolWithMigrations(t, ctx, databaseURL, true)
+}
+
+func newIsolatedProcessTestPoolWithMigrations(t *testing.T, ctx context.Context, databaseURL string, migrate bool) (*pgxpool.Pool, string) {
 	t.Helper()
 
 	adminPool, err := pgxpool.New(ctx, databaseURL)
@@ -263,10 +393,24 @@ func newIsolatedProcessTestPool(t *testing.T, ctx context.Context, databaseURL s
 		t.Fatalf("open isolated process test schema: %v", redactProcessText(err.Error(), databaseURL, isolatedURL))
 	}
 	t.Cleanup(pool.Close)
-	if err := store.RunMigrations(ctx, pool); err != nil {
-		t.Fatalf("run isolated process test migrations: %v", redactProcessText(err.Error(), databaseURL, isolatedURL))
+	if migrate {
+		if err := store.RunMigrations(ctx, pool); err != nil {
+			t.Fatalf("run isolated process test migrations: %v", redactProcessText(err.Error(), databaseURL, isolatedURL))
+		}
 	}
 	return pool, isolatedURL
+}
+
+func processTestDatabaseURLWithParam(t *testing.T, databaseURL, key, value string) string {
+	t.Helper()
+	parsed, err := url.Parse(databaseURL)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		t.Fatalf("set process test database URL parameter: unsupported URL")
+	}
+	query := parsed.Query()
+	query.Set(key, value)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func processTestDatabaseURL(databaseURL, schema string) (string, error) {
@@ -341,6 +485,7 @@ func startN2APIProcess(t *testing.T, binaryPath, databaseURL, adminUsername, adm
 	t.Helper()
 	logs := &lockedProcessLog{}
 	command := exec.Command(binaryPath)
+	command.Dir = newProcessTestWorkingDirectory(t)
 	command.Env = overrideProcessTestEnv(n2apiProcessTestEnv(databaseURL, adminUsername, adminPassword, encryptionSecret, port), overrides...)
 	command.Stdout = logs
 	command.Stderr = logs
@@ -367,6 +512,19 @@ func startN2APIProcess(t *testing.T, binaryPath, databaseURL, adminUsername, adm
 		}
 	})
 	return process
+}
+
+func newProcessTestWorkingDirectory(t *testing.T) string {
+	t.Helper()
+	workingDirectory := t.TempDir()
+	buildDirectory := filepath.Join(workingDirectory, "frontend", "build")
+	if err := os.MkdirAll(buildDirectory, 0o755); err != nil {
+		t.Fatalf("create process test frontend build directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(buildDirectory, "200.html"), []byte("<!doctype html><title>N2API process test</title>"), 0o644); err != nil {
+		t.Fatalf("create process test frontend fixture: %v", err)
+	}
+	return workingDirectory
 }
 
 func overrideProcessTestEnv(environment []string, overrides ...string) []string {
@@ -430,6 +588,168 @@ func waitForProcessListener(t *testing.T, process *n2apiTestProcess, port int, s
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatalf("n2api process did not listen on reserved port; logs: %s", processLogs(process, secrets...))
+}
+
+func waitForSingleProcessWinner(t *testing.T, first *n2apiTestProcess, firstPort int, second *n2apiTestProcess, secondPort int, secrets ...string) (*n2apiTestProcess, *n2apiTestProcess, int) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		firstListening := processListenerOpen(firstPort)
+		secondListening := processListenerOpen(secondPort)
+		if firstListening && secondListening {
+			t.Fatal("both safe cold-start processes opened listeners")
+		}
+		if firstListening {
+			return first, second, firstPort
+		}
+		if secondListening {
+			return second, first, secondPort
+		}
+		select {
+		case <-first.done:
+			select {
+			case <-second.done:
+				t.Fatalf("both safe cold-start processes exited; first: %s; second: %s", processLogs(first, secrets...), processLogs(second, secrets...))
+			default:
+			}
+		default:
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("neither safe cold-start process opened a listener; first: %s; second: %s", processLogs(first, secrets...), processLogs(second, secrets...))
+	return nil, nil, 0
+}
+
+func processListenerOpen(port int) bool {
+	connection, err := net.DialTimeout("tcp4", fmt.Sprintf("127.0.0.1:%d", port), 100*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	return true
+}
+
+func assertProcessReady(t *testing.T, port int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/readyz", port), nil)
+	if err != nil {
+		t.Fatalf("create readiness request: %v", err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("request readiness on port %d: %v", port, err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		t.Fatalf("read readiness on port %d: %v", port, err)
+	}
+	var readiness struct {
+		Status       string `json:"status"`
+		Database     string `json:"database"`
+		StaticAssets string `json:"staticAssets"`
+	}
+	if err := json.Unmarshal(body, &readiness); err != nil {
+		t.Fatalf("decode readiness on port %d: %v", port, err)
+	}
+	if response.StatusCode != http.StatusOK || readiness.Status != "ok" || readiness.Database != "ok" || readiness.StaticAssets != "ok" {
+		t.Fatalf("readiness on port %d returned status %d and state %+v: %s", port, response.StatusCode, readiness, strings.TrimSpace(string(body)))
+	}
+}
+
+func assertPostgresApplicationConnectionCount(t *testing.T, pool *pgxpool.Pool, applicationName string, maximum int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM pg_stat_activity
+		WHERE datname = current_database() AND application_name = $1
+	`, applicationName).Scan(&count); err != nil {
+		t.Fatalf("count PostgreSQL %s connections: %v", applicationName, err)
+	}
+	if count > maximum {
+		t.Fatalf("PostgreSQL %s connections = %d, want at most %d", applicationName, count, maximum)
+	}
+}
+
+func waitForPostgresApplicationBackend(t *testing.T, pool *pgxpool.Pool, applicationName string, previousPID int32) int32 {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		var pid int32
+		err := pool.QueryRow(ctx, `
+			SELECT pid
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+				AND application_name = $1
+				AND pid <> $2
+			ORDER BY backend_start DESC
+			LIMIT 1
+		`, applicationName, previousPID).Scan(&pid)
+		cancel()
+		if err == nil {
+			return pid
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("find PostgreSQL %s backend: %v", applicationName, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("PostgreSQL %s backend was not found", applicationName)
+	return 0
+}
+
+func waitForMigrationLockWaiter(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	lockID := uint64(processTestMigrationLockID)
+	classID := int64(lockID >> 32)
+	objectID := int64(lockID & 0xffffffff)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		var exists bool
+		err := pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_locks AS locks
+				JOIN pg_stat_activity AS activity ON activity.pid = locks.pid
+				WHERE locks.locktype = 'advisory'
+					AND locks.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+					AND locks.classid::bigint = $1
+					AND locks.objid::bigint = $2
+					AND locks.objsubid = 1
+					AND NOT locks.granted
+					AND activity.application_name = $3
+			)
+		`, classID, objectID, store.PostgresApplicationNameMigrationLock).Scan(&exists)
+		cancel()
+		if err != nil {
+			t.Fatalf("inspect waiting migration lock backend: %v", err)
+		}
+		if exists {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatal("unsafe process did not block on the migration advisory lock")
+}
+
+func assertSingleBootstrapAdmin(t *testing.T, pool *pgxpool.Pool, username string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM admins WHERE username = $1`, username).Scan(&count); err != nil {
+		t.Fatalf("count bootstrap admins: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("bootstrap admin count = %d, want 1", count)
+	}
 }
 
 func assertProcessListenerOpen(t *testing.T, port int) {
