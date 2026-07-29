@@ -210,8 +210,9 @@ PostgreSQL receives three additive structures:
 ### Request budget
 
 An authenticated, structurally valid external gateway request consumes one
-request unit immediately before upstream selection. Local authentication,
-validation, rate-limit, concurrency-limit, and budget rejections consume none.
+request unit after it secures its first schedulable provider-account slot and
+before any upstream operation. Local authentication, validation, rate-limit,
+concurrency-limit, routing, and budget rejections consume none.
 Once admitted, upstream errors, cancellation, client disconnect, and an empty
 usage result do not refund the request unit. Fallback and retry reuse the same
 admission ID and cannot charge again.

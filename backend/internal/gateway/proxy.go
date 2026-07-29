@@ -623,31 +623,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if affinitySelection.enabled() {
 		maxAttempts = 1
 	}
-	if p.budgets != nil {
-		budgetAdmission, err = p.budgets.AdmitAPIKeyBudget(r.Context(), key.ID, time.Now().UTC())
-		if err != nil {
-			switch {
-			case errors.Is(err, admin.ErrAPIKeyRequestBudgetExceeded):
-				errorCode = "api_key_request_budget_exceeded"
-			case errors.Is(err, admin.ErrAPIKeyTokenBudgetExceeded):
-				errorCode = "api_key_token_budget_exceeded"
-			case errors.Is(err, admin.ErrAPIKeyCostBudgetExceeded):
-				errorCode = "api_key_cost_budget_exceeded"
-			case errors.Is(err, admin.ErrBudgetInitializing):
-				errorCode = "budget_initializing"
-				writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "api key budget is initializing")
-				return
-			default:
-				errorCode = "internal_error"
-				writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not admit api key budget")
-				return
-			}
-			p.observeLimitRejection("api_key", budgetMetricReason(errorCode))
-			writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
-			return
-		}
-	}
-
 	failedAccountIDs := []int64{}
 	accountConcurrencyLimited := false
 	var lastRetryableResp *http.Response
@@ -711,6 +686,31 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.observeLimitRejection("provider_account", "concurrency")
 			writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 			return
+		}
+		if budgetAdmission.ID == "" && p.budgets != nil {
+			budgetAdmission, err = p.budgets.AdmitAPIKeyBudget(r.Context(), key.ID, time.Now().UTC())
+			if err != nil {
+				releaseAccount()
+				switch {
+				case errors.Is(err, admin.ErrAPIKeyRequestBudgetExceeded):
+					errorCode = "api_key_request_budget_exceeded"
+				case errors.Is(err, admin.ErrAPIKeyTokenBudgetExceeded):
+					errorCode = "api_key_token_budget_exceeded"
+				case errors.Is(err, admin.ErrAPIKeyCostBudgetExceeded):
+					errorCode = "api_key_cost_budget_exceeded"
+				case errors.Is(err, admin.ErrBudgetInitializing):
+					errorCode = "budget_initializing"
+					writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "api key budget is initializing")
+					return
+				default:
+					errorCode = "internal_error"
+					writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not admit api key budget")
+					return
+				}
+				p.observeLimitRejection("api_key", budgetMetricReason(errorCode))
+				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
+				return
+			}
 		}
 		if err := p.recordAccountUsed(r.Context(), selected.AccountID); err != nil {
 			releaseAccount()

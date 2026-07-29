@@ -3756,8 +3756,8 @@ func TestProxyRejectsWhenAPIKeyBudgetIsExceeded(t *testing.T) {
 	if budgets.admitCalls != 1 || budgets.keyID != 42 {
 		t.Fatalf("budget calls/key = %d/%d, want one call for key 42", budgets.admitCalls, budgets.keyID)
 	}
-	if tokens.calls != 0 {
-		t.Fatalf("account calls = %d, want 0 when key budget is exceeded", tokens.calls)
+	if tokens.calls != 1 {
+		t.Fatalf("account calls = %d, want one schedulability check before budget rejection", tokens.calls)
 	}
 	assertLastLoggedError(t, logger, "api_key_request_budget_exceeded")
 }
@@ -3828,8 +3828,8 @@ func TestProxyLogsPreciseAPIKeyCostBudgetReason(t *testing.T) {
 	if recorder.Code != http.StatusTooManyRequests || !strings.Contains(recorder.Body.String(), "rate_limit_exceeded") {
 		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
 	}
-	if tokens.calls != 0 {
-		t.Fatalf("account calls = %d, want 0 when key cost budget is exceeded", tokens.calls)
+	if tokens.calls != 1 {
+		t.Fatalf("account calls = %d, want one schedulability check before budget rejection", tokens.calls)
 	}
 	assertLastLoggedError(t, logger, "api_key_cost_budget_exceeded")
 }
@@ -3853,21 +3853,22 @@ func TestProxyFailsClosedWhenAPIKeyBudgetUsageCannotBeChecked(t *testing.T) {
 	if recorder.Code != http.StatusInternalServerError || !strings.Contains(recorder.Body.String(), "internal_error") {
 		t.Fatalf("status/body = %d/%s, want 500 internal_error", recorder.Code, recorder.Body.String())
 	}
-	if tokens.calls != 0 {
-		t.Fatalf("account calls = %d, want 0 when budget usage cannot be checked", tokens.calls)
+	if tokens.calls != 1 {
+		t.Fatalf("account calls = %d, want one schedulability check before budget failure", tokens.calls)
 	}
 	assertLastLoggedError(t, logger, "internal_error")
 }
 
-func TestProxyReturnsBudgetInitializingWithoutUpstreamSelection(t *testing.T) {
+func TestProxyReturnsBudgetInitializingWithoutUpstreamRequest(t *testing.T) {
 	logger := &fakeRequestLogger{}
 	budgets := &fakeBudgetProvider{admitErr: admin.ErrBudgetInitializing}
 	routingPoolID := int64(1)
 	accounts := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "upstream-token"}}}
 	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{key: admin.APIKey{ID: 42, RequestBudget24h: 1, RoutingPoolID: &routingPoolID}}, accounts, Config{
-		UpstreamBaseURL: "https://upstream.example.test",
-		Logger:          logger,
-		BudgetProvider:  budgets,
+		UpstreamBaseURL:                 "https://upstream.example.test",
+		Logger:                          logger,
+		BudgetProvider:                  budgets,
+		MaxConcurrentRequestsPerAccount: 1,
 	}, http.DefaultClient)
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
@@ -3878,9 +3879,14 @@ func TestProxyReturnsBudgetInitializingWithoutUpstreamSelection(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "budget_initializing") {
 		t.Fatalf("status/body = %d/%s, want 503 budget_initializing", recorder.Code, recorder.Body.String())
 	}
-	if accounts.calls != 0 || budgets.settleCalls != 0 {
-		t.Fatalf("account/settlement calls = %d/%d, want 0/0", accounts.calls, budgets.settleCalls)
+	if accounts.calls != 1 || budgets.settleCalls != 0 {
+		t.Fatalf("account/settlement calls = %d/%d, want 1/0", accounts.calls, budgets.settleCalls)
 	}
+	release, ok := proxy.tryAcquireAccountSlot(1, 1)
+	if !ok {
+		t.Fatal("provider account slot was not released after budget initialization rejection")
+	}
+	release()
 	assertLastLoggedError(t, logger, "budget_initializing")
 }
 
@@ -4300,6 +4306,7 @@ func TestProxyLogsPreciseAPIKeyConcurrencyLimitReason(t *testing.T) {
 
 func TestProxyLogsPreciseProviderAccountConcurrencyLimitReason(t *testing.T) {
 	logger := &fakeRequestLogger{}
+	budgets := &fakeBudgetProvider{}
 	proxy := NewProxyWithClient(
 		&fakeAPIKeyAuthenticator{},
 		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 7, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "busy-token"}}},
@@ -4307,6 +4314,7 @@ func TestProxyLogsPreciseProviderAccountConcurrencyLimitReason(t *testing.T) {
 			UpstreamBaseURL:                 "https://upstream.example.test",
 			MaxConcurrentRequestsPerAccount: 1,
 			Logger:                          logger,
+			BudgetProvider:                  budgets,
 		},
 		http.DefaultClient,
 	)
@@ -4325,6 +4333,9 @@ func TestProxyLogsPreciseProviderAccountConcurrencyLimitReason(t *testing.T) {
 		t.Fatalf("status/body = %d/%s, want 429 rate_limit_exceeded", recorder.Code, recorder.Body.String())
 	}
 	assertLastLoggedError(t, logger, "provider_account_concurrency_limited")
+	if budgets.admitCalls != 0 || budgets.settleCalls != 0 {
+		t.Fatalf("budget admit/settle calls = %d/%d, want 0/0 for local concurrency rejection", budgets.admitCalls, budgets.settleCalls)
+	}
 }
 
 func TestProxyDoesNotCountFallbackForTerminalAccountConcurrencyLimit(t *testing.T) {
@@ -4440,6 +4451,7 @@ func TestProxyRequestLogWriteFailureDoesNotChangeSuccessfulResponse(t *testing.T
 
 func TestProxyLogsGatewayFallbackCountsForBusyAccountFallback(t *testing.T) {
 	logger := &fakeRequestLogger{}
+	budgets := &fakeBudgetProvider{}
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{
 		{AccountID: 1, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "first-token"},
 		{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "second-token"},
@@ -4456,6 +4468,7 @@ func TestProxyLogsGatewayFallbackCountsForBusyAccountFallback(t *testing.T) {
 		UpstreamBaseURL:                 "https://upstream.example.test",
 		MaxConcurrentRequestsPerAccount: 1,
 		Logger:                          logger,
+		BudgetProvider:                  budgets,
 	}, client)
 	release, ok := proxy.tryAcquireAccountSlot(1, 1)
 	if !ok {
@@ -4477,6 +4490,9 @@ func TestProxyLogsGatewayFallbackCountsForBusyAccountFallback(t *testing.T) {
 	entry := logger.entries[0]
 	if entry.GatewayAttemptCount != 2 || entry.GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", entry.GatewayAttemptCount, entry.GatewayFallbackCount)
+	}
+	if budgets.admitCalls != 1 || budgets.settleCalls != 1 {
+		t.Fatalf("budget admit/settle calls = %d/%d, want 1/1 after busy-account fallback", budgets.admitCalls, budgets.settleCalls)
 	}
 }
 
