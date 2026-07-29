@@ -52,6 +52,7 @@ type AdminService interface {
 	RevokeSessionByID(ctx context.Context, adminID, sessionID int64, currentToken string) (bool, error)
 	RevokeOtherSessions(ctx context.Context, adminID int64, currentToken string) (int64, error)
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
+	ListAPIKeyPage(ctx context.Context, filter admin.ManagementListFilter) (admin.APIKeyPage, error)
 	CreateAPIKey(ctx context.Context, name string, routingPoolID *int64) (admin.CreatedAPIKey, error)
 	RevealAPIKeySecret(ctx context.Context, adminID, keyID int64, currentPassword string) (string, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
@@ -62,6 +63,7 @@ type AdminService interface {
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (admin.APIKey, error)
 	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (admin.APIKey, error)
 	ListRoutingPools(ctx context.Context) ([]admin.RoutingPool, error)
+	ListRoutingPoolPage(ctx context.Context, filter admin.ManagementListFilter) (admin.RoutingPoolPage, error)
 	CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error)
 	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error)
 	DeleteRoutingPool(ctx context.Context, id int64) error
@@ -573,8 +575,21 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/keys", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		keys, err := admins.ListAPIKeys(r.Context())
+		filter, err := managementListFilterFromRequest(r)
 		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		page, err := admins.ListAPIKeyPage(r.Context(), filter)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidCursor) {
+				writeError(w, http.StatusBadRequest, "invalid_cursor")
+				return
+			}
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
@@ -593,18 +608,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			requestRate = apiKeyRateSource.APIKeyRequestRateSnapshot()
 			tokenRate = apiKeyRateSource.APIKeyTokenRateSnapshot()
 		}
-		budgetUsage := map[int64]admin.APIKeyBudgetUsage{}
-		now := time.Now()
-		for _, key := range keys {
-			usage, err := admins.GetAPIKeyBudgetUsage(r.Context(), key, now)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "internal_error")
-				return
-			}
-			budgetUsage[key.ID] = usage
-		}
-		writeJSON(w, http.StatusOK, map[string][]apiKeyResponse{
-			"keys": apiKeyResponses(keys, budgetUsage, settings, concurrency, requestRate, tokenRate),
+		writeJSON(w, http.StatusOK, map[string]any{
+			"keys":       apiKeyResponses(page.Keys, page.BudgetUsage, settings, concurrency, requestRate, tokenRate),
+			"nextCursor": page.NextCursor,
+			"hasMore":    page.HasMore,
 		})
 	}))
 
@@ -909,12 +916,25 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	}))
 
 	mux.HandleFunc("GET /api/admin/routing-pools", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		pools, err := admins.ListRoutingPools(r.Context())
+		filter, err := managementListFilterFromRequest(r)
 		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_input")
+			return
+		}
+		page, err := admins.ListRoutingPoolPage(r.Context(), filter)
+		if err != nil {
+			if errors.Is(err, admin.ErrInvalidCursor) {
+				writeError(w, http.StatusBadRequest, "invalid_cursor")
+				return
+			}
+			if errors.Is(err, admin.ErrInvalidInput) {
+				writeError(w, http.StatusBadRequest, "invalid_input")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string][]admin.RoutingPool{"pools": pools})
+		writeJSON(w, http.StatusOK, map[string]any{"pools": page.Pools, "nextCursor": page.NextCursor, "hasMore": page.HasMore})
 	}))
 
 	mux.HandleFunc("POST /api/admin/routing-pools", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -3196,6 +3216,22 @@ func apiKeyBudgetMaintenanceStatusSourceFromOptions(options ...any) APIKeyBudget
 		}
 	}
 	return nil
+}
+
+func managementListFilterFromRequest(r *http.Request) (admin.ManagementListFilter, error) {
+	filter := admin.ManagementListFilter{
+		Limit:  admin.DefaultManagementPageSize,
+		Cursor: r.URL.Query().Get("cursor"),
+		Query:  r.URL.Query().Get("q"),
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > admin.MaxManagementPageSize {
+			return admin.ManagementListFilter{}, admin.ErrInvalidInput
+		}
+		filter.Limit = limit
+	}
+	return filter, nil
 }
 
 func readinessMetricsObserverFromOptions(options ...any) ReadinessMetricsObserver {

@@ -705,11 +705,30 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 49 {
-		t.Fatalf("migration sources = %d, want 49", len(sources))
+	if len(sources) != 50 {
+		t.Fatalf("migration sources = %d, want 50", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[48].Path != "00049_api_key_budget_ledger.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[49].Path != "00050_management_list_indexes.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
+	}
+}
+
+func TestManagementListIndexesMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00050_management_list_indexes.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"client_api_keys_management_page_idx",
+		"ON client_api_keys (created_at DESC, id DESC)",
+		"routing_pools_management_page_idx",
+		"ON routing_pools (created_at DESC, id DESC)",
+		"DROP INDEX IF EXISTS routing_pools_management_page_idx",
+		"DROP INDEX IF EXISTS client_api_keys_management_page_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
 	}
 }
 
@@ -751,6 +770,7 @@ func TestAPIKeyBudgetLedgerMigrationRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestAlertingRepository(t, ctx)
 	provider := newStoreMigrationTestProvider(t, repo)
+	rollBackManagementListMigration(t, ctx, provider)
 
 	result, err := provider.Down(ctx)
 	if err != nil {
@@ -764,7 +784,7 @@ func TestAPIKeyBudgetLedgerMigrationRoundTrip(t *testing.T) {
 	assertStoreRelationExists(t, ctx, repo, "api_key_budget_states", false)
 	assertStoreColumnExists(t, ctx, repo, "request_logs", "budget_backfill_eligible", false)
 
-	results, err := provider.Up(ctx)
+	results, err := provider.UpTo(ctx, 49)
 	if err != nil {
 		t.Fatalf("reapply API key budget ledger migration: %v", err)
 	}
@@ -781,6 +801,7 @@ func TestAPIKeyBudgetLedgerMigrationDownRejectsLiveAdmissions(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestAlertingRepository(t, ctx)
 	provider := newStoreMigrationTestProvider(t, repo)
+	rollBackManagementListMigration(t, ctx, provider)
 	adminRepo := NewAdminRepository(repo.pool, "migration-budget-test")
 	key, err := adminRepo.CreateAPIKey(ctx, "migration budget key", "migration-budget-hash", "n2api_", "encrypted", nil)
 	if err != nil {
@@ -812,6 +833,7 @@ func TestAPIKeyBudgetLedgerMigrationDownRejectsPostLedgerRequestLogs(t *testing.
 	ctx := context.Background()
 	repo := newTestAlertingRepository(t, ctx)
 	provider := newStoreMigrationTestProvider(t, repo)
+	rollBackManagementListMigration(t, ctx, provider)
 	adminRepo := NewAdminRepository(repo.pool, "migration-budget-test")
 	key, err := adminRepo.CreateAPIKey(ctx, "migration rejected request key", "migration-rejected-request-hash", "n2api_", "encrypted", nil)
 	if err != nil {
@@ -870,6 +892,18 @@ func newStoreMigrationTestProvider(t *testing.T, repo *AlertingRepository) *goos
 		t.Fatalf("create migration provider: %v", err)
 	}
 	return provider
+}
+
+func rollBackManagementListMigration(t *testing.T, ctx context.Context, provider *goose.Provider) {
+	t.Helper()
+	result, err := provider.Down(ctx)
+	if err != nil {
+		t.Fatalf("roll back management list migration: %v", err)
+	}
+	if result == nil || result.Source.Version != 50 {
+		t.Fatalf("management migration down result = %+v, want version 50", result)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 49)
 }
 
 func assertStoreMigrationVersion(t *testing.T, ctx context.Context, provider *goose.Provider, want int64) {

@@ -43,11 +43,15 @@ const MaxRequestLogExportRows = 1_000_000
 const MaxRequestLogQueryLength = 200
 const MaxRequestLogFilterValueLength = 100
 const MaxRequestLogRoutingPoolChainLength = 200
+const DefaultManagementPageSize = 50
+const MaxManagementPageSize = 100
+const MaxManagementQueryLength = 200
 
 var (
 	ErrNotFound                  = errors.New("not found")
 	ErrUnauthorized              = errors.New("unauthorized")
 	ErrInvalidInput              = errors.New("invalid input")
+	ErrInvalidCursor             = errors.New("invalid cursor")
 	ErrConflict                  = errors.New("conflict")
 	ErrAuthenticationUnavailable = errors.New("authentication unavailable")
 )
@@ -149,6 +153,25 @@ type RoutingPool struct {
 type RoutingPoolAccount struct {
 	AccountID int64 `json:"accountId"`
 	Priority  int   `json:"priority"`
+}
+
+type ManagementListFilter struct {
+	Limit  int
+	Cursor string
+	Query  string
+}
+
+type APIKeyPage struct {
+	Keys        []APIKey
+	BudgetUsage map[int64]APIKeyBudgetUsage
+	NextCursor  string
+	HasMore     bool
+}
+
+type RoutingPoolPage struct {
+	Pools      []RoutingPool
+	NextCursor string
+	HasMore    bool
 }
 
 type APIKeyBudgetUsage struct {
@@ -384,6 +407,7 @@ type Repository interface {
 	RevokeOtherAdminSessions(ctx context.Context, adminID int64, currentHash string, revokedAt time.Time) (int64, error)
 	CreateAPIKey(ctx context.Context, name, hash, prefix, encryptedSecret string, routingPoolID *int64) (APIKey, error)
 	ListAPIKeys(ctx context.Context) ([]APIKey, error)
+	ListAPIKeyPage(ctx context.Context, filter ManagementListFilter, now time.Time) (APIKeyPage, error)
 	PurgeRevokedAPIKeys(ctx context.Context, cutoff time.Time) (int64, error)
 	RevokeAPIKey(ctx context.Context, id int64) (APIKey, error)
 	DeleteRevokedAPIKey(ctx context.Context, id int64) error
@@ -395,6 +419,7 @@ type Repository interface {
 	UpdateAPIKeyLimits(ctx context.Context, id int64, requestsPerMinute, tokensPerMinute int) (APIKey, error)
 	UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudget24h, tokenBudget24h int, costBudgetMicrousd24h int64, requestBudget30d, tokenBudget30d int, costBudgetMicrousd30d int64) (APIKey, error)
 	ListRoutingPools(ctx context.Context) ([]RoutingPool, error)
+	ListRoutingPoolPage(ctx context.Context, filter ManagementListFilter) (RoutingPoolPage, error)
 	CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error)
 	UpdateRoutingPool(ctx context.Context, id int64, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error)
 	DeleteRoutingPool(ctx context.Context, id int64) error
@@ -852,6 +877,26 @@ func (s *Service) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
 	return s.repo.ListAPIKeys(ctx)
 }
 
+func (s *Service) ListAPIKeyPage(ctx context.Context, filter ManagementListFilter) (APIKeyPage, error) {
+	filter, err := normalizeManagementListFilter(filter)
+	if err != nil {
+		return APIKeyPage{}, err
+	}
+	page, err := s.repo.ListAPIKeyPage(ctx, filter, s.now().UTC())
+	if err != nil {
+		return APIKeyPage{}, err
+	}
+	for _, key := range page.Keys {
+		usage, ok := page.BudgetUsage[key.ID]
+		if !ok {
+			return APIKeyPage{}, ErrNotFound
+		}
+		applyBudgetRemaining(&usage, key)
+		page.BudgetUsage[key.ID] = usage
+	}
+	return page, nil
+}
+
 func (s *Service) PurgeExpiredAPIKeys(ctx context.Context) (int64, error) {
 	cutoff := s.now().Add(-APIKeyPhysicalDeleteRetention)
 	ctx = withSchedulerIntent(ctx, systemevent.ActionSchedulerAPIKeyPurgeCompleted, "client_api_key_collection", map[string]any{"cutoff": cutoff.UTC().Format(time.RFC3339)})
@@ -925,6 +970,26 @@ func (s *Service) UpdateAPIKeyBudgets(ctx context.Context, id int64, requestBudg
 
 func (s *Service) ListRoutingPools(ctx context.Context) ([]RoutingPool, error) {
 	return s.repo.ListRoutingPools(ctx)
+}
+
+func (s *Service) ListRoutingPoolPage(ctx context.Context, filter ManagementListFilter) (RoutingPoolPage, error) {
+	filter, err := normalizeManagementListFilter(filter)
+	if err != nil {
+		return RoutingPoolPage{}, err
+	}
+	return s.repo.ListRoutingPoolPage(ctx, filter)
+}
+
+func normalizeManagementListFilter(filter ManagementListFilter) (ManagementListFilter, error) {
+	if filter.Limit == 0 {
+		filter.Limit = DefaultManagementPageSize
+	}
+	filter.Cursor = strings.TrimSpace(filter.Cursor)
+	filter.Query = strings.ToLower(strings.Join(strings.Fields(filter.Query), " "))
+	if filter.Limit < 1 || filter.Limit > MaxManagementPageSize || len(filter.Cursor) > 2048 || utf8.RuneCountInString(filter.Query) > MaxManagementQueryLength {
+		return ManagementListFilter{}, ErrInvalidInput
+	}
+	return filter, nil
 }
 
 func (s *Service) CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error) {

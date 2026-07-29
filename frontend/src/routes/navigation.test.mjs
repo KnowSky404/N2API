@@ -408,6 +408,9 @@ test('routing pools page manages account pools', () => {
 
 
   assert.match(poolsPage, /loadKeys/);
+  assert.match(poolsPage, /loadMoreRoutingPools/);
+  assert.match(poolsPage, /routingPools\.hasMore/);
+  assert.match(poolsPage, /Bound key counts use \{apiKeys\.items\.length\} loaded keys/);
   assert.match(poolsPage, /boundAPIKeyCount\(pool\)/);
   assert.match(poolsPage, /schedulablePoolMemberCount\(pool\)/);
   assert.match(poolsPage, /pool\.fallbackPoolId/);
@@ -1649,6 +1652,9 @@ test('api keys page supports local table pagination', () => {
   // Navigation controls
   assert.match(apiKeysPage, /Previous/);
   assert.match(apiKeysPage, /Next/);
+  assert.match(apiKeysPage, /loadMoreKeys/);
+  assert.match(apiKeysPage, /apiKeys\.hasMore/);
+  assert.match(apiKeysPage, /apiKeys\.items\.length\} loaded/);
   // Table uses paginatedAPIKeys
   assert.match(apiKeysPage, /paginatedAPIKeys/);
   // Selected count summary references filtered total, not page

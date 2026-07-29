@@ -18,7 +18,7 @@ review, and atomic commit are complete.
 | Gateway Settings runtime | completed | Atomic validated snapshots, startup gating, supervised refresh, immediate committed publication, LKG stale state, bounded health/metrics, and zero request-path settings loads implemented in Task 4 |
 | API key authentication touch | completed | One active-state statement returns the key and selected models while conditionally touching at most once per UTC minute, with bounded metrics and stable failure behavior |
 | Durable budget ledger | completed | Migration 49, atomic zero-budget-aware admission, durable settlement recovery, bounded initialization/expiry/abandonment, downgrade guards, Store race/process tests, and rendered desktop/mobile UI evidence |
-| Bounded admin lists | pending | Current key list has N+1 budget reads and both lists are unbounded |
+| Bounded admin lists | completed | Signed 24-hour keyset cursors, 50/100 page bounds, fixed 3-query key and 2-query pool reads, scale profiles, and rendered load-more/error evidence implemented in Task 7 |
 | Database TLS identity | completed | Parsed pgx primary and fallback attempts are classified as plaintext, unverified TLS, or verified-full with independent accepted-risk gates |
 | Secret reveal step-up | completed | Password-bearing POST, bounded three-dimensional throttling, sanitized auditing, no-store responses, and dialog-local secret state are implemented and verified |
 | Password hash migration | completed | Bounded Argon2id hashing, legacy PBKDF2 compare-and-swap migration, exact password bytes, and dummy verification are implemented and verified |
@@ -242,7 +242,7 @@ Commit: `feat(budget): add atomic budget admission and settlement`
 
 ## Task 7: Batch And Paginate Management Lists
 
-Status: pending
+Status: completed
 Dependencies: Task 6
 
 Implementation:
@@ -261,6 +261,42 @@ Tests and acceptance:
 - Frontend does not assume one response contains every row.
 - Profiles cover 10,000 keys, 1,000 pools, and scalable 10,000,000-log
   equivalents with stable `EXPLAIN (ANALYZE, BUFFERS)` assertions.
+
+Evidence:
+
+- Admin HTTP API Key and Routing Pool lists default to 50 rows, reject limits
+  above 100, and use stable `(created_at DESC, id DESC)` keyset order. Cursors
+  are base64url HMACs with a domain-separated key, resource and normalized
+  query digest, row position, and 24-hour expiry; tampering, cross-resource
+  replay, filter mismatch, and expiry return `invalid_cursor`.
+- API Key pages use exactly three queries for 1 or 100 rows: the page, allowed
+  models, and durable budget state. Routing Pool pages use exactly two: the
+  page and memberships. The internal full-list contracts used by configuration
+  export and validation remain available, with Routing Pool membership also
+  changed from N+1 to one batch query.
+- `make test-management-list-profile` passed with 10,000 API Keys and 1,000
+  Routing Pools. First and deep pages used the new management indexes with no
+  Sort node and 2-5 shared buffers; association batches used their expected
+  model, budget-state, and membership indexes. The existing fixed-row request
+  log keyset profile supplies the 10x/10,000,000-row equivalent projection.
+- Frontend state appends unique rows, preserves partial data after append
+  failure, prevents old-cursor append during refresh, clears explicit API Key
+  selection on a successful fresh load, and never implies selection of
+  unloaded IDs. Local filters and pagination explicitly describe their loaded
+  row boundary.
+- `make test` passed all Go packages, Svelte with zero errors and warnings, 208
+  Bun tests, and the production frontend build.
+- `make test-control-connections` passed the Store integration group (`9.966s`),
+  Store race group (`8.655s`), and real process lifecycle group (`8.841s`),
+  including migration 50 and constant-query management page tests.
+- `cd backend && env GOMODCACHE=/root/Clouds/N2API/.cache/go-mod GOCACHE=/root/Clouds/N2API/.cache/go-build go test -race -count=1 ./internal/admin ./internal/httpapi ./internal/store ./cmd/n2api`
+  and focused `go vet` over the same packages passed.
+- Browser plugin was unavailable. A temporary `/tmp` Playwright 1.62.0 suite
+  passed three tests at 1440x900, 1280x800, and 390x844: API Key append with
+  explicit selection preserved, Routing Pool mobile append, and failed API Key
+  append with rows/cursor retry preserved. Titles, meaningful DOM, console
+  health, framework overlays, page-level overflow, interactions, and
+  screenshots were checked.
 
 Commit: `perf(admin): batch and paginate management queries`
 

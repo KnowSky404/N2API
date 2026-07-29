@@ -8,6 +8,7 @@
     formatDate,
     getSchedulableProviderAccounts,
     loadKeys,
+    loadMoreRoutingPools,
     loadProviderAccounts,
     loadRoutingPools,
     providerAccounts,
@@ -496,9 +497,19 @@
         No routing pools configured.
       </p>
     {:else if visibleRoutingPools.length === 0}
-      <p class="mt-6 rounded-lg border border-dashed border-[#d9d9d9] bg-[#fafafa] p-6 text-sm text-[#6e6e6e]">
-        No routing pool matches this link.
-      </p>
+      <div class="mt-6 rounded-lg border border-dashed border-[#d9d9d9] bg-[#fafafa] p-6 text-sm text-[#6e6e6e]">
+        <p>No loaded routing pool matches the current filters.</p>
+        {#if routingPools.hasMore}
+          <button
+            class="ui-button ui-button--sm ui-button--secondary mt-3 rounded-md border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={routingPools.loadingMore}
+            onclick={() => loadMoreRoutingPools()}
+          >
+            {routingPools.loadingMore ? 'Loading' : 'Load more'}
+          </button>
+        {/if}
+      </div>
     {:else}
       <div class="ui-table-shell mt-6 overflow-x-auto rounded-lg border border-[#ededed]">
         <table class="ui-table ui-table--stacked w-full min-w-[980px] text-left text-sm">
@@ -584,6 +595,19 @@
             {/each}
           </tbody>
         </table>
+      </div>
+      <div class="mt-4 flex flex-col gap-2 text-xs text-[#6e6e6e] sm:flex-row sm:items-center sm:justify-between">
+        <p>{routingPools.items.length} pools loaded. Bound key counts use {apiKeys.items.length} loaded keys.</p>
+        {#if routingPools.hasMore}
+          <button
+            class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-3 py-2 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+            type="button"
+            disabled={routingPools.loadingMore || routingPools.saving}
+            onclick={() => loadMoreRoutingPools()}
+          >
+            {routingPools.loadingMore ? 'Loading' : 'Load more'}
+          </button>
+        {/if}
       </div>
     {/if}
   </div>

@@ -18,6 +18,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -123,6 +124,66 @@ func TestRequestLogCursorIsAuthenticatedAndFilterBound(t *testing.T) {
 		if _, err := repo.ListRequestLogs(context.Background(), admin.RequestLogFilter{Limit: limit}); !errors.Is(err, admin.ErrInvalidInput) {
 			t.Fatalf("ListRequestLogs limit %d error = %v, want ErrInvalidInput", limit, err)
 		}
+	}
+}
+
+func TestManagementCursorIsAuthenticatedResourceFilterAndExpiryBound(t *testing.T) {
+	now := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	repo := NewAdminRepository(nil, "cursor-secret")
+	repo.now = func() time.Time { return now }
+	filter := admin.ManagementListFilter{Limit: 50, Query: "codex"}
+	want := managementCursor{
+		Version: managementCursorVersion, Resource: "api_keys", CreatedAt: now.Add(-time.Minute), ID: 42,
+		FilterDigest: managementFilterDigest("api_keys", filter), ExpiresAt: now.Add(time.Hour),
+	}
+	encoded, err := repo.encodeManagementCursor(want)
+	if err != nil {
+		t.Fatalf("encodeManagementCursor returned error: %v", err)
+	}
+	got, err := repo.decodeManagementCursor(encoded, "api_keys", filter, now)
+	if err != nil {
+		t.Fatalf("decodeManagementCursor returned error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("decoded cursor = %+v, want %+v", got, want)
+	}
+	changedLimit := filter
+	changedLimit.Limit = 100
+	if _, err := repo.decodeManagementCursor(encoded, "api_keys", changedLimit, now); err != nil {
+		t.Fatalf("cursor must not bind page size: %v", err)
+	}
+
+	tampered := encoded
+	if tampered[0] == 'A' {
+		tampered = "B" + tampered[1:]
+	} else {
+		tampered = "A" + tampered[1:]
+	}
+	for name, tc := range map[string]struct {
+		resource string
+		filter   admin.ManagementListFilter
+		at       time.Time
+	}{
+		"tampered":       {"api_keys", filter, now},
+		"cross resource": {"routing_pools", filter, now},
+		"filter mismatch": {"api_keys", admin.ManagementListFilter{
+			Limit: 50, Query: "other",
+		}, now},
+		"expired": {"api_keys", filter, want.ExpiresAt},
+	} {
+		value := encoded
+		if name == "tampered" {
+			value = tampered
+		}
+		if _, err := repo.decodeManagementCursor(value, tc.resource, tc.filter, tc.at); !errors.Is(err, admin.ErrInvalidCursor) {
+			t.Fatalf("%s cursor error = %v, want ErrInvalidCursor", name, err)
+		}
+	}
+	if _, err := repo.decodeManagementCursor("not-a-cursor", "api_keys", filter, now); !errors.Is(err, admin.ErrInvalidCursor) {
+		t.Fatalf("malformed cursor error = %v, want ErrInvalidCursor", err)
+	}
+	if _, err := NewAdminRepository(nil, "different-secret").decodeManagementCursor(encoded, "api_keys", filter, now); !errors.Is(err, admin.ErrInvalidCursor) {
+		t.Fatalf("wrong-secret cursor error = %v, want ErrInvalidCursor", err)
 	}
 }
 
@@ -910,6 +971,137 @@ func TestAdminRepositoryRoutingPools(t *testing.T) {
 	}
 	if len(keys) != 1 || keys[0].RoutingPoolID == nil || *keys[0].RoutingPoolID != pool.ID || keys[0].RoutingPoolName != "codex primary" {
 		t.Fatalf("keys = %+v, want pool binding in list", keys)
+	}
+}
+
+func TestManagementPagesUseStableKeysetAndBatchAssociations(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	now := time.Date(2026, time.July, 29, 14, 0, 0, 0, time.UTC)
+	repo.now = func() time.Time { return now }
+	createdAt := now.Add(-time.Hour)
+
+	keys := make([]admin.APIKey, 0, 3)
+	for i := 1; i <= 3; i++ {
+		key, err := repo.CreateAPIKey(ctx, "page key "+strconv.Itoa(i), "page-key-hash-"+strconv.Itoa(i), "n2api_page_"+strconv.Itoa(i), "encrypted", nil)
+		if err != nil {
+			t.Fatalf("create key %d: %v", i, err)
+		}
+		if _, err := repo.pool.Exec(ctx, `UPDATE client_api_keys SET created_at = $2 WHERE id = $1`, key.ID, createdAt); err != nil {
+			t.Fatalf("align key timestamp: %v", err)
+		}
+		keys = append(keys, key)
+	}
+	if _, err := repo.UpdateAPIKeyModelPolicy(ctx, keys[2].ID, admin.APIKeyModelPolicySelected, []string{"gpt-5", "gpt-5-mini"}); err != nil {
+		t.Fatalf("set selected models: %v", err)
+	}
+	setBudgetLedgerUsage(t, repo, keys[2].ID, 2, 11, 101, 3, 22, 202)
+
+	first, err := repo.ListAPIKeyPage(ctx, admin.ManagementListFilter{Limit: 2}, now)
+	if err != nil {
+		t.Fatalf("first API key page: %v", err)
+	}
+	if !first.HasMore || first.NextCursor == "" || len(first.Keys) != 2 || first.Keys[0].ID != keys[2].ID || first.Keys[1].ID != keys[1].ID {
+		t.Fatalf("first API key page = %+v", first)
+	}
+	if got := first.Keys[0].AllowedModels; !slices.Equal(got, []string{"gpt-5", "gpt-5-mini"}) {
+		t.Fatalf("batched models = %v", got)
+	}
+	if usage := first.BudgetUsage[keys[2].ID]; usage.RequestsUsed24h != 2 || usage.TokensUsed30d != 22 {
+		t.Fatalf("batched budget usage = %+v", usage)
+	}
+	second, err := repo.ListAPIKeyPage(ctx, admin.ManagementListFilter{Limit: 2, Cursor: first.NextCursor}, now)
+	if err != nil {
+		t.Fatalf("second API key page: %v", err)
+	}
+	if second.HasMore || second.NextCursor != "" || len(second.Keys) != 1 || second.Keys[0].ID != keys[0].ID {
+		t.Fatalf("second API key page = %+v", second)
+	}
+	if _, err := repo.ListAPIKeyPage(ctx, admin.ManagementListFilter{Limit: 2, Cursor: first.NextCursor, Query: "different"}, now); !errors.Is(err, admin.ErrInvalidCursor) {
+		t.Fatalf("filter-mismatched API key cursor error = %v", err)
+	}
+
+	accountID := insertProviderAccount(t, repo.pool, "openai", "api_upstream", "page-account")
+	pools := make([]admin.RoutingPool, 0, 3)
+	for i := 1; i <= 3; i++ {
+		pool, err := repo.CreateRoutingPool(ctx, "page pool "+strconv.Itoa(i), "description", true, nil)
+		if err != nil {
+			t.Fatalf("create pool %d: %v", i, err)
+		}
+		if _, err := repo.pool.Exec(ctx, `UPDATE routing_pools SET created_at = $2 WHERE id = $1`, pool.ID, createdAt); err != nil {
+			t.Fatalf("align pool timestamp: %v", err)
+		}
+		pools = append(pools, pool)
+	}
+	if _, err := repo.ReplaceRoutingPoolAccounts(ctx, pools[2].ID, []admin.RoutingPoolAccount{{AccountID: accountID, Priority: 7}}); err != nil {
+		t.Fatalf("set pool membership: %v", err)
+	}
+	poolFirst, err := repo.ListRoutingPoolPage(ctx, admin.ManagementListFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("first routing pool page: %v", err)
+	}
+	if !poolFirst.HasMore || len(poolFirst.Pools) != 2 || poolFirst.Pools[0].ID != pools[2].ID || len(poolFirst.Pools[0].Accounts) != 1 || poolFirst.Pools[0].Accounts[0].AccountID != accountID {
+		t.Fatalf("first routing pool page = %+v", poolFirst)
+	}
+	poolSecond, err := repo.ListRoutingPoolPage(ctx, admin.ManagementListFilter{Limit: 2, Cursor: poolFirst.NextCursor})
+	if err != nil {
+		t.Fatalf("second routing pool page: %v", err)
+	}
+	if poolSecond.HasMore || len(poolSecond.Pools) != 1 || poolSecond.Pools[0].ID != pools[0].ID {
+		t.Fatalf("second routing pool page = %+v", poolSecond)
+	}
+}
+
+type managementQueryCounter struct {
+	count atomic.Int64
+}
+
+func (c *managementQueryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.count.Add(1)
+	return ctx
+}
+
+func (*managementQueryCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestManagementPageQueryCountsAreConstant(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for i := 0; i < admin.MaxManagementPageSize; i++ {
+		if _, err := repo.CreateAPIKey(ctx, "count key "+strconv.Itoa(i), "count-hash-"+strconv.Itoa(i), "n2api_count_"+strconv.Itoa(i), "encrypted", nil); err != nil {
+			t.Fatalf("create count key %d: %v", i, err)
+		}
+		if _, err := repo.CreateRoutingPool(ctx, "count pool "+strconv.Itoa(i), "", true, nil); err != nil {
+			t.Fatalf("create count pool %d: %v", i, err)
+		}
+	}
+	counter := &managementQueryCounter{}
+	config := repo.pool.Config().Copy()
+	config.ConnConfig.Tracer = counter
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("create traced pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	traced := NewAdminRepository(pool, "store-test-cursor-secret")
+	now := time.Now().UTC()
+
+	for _, limit := range []int{1, admin.MaxManagementPageSize} {
+		counter.count.Store(0)
+		if _, err := traced.ListAPIKeyPage(ctx, admin.ManagementListFilter{Limit: limit}, now); err != nil {
+			t.Fatalf("list %d API keys: %v", limit, err)
+		}
+		if got := counter.count.Load(); got != 3 {
+			t.Fatalf("API key query count for limit %d = %d, want 3", limit, got)
+		}
+		counter.count.Store(0)
+		if _, err := traced.ListRoutingPoolPage(ctx, admin.ManagementListFilter{Limit: limit}); err != nil {
+			t.Fatalf("list %d routing pools: %v", limit, err)
+		}
+		if got := counter.count.Load(); got != 2 {
+			t.Fatalf("routing pool query count for limit %d = %d, want 2", limit, got)
+		}
 	}
 }
 

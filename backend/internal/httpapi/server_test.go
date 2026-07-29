@@ -104,97 +104,103 @@ func (s fakeAutoTestStatusSource) ProviderAccountAutoTestStatus() provider.AutoT
 }
 
 type fakeAdminService struct {
-	loginMu              sync.Mutex
-	loginCalls           int
-	loginStarted         chan<- struct{}
-	loginRelease         <-chan struct{}
-	loginErr             error
-	loginPanic           any
-	loginMetadata        admin.SessionMetadata
-	sessions             []admin.AdminSession
-	sessionsErr          error
-	revokedSessionID     int64
-	revokeSessionToken   string
-	revokeSessionCurrent bool
-	revokeSessionErr     error
-	revokeOthersToken    string
-	revokeOthersCount    int64
-	revokeOthersErr      error
-	changePasswordErr    error
-	reveal               fakeSecretReveal
-	keys                 []admin.APIKey
-	deletedKeyID         int64
-	deleteKeyErr         error
-	logs                 []admin.RequestLog
-	requestLogHasMore    bool
-	requestLogNextCursor string
-	requestLogFilter     admin.RequestLogFilter
-	requestLogErr        error
-	requestLogErrAfter   int
-	requestLogExportWait bool
-	requestLogStarted    chan struct{}
-	requestLogCanceled   chan struct{}
-	requestLogExportRows int
-	systemEventPage      admin.SystemEventPage
-	systemEventFilter    admin.SystemEventFilter
-	systemEventErr       error
-	configurationExport  admin.ConfigurationSnapshot
-	configurationErr     error
-	errorOnEmptyLogout   bool
-	logoutTokens         []string
-	modelSettings        admin.ModelSettings
-	modelPolicyKeyID     int64
-	modelPolicy          string
-	modelPolicyModels    []string
-	modelPolicyErr       error
-	renameKeyID          int64
-	renameName           string
-	renameErr            error
-	disabledKeyID        int64
-	disabledValue        bool
-	disabledErr          error
-	limitKeyID           int64
-	requestsPerMinute    int
-	tokensPerMinute      int
-	limitsErr            error
-	budgetKeyID          int64
-	requestBudget24h     int
-	tokenBudget24h       int
-	costBudget24h        int64
-	requestBudget30d     int
-	tokenBudget30d       int
-	costBudget30d        int64
-	budgetsErr           error
-	routingPools         []admin.RoutingPool
-	createFallbackID     *int64
-	updateFallbackID     *int64
-	routingPoolKeyID     int64
-	routingPoolID        *int64
-	budgetUsage          map[int64]admin.APIKeyBudgetUsage
-	usageSummary         admin.UsageSummary
-	usageRange           string
-	usageGroupBy         string
-	usagePricing         admin.UsagePricing
-	gatewaySettings      admin.GatewaySettings
-	gatewaySettingsErr   error
-	retentionStats       admin.RequestLogRetentionStats
-	retentionStatsErr    error
-	cleanupResult        admin.RequestLogCleanupResult
-	cleanupCalled        bool
-	cleanupErr           error
-	opsAccountHealth     admin.OpsAccountHealth
-	opsAccountSince      time.Time
-	opsAccountTests      []admin.OpsAccountTest
-	opsAccountTestsSince time.Time
-	opsAccountTestsLimit int
-	opsCostBreakdown     admin.OpsCostBreakdown
-	opsCostSince         time.Time
-	fingerprintInput     admin.FingerprintProfileInput
-	fingerprintID        int64
-	fingerprintErr       error
-	errorRuleInput       admin.ErrorPassthroughRuleInput
-	errorRuleID          int64
-	errorRuleErr         error
+	loginMu               sync.Mutex
+	loginCalls            int
+	loginStarted          chan<- struct{}
+	loginRelease          <-chan struct{}
+	loginErr              error
+	loginPanic            any
+	loginMetadata         admin.SessionMetadata
+	sessions              []admin.AdminSession
+	sessionsErr           error
+	revokedSessionID      int64
+	revokeSessionToken    string
+	revokeSessionCurrent  bool
+	revokeSessionErr      error
+	revokeOthersToken     string
+	revokeOthersCount     int64
+	revokeOthersErr       error
+	changePasswordErr     error
+	reveal                fakeSecretReveal
+	keys                  []admin.APIKey
+	deletedKeyID          int64
+	deleteKeyErr          error
+	logs                  []admin.RequestLog
+	requestLogHasMore     bool
+	requestLogNextCursor  string
+	requestLogFilter      admin.RequestLogFilter
+	requestLogErr         error
+	requestLogErrAfter    int
+	requestLogExportWait  bool
+	requestLogStarted     chan struct{}
+	requestLogCanceled    chan struct{}
+	requestLogExportRows  int
+	systemEventPage       admin.SystemEventPage
+	systemEventFilter     admin.SystemEventFilter
+	systemEventErr        error
+	configurationExport   admin.ConfigurationSnapshot
+	configurationErr      error
+	errorOnEmptyLogout    bool
+	logoutTokens          []string
+	modelSettings         admin.ModelSettings
+	modelPolicyKeyID      int64
+	modelPolicy           string
+	modelPolicyModels     []string
+	modelPolicyErr        error
+	renameKeyID           int64
+	renameName            string
+	renameErr             error
+	disabledKeyID         int64
+	disabledValue         bool
+	disabledErr           error
+	limitKeyID            int64
+	requestsPerMinute     int
+	tokensPerMinute       int
+	limitsErr             error
+	budgetKeyID           int64
+	requestBudget24h      int
+	tokenBudget24h        int
+	costBudget24h         int64
+	requestBudget30d      int
+	tokenBudget30d        int
+	costBudget30d         int64
+	budgetsErr            error
+	routingPools          []admin.RoutingPool
+	apiKeyListFilter      admin.ManagementListFilter
+	routingPoolListFilter admin.ManagementListFilter
+	apiKeyNextCursor      string
+	apiKeyHasMore         bool
+	routingPoolNextCursor string
+	routingPoolHasMore    bool
+	createFallbackID      *int64
+	updateFallbackID      *int64
+	routingPoolKeyID      int64
+	routingPoolID         *int64
+	budgetUsage           map[int64]admin.APIKeyBudgetUsage
+	usageSummary          admin.UsageSummary
+	usageRange            string
+	usageGroupBy          string
+	usagePricing          admin.UsagePricing
+	gatewaySettings       admin.GatewaySettings
+	gatewaySettingsErr    error
+	retentionStats        admin.RequestLogRetentionStats
+	retentionStatsErr     error
+	cleanupResult         admin.RequestLogCleanupResult
+	cleanupCalled         bool
+	cleanupErr            error
+	opsAccountHealth      admin.OpsAccountHealth
+	opsAccountSince       time.Time
+	opsAccountTests       []admin.OpsAccountTest
+	opsAccountTestsSince  time.Time
+	opsAccountTestsLimit  int
+	opsCostBreakdown      admin.OpsCostBreakdown
+	opsCostSince          time.Time
+	fingerprintInput      admin.FingerprintProfileInput
+	fingerprintID         int64
+	fingerprintErr        error
+	errorRuleInput        admin.ErrorPassthroughRuleInput
+	errorRuleID           int64
+	errorRuleErr          error
 
 	syncOfficialPricing   admin.UsagePricing
 	syncOfficialSummary   admin.UsagePricingSyncSummary
@@ -397,6 +403,22 @@ func (s *fakeAdminService) ListAPIKeys(_ context.Context) ([]admin.APIKey, error
 	return s.keys, nil
 }
 
+func (s *fakeAdminService) ListAPIKeyPage(_ context.Context, filter admin.ManagementListFilter) (admin.APIKeyPage, error) {
+	s.apiKeyListFilter = filter
+	if filter.Cursor == "invalid" || filter.Cursor == "tampered" {
+		return admin.APIKeyPage{}, admin.ErrInvalidCursor
+	}
+	keys := append([]admin.APIKey(nil), s.keys...)
+	if len(keys) > filter.Limit {
+		keys = keys[:filter.Limit]
+	}
+	usage := make(map[int64]admin.APIKeyBudgetUsage, len(keys))
+	for _, key := range keys {
+		usage[key.ID] = s.budgetUsage[key.ID]
+	}
+	return admin.APIKeyPage{Keys: keys, BudgetUsage: usage, NextCursor: s.apiKeyNextCursor, HasMore: s.apiKeyHasMore}, nil
+}
+
 func (s *fakeAdminService) ExportConfiguration(_ context.Context) (admin.ConfigurationSnapshot, error) {
 	return s.configurationExport, s.configurationErr
 }
@@ -570,6 +592,18 @@ func (s *fakeAdminService) UpdateAPIKeyBudgets(_ context.Context, id int64, requ
 
 func (s *fakeAdminService) ListRoutingPools(_ context.Context) ([]admin.RoutingPool, error) {
 	return append([]admin.RoutingPool(nil), s.routingPools...), nil
+}
+
+func (s *fakeAdminService) ListRoutingPoolPage(_ context.Context, filter admin.ManagementListFilter) (admin.RoutingPoolPage, error) {
+	s.routingPoolListFilter = filter
+	if filter.Cursor == "invalid" || filter.Cursor == "tampered" {
+		return admin.RoutingPoolPage{}, admin.ErrInvalidCursor
+	}
+	pools := append([]admin.RoutingPool(nil), s.routingPools...)
+	if len(pools) > filter.Limit {
+		pools = pools[:filter.Limit]
+	}
+	return admin.RoutingPoolPage{Pools: pools, NextCursor: s.routingPoolNextCursor, HasMore: s.routingPoolHasMore}, nil
 }
 
 func (s *fakeAdminService) CreateRoutingPool(_ context.Context, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error) {
@@ -2270,6 +2304,72 @@ func TestListAPIKeysRequiresSessionAndReturnsKeys(t *testing.T) {
 	}
 	if len(body.Keys) != 1 || body.Keys[0].ID != 7 {
 		t.Fatalf("keys = %+v, want key 7", body.Keys)
+	}
+}
+
+func TestManagementListsReturnPageMetadataAndMapInvalidCursor(t *testing.T) {
+	admins := newFakeAdminService()
+	admins.apiKeyNextCursor = "next-keys"
+	admins.apiKeyHasMore = true
+	admins.routingPoolNextCursor = "next-pools"
+	admins.routingPoolHasMore = true
+	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+
+	for _, test := range []struct {
+		path       string
+		collection string
+		next       string
+	}{
+		{path: "/api/admin/keys?limit=7&q=CoDeX", collection: "keys", next: "next-keys"},
+		{path: "/api/admin/routing-pools?limit=9&q=Primary", collection: "pools", next: "next-pools"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, test.path, nil)
+		req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s status/body = %d/%s", test.path, recorder.Code, recorder.Body.String())
+		}
+		var body struct {
+			NextCursor string `json:"nextCursor"`
+			HasMore    bool   `json:"hasMore"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil || body.NextCursor != test.next || !body.HasMore || !strings.Contains(recorder.Body.String(), `"`+test.collection+`"`) {
+			t.Fatalf("%s body/error = %s/%v", test.path, recorder.Body.String(), err)
+		}
+	}
+	if admins.apiKeyListFilter.Limit != 7 || admins.apiKeyListFilter.Query != "CoDeX" {
+		t.Fatalf("API key filter = %+v", admins.apiKeyListFilter)
+	}
+	if admins.routingPoolListFilter.Limit != 9 || admins.routingPoolListFilter.Query != "Primary" {
+		t.Fatalf("routing pool filter = %+v", admins.routingPoolListFilter)
+	}
+
+	for _, path := range []string{"/api/admin/keys?cursor=tampered", "/api/admin/routing-pools?cursor=tampered"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "invalid_cursor") {
+			t.Fatalf("%s status/body = %d/%s, want invalid_cursor", path, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestManagementListsRejectInvalidLimits(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
+	for _, path := range []string{
+		"/api/admin/keys?limit=0",
+		"/api/admin/keys?limit=101",
+		"/api/admin/routing-pools?limit=not-a-number",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
+		recorder := httptest.NewRecorder()
+		server.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "invalid_input") {
+			t.Fatalf("%s status/body = %d/%s", path, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 

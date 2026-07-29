@@ -7,13 +7,13 @@ source "${repo_root}/dev/lib/test-resources.sh"
 
 mode=${1:-}
 if [[ -z "${mode}" ]]; then
-  echo "usage: $0 {unit|control-connections|request-log-profile|gateway-e2e|contracts|playwright-install|playwright} [args...]" >&2
+  echo "usage: $0 {unit|control-connections|request-log-profile|management-list-profile|gateway-e2e|contracts|playwright-install|playwright} [args...]" >&2
   exit 2
 fi
 shift
 
 case "${mode}" in
-  unit|control-connections|request-log-profile|gateway-e2e|contracts|playwright-install|playwright)
+  unit|control-connections|request-log-profile|management-list-profile|gateway-e2e|contracts|playwright-install|playwright)
     "${repo_root}/dev/maintenance/disk-check.sh" --heavy
     ;;
   *) echo "unknown test mode: ${mode}" >&2; exit 2 ;;
@@ -57,7 +57,7 @@ case "${mode}" in
       cd "$1/backend"
       export N2API_STORE_TEST_ALLOW_DESTRUCTIVE=1
       export N2API_STORE_TEST_DATABASE_URL="$2"
-      go test -count=1 -run "Test(PostgresConnection|PostgresPool|InstanceLock|MigrationLock|SystemEventSubscription|APIKeyAuthentication|APIKeyBudget)" ./internal/store
+      go test -count=1 -run "Test(PostgresConnection|PostgresPool|InstanceLock|MigrationLock|SystemEventSubscription|APIKeyAuthentication|APIKeyBudget|Management)" ./internal/store
       go test -race -count=1 -run "Test(APIKeyAuthentication|APIKeyBudget)" ./internal/store
       go test -count=1 -run TestInstanceLockProcessLifecycle ./cmd/n2api
     ' _ "${repo_root}" "postgres://n2api:e2e-postgres-password@${postgres_host}:5432/n2api_e2e?sslmode=disable"
@@ -79,6 +79,25 @@ case "${mode}" in
       N2API_STORE_TEST_ALLOW_DESTRUCTIVE=1 \
       N2API_STORE_TEST_DATABASE_URL="$2" \
         go test -count=1 -run TestRequestLogQueryProfile -v ./internal/store
+    ' _ "${repo_root}" "postgres://n2api:e2e-postgres-password@${postgres_host}:5432/n2api_e2e?sslmode=disable"
+    ;;
+  management-list-profile)
+	project="n2api-${N2API_RUN_ID}"
+	n2api_register_compose "${repo_root}/deploy/compose.e2e.yaml" "${project}"
+	run_compose up -d --wait postgres
+	postgres_container="$(run_compose ps -q postgres)"
+	postgres_host="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${postgres_container}")"
+	if [[ ! "${postgres_host}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+		echo "management list profile database has no isolated Docker network address" >&2
+		exit 1
+	fi
+    n2api_run_command bash -c '
+      set -euo pipefail
+      cd "$1/backend"
+      N2API_MANAGEMENT_LIST_QUERY_PROFILE=1 \
+      N2API_STORE_TEST_ALLOW_DESTRUCTIVE=1 \
+      N2API_STORE_TEST_DATABASE_URL="$2" \
+        go test -count=1 -run TestManagementListQueryProfile -v ./internal/store
     ' _ "${repo_root}" "postgres://n2api:e2e-postgres-password@${postgres_host}:5432/n2api_e2e?sslmode=disable"
     ;;
   gateway-e2e)

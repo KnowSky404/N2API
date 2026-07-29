@@ -1005,6 +1005,26 @@ func TestListAPIKeysReturnsRepositoryKeys(t *testing.T) {
 	}
 }
 
+func TestNormalizeManagementListFilterDefaultsBoundsAndCanonicalizes(t *testing.T) {
+	filter, err := normalizeManagementListFilter(ManagementListFilter{Query: "  CoDeX\t Laptop  "})
+	if err != nil {
+		t.Fatalf("normalizeManagementListFilter returned error: %v", err)
+	}
+	if filter.Limit != DefaultManagementPageSize || filter.Query != "codex laptop" {
+		t.Fatalf("normalized filter = %+v", filter)
+	}
+	for _, invalid := range []ManagementListFilter{
+		{Limit: -1},
+		{Limit: MaxManagementPageSize + 1},
+		{Cursor: strings.Repeat("x", 2049)},
+		{Query: strings.Repeat("x", MaxManagementQueryLength+1)},
+	} {
+		if _, err := normalizeManagementListFilter(invalid); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("filter %+v error = %v, want ErrInvalidInput", invalid, err)
+		}
+	}
+}
+
 func TestListAPIKeysDoesNotPurgeRevokedKeys(t *testing.T) {
 	repo := newMemoryRepo()
 	service := NewService(repo, Config{SessionTTL: time.Hour})
@@ -2486,6 +2506,36 @@ func (r *memoryRepo) ListAPIKeys(_ context.Context) ([]APIKey, error) {
 	return keys, nil
 }
 
+func (r *memoryRepo) ListAPIKeyPage(ctx context.Context, filter ManagementListFilter, now time.Time) (APIKeyPage, error) {
+	if filter.Cursor != "" {
+		return APIKeyPage{}, ErrInvalidCursor
+	}
+	keys, err := r.ListAPIKeys(ctx)
+	if err != nil {
+		return APIKeyPage{}, err
+	}
+	filtered := make([]APIKey, 0, len(keys))
+	for _, key := range keys {
+		if filter.Query == "" || strings.Contains(strings.ToLower(key.Name+" "+key.Prefix), filter.Query) {
+			filtered = append(filtered, key)
+		}
+	}
+	page := APIKeyPage{Keys: filtered, BudgetUsage: map[int64]APIKeyBudgetUsage{}}
+	if len(page.Keys) > filter.Limit {
+		page.Keys = page.Keys[:filter.Limit]
+		page.HasMore = true
+		page.NextCursor = "memory-next"
+	}
+	for _, key := range page.Keys {
+		usage, err := r.GetAPIKeyBudgetUsage(ctx, key.ID, now)
+		if err != nil {
+			return APIKeyPage{}, err
+		}
+		page.BudgetUsage[key.ID] = usage
+	}
+	return page, nil
+}
+
 func (r *memoryRepo) PurgeRevokedAPIKeys(_ context.Context, cutoff time.Time) (int64, error) {
 	var deleted int64
 	for id, key := range r.keys {
@@ -2585,6 +2635,29 @@ func (r *memoryRepo) ListRoutingPools(_ context.Context) ([]RoutingPool, error) 
 		pools = append(pools, pool)
 	}
 	return pools, nil
+}
+
+func (r *memoryRepo) ListRoutingPoolPage(ctx context.Context, filter ManagementListFilter) (RoutingPoolPage, error) {
+	if filter.Cursor != "" {
+		return RoutingPoolPage{}, ErrInvalidCursor
+	}
+	pools, err := r.ListRoutingPools(ctx)
+	if err != nil {
+		return RoutingPoolPage{}, err
+	}
+	filtered := make([]RoutingPool, 0, len(pools))
+	for _, pool := range pools {
+		if filter.Query == "" || strings.Contains(strings.ToLower(pool.Name+" "+pool.Description), filter.Query) {
+			filtered = append(filtered, pool)
+		}
+	}
+	page := RoutingPoolPage{Pools: filtered}
+	if len(page.Pools) > filter.Limit {
+		page.Pools = page.Pools[:filter.Limit]
+		page.HasMore = true
+		page.NextCursor = "memory-next"
+	}
+	return page, nil
 }
 
 func (r *memoryRepo) CreateRoutingPool(_ context.Context, name, description string, enabled bool, fallbackPoolID *int64) (RoutingPool, error) {

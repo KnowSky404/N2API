@@ -511,7 +511,7 @@ test('provider account state can add selected accounts to a routing pool', async
   const requests = [];
   globalThis.fetch = async (path, options) => {
     requests.push({ path, options });
-    if (path === '/api/admin/routing-pools') {
+    if (path === '/api/admin/routing-pools?limit=50') {
       return new Response(
         JSON.stringify({
           pools: [
@@ -607,7 +607,7 @@ test('provider account state can remove selected accounts from a routing pool', 
   const requests = [];
   globalThis.fetch = async (path, options) => {
     requests.push({ path, options });
-    if (path === '/api/admin/routing-pools') {
+    if (path === '/api/admin/routing-pools?limit=50') {
       return new Response(
         JSON.stringify({
           pools: [
@@ -1276,7 +1276,7 @@ test('routing pool state refreshes fallback references after deleting a pool', a
     if (path === '/api/admin/routing-pools/2' && options.method === 'DELETE') {
       return new Response(null, { status: 204 });
     }
-    if (path === '/api/admin/routing-pools') {
+    if (path === '/api/admin/routing-pools?limit=50') {
       return new Response(
         JSON.stringify({
           pools: [{ id: 1, name: 'primary', fallbackPoolId: null, fallbackPoolName: '' }]
@@ -1284,7 +1284,7 @@ test('routing pool state refreshes fallback references after deleting a pool', a
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
-    if (path === '/api/admin/keys') {
+    if (path === '/api/admin/keys?limit=50') {
       return new Response(JSON.stringify({ keys: [] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -1297,7 +1297,7 @@ test('routing pool state refreshes fallback references after deleting a pool', a
 
   assert.deepEqual(
     requests.map((request) => request.path),
-    ['/api/admin/routing-pools/2', '/api/admin/routing-pools', '/api/admin/keys']
+    ['/api/admin/routing-pools/2', '/api/admin/routing-pools?limit=50', '/api/admin/keys?limit=50']
   );
   assert.deepEqual(routingPools.items, [{ id: 1, name: 'primary', fallbackPoolId: null, fallbackPoolName: '' }]);
 });

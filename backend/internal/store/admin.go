@@ -21,12 +21,16 @@ import (
 type AdminRepository struct {
 	pool                   *pgxpool.Pool
 	requestLogCursorSecret []byte
+	managementCursorSecret []byte
+	now                    func() time.Time
 }
 
 const modelSettingsKey = "model_settings"
 const usagePricingKey = "usage_pricing"
 const gatewaySettingsKey = "gateway_settings"
 const requestLogCursorVersion = 1
+const managementCursorVersion = 1
+const managementCursorTTL = 24 * time.Hour
 const requestLogRetentionAdvisoryLockID int64 = 0x4e32415049524c
 const requestLogRetentionUnlockTimeout = 2 * time.Second
 const apiKeySelectColumns = `
@@ -38,8 +42,14 @@ const apiKeySelectColumns = `
 `
 
 func NewAdminRepository(pool *pgxpool.Pool, cursorSecret string) *AdminRepository {
-	key := sha256.Sum256([]byte("n2api-request-log-cursor\x00" + cursorSecret))
-	return &AdminRepository{pool: pool, requestLogCursorSecret: key[:]}
+	requestLogKey := sha256.Sum256([]byte("n2api-request-log-cursor\x00" + cursorSecret))
+	managementKey := sha256.Sum256([]byte("n2api-management-cursor\x00" + cursorSecret))
+	return &AdminRepository{
+		pool:                   pool,
+		requestLogCursorSecret: requestLogKey[:],
+		managementCursorSecret: managementKey[:],
+		now:                    time.Now,
+	}
 }
 
 func scanAPIKey(key *admin.APIKey) []any {
@@ -521,6 +531,67 @@ func (r *AdminRepository) ListAPIKeys(ctx context.Context) ([]admin.APIKey, erro
 	return keys, nil
 }
 
+func (r *AdminRepository) ListAPIKeyPage(ctx context.Context, filter admin.ManagementListFilter, now time.Time) (admin.APIKeyPage, error) {
+	if r == nil || r.pool == nil || filter.Limit < 1 || filter.Limit > admin.MaxManagementPageSize || now.IsZero() {
+		return admin.APIKeyPage{}, admin.ErrInvalidInput
+	}
+	whereSQL, args, err := r.managementPageWhere(filter, "api_keys", "k", now)
+	if err != nil {
+		return admin.APIKeyPage{}, err
+	}
+	if filter.Query != "" {
+		args = append(args, "%"+filter.Query+"%")
+		whereSQL = appendManagementCondition(whereSQL, "(lower(k.name) LIKE $"+strconv.Itoa(len(args))+" OR lower(k.prefix) LIKE $"+strconv.Itoa(len(args))+")")
+	}
+	args = append(args, filter.Limit+1)
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+apiKeySelectColumns+`
+		FROM client_api_keys k
+		LEFT JOIN routing_pools rp ON rp.id = k.routing_pool_id
+		`+whereSQL+`
+		ORDER BY k.created_at DESC, k.id DESC
+		LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return admin.APIKeyPage{}, err
+	}
+	defer rows.Close()
+
+	keys := make([]admin.APIKey, 0, filter.Limit+1)
+	for rows.Next() {
+		var key admin.APIKey
+		if err := rows.Scan(scanAPIKey(&key)...); err != nil {
+			return admin.APIKeyPage{}, err
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return admin.APIKeyPage{}, err
+	}
+	page := admin.APIKeyPage{Keys: keys}
+	if len(keys) > filter.Limit {
+		page.HasMore = true
+		page.Keys = keys[:filter.Limit]
+	}
+	if err := r.populateAPIKeyModels(ctx, page.Keys); err != nil {
+		return admin.APIKeyPage{}, err
+	}
+	page.BudgetUsage, err = r.listAPIKeyBudgetUsage(ctx, page.Keys, now.UTC())
+	if err != nil {
+		return admin.APIKeyPage{}, err
+	}
+	if page.HasMore {
+		last := page.Keys[len(page.Keys)-1]
+		page.NextCursor, err = r.encodeManagementCursor(managementCursor{
+			Version: managementCursorVersion, Resource: "api_keys", CreatedAt: last.CreatedAt.UTC(), ID: last.ID,
+			FilterDigest: managementFilterDigest("api_keys", filter), ExpiresAt: r.clockNow().Add(managementCursorTTL),
+		})
+		if err != nil {
+			return admin.APIKeyPage{}, err
+		}
+	}
+	return page, nil
+}
+
 func (r *AdminRepository) RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -891,36 +962,92 @@ func (r *AdminRepository) UpdateAPIKeyBudgets(ctx context.Context, id int64, req
 
 func (r *AdminRepository) ListRoutingPools(ctx context.Context) ([]admin.RoutingPool, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id
-		FROM routing_pools
-		ORDER BY name ASC, id ASC
+		SELECT p.id, p.name, p.description, p.enabled, p.fallback_pool_id,
+			COALESCE(fp.name, ''), p.created_at, p.updated_at
+		FROM routing_pools p
+		LEFT JOIN routing_pools fp ON fp.id = p.fallback_pool_id
+		ORDER BY p.name ASC, p.id ASC
 	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var ids []int64
+	var pools []admin.RoutingPool
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var pool admin.RoutingPool
+		if err := rows.Scan(&pool.ID, &pool.Name, &pool.Description, &pool.Enabled, &pool.FallbackPoolID, &pool.FallbackPoolName, &pool.CreatedAt, &pool.UpdatedAt); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		pools = append(pools, pool)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	pools := make([]admin.RoutingPool, 0, len(ids))
-	for _, id := range ids {
-		pool, err := r.getRoutingPool(ctx, id)
-		if err != nil {
-			return nil, err
+	if err := r.populateRoutingPoolAccounts(ctx, pools); err != nil {
+		return nil, err
+	}
+	return pools, nil
+}
+
+func (r *AdminRepository) ListRoutingPoolPage(ctx context.Context, filter admin.ManagementListFilter) (admin.RoutingPoolPage, error) {
+	if r == nil || r.pool == nil || filter.Limit < 1 || filter.Limit > admin.MaxManagementPageSize {
+		return admin.RoutingPoolPage{}, admin.ErrInvalidInput
+	}
+	now := r.clockNow()
+	whereSQL, args, err := r.managementPageWhere(filter, "routing_pools", "p", now)
+	if err != nil {
+		return admin.RoutingPoolPage{}, err
+	}
+	if filter.Query != "" {
+		args = append(args, "%"+filter.Query+"%")
+		param := "$" + strconv.Itoa(len(args))
+		whereSQL = appendManagementCondition(whereSQL, "(lower(p.name) LIKE "+param+" OR lower(p.description) LIKE "+param+")")
+	}
+	args = append(args, filter.Limit+1)
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id, p.name, p.description, p.enabled, p.fallback_pool_id,
+			COALESCE(fp.name, ''), p.created_at, p.updated_at
+		FROM routing_pools p
+		LEFT JOIN routing_pools fp ON fp.id = p.fallback_pool_id
+		`+whereSQL+`
+		ORDER BY p.created_at DESC, p.id DESC
+		LIMIT $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return admin.RoutingPoolPage{}, err
+	}
+	defer rows.Close()
+	pools := make([]admin.RoutingPool, 0, filter.Limit+1)
+	for rows.Next() {
+		var pool admin.RoutingPool
+		if err := rows.Scan(&pool.ID, &pool.Name, &pool.Description, &pool.Enabled, &pool.FallbackPoolID, &pool.FallbackPoolName, &pool.CreatedAt, &pool.UpdatedAt); err != nil {
+			return admin.RoutingPoolPage{}, err
 		}
 		pools = append(pools, pool)
 	}
-	return pools, nil
+	if err := rows.Err(); err != nil {
+		return admin.RoutingPoolPage{}, err
+	}
+	page := admin.RoutingPoolPage{Pools: pools}
+	if len(pools) > filter.Limit {
+		page.HasMore = true
+		page.Pools = pools[:filter.Limit]
+	}
+	if err := r.populateRoutingPoolAccounts(ctx, page.Pools); err != nil {
+		return admin.RoutingPoolPage{}, err
+	}
+	if page.HasMore {
+		last := page.Pools[len(page.Pools)-1]
+		page.NextCursor, err = r.encodeManagementCursor(managementCursor{
+			Version: managementCursorVersion, Resource: "routing_pools", CreatedAt: last.CreatedAt.UTC(), ID: last.ID,
+			FilterDigest: managementFilterDigest("routing_pools", filter), ExpiresAt: now.Add(managementCursorTTL),
+		})
+		if err != nil {
+			return admin.RoutingPoolPage{}, err
+		}
+	}
+	return page, nil
 }
 
 func (r *AdminRepository) CreateRoutingPool(ctx context.Context, name, description string, enabled bool, fallbackPoolID *int64) (admin.RoutingPool, error) {
@@ -1249,17 +1376,189 @@ func (r *AdminRepository) ListAPIKeyModels(ctx context.Context, id int64) ([]str
 }
 
 func (r *AdminRepository) populateAPIKeyModels(ctx context.Context, keys []admin.APIKey) error {
+	ids := make([]int64, 0, len(keys))
+	keyIndexes := make(map[int64]int, len(keys))
 	for i := range keys {
-		if keys[i].ModelPolicy != admin.APIKeyModelPolicySelected {
-			continue
-		}
-		models, err := r.ListAPIKeyModels(ctx, keys[i].ID)
-		if err != nil {
+		keyIndexes[keys[i].ID] = i
+		ids = append(ids, keys[i].ID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT client_key_id, model
+		FROM client_api_key_models
+		WHERE client_key_id = ANY($1)
+		ORDER BY client_key_id ASC, model ASC
+	`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var keyID int64
+		var model string
+		if err := rows.Scan(&keyID, &model); err != nil {
 			return err
 		}
-		keys[i].AllowedModels = models
+		if index, ok := keyIndexes[keyID]; ok {
+			keys[index].AllowedModels = append(keys[index].AllowedModels, model)
+		}
 	}
-	return nil
+	return rows.Err()
+}
+
+func (r *AdminRepository) listAPIKeyBudgetUsage(ctx context.Context, keys []admin.APIKey, now time.Time) (map[int64]admin.APIKeyBudgetUsage, error) {
+	usageByKey := make(map[int64]admin.APIKeyBudgetUsage, len(keys))
+	if len(keys) == 0 {
+		return usageByKey, nil
+	}
+	ids := make([]int64, len(keys))
+	for i := range keys {
+		ids[i] = keys[i].ID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT states.client_key_id,
+			states.initialization_status,
+			states.initialization_status <> 'ready' OR EXISTS (
+				SELECT 1 FROM api_key_budget_admissions admissions
+				WHERE admissions.client_key_id = states.client_key_id
+					AND ((NOT admissions.request_24h_expired AND admissions.request_24h_expires_at <= $2)
+						OR (NOT admissions.request_30d_expired AND admissions.request_30d_expires_at <= $2))
+			),
+			states.requests_used_24h, states.observed_tokens_used_24h, states.observed_cost_microusd_used_24h,
+			states.requests_used_30d, states.observed_tokens_used_30d, states.observed_cost_microusd_used_30d
+		FROM api_key_budget_states states
+		WHERE states.client_key_id = ANY($1)
+	`, ids, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var usage admin.APIKeyBudgetUsage
+		if err := rows.Scan(
+			&usage.KeyID, &usage.InitializationStatus, &usage.Stale,
+			&usage.RequestsUsed24h, &usage.TokensUsed24h, &usage.CostMicrousd24h,
+			&usage.RequestsUsed30d, &usage.TokensUsed30d, &usage.CostMicrousd30d,
+		); err != nil {
+			return nil, err
+		}
+		usageByKey[usage.KeyID] = usage
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(usageByKey) != len(keys) {
+		return nil, admin.ErrNotFound
+	}
+	return usageByKey, nil
+}
+
+func (r *AdminRepository) populateRoutingPoolAccounts(ctx context.Context, pools []admin.RoutingPool) error {
+	if len(pools) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(pools))
+	poolIndexes := make(map[int64]int, len(pools))
+	for i := range pools {
+		ids[i] = pools[i].ID
+		poolIndexes[pools[i].ID] = i
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT pool_id, account_id, priority
+		FROM routing_pool_accounts
+		WHERE pool_id = ANY($1)
+		ORDER BY pool_id ASC, priority ASC, account_id ASC
+	`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var poolID, accountID int64
+		var priority int
+		if err := rows.Scan(&poolID, &accountID, &priority); err != nil {
+			return err
+		}
+		if index, ok := poolIndexes[poolID]; ok {
+			pools[index].Accounts = append(pools[index].Accounts, admin.RoutingPoolAccount{AccountID: accountID, Priority: priority})
+			pools[index].AccountIDs = append(pools[index].AccountIDs, accountID)
+		}
+	}
+	return rows.Err()
+}
+
+type managementCursor struct {
+	Version      int       `json:"v"`
+	Resource     string    `json:"r"`
+	CreatedAt    time.Time `json:"createdAt"`
+	ID           int64     `json:"id"`
+	FilterDigest string    `json:"filter"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+}
+
+func (r *AdminRepository) managementPageWhere(filter admin.ManagementListFilter, resource, alias string, now time.Time) (string, []any, error) {
+	if filter.Cursor == "" {
+		return "", nil, nil
+	}
+	cursor, err := r.decodeManagementCursor(filter.Cursor, resource, filter, now)
+	if err != nil {
+		return "", nil, err
+	}
+	return "WHERE (" + alias + ".created_at, " + alias + ".id) < ($1, $2)", []any{cursor.CreatedAt.UTC(), cursor.ID}, nil
+}
+
+func appendManagementCondition(whereSQL, condition string) string {
+	if whereSQL == "" {
+		return "WHERE " + condition
+	}
+	return whereSQL + " AND " + condition
+}
+
+func managementFilterDigest(resource string, filter admin.ManagementListFilter) string {
+	digest := sha256.Sum256([]byte(resource + "\x00" + filter.Query))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func (r *AdminRepository) encodeManagementCursor(cursor managementCursor) (string, error) {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, r.managementCursorSecret)
+	_, _ = mac.Write(payload)
+	return base64.RawURLEncoding.EncodeToString(append(payload, mac.Sum(nil)...)), nil
+}
+
+func (r *AdminRepository) decodeManagementCursor(value, resource string, filter admin.ManagementListFilter, now time.Time) (managementCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(decoded) <= sha256.Size {
+		return managementCursor{}, admin.ErrInvalidCursor
+	}
+	payload, signature := decoded[:len(decoded)-sha256.Size], decoded[len(decoded)-sha256.Size:]
+	mac := hmac.New(sha256.New, r.managementCursorSecret)
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return managementCursor{}, admin.ErrInvalidCursor
+	}
+	var cursor managementCursor
+	if err := json.Unmarshal(payload, &cursor); err != nil ||
+		cursor.Version != managementCursorVersion || cursor.Resource != resource || cursor.CreatedAt.IsZero() || cursor.ID < 1 ||
+		cursor.ExpiresAt.IsZero() || !now.Before(cursor.ExpiresAt) ||
+		!hmac.Equal([]byte(cursor.FilterDigest), []byte(managementFilterDigest(resource, filter))) {
+		return managementCursor{}, admin.ErrInvalidCursor
+	}
+	cursor.CreatedAt = cursor.CreatedAt.UTC()
+	cursor.ExpiresAt = cursor.ExpiresAt.UTC()
+	return cursor, nil
+}
+
+func (r *AdminRepository) clockNow() time.Time {
+	if r != nil && r.now != nil {
+		return r.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 type requestLogCursor struct {

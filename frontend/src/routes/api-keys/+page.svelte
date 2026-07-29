@@ -18,6 +18,7 @@
     gatewaySettings,
     getActiveKeys,
     loadGatewaySettings,
+    loadMoreKeys,
     loadModelRouting,
     loadRoutingPools,
     modelListText,
@@ -1807,6 +1808,9 @@
       {#if selectedAPIKeyCount > 0}
         &middot; {selectedAPIKeyCount} selected
       {/if}
+      {#if apiKeys.hasMore}
+        &middot; {apiKeys.items.length} loaded
+      {/if}
     </p>
     <div class="flex flex-wrap items-center gap-2">
       <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
@@ -1840,6 +1844,16 @@
       >
         Next
       </button>
+      {#if apiKeys.hasMore}
+        <button
+          class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+          type="button"
+          disabled={apiKeys.loading || apiKeys.loadingMore || apiKeys.saving}
+          onclick={() => loadMoreKeys()}
+        >
+          {apiKeys.loadingMore ? 'Loading' : 'Load more'}
+        </button>
+      {/if}
     </div>
   </div>
 </div>

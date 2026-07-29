@@ -521,12 +521,15 @@ export const provider = $state({
 });
 /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
-/** @type {{ loading: boolean, saving: boolean, error: string, items: RoutingPool[], newPoolName: string, newPoolDescription: string, newPoolFallbackPoolId: string }} */
+/** @type {{ loading: boolean, loadingMore: boolean, saving: boolean, error: string, items: RoutingPool[], nextCursor: string, hasMore: boolean, newPoolName: string, newPoolDescription: string, newPoolFallbackPoolId: string }} */
 export const routingPools = $state({
   loading: false,
+  loadingMore: false,
   saving: false,
   error: '',
   items: [],
+  nextCursor: '',
+  hasMore: false,
   newPoolName: '',
   newPoolDescription: '',
   newPoolFallbackPoolId: '0'
@@ -549,16 +552,21 @@ export const apiUpstreamForm = $state({
   submitting: false,
   error: ''
 });
-/** @type {{ loading: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], newKeyName: string, newKeyRoutingPoolId: number }} */
+/** @type {{ loading: boolean, loadingMore: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], nextCursor: string, hasMore: boolean, newKeyName: string, newKeyRoutingPoolId: number }} */
 export const apiKeys = $state({
   loading: false,
+  loadingMore: false,
   creating: false,
   saving: false,
   error: '',
   items: [],
+  nextCursor: '',
+  hasMore: false,
   newKeyName: '',
   newKeyRoutingPoolId: 0
 });
+let apiKeyListRequestSequence = 0;
+let routingPoolListRequestSequence = 0;
 /** @type {Record<string, boolean>} */
 export const selectedAPIKeyIds = $state({});
 /** @type {{ loading: boolean, saving: boolean, cleanupRunning: boolean, error: string, saved: boolean, cleanupResult: { retentionDays: number, deleted: number, before: string } | null, data: GatewaySettingsData | null }} */
@@ -1273,10 +1281,13 @@ export async function copyAuthorizationURL() {
 function clearAPIKeys() {
   replaceState(apiKeys, {
     loading: false,
+    loadingMore: false,
     creating: false,
     saving: false,
     error: '',
     items: [],
+    nextCursor: '',
+    hasMore: false,
     newKeyName: '',
     newKeyRoutingPoolId: 0
   });
@@ -1468,9 +1479,12 @@ function clearProvider() {
   replaceState(providerAccounts, { loading: false, saving: false, error: '', items: [] });
   replaceState(routingPools, {
     loading: false,
+    loadingMore: false,
     saving: false,
     error: '',
     items: [],
+    nextCursor: '',
+    hasMore: false,
     newPoolName: '',
     newPoolDescription: '',
     newPoolFallbackPoolId: '0'
@@ -3226,43 +3240,94 @@ export async function disconnectProviderAccount(account) {
   }
 }
 
-export async function loadKeys() {
+/** @param {{ append?: boolean }} [options] */
+export async function loadKeys(options = {}) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
 
-  apiKeys.loading = true;
+  const append = Boolean(options.append);
+  if (append && (apiKeys.loading || !apiKeys.hasMore || !apiKeys.nextCursor || apiKeys.loadingMore)) return;
+  const requestSequence = ++apiKeyListRequestSequence;
+
+  if (append) apiKeys.loadingMore = true;
+  else {
+    apiKeys.loading = true;
+    apiKeys.loadingMore = false;
+  }
   apiKeys.error = '';
 
   try {
-    const payload = await requestJSON('/api/admin/keys');
-    if (!isCurrentAuthenticated(version)) return;
-    apiKeys.items = payload.keys ?? [];
+    const params = new URLSearchParams({ limit: '50' });
+    if (append) params.set('cursor', apiKeys.nextCursor);
+    const payload = await requestJSON(`/api/admin/keys?${params.toString()}`);
+    if (!isCurrentAuthenticated(version) || requestSequence !== apiKeyListRequestSequence) return;
+    /** @type {APIKey[]} */
+    const incoming = payload.keys ?? [];
+    if (append) {
+      const existing = new Set(apiKeys.items.map((key) => key.id));
+      apiKeys.items = [...apiKeys.items, ...incoming.filter((key) => !existing.has(key.id))];
+    } else {
+      apiKeys.items = incoming;
+      clearAPIKeySelection();
+    }
+    apiKeys.nextCursor = payload.nextCursor ?? '';
+    apiKeys.hasMore = Boolean(payload.hasMore && apiKeys.nextCursor);
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    apiKeys.error = error instanceof Error ? error.message : 'Failed to load API keys';
+    if (!isCurrentAuthenticated(version) || requestSequence !== apiKeyListRequestSequence) return;
+    apiKeys.error = error instanceof Error ? error.message : append ? 'Failed to load more API keys' : 'Failed to load API keys';
   } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    apiKeys.loading = false;
+    if (!isCurrentAuthenticated(version) || requestSequence !== apiKeyListRequestSequence) return;
+    if (append) apiKeys.loadingMore = false;
+    else apiKeys.loading = false;
   }
 }
 
-export async function loadRoutingPools() {
+export async function loadMoreKeys() {
+  return loadKeys({ append: true });
+}
+
+/** @param {{ append?: boolean }} [options] */
+export async function loadRoutingPools(options = {}) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
 
-  routingPools.loading = true;
+  const append = Boolean(options.append);
+  if (append && (!routingPools.hasMore || !routingPools.nextCursor || routingPools.loadingMore)) return;
+  const requestSequence = ++routingPoolListRequestSequence;
+
+  if (append) routingPools.loadingMore = true;
+  else {
+    routingPools.loading = true;
+    routingPools.loadingMore = false;
+  }
   routingPools.error = '';
   try {
-    const payload = await requestJSON('/api/admin/routing-pools');
-    if (!isCurrentAuthenticated(version)) return;
-    routingPools.items = payload.pools ?? [];
+    const params = new URLSearchParams({ limit: '50' });
+    if (append) params.set('cursor', routingPools.nextCursor);
+    const payload = await requestJSON(`/api/admin/routing-pools?${params.toString()}`);
+    if (!isCurrentAuthenticated(version) || requestSequence !== routingPoolListRequestSequence) return;
+    /** @type {RoutingPool[]} */
+    const incoming = payload.pools ?? [];
+    if (append) {
+      const existing = new Set(routingPools.items.map((pool) => pool.id));
+      routingPools.items = [...routingPools.items, ...incoming.filter((pool) => !existing.has(pool.id))];
+    } else {
+      routingPools.items = incoming;
+    }
+    routingPools.nextCursor = payload.nextCursor ?? '';
+    routingPools.hasMore = Boolean(payload.hasMore && routingPools.nextCursor);
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    routingPools.error = error instanceof Error ? error.message : 'Failed to load routing pools';
+    if (!isCurrentAuthenticated(version) || requestSequence !== routingPoolListRequestSequence) return;
+    routingPools.error = error instanceof Error ? error.message : append ? 'Failed to load more routing pools' : 'Failed to load routing pools';
   } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    routingPools.loading = false;
+    if (!isCurrentAuthenticated(version) || requestSequence !== routingPoolListRequestSequence) return;
+    if (append) routingPools.loadingMore = false;
+    else routingPools.loading = false;
   }
+}
+
+export async function loadMoreRoutingPools() {
+  return loadRoutingPools({ append: true });
 }
 
 export async function createRoutingPool() {
