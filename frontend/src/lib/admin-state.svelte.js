@@ -251,6 +251,8 @@ import { copyText } from '$lib/clipboard.js';
  * @typedef {object} AlertDeliveryStatus
  * @property {boolean} enabled
  * @property {boolean} running
+ * @property {boolean} listenerConnected
+ * @property {number} listenerReconnectCount
  * @property {number} queueDepth
  * @property {number} queueCapacity
  * @property {number} activeWorkers
@@ -453,6 +455,10 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string | null} newestLogAt
  * @property {number} totalCountEstimate
  * @property {number} eligibleCount
+ * @property {number} relationSizeBytes
+ * @property {boolean} retentionConfigured
+ * @property {'keep_all' | 'delete_after_days'} retentionPolicy
+ * @property {'unknown' | 'ok' | 'watch' | 'high'} diskRisk
  * @property {string | null} observedAt
  */
 
@@ -1212,14 +1218,24 @@ function normalizeRequestLogRetentionStatus(status) {
   };
 }
 
-/** @param {Partial<RequestLogRetentionStats> | null | undefined} stats */
+/**
+ * @param {Partial<RequestLogRetentionStats> | null | undefined} stats
+ * @returns {RequestLogRetentionStats}
+ */
 function normalizeRequestLogRetentionStats(stats) {
+  const retentionPolicy = stats?.retentionPolicy === 'delete_after_days' ? 'delete_after_days' : 'keep_all';
+  const rawDiskRisk = String(stats?.diskRisk ?? 'unknown');
+  const diskRisk = rawDiskRisk === 'ok' || rawDiskRisk === 'watch' || rawDiskRisk === 'high' ? rawDiskRisk : 'unknown';
   return {
     cutoff: stats?.cutoff && !String(stats.cutoff).startsWith('0001-') ? stats.cutoff : null,
     oldestLogAt: stats?.oldestLogAt ?? null,
     newestLogAt: stats?.newestLogAt ?? null,
     totalCountEstimate: Number(stats?.totalCountEstimate ?? 0),
     eligibleCount: Number(stats?.eligibleCount ?? 0),
+    relationSizeBytes: Number(stats?.relationSizeBytes ?? 0),
+    retentionConfigured: Boolean(stats?.retentionConfigured),
+    retentionPolicy,
+    diskRisk,
     observedAt: stats?.observedAt ?? null
   };
 }

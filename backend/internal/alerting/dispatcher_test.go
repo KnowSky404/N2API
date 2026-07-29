@@ -243,6 +243,38 @@ func TestDispatcherClosesInitialSubscriptionOnImmediateShutdown(t *testing.T) {
 	}
 }
 
+func TestDispatcherReportsListenerReconnectState(t *testing.T) {
+	initial := &queuedEventSubscription{ids: make(chan int64), closed: make(chan struct{})}
+	reconnected := &queuedEventSubscription{ids: make(chan int64), closed: make(chan struct{})}
+	var subscribeCalls atomic.Int64
+	dispatcher := NewDispatcher(DispatcherConfig{
+		Enabled: true, Service: &Service{}, InitialSubscription: initial,
+		Subscribe: func(context.Context) (EventSubscription, error) {
+			subscribeCalls.Add(1)
+			return reconnected, nil
+		},
+		GetEvent: func(context.Context, int64) (systemevent.Event, error) {
+			return systemevent.Event{}, nil
+		},
+		ListenerRetryDelay: time.Millisecond,
+	})
+	dispatcher.Start()
+	waitFor(t, time.Second, func() bool { return dispatcher.AlertDeliveryStatus().ListenerConnected })
+	initial.Close()
+	waitFor(t, time.Second, func() bool {
+		status := dispatcher.AlertDeliveryStatus()
+		return subscribeCalls.Load() == 1 && status.ListenerConnected && status.ListenerReconnectCount == 1
+	})
+	status := dispatcher.AlertDeliveryStatus()
+	if status.LastFailedAt == nil || status.LastErrorCode != "alert_delivery_listener_unavailable" {
+		t.Fatalf("listener failure status = %+v", status)
+	}
+	shutdownDispatcher(t, dispatcher)
+	if dispatcher.AlertDeliveryStatus().ListenerConnected {
+		t.Fatal("listener remained connected after shutdown")
+	}
+}
+
 func TestDispatcherPreservesOrderWithinRuleDeduplicationStreamAcrossWorkers(t *testing.T) {
 	service, _ := dispatcherService(t, 1)
 	adapter := &orderedBlockingAdapter{

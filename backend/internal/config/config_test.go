@@ -3,14 +3,147 @@ package config
 import (
 	"maps"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
 )
+
+func TestLoadReadsBoundedSecretFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, value string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return path
+	}
+	values := map[string]string{
+		"DATABASE_URL_FILE":                   write("database-url", "postgres://owner:secret@db.internal/n2api?sslmode=verify-full\n"),
+		"N2API_ADMIN_PASSWORD_FILE":           write("admin-password", " admin password \n"),
+		"N2API_ENCRYPTION_SECRET_FILE":        write("encryption-secret", "file-encryption-secret-at-least-32-bytes\r\n"),
+		"N2API_ENCRYPTION_PREVIOUS_KEYS_FILE": write("previous-keys", "[]\n\n"),
+		"OPENAI_OAUTH_CLIENT_SECRET_FILE":     write("oauth-secret", "oauth-secret\n"),
+		"N2API_METRICS_BEARER_TOKEN_FILE":     write("metrics-token", "metrics-token\n"),
+		"N2API_HOST":                          "127.0.0.1",
+		"N2API_PUBLIC_URL":                    "https://n2api.knowsky.uk",
+		"N2API_METRICS_ENABLED":               "true",
+		"N2API_METRICS_HOST":                  "0.0.0.0",
+	}
+	cfg, err := Load(mapLookup(values))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.AdminPassword != " admin password " {
+		t.Fatalf("AdminPassword bytes = %q", cfg.AdminPassword)
+	}
+	if cfg.EncryptionSecret != "file-encryption-secret-at-least-32-bytes" || cfg.OpenAIOAuthSecret != "oauth-secret" || cfg.MetricsBearerToken != "metrics-token" {
+		t.Fatal("secret file values were not loaded")
+	}
+	if got := values["N2API_ENCRYPTION_PREVIOUS_KEYS_FILE"]; got == "" || cfg.EncryptionKeyring.PreviousKeyCount() != 0 {
+		t.Fatal("previous key file was not parsed")
+	}
+}
+
+func TestLoadRejectsUnsafeSecretFileInputsWithoutLeaks(t *testing.T) {
+	dir := t.TempDir()
+	regular := filepath.Join(dir, "secret")
+	if err := os.WriteFile(regular, []byte("file-secret-value"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oversized := filepath.Join(dir, "oversized")
+	if err := os.WriteFile(oversized, []byte(strings.Repeat("x", maximumSecretFileBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(dir, "symlink")
+	if err := os.Symlink(regular, symlink); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		values map[string]string
+		want   string
+	}{
+		{name: "conflict", values: map[string]string{"N2API_ADMIN_PASSWORD": "plain-secret", "N2API_ADMIN_PASSWORD_FILE": regular}, want: "cannot both be set"},
+		{name: "directory", values: map[string]string{"N2API_ADMIN_PASSWORD_FILE": dir}, want: "regular file"},
+		{name: "symlink", values: map[string]string{"N2API_ADMIN_PASSWORD_FILE": symlink}, want: "regular file"},
+		{name: "fifo", values: map[string]string{"N2API_ADMIN_PASSWORD_FILE": fifo}, want: "regular file"},
+		{name: "oversized", values: map[string]string{"N2API_ADMIN_PASSWORD_FILE": oversized}, want: "maximum size"},
+		{name: "missing", values: map[string]string{"N2API_ADMIN_PASSWORD_FILE": filepath.Join(dir, "missing-secret-name")}, want: "could not be inspected"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Load(mapLookup(test.values))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Load error = %v, want %q", err, test.want)
+			}
+			for _, forbidden := range []string{"plain-secret", regular, oversized, symlink, fifo, dir, "missing-secret-name"} {
+				if strings.Contains(err.Error(), forbidden) {
+					t.Fatalf("Load error leaked secret value or path: %q", err)
+				}
+			}
+		})
+	}
+}
+
+func TestSecretFileBoundaryAndSingleTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	for _, test := range []struct {
+		name    string
+		content string
+		want    string
+		wantErr bool
+	}{
+		{name: "no newline", content: "secret", want: "secret"},
+		{name: "single LF", content: "secret\n", want: "secret"},
+		{name: "single CRLF", content: "secret\r\n", want: "secret"},
+		{name: "double LF", content: "secret\n\n", want: "secret\n"},
+		{name: "maximum", content: strings.Repeat("x", maximumSecretFileBytes), want: strings.Repeat("x", maximumSecretFileBytes)},
+		{name: "over maximum", content: strings.Repeat("x", maximumSecretFileBytes+1), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(test.name, " ", "-"))
+			if err := os.WriteFile(path, []byte(test.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readSecretFile("TEST_SECRET_FILE", path)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("readSecretFile returned nil error")
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("readSecretFile = %d bytes, %v; want %d bytes", len(got), err, len(test.want))
+			}
+		})
+	}
+}
+
+func TestLoadRejectsEveryDirectAndFileSecretConflict(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte("file-secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range secretFileEnvironmentNames {
+		t.Run(name, func(t *testing.T) {
+			_, err := resolveSecretFiles(mapLookup(map[string]string{name: "direct-secret", name + "_FILE": path}))
+			if err == nil || !strings.Contains(err.Error(), name+" and "+name+"_FILE cannot both be set") || strings.Contains(err.Error(), "direct-secret") || strings.Contains(err.Error(), path) {
+				t.Fatalf("resolveSecretFiles error = %v", err)
+			}
+		})
+	}
+}
 
 func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	cfg, err := Load(mapLookup(map[string]string{

@@ -26,6 +26,10 @@ function settingsPayload(retentionDays, cutoff, eligibleCount) {
       cutoff,
       totalCountEstimate: 100,
       eligibleCount,
+      relationSizeBytes: 1048576,
+      retentionConfigured: retentionDays > 0,
+      retentionPolicy: retentionDays > 0 ? 'delete_after_days' : 'keep_all',
+      diskRisk: 'ok',
       observedAt: '2026-07-21T12:00:00Z'
     }
   };
@@ -64,6 +68,9 @@ test('saving retention reloads cutoff and eligible count for the new policy', as
   assert.equal(gatewaySettings.data.requestLogRetentionDays, 30);
   assert.equal(gatewaySettings.data.requestLogRetentionStats.cutoff, '2026-06-21T12:00:00Z');
   assert.equal(gatewaySettings.data.requestLogRetentionStats.eligibleCount, 8);
+  assert.equal(gatewaySettings.data.requestLogRetentionStats.retentionPolicy, 'delete_after_days');
+  assert.equal(gatewaySettings.data.requestLogRetentionStats.relationSizeBytes, 1048576);
+  assert.equal(gatewaySettings.data.requestLogRetentionStats.diskRisk, 'ok');
   assert.equal(gatewaySettings.saved, true);
   assert.equal(gatewaySettings.error, '');
 });

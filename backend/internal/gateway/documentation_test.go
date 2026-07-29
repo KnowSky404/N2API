@@ -1031,8 +1031,12 @@ func TestPrometheusDocumentationMatchesPrivateListenerContract(t *testing.T) {
 		},
 		"../../../deploy/compose.metrics.yaml": {
 			"N2API_METRICS_ENABLED",
-			"N2API_METRICS_BEARER_TOKEN is required",
+			"N2API_METRICS_BEARER_TOKEN:-",
 			"host_ip",
+		},
+		"../../../deploy/compose.metrics.secrets.yaml": {
+			"N2API_METRICS_BEARER_TOKEN_FILE",
+			"n2api_metrics_bearer_token",
 		},
 		"../../../docs/manual.md": {
 			"separate listener",

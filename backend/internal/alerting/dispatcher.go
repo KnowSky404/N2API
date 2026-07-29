@@ -73,32 +73,34 @@ type deliveryJob struct {
 }
 
 type Dispatcher struct {
-	cfg             DispatcherConfig
-	eventQueue      chan systemevent.Event
-	deliveryQueues  []chan deliveryJob
-	queueMu         sync.RWMutex
-	startOnce       sync.Once
-	stopOnce        sync.Once
-	accepting       atomic.Bool
-	running         atomic.Bool
-	activeWorkers   atomic.Int64
-	enqueued        atomic.Uint64
-	delivered       atomic.Uint64
-	failed          atomic.Uint64
-	dropped         atomic.Uint64
-	droppedPending  atomic.Uint64
-	retried         atomic.Uint64
-	statusMu        sync.Mutex
-	lastDeliveredAt *time.Time
-	lastFailedAt    *time.Time
-	lastErrorCode   string
-	listenCancel    context.CancelFunc
-	workCancel      context.CancelFunc
-	listenerDone    chan struct{}
-	evaluatorDone   chan struct{}
-	workersDone     chan struct{}
-	reporterDone    chan struct{}
-	done            chan struct{}
+	cfg                DispatcherConfig
+	eventQueue         chan systemevent.Event
+	deliveryQueues     []chan deliveryJob
+	queueMu            sync.RWMutex
+	startOnce          sync.Once
+	stopOnce           sync.Once
+	accepting          atomic.Bool
+	running            atomic.Bool
+	activeWorkers      atomic.Int64
+	listenerConnected  atomic.Bool
+	listenerReconnects atomic.Uint64
+	enqueued           atomic.Uint64
+	delivered          atomic.Uint64
+	failed             atomic.Uint64
+	dropped            atomic.Uint64
+	droppedPending     atomic.Uint64
+	retried            atomic.Uint64
+	statusMu           sync.Mutex
+	lastDeliveredAt    *time.Time
+	lastFailedAt       *time.Time
+	lastErrorCode      string
+	listenCancel       context.CancelFunc
+	workCancel         context.CancelFunc
+	listenerDone       chan struct{}
+	evaluatorDone      chan struct{}
+	workersDone        chan struct{}
+	reporterDone       chan struct{}
+	done               chan struct{}
 }
 
 func NewDispatcher(cfg DispatcherConfig) *Dispatcher {
@@ -212,6 +214,7 @@ func (dispatcher *Dispatcher) AlertDeliveryStatus() DeliveryStatus {
 	}
 	return DeliveryStatus{
 		Enabled: dispatcher.cfg.Enabled, Running: dispatcher.running.Load(),
+		ListenerConnected: dispatcher.listenerConnected.Load(), ListenerReconnectCount: dispatcher.listenerReconnects.Load(),
 		QueueDepth:    queueDepth,
 		QueueCapacity: queueCapacity,
 		ActiveWorkers: int(dispatcher.activeWorkers.Load()), WorkerCount: dispatcher.cfg.WorkerCount,
@@ -241,6 +244,11 @@ func (dispatcher *Dispatcher) finishShutdown() {
 func (dispatcher *Dispatcher) runListener(ctx context.Context) {
 	defer close(dispatcher.listenerDone)
 	subscription := dispatcher.cfg.InitialSubscription
+	connectedOnce := subscription != nil
+	if connectedOnce {
+		dispatcher.listenerConnected.Store(true)
+	}
+	defer dispatcher.listenerConnected.Store(false)
 	defer func() {
 		if subscription != nil {
 			subscription.Close()
@@ -259,16 +267,27 @@ func (dispatcher *Dispatcher) runListener(ctx context.Context) {
 			var err error
 			subscription, err = dispatcher.cfg.Subscribe(ctx)
 			if err != nil {
+				dispatcher.listenerConnected.Store(false)
 				dispatcher.markFailure("alert_delivery_listener_unavailable")
 				if !waitContext(ctx, dispatcher.cfg.ListenerRetryDelay) {
 					return
 				}
 				continue
 			}
+			if connectedOnce {
+				dispatcher.listenerReconnects.Add(1)
+			} else {
+				connectedOnce = true
+			}
+			dispatcher.listenerConnected.Store(true)
 		}
 		for ctx.Err() == nil {
 			id, err := subscription.Wait(ctx)
 			if err != nil {
+				if ctx.Err() == nil {
+					dispatcher.listenerConnected.Store(false)
+					dispatcher.markFailure("alert_delivery_listener_unavailable")
+				}
 				break
 			}
 			event, err := dispatcher.cfg.GetEvent(ctx, id)

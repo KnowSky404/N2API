@@ -1921,8 +1921,9 @@ func (r *AdminRepository) GetRequestLogRetentionStats(ctx context.Context, befor
 			(SELECT min(created_at) FROM request_logs),
 			(SELECT max(created_at) FROM request_logs),
 			GREATEST(COALESCE((SELECT reltuples::bigint FROM pg_class WHERE oid = 'request_logs'::regclass), 0), 0),
-			(SELECT count(*) FROM request_logs WHERE created_at < $1)
-	`, before.UTC()).Scan(&stats.OldestLogAt, &stats.NewestLogAt, &stats.TotalCountEstimate, &stats.EligibleCount)
+			(SELECT count(*) FROM request_logs WHERE created_at < $1),
+			GREATEST(pg_total_relation_size('request_logs'::regclass), 0)
+	`, before.UTC()).Scan(&stats.OldestLogAt, &stats.NewestLogAt, &stats.TotalCountEstimate, &stats.EligibleCount, &stats.RelationSizeBytes)
 	if err != nil {
 		return admin.RequestLogRetentionStats{}, err
 	}

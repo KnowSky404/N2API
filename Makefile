@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: test test-control-connections test-request-log-profile test-management-list-profile test-e2e test-contracts test-playwright playwright-install \
+.PHONY: test test-control-connections test-request-log-profile test-management-list-profile test-production-deploy test-e2e test-contracts test-playwright playwright-install \
 	disk-check disk-check-heavy clean-dev-artifacts clean-dev-artifacts-deep \
 	test-dev-artifacts test-restore-backup backup-dev
 
@@ -15,6 +15,9 @@ test-request-log-profile:
 
 test-management-list-profile:
 	dev/testing/run.sh management-list-profile
+
+test-production-deploy:
+	dev/ci/test-production-deploy.sh
 
 test-e2e:
 	dev/testing/run.sh gateway-e2e

@@ -1600,7 +1600,7 @@ func TestAdminHealthIncludesRequestLogWriteStatusOnlyForAuthenticatedSession(t *
 
 func TestAdminHealthIncludesAlertDeliveryTaskOnlyForAuthenticatedSession(t *testing.T) {
 	source := fakeAlertDeliveryStatusSource{status: alerting.DeliveryStatus{
-		Enabled: true, Running: true, QueueDepth: 3, DroppedCount: 2,
+		Enabled: true, Running: true, ListenerConnected: true, ListenerReconnectCount: 4, QueueDepth: 3, DroppedCount: 2,
 	}}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, source)
 
@@ -1641,7 +1641,7 @@ func TestAdminHealthIncludesAlertDeliveryTaskOnlyForAuthenticatedSession(t *test
 	if err := json.Unmarshal(body.Tasks["alertDelivery"], &status); err != nil {
 		t.Fatalf("decode alert delivery status: %v", err)
 	}
-	if !status.Enabled || !status.Running || status.QueueDepth != 3 || status.DroppedCount != 2 {
+	if !status.Enabled || !status.Running || !status.ListenerConnected || status.ListenerReconnectCount != 4 || status.QueueDepth != 3 || status.DroppedCount != 2 {
 		t.Fatalf("alert delivery status = %+v, want configured status", status)
 	}
 }

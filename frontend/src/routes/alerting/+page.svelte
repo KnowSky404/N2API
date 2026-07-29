@@ -490,6 +490,8 @@
       </div>
       <dl class="mt-3 grid gap-x-6 gap-y-3 border-y border-[#ededed] py-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Queue</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery ? `${delivery.queueDepth} / ${delivery.queueCapacity}` : '-'}</dd></div>
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Listener</dt><dd class="mt-1 text-sm text-[#0d0d0d]">{delivery ? (delivery.listenerConnected ? 'Connected' : 'Disconnected') : '-'}</dd></div>
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Reconnects</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery?.listenerReconnectCount ?? '-'}</dd></div>
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Workers</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery ? `${delivery.activeWorkers} / ${delivery.workerCount}` : '-'}</dd></div>
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Delivered</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery?.deliveredCount ?? '-'}</dd></div>
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Failed / dropped</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery ? `${delivery.failedCount} / ${delivery.droppedCount}` : '-'}</dd></div>

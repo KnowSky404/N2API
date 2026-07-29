@@ -59,20 +59,22 @@ const (
 )
 
 type DeliveryStatus struct {
-	Enabled         bool       `json:"enabled"`
-	Running         bool       `json:"running"`
-	QueueDepth      int        `json:"queueDepth"`
-	QueueCapacity   int        `json:"queueCapacity"`
-	ActiveWorkers   int        `json:"activeWorkers"`
-	WorkerCount     int        `json:"workerCount"`
-	EnqueuedCount   uint64     `json:"enqueuedCount"`
-	DeliveredCount  uint64     `json:"deliveredCount"`
-	FailedCount     uint64     `json:"failedCount"`
-	DroppedCount    uint64     `json:"droppedCount"`
-	RetriedCount    uint64     `json:"retriedCount"`
-	LastDeliveredAt *time.Time `json:"lastDeliveredAt,omitempty"`
-	LastFailedAt    *time.Time `json:"lastFailedAt,omitempty"`
-	LastErrorCode   string     `json:"lastErrorCode"`
+	Enabled                bool       `json:"enabled"`
+	Running                bool       `json:"running"`
+	ListenerConnected      bool       `json:"listenerConnected"`
+	ListenerReconnectCount uint64     `json:"listenerReconnectCount"`
+	QueueDepth             int        `json:"queueDepth"`
+	QueueCapacity          int        `json:"queueCapacity"`
+	ActiveWorkers          int        `json:"activeWorkers"`
+	WorkerCount            int        `json:"workerCount"`
+	EnqueuedCount          uint64     `json:"enqueuedCount"`
+	DeliveredCount         uint64     `json:"deliveredCount"`
+	FailedCount            uint64     `json:"failedCount"`
+	DroppedCount           uint64     `json:"droppedCount"`
+	RetriedCount           uint64     `json:"retriedCount"`
+	LastDeliveredAt        *time.Time `json:"lastDeliveredAt,omitempty"`
+	LastFailedAt           *time.Time `json:"lastFailedAt,omitempty"`
+	LastErrorCode          string     `json:"lastErrorCode"`
 }
 
 var (

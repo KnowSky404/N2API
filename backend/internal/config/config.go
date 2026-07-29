@@ -8,8 +8,10 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
@@ -111,7 +113,17 @@ const (
 	defaultUpstreamTLSHandshakeSeconds        = 10
 	defaultUpstreamSSEIdleTimeoutSeconds      = 60
 	defaultMetricsPort                        = 9090
+	maximumSecretFileBytes                    = 64 << 10
 )
+
+var secretFileEnvironmentNames = [...]string{
+	"DATABASE_URL",
+	"N2API_ADMIN_PASSWORD",
+	"N2API_ENCRYPTION_SECRET",
+	"N2API_ENCRYPTION_PREVIOUS_KEYS",
+	"OPENAI_OAUTH_CLIENT_SECRET",
+	"N2API_METRICS_BEARER_TOKEN",
+}
 
 const (
 	riskPublicHTTP            = "public-http"
@@ -121,6 +133,11 @@ const (
 )
 
 func Load(lookup func(string) string) (Config, error) {
+	var err error
+	lookup, err = resolveSecretFiles(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	acceptedRisks, err := parseAcceptedRisks(lookup("N2API_ACCEPT_RISKS"))
 	if err != nil {
 		return Config{}, err
@@ -475,6 +492,75 @@ func Load(lookup func(string) string) (Config, error) {
 	cfg.EncryptionKeyring = keyring
 
 	return cfg, nil
+}
+
+func resolveSecretFiles(lookup func(string) string) (func(string) string, error) {
+	if lookup == nil {
+		return nil, errors.New("configuration environment lookup is required")
+	}
+	resolved := make(map[string]string, len(secretFileEnvironmentNames))
+	for _, name := range secretFileEnvironmentNames {
+		value := lookup(name)
+		fileName := name + "_FILE"
+		path := lookup(fileName)
+		if value != "" && path != "" {
+			return nil, fmt.Errorf("%s and %s cannot both be set", name, fileName)
+		}
+		if path == "" {
+			continue
+		}
+		fileValue, err := readSecretFile(fileName, path)
+		if err != nil {
+			return nil, err
+		}
+		resolved[name] = fileValue
+	}
+	return func(name string) string {
+		if value, ok := resolved[name]; ok {
+			return value
+		}
+		return lookup(name)
+	}, nil
+}
+
+func readSecretFile(name, path string) (string, error) {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("%s could not be inspected", name)
+	}
+	if !before.Mode().IsRegular() {
+		return "", fmt.Errorf("%s must reference a regular file", name)
+	}
+	if before.Size() > maximumSecretFileBytes {
+		return "", fmt.Errorf("%s exceeds the maximum size", name)
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return "", fmt.Errorf("%s could not be opened", name)
+	}
+	file := os.NewFile(uintptr(fd), name)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return "", fmt.Errorf("%s could not be opened", name)
+	}
+	defer file.Close()
+	after, err := file.Stat()
+	if err != nil || !after.Mode().IsRegular() || !os.SameFile(before, after) {
+		return "", fmt.Errorf("%s changed while being opened", name)
+	}
+	content, err := io.ReadAll(io.LimitReader(file, maximumSecretFileBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("%s could not be read", name)
+	}
+	if len(content) > maximumSecretFileBytes {
+		return "", fmt.Errorf("%s exceeds the maximum size", name)
+	}
+	if strings.HasSuffix(string(content), "\r\n") {
+		content = content[:len(content)-2]
+	} else if len(content) > 0 && content[len(content)-1] == '\n' {
+		content = content[:len(content)-1]
+	}
+	return string(content), nil
 }
 
 func (c Config) Addr() string {

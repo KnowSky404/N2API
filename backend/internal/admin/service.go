@@ -343,13 +343,30 @@ type RequestLogCleanupResult struct {
 }
 
 type RequestLogRetentionStats struct {
-	Cutoff             time.Time  `json:"cutoff"`
-	OldestLogAt        *time.Time `json:"oldestLogAt,omitempty"`
-	NewestLogAt        *time.Time `json:"newestLogAt,omitempty"`
-	TotalCountEstimate int64      `json:"totalCountEstimate"`
-	EligibleCount      int64      `json:"eligibleCount"`
-	ObservedAt         time.Time  `json:"observedAt"`
+	Cutoff              time.Time  `json:"cutoff"`
+	OldestLogAt         *time.Time `json:"oldestLogAt,omitempty"`
+	NewestLogAt         *time.Time `json:"newestLogAt,omitempty"`
+	TotalCountEstimate  int64      `json:"totalCountEstimate"`
+	EligibleCount       int64      `json:"eligibleCount"`
+	RelationSizeBytes   int64      `json:"relationSizeBytes"`
+	RetentionConfigured bool       `json:"retentionConfigured"`
+	RetentionPolicy     string     `json:"retentionPolicy"`
+	DiskRisk            string     `json:"diskRisk"`
+	ObservedAt          time.Time  `json:"observedAt"`
 }
+
+const (
+	RequestLogRetentionPolicyKeepAll         = "keep_all"
+	RequestLogRetentionPolicyDeleteAfterDays = "delete_after_days"
+	RequestLogDiskRiskUnknown                = "unknown"
+	RequestLogDiskRiskOK                     = "ok"
+	RequestLogDiskRiskWatch                  = "watch"
+	RequestLogDiskRiskHigh                   = "high"
+	requestLogWatchRelationBytes             = int64(512 << 20)
+	requestLogHighRelationBytes              = int64(2 << 30)
+	requestLogWatchRowEstimate               = int64(250_000)
+	requestLogHighRowEstimate                = int64(1_000_000)
+)
 
 type RequestLogRetentionLease interface {
 	DeleteBeforeBatch(ctx context.Context, before time.Time, batchSize int) (int64, error)
@@ -1557,9 +1574,27 @@ func (s *Service) GetRequestLogRetentionStats(ctx context.Context, now time.Time
 	}
 	if settings.RequestLogRetentionDays > 0 {
 		stats.Cutoff = cutoff
+		stats.RetentionConfigured = true
+		stats.RetentionPolicy = RequestLogRetentionPolicyDeleteAfterDays
+	} else {
+		stats.RetentionPolicy = RequestLogRetentionPolicyKeepAll
 	}
+	stats.DiskRisk = classifyRequestLogDiskRisk(stats)
 	stats.ObservedAt = now.UTC()
 	return stats, nil
+}
+
+func classifyRequestLogDiskRisk(stats RequestLogRetentionStats) string {
+	if stats.RelationSizeBytes < 0 || stats.TotalCountEstimate < 0 || stats.EligibleCount < 0 {
+		return RequestLogDiskRiskUnknown
+	}
+	if stats.RelationSizeBytes >= requestLogHighRelationBytes || stats.TotalCountEstimate >= requestLogHighRowEstimate {
+		return RequestLogDiskRiskHigh
+	}
+	if stats.RelationSizeBytes >= requestLogWatchRelationBytes || stats.TotalCountEstimate >= requestLogWatchRowEstimate {
+		return RequestLogDiskRiskWatch
+	}
+	return RequestLogDiskRiskOK
 }
 
 func (s *Service) DefaultModel(ctx context.Context) (string, error) {

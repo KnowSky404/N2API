@@ -1737,7 +1737,7 @@ func TestRunRequestLogRetentionUsesMultipleBatchesAndRejectsContention(t *testin
 func TestGetRequestLogRetentionStatsUsesSavedCutoffAndObservationTime(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.gatewaySettings = GatewaySettings{RequestLogRetentionDays: 7}
-	repo.requestLogRetentionStats = RequestLogRetentionStats{EligibleCount: 12, TotalCountEstimate: 50}
+	repo.requestLogRetentionStats = RequestLogRetentionStats{EligibleCount: 12, TotalCountEstimate: 50, RelationSizeBytes: 4096}
 	service := NewService(repo, Config{SessionTTL: time.Hour})
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	stats, err := service.GetRequestLogRetentionStats(context.Background(), now)
@@ -1746,6 +1746,30 @@ func TestGetRequestLogRetentionStatsUsesSavedCutoffAndObservationTime(t *testing
 	}
 	if !stats.Cutoff.Equal(now.Add(-7*24*time.Hour)) || !stats.ObservedAt.Equal(now) || stats.EligibleCount != 12 || stats.TotalCountEstimate != 50 {
 		t.Fatalf("retention stats = %+v", stats)
+	}
+	if !stats.RetentionConfigured || stats.RetentionPolicy != RequestLogRetentionPolicyDeleteAfterDays || stats.DiskRisk != RequestLogDiskRiskOK {
+		t.Fatalf("retention policy status = %+v", stats)
+	}
+}
+
+func TestRequestLogDiskRiskUsesBoundedOperationalThresholds(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		stats RequestLogRetentionStats
+		want  string
+	}{
+		{name: "unknown", stats: RequestLogRetentionStats{RelationSizeBytes: -1}, want: RequestLogDiskRiskUnknown},
+		{name: "ok", stats: RequestLogRetentionStats{RelationSizeBytes: requestLogWatchRelationBytes - 1, TotalCountEstimate: requestLogWatchRowEstimate - 1}, want: RequestLogDiskRiskOK},
+		{name: "watch bytes", stats: RequestLogRetentionStats{RelationSizeBytes: requestLogWatchRelationBytes}, want: RequestLogDiskRiskWatch},
+		{name: "watch rows", stats: RequestLogRetentionStats{TotalCountEstimate: requestLogWatchRowEstimate}, want: RequestLogDiskRiskWatch},
+		{name: "high bytes", stats: RequestLogRetentionStats{RelationSizeBytes: requestLogHighRelationBytes}, want: RequestLogDiskRiskHigh},
+		{name: "high rows", stats: RequestLogRetentionStats{TotalCountEstimate: requestLogHighRowEstimate}, want: RequestLogDiskRiskHigh},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifyRequestLogDiskRisk(test.stats); got != test.want {
+				t.Fatalf("classifyRequestLogDiskRisk() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

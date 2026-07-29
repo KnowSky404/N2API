@@ -437,6 +437,18 @@
                 <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStats.totalCountEstimate}</dd>
               </div>
               <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Persisted policy</dt>
+                <dd class="mt-2 text-sm font-semibold text-[#0d0d0d]">{gatewaySettings.data.requestLogRetentionStats.retentionPolicy === 'delete_after_days' ? 'Delete after days' : 'Keep all'}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Relation size</dt>
+                <dd class="mt-2 font-mono text-sm font-semibold text-[#0d0d0d]">{Math.ceil(gatewaySettings.data.requestLogRetentionStats.relationSizeBytes / 1024 / 1024)} MiB</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
+                <dt class="text-xs font-medium text-[#6e6e6e]">Disk risk</dt>
+                <dd class={gatewaySettings.data.requestLogRetentionStats.diskRisk === 'high' ? 'mt-2 text-sm font-semibold text-red-700' : gatewaySettings.data.requestLogRetentionStats.diskRisk === 'watch' ? 'mt-2 text-sm font-semibold text-amber-700' : 'mt-2 text-sm font-semibold text-[#0d0d0d]'}>{gatewaySettings.data.requestLogRetentionStats.diskRisk}</dd>
+              </div>
+              <div class="rounded-md border border-[#ededed] bg-white p-3">
                 <dt class="text-xs font-medium text-[#6e6e6e]">Last automatic result</dt>
                 <dd class={gatewaySettings.data.requestLogRetentionStatus.lastErrorCode ? 'mt-2 min-w-0 break-words font-mono text-sm font-semibold text-red-700' : 'mt-2 min-w-0 break-words text-sm font-semibold text-[#0d0d0d]'}>
                   {gatewaySettings.data.requestLogRetentionStatus.lastErrorCode || (gatewaySettings.data.requestLogRetentionStatus.lastSucceededAt ? `${gatewaySettings.data.requestLogRetentionStatus.lastDeletedCount} deleted` : 'Not run yet')}
