@@ -3,10 +3,16 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 )
@@ -830,6 +836,199 @@ func TestAPIKeyBudgetLedgerMigrationRoundTrip(t *testing.T) {
 	assertStoreColumnExists(t, ctx, repo, "request_logs", "budget_backfill_eligible", true)
 }
 
+func TestAPIKeyBudgetLedgerMigrationBackfillsLegacyUsageAcrossRestart(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	repo, provider := newIsolatedStoreMigrationRepository(t, ctx, 48)
+	assertStoreMigrationVersion(t, ctx, provider, 48)
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	keyCreatedAt := now.Add(-31 * 24 * time.Hour)
+	var keyID int64
+	if err := repo.pool.QueryRow(ctx, `
+		INSERT INTO client_api_keys (
+			name, key_hash, prefix, encrypted_secret, created_at,
+			request_budget_24h, token_budget_24h, cost_budget_microusd_24h,
+			request_budget_30d, token_budget_30d, cost_budget_microusd_30d
+		) VALUES (
+			'migration budget key', 'migration-budget-backfill-hash', 'n2api_', 'encrypted', $1,
+			100, 1000, 1000, 100, 1000, 1000
+		)
+		RETURNING id
+	`, keyCreatedAt).Scan(&keyID); err != nil {
+		t.Fatalf("seed legacy budgeted API key: %v", err)
+	}
+
+	type legacyRequestLog struct {
+		requestID   string
+		createdAt   time.Time
+		tokens      int64
+		cost        int64
+		usageSource string
+		id          int64
+	}
+	logs := []legacyRequestLog{
+		{requestID: "migration-old-observed", createdAt: now.Add(-25 * time.Hour), tokens: 20, cost: 200, usageSource: "parsed"},
+		{requestID: "migration-recent-missing", createdAt: now.Add(-2 * time.Hour), tokens: 999, cost: 999, usageSource: "missing"},
+		{requestID: "migration-recent-observed", createdAt: now.Add(-time.Hour), tokens: 10, cost: 100, usageSource: "parsed"},
+	}
+	for index := range logs {
+		if err := repo.pool.QueryRow(ctx, `
+			INSERT INTO request_logs (
+				request_id, client_key_id, provider, route, method, status_code, latency_ms,
+				total_tokens, estimated_cost_microusd, usage_source, created_at
+			) VALUES ($1, $2, 'openai', '/v1/responses', 'POST', 200, 1, $3, $4, $5, $6)
+			RETURNING id
+		`, logs[index].requestID, keyID, logs[index].tokens, logs[index].cost, logs[index].usageSource, logs[index].createdAt).Scan(&logs[index].id); err != nil {
+			t.Fatalf("seed legacy request log %q: %v", logs[index].requestID, err)
+		}
+	}
+
+	results, err := provider.UpTo(ctx, 49)
+	if err != nil {
+		t.Fatalf("apply API key budget ledger migration: %v", err)
+	}
+	if len(results) != 1 || results[0].Source.Version != 49 {
+		t.Fatalf("migration up results = %+v, want only version 49", results)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 49)
+
+	adminRepo := NewAdminRepository(repo.pool, "migration-budget-restart-test")
+	state, err := adminRepo.GetAPIKeyBudgetState(ctx, keyID)
+	if err != nil {
+		t.Fatalf("load migrated API key budget state: %v", err)
+	}
+	if state.InitializationStatus != admin.APIKeyBudgetInitializationPending || state.InitializedAt != nil {
+		t.Fatalf("migrated API key budget state = %+v, want pending and uninitialized", state)
+	}
+	if _, err := adminRepo.AdmitAPIKeyBudget(ctx, keyID, "00000000000000000000000000000049", now); !errors.Is(err, admin.ErrBudgetInitializing) {
+		t.Fatalf("admission before migration backfill error = %v, want ErrBudgetInitializing", err)
+	}
+
+	var postLedgerLogID int64
+	if err := repo.pool.QueryRow(ctx, `
+		INSERT INTO request_logs (
+			request_id, client_key_id, provider, route, method, status_code, latency_ms,
+			total_tokens, estimated_cost_microusd, usage_source, budget_backfill_eligible, created_at
+		) VALUES (
+			'migration-post-ledger', $1, 'openai', '/v1/responses', 'POST', 429, 1,
+			777, 777, 'parsed', false, $2
+		)
+		RETURNING id
+	`, keyID, now.Add(-30*time.Minute)).Scan(&postLedgerLogID); err != nil {
+		t.Fatalf("seed post-ledger request log: %v", err)
+	}
+
+	first, err := adminRepo.RunAPIKeyBudgetInitializationCycle(ctx, now, 2)
+	if err != nil {
+		t.Fatalf("run first migration backfill batch: %v", err)
+	}
+	if first.ClientKeyID != keyID || first.Processed != 2 || first.Ready || !first.HasPending {
+		t.Fatalf("first migration backfill result = %+v, want two processed with pending work", first)
+	}
+	var (
+		status      string
+		cursorAt    time.Time
+		cursorLogID int64
+		attempts    int
+		requests24h int64
+		requests30d int64
+		tokens24h   int64
+		tokens30d   int64
+		cost24h     int64
+		cost30d     int64
+	)
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT initialization_status, initialization_cursor_created_at,
+			initialization_cursor_request_log_id, initialization_attempts,
+			requests_used_24h, requests_used_30d,
+			observed_tokens_used_24h, observed_tokens_used_30d,
+			observed_cost_microusd_used_24h, observed_cost_microusd_used_30d
+		FROM api_key_budget_states
+		WHERE client_key_id = $1
+	`, keyID).Scan(
+		&status, &cursorAt, &cursorLogID, &attempts,
+		&requests24h, &requests30d, &tokens24h, &tokens30d, &cost24h, &cost30d,
+	); err != nil {
+		t.Fatalf("load committed first migration backfill state: %v", err)
+	}
+	if status != admin.APIKeyBudgetInitializationPending || !cursorAt.Equal(logs[1].createdAt) || cursorLogID != logs[1].id || attempts != 1 {
+		t.Fatalf("first migration backfill cursor = (%q, %s, %d, %d), want pending at (%s, %d) after one attempt", status, cursorAt, cursorLogID, attempts, logs[1].createdAt, logs[1].id)
+	}
+	if requests24h != 1 || requests30d != 2 || tokens24h != 0 || tokens30d != 20 || cost24h != 0 || cost30d != 200 {
+		t.Fatalf("first migration backfill counters = (%d, %d, %d, %d, %d, %d), want (1, 2, 0, 20, 0, 200)", requests24h, requests30d, tokens24h, tokens30d, cost24h, cost30d)
+	}
+
+	restartedPool, err := pgxpool.NewWithConfig(ctx, repo.pool.Config())
+	if err != nil {
+		t.Fatalf("reconnect migration backfill repository: %v", err)
+	}
+	t.Cleanup(restartedPool.Close)
+	restartedRepo := NewAdminRepository(restartedPool, "migration-budget-restart-test")
+	second, err := restartedRepo.RunAPIKeyBudgetInitializationCycle(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("resume migration backfill after repository restart: %v", err)
+	}
+	if second.ClientKeyID != keyID || second.Processed != 1 || !second.Ready || second.HasPending {
+		t.Fatalf("second migration backfill result = %+v, want one processed and ready", second)
+	}
+	state, err = restartedRepo.GetAPIKeyBudgetState(ctx, keyID)
+	if err != nil {
+		t.Fatalf("load completed migrated API key budget state: %v", err)
+	}
+	if state.InitializationStatus != admin.APIKeyBudgetInitializationReady || state.InitializedAt == nil || state.InitializationAttempts != 2 {
+		t.Fatalf("completed migrated API key budget state = %+v, want ready after two attempts", state)
+	}
+	if state.RequestsUsed24h != 2 || state.RequestsUsed30d != 3 ||
+		state.ObservedTokensUsed24h != 10 || state.ObservedTokensUsed30d != 30 ||
+		state.ObservedCostMicrousdUsed24h != 100 || state.ObservedCostMicrousdUsed30d != 300 {
+		t.Fatalf("completed migration counters = %+v, want requests (2, 3), tokens (10, 30), cost (100, 300)", state)
+	}
+	var legacyAdmissions, postLedgerLegacyAdmissions int
+	if err := repo.pool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE source = 'legacy'),
+			count(*) FILTER (WHERE admission_id = 'legacy:' || $1::bigint::text)
+		FROM api_key_budget_admissions
+	`, postLedgerLogID).Scan(&legacyAdmissions, &postLedgerLegacyAdmissions); err != nil {
+		t.Fatalf("inspect migration legacy admissions: %v", err)
+	}
+	if legacyAdmissions != 3 || postLedgerLegacyAdmissions != 0 {
+		t.Fatalf("legacy admissions = %d and post-ledger admissions = %d, want 3 and 0", legacyAdmissions, postLedgerLegacyAdmissions)
+	}
+
+	results, err = provider.UpTo(ctx, 50)
+	if err != nil {
+		t.Fatalf("apply management list indexes migration: %v", err)
+	}
+	if len(results) != 1 || results[0].Source.Version != 50 {
+		t.Fatalf("management migration up results = %+v, want only version 50", results)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 50)
+	assertStoreRelationExists(t, ctx, repo, "client_api_keys_management_page_idx", true)
+	assertStoreRelationExists(t, ctx, repo, "routing_pools_management_page_idx", true)
+}
+
+func TestManagementListIndexesMigrationFromVersion49(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	repo, provider := newIsolatedStoreMigrationRepository(t, ctx, 49)
+	assertStoreMigrationVersion(t, ctx, provider, 49)
+	assertStoreRelationExists(t, ctx, repo, "client_api_keys_management_page_idx", false)
+	assertStoreRelationExists(t, ctx, repo, "routing_pools_management_page_idx", false)
+
+	results, err := provider.UpTo(ctx, 50)
+	if err != nil {
+		t.Fatalf("apply management list indexes migration: %v", err)
+	}
+	if len(results) != 1 || results[0].Source.Version != 50 {
+		t.Fatalf("management migration up results = %+v, want only version 50", results)
+	}
+	assertStoreMigrationVersion(t, ctx, provider, 50)
+	assertStoreRelationExists(t, ctx, repo, "client_api_keys_management_page_idx", true)
+	assertStoreRelationExists(t, ctx, repo, "routing_pools_management_page_idx", true)
+}
+
 func TestAPIKeyBudgetLedgerMigrationDownRejectsLiveAdmissions(t *testing.T) {
 	ctx := context.Background()
 	repo := newTestAlertingRepository(t, ctx)
@@ -925,6 +1124,55 @@ func newStoreMigrationTestProvider(t *testing.T, repo *AlertingRepository) *goos
 		t.Fatalf("create migration provider: %v", err)
 	}
 	return provider
+}
+
+func newIsolatedStoreMigrationRepository(t *testing.T, ctx context.Context, targetVersion int64) (*AlertingRepository, *goose.Provider) {
+	t.Helper()
+	dsn := os.Getenv("N2API_STORE_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set N2API_STORE_TEST_DATABASE_URL to run PostgreSQL store migration tests")
+	}
+	adminPool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect store migration test database: %v", err)
+	}
+	t.Cleanup(adminPool.Close)
+	requireStoreTestDatabase(t, ctx, adminPool)
+
+	schema := fmt.Sprintf("store_migration_%d", time.Now().UnixNano())
+	quotedSchema := pgx.Identifier{schema}.Sanitize()
+	if _, err := adminPool.Exec(ctx, "CREATE SCHEMA "+quotedSchema); err != nil {
+		t.Fatalf("create store migration test schema: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := adminPool.Exec(cleanupCtx, "DROP SCHEMA "+quotedSchema+" CASCADE"); err != nil {
+			t.Errorf("drop store migration test schema: %v", err)
+		}
+	})
+
+	config, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse store migration test database URL: %v", err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	config.MaxConns = 4
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("connect isolated store migration test schema: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	repo := NewAlertingRepository(pool)
+	provider := newStoreMigrationTestProvider(t, repo)
+	results, err := provider.UpTo(ctx, targetVersion)
+	if err != nil {
+		t.Fatalf("apply store migrations through version %d: %v", targetVersion, err)
+	}
+	if len(results) != int(targetVersion) {
+		t.Fatalf("migration up results = %d, want %d versions", len(results), targetVersion)
+	}
+	return repo, provider
 }
 
 func rollBackManagementListMigration(t *testing.T, ctx context.Context, provider *goose.Provider) {
