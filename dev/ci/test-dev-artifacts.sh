@@ -355,6 +355,15 @@ done
 control_connections_block="$(sed -n '/^  control-connections)/,/^    ;;/p' "${repo_root}/dev/testing/run.sh")"
 grep -Fq 'AllMigrationsRoundTrip' <<<"${control_connections_block}" ||
   fail "control connection runner does not cover the full migration round trip"
+postgres_faults_block="$(sed -n '/^  postgres-faults)/,/^    ;;/p' "${repo_root}/dev/testing/run.sh")"
+grep -Fq 'docker pause' <<<"${postgres_faults_block}" ||
+  fail "PostgreSQL fault runner does not pause the real database container"
+grep -Fq '503 Service Unavailable' <<<"${postgres_faults_block}" ||
+  fail "PostgreSQL fault runner does not verify non-ready HTTP status"
+grep -Fq 'docker unpause' <<<"${postgres_faults_block}" ||
+  fail "PostgreSQL fault runner does not recover the database container"
+grep -Fq 'test-postgres-faults' "${repo_root}/.github/workflows/ci-image.yml" ||
+  fail "CI correctness matrix does not run the PostgreSQL fault gate"
 grep -Fq -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore cleanup does not remove local test images"
 grep -Fq 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||

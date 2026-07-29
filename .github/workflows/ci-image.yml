@@ -430,6 +430,7 @@ jobs:
           - test-go-quality
           - test-critical-race
           - test-control-connections
+          - test-postgres-faults
           - test-request-log-profile
           - test-management-list-profile
           - test-production-deploy
