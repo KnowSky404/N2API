@@ -237,6 +237,9 @@ test('alerts route manages redacted delivery actions and exact-match rules', () 
   assert.match(layoutPage, /label:\s*'Alerts'/);
   assert.match(layoutPage, /icon:\s*BellRing/);
   assert.match(alertingPage, /health\.tasks\?\.alertDelivery/);
+  assert.match(alertingPage, /Delivery is best-effort and uses non-durable in-memory queues/);
+  assert.match(alertingPage, /delivery\?\.lastFailedAt \? formatDate\(delivery\.lastFailedAt\) : 'No failure recorded'/);
+  assert.match(alertingPage, /delivery\?\.lastErrorCode \|\| 'None'/);
   assert.equal((alertingPage.match(/<table class="ui-table ui-table--stacked/g) ?? []).length, 2);
   assert.match(alertingPage, /min-w-\[1040px\]/);
   assert.doesNotMatch(alertingPage, /sticky right-0[^>]*data-label="Actions"/);

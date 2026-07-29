@@ -488,6 +488,9 @@
           {delivery?.running ? 'Running' : delivery?.enabled ? 'Enabled, not running' : 'Disabled'}
         </span>
       </div>
+      <p class="mt-1 max-w-3xl text-sm leading-5 text-[#6e6e6e]">
+        Delivery is best-effort and uses non-durable in-memory queues. Restarts, listener disconnects, or queue saturation can lose notifications.
+      </p>
       <dl class="mt-3 grid gap-x-6 gap-y-3 border-y border-[#ededed] py-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Queue</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery ? `${delivery.queueDepth} / ${delivery.queueCapacity}` : '-'}</dd></div>
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Listener</dt><dd class="mt-1 text-sm text-[#0d0d0d]">{delivery ? (delivery.listenerConnected ? 'Connected' : 'Disconnected') : '-'}</dd></div>
@@ -496,7 +499,9 @@
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Delivered</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery?.deliveredCount ?? '-'}</dd></div>
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Failed / dropped</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery ? `${delivery.failedCount} / ${delivery.droppedCount}` : '-'}</dd></div>
         <div><dt class="text-xs font-medium text-[#6e6e6e]">Retried</dt><dd class="mt-1 text-sm tabular-nums text-[#0d0d0d]">{delivery?.retriedCount ?? '-'}</dd></div>
-        <div><dt class="text-xs font-medium text-[#6e6e6e]">Last result</dt><dd class="mt-1 truncate text-sm text-[#0d0d0d]" title={delivery?.lastErrorCode || undefined}>{delivery?.lastErrorCode || (delivery?.lastDeliveredAt ? formatDate(delivery.lastDeliveredAt) : 'No delivery yet')}</dd></div>
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Last delivery</dt><dd class="mt-1 text-sm text-[#0d0d0d]">{delivery?.lastDeliveredAt ? formatDate(delivery.lastDeliveredAt) : 'No delivery yet'}</dd></div>
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Last failure</dt><dd class="mt-1 text-sm text-[#0d0d0d]">{delivery?.lastFailedAt ? formatDate(delivery.lastFailedAt) : 'No failure recorded'}</dd></div>
+        <div><dt class="text-xs font-medium text-[#6e6e6e]">Last error code</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]" title={delivery?.lastErrorCode || undefined}>{delivery?.lastErrorCode || 'None'}</dd></div>
       </dl>
     </section>
 
