@@ -1,6 +1,7 @@
 <script>
   import { page } from '$app/state';
   import { Copy, Pencil, Plus, ScrollText, SquareCheckBig, Trash2, X } from 'lucide-svelte';
+  import { copyText } from '$lib/clipboard.js';
   import {
     apiKeys,
     apiKeyModelWarnings,
@@ -9,8 +10,6 @@
     bulkSetSelectedAPIKeysDisabled,
     bulkUpdateSelectedAPIKeys,
     clearAPIKeySelection,
-    copyAPIKeySecret,
-    copySecret,
     createKey,
     deleteRevokedKey,
     formatCostMicrousd,
@@ -24,6 +23,7 @@
     modelListText,
     modelRouting,
     revokeKey,
+    revealAPIKeySecret,
     routingPools,
     selectedAPIKeyIds,
     session,
@@ -45,6 +45,8 @@
   let keyIssueFilter = $state('all');
   let modelRoutingRequested = $state(false);
   let createKeyModalOpen = $state(false);
+  const createKeyDialog = $state({ secret: '', copyError: '' });
+  const revealKeyDialog = $state({ keyId: 0, keyName: '', currentPassword: '', secret: '', error: '', loading: false });
   let editingKeyId = $state(0);
   let editingKeyDraft = $state(/** @type {import('$lib/admin-state.svelte.js').APIKey | null} */ (null));
   let editKeySaving = $state(false);
@@ -191,7 +193,8 @@
     apiKeys.error = '';
     apiKeys.newKeyName = '';
     apiKeys.newKeyRoutingPoolId = 0;
-    apiKeys.oneTimeSecret = '';
+    createKeyDialog.secret = '';
+    createKeyDialog.copyError = '';
     createKeyModalOpen = true;
   }
 
@@ -201,6 +204,66 @@
     apiKeys.error = '';
     apiKeys.newKeyName = '';
     apiKeys.newKeyRoutingPoolId = 0;
+    createKeyDialog.secret = '';
+    createKeyDialog.copyError = '';
+  }
+
+  async function copyCreatedKeySecret() {
+    if (!createKeyDialog.secret) return;
+    createKeyDialog.copyError = (await copyText(createKeyDialog.secret)) ? '' : 'Copy failed.';
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  function openRevealKeyModal(key) {
+    revealKeyDialog.keyId = key.id;
+    revealKeyDialog.keyName = key.name;
+    revealKeyDialog.currentPassword = '';
+    revealKeyDialog.secret = '';
+    revealKeyDialog.error = '';
+    revealKeyDialog.loading = false;
+  }
+
+  function resetRevealKeyDialog() {
+    revealKeyDialog.keyId = 0;
+    revealKeyDialog.keyName = '';
+    revealKeyDialog.currentPassword = '';
+    revealKeyDialog.secret = '';
+    revealKeyDialog.error = '';
+    revealKeyDialog.loading = false;
+  }
+
+  function closeRevealKeyModal() {
+    if (revealKeyDialog.loading) return;
+    resetRevealKeyDialog();
+  }
+
+  /** @param {SubmitEvent} event */
+  async function submitRevealKey(event) {
+    event.preventDefault();
+    if (revealKeyDialog.loading || revealKeyDialog.keyId <= 0) return;
+    const keyId = revealKeyDialog.keyId;
+    const currentPassword = revealKeyDialog.currentPassword;
+    revealKeyDialog.currentPassword = '';
+    revealKeyDialog.secret = '';
+    revealKeyDialog.error = '';
+    revealKeyDialog.loading = true;
+    const result = await revealAPIKeySecret(keyId, currentPassword);
+    if (!session.authenticated) {
+      resetRevealKeyDialog();
+      return;
+    }
+    if (revealKeyDialog.keyId !== keyId) return;
+    revealKeyDialog.loading = false;
+    if (result?.ok) {
+      revealKeyDialog.secret = result.secret;
+    } else {
+      revealKeyDialog.error = result?.error ?? 'Failed to reveal API key.';
+    }
+  }
+
+  async function copyRevealedKeySecret() {
+    if (!revealKeyDialog.secret) return;
+    revealKeyDialog.error = (await copyText(revealKeyDialog.secret)) ? '' : 'Copy failed.';
   }
 
   /** @param {number} keyId */
@@ -405,7 +468,12 @@
 
   /** @param {SubmitEvent} event */
   async function submitCreateKey(event) {
-    await createKey(event);
+    createKeyDialog.secret = '';
+    createKeyDialog.copyError = '';
+    const secret = await createKey(event);
+    if (secret && session.authenticated && createKeyModalOpen) {
+      createKeyDialog.secret = secret;
+    }
   }
 
   /** @param {SubmitEvent} event */
@@ -475,6 +543,10 @@
 
   $effect(() => {
     if (!session.authenticated) {
+      createKeyModalOpen = false;
+      createKeyDialog.secret = '';
+      createKeyDialog.copyError = '';
+      resetRevealKeyDialog();
       modelRoutingRequested = false;
       appliedAPIKeySearch = '';
       keySearch = '';
@@ -715,13 +787,19 @@
             </label>
             <p class="mt-2 text-xs leading-5 text-[#6e6e6e]">No routing pool = no model access.</p>
           </div>
-          {#if apiKeys.oneTimeSecret}
+          {#if createKeyDialog.secret}
             <div class="rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <p class="text-sm font-medium text-[#0a7a5e]">Copy this key before saving another one.</p>
-                <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={copySecret}>Copy</button>
+                <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={copyCreatedKeySecret}>
+                  <Copy class="size-3.5" aria-hidden="true" />
+                  Copy
+                </button>
               </div>
-              <code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]">{apiKeys.oneTimeSecret}</code>
+              <code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]">{createKeyDialog.secret}</code>
+              {#if createKeyDialog.copyError}
+                <p class="mt-2 text-sm text-red-700">{createKeyDialog.copyError}</p>
+              {/if}
             </div>
           {/if}
           <div class="ui-modal-actions flex justify-end gap-3">
@@ -731,6 +809,74 @@
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  {/if}
+
+  {#if revealKeyDialog.keyId > 0}
+    <div
+      class="ui-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="reveal-api-key-title"
+    >
+      <div class="ui-modal-panel ui-modal-panel--sm w-full max-w-md max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div class="min-w-0">
+            <h3 id="reveal-api-key-title" class="text-lg font-semibold text-[#0d0d0d]">Reveal API key</h3>
+            <p class="mt-1 truncate text-sm text-[#6e6e6e]">{revealKeyDialog.keyName}</p>
+          </div>
+          <button
+            class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
+            type="button"
+            disabled={revealKeyDialog.loading}
+            onclick={closeRevealKeyModal}
+            aria-label="Close reveal API key modal"
+            title="Close"
+          >
+            <X class="size-4" aria-hidden="true" />
+          </button>
+        </div>
+
+        {#if revealKeyDialog.error}
+          <p class="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{revealKeyDialog.error}</p>
+        {/if}
+
+        {#if revealKeyDialog.secret}
+          <div class="rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <p class="text-sm font-medium text-[#0a7a5e]">Full API key</p>
+              <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={copyRevealedKeySecret}>
+                <Copy class="size-3.5" aria-hidden="true" />
+                Copy
+              </button>
+            </div>
+            <code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d]">{revealKeyDialog.secret}</code>
+          </div>
+          <div class="ui-modal-actions mt-5 flex justify-end">
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" onclick={closeRevealKeyModal}>Close</button>
+          </div>
+        {:else}
+          <form class="space-y-4" onsubmit={submitRevealKey}>
+            <label class="grid gap-2 text-sm font-medium text-[#3c3c3c]">
+              Current password
+              <input
+                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-base text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
+                type="password"
+                autocomplete="current-password"
+                bind:value={revealKeyDialog.currentPassword}
+                disabled={revealKeyDialog.loading}
+                required
+              />
+            </label>
+            <div class="ui-modal-actions flex justify-end gap-3">
+              <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={revealKeyDialog.loading} onclick={closeRevealKeyModal}>Cancel</button>
+              <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={revealKeyDialog.loading}>
+                {revealKeyDialog.loading ? 'Verifying' : 'Reveal'}
+              </button>
+            </div>
+          </form>
+        {/if}
       </div>
     </div>
   {/if}
@@ -1567,12 +1713,12 @@
                 class="ui-button ui-button--icon ui-button--secondary inline-flex size-7 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                 type="button"
                 disabled={!key.secretAvailable}
-                onclick={() => copyAPIKeySecret(key.id)}
-                title={key.secretAvailable ? 'Copy full API key' : 'Full API key is unavailable for legacy keys'}
-                aria-label="Copy full API key"
+                onclick={() => openRevealKeyModal(key)}
+                title={key.secretAvailable ? 'Reveal full API key' : 'Full API key is unavailable for legacy keys'}
+                aria-label="Reveal full API key"
               >
                 <Copy class="size-3.5" aria-hidden="true" />
-                <span class="sr-only">Copy full API key</span>
+                <span class="sr-only">Reveal full API key</span>
               </button>
             {/if}
           </div>

@@ -547,7 +547,7 @@ export const apiUpstreamForm = $state({
   submitting: false,
   error: ''
 });
-/** @type {{ loading: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], newKeyName: string, newKeyRoutingPoolId: number, oneTimeSecret: string }} */
+/** @type {{ loading: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], newKeyName: string, newKeyRoutingPoolId: number }} */
 export const apiKeys = $state({
   loading: false,
   creating: false,
@@ -555,8 +555,7 @@ export const apiKeys = $state({
   error: '',
   items: [],
   newKeyName: '',
-  newKeyRoutingPoolId: 0,
-  oneTimeSecret: ''
+  newKeyRoutingPoolId: 0
 });
 /** @type {Record<string, boolean>} */
 export const selectedAPIKeyIds = $state({});
@@ -1215,36 +1214,43 @@ function normalizeRequestLogRetentionStats(stats) {
   };
 }
 
-export async function copySecret() {
-  if (!apiKeys.oneTimeSecret) return;
+/** @param {number} id @param {string} currentPassword */
+export async function revealAPIKeySecret(id, currentPassword) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-
-  const copied = await copyText(apiKeys.oneTimeSecret);
-  if (!isCurrentAuthenticated(version)) return;
-  if (!copied) {
-    apiKeys.error = 'Copy failed';
-  }
-}
-
-/** @param {number} id */
-export async function copyAPIKeySecret(id) {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-
-  apiKeys.error = '';
+  if (!isCurrentAuthenticated(version)) return null;
 
   try {
-    const payload = await requestJSON(`/api/admin/keys/${id}/secret`);
-    if (!isCurrentAuthenticated(version)) return;
-    const copied = await copyText(payload.secret);
-    if (!isCurrentAuthenticated(version)) return;
-    if (!copied) {
-      apiKeys.error = 'Copy failed';
-    }
+    const payload = await requestJSON(`/api/admin/keys/${id}/reveal-secret`, {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword })
+    });
+    if (!isCurrentAuthenticated(version)) return null;
+    return { ok: true, secret: String(payload?.secret ?? ''), error: '', retryAfterSeconds: 0 };
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    apiKeys.error = error instanceof Error ? error.message : 'Failed to copy API key';
+    if (!isCurrentAuthenticated(version)) return null;
+    const status = alertRequestStatus(error);
+    const message = alertRequestMessage(error);
+    if (status === 429) {
+      const retryAfter = retryAfterSeconds(
+        error && typeof error === 'object' && 'retryAfter' in error ? String(error.retryAfter ?? '') : ''
+      );
+      return {
+        ok: false,
+        secret: '',
+        error: retryAfter > 0
+          ? `Reveal rate limit reached. Try again in ${retryAfter} seconds.`
+          : 'Reveal rate limit reached. Try again shortly.',
+        retryAfterSeconds: retryAfter
+      };
+    }
+    return {
+      ok: false,
+      secret: '',
+      error: status === 400 && message === 'invalid_current_password'
+        ? 'Current password is incorrect.'
+        : message || 'Failed to reveal API key',
+      retryAfterSeconds: 0
+    };
   }
 }
 
@@ -1270,8 +1276,7 @@ function clearAPIKeys() {
     error: '',
     items: [],
     newKeyName: '',
-    newKeyRoutingPoolId: 0,
-    oneTimeSecret: ''
+    newKeyRoutingPoolId: 0
   });
   replaceState(selectedAPIKeyIds, {});
 }
@@ -4355,17 +4360,16 @@ export async function ignoreUpcomingUsagePricing(models) {
 export async function createKey(event) {
   event.preventDefault();
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return null;
 
   apiKeys.creating = true;
   apiKeys.error = '';
-  apiKeys.oneTimeSecret = '';
 
   try {
     const routingPoolId = Number(apiKeys.newKeyRoutingPoolId ?? 0);
     if (!Number.isInteger(routingPoolId) || routingPoolId < 0) {
       apiKeys.error = 'Routing pool selection is invalid';
-      return;
+      return null;
     }
     const payload = await requestJSON('/api/admin/keys', {
       method: 'POST',
@@ -4374,18 +4378,19 @@ export async function createKey(event) {
         routingPoolId: routingPoolId > 0 ? routingPoolId : null
       })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return null;
     apiKeys.items = [payload.key, ...apiKeys.items];
-    apiKeys.oneTimeSecret = payload.secret;
     apiKeys.newKeyName = '';
     apiKeys.newKeyRoutingPoolId = 0;
     await loadRequestLogs();
+    if (!isCurrentAuthenticated(version)) return null;
+    return String(payload.secret ?? '');
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return null;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to create API key';
+    return null;
   } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    apiKeys.creating = false;
+    if (isCurrentAuthenticated(version)) apiKeys.creating = false;
   }
 }
 

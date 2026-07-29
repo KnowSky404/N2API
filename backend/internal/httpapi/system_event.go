@@ -113,7 +113,8 @@ type providerBatchAudit struct {
 
 type statusCapturingResponseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode       int
+	failureErrorCode string
 }
 
 func (w *statusCapturingResponseWriter) WriteHeader(statusCode int) {
@@ -142,7 +143,7 @@ func (w *statusCapturingResponseWriter) Flush() {
 	}
 }
 
-func recordAdminMutationFailure(ctx context.Context, recorder SystemEventRecorder, r *http.Request, statusCode int, duration time.Duration) {
+func recordAdminMutationFailure(ctx context.Context, recorder SystemEventRecorder, r *http.Request, statusCode int, failureErrorCode string, duration time.Duration) {
 	if statusCode < http.StatusBadRequest {
 		return
 	}
@@ -154,10 +155,13 @@ func recordAdminMutationFailure(ctx context.Context, recorder SystemEventRecorde
 	if statusCode >= http.StatusInternalServerError {
 		severity = systemevent.SeverityError
 	}
+	if failureErrorCode == "" {
+		failureErrorCode = adminFailureErrorCode(statusCode)
+	}
 	_ = recordHTTPSystemEvent(ctx, recorder, systemevent.EventIntent{
 		Category: category, Severity: severity, Action: action, Outcome: systemevent.OutcomeFailure,
 		Target:    systemevent.Target{Type: targetType, ID: r.PathValue("id")},
-		ErrorCode: adminFailureErrorCode(statusCode),
+		ErrorCode: failureErrorCode,
 	}, statusCode, duration)
 }
 
@@ -188,6 +192,7 @@ func adminFailureEventForRequest(r *http.Request) (systemevent.Action, systemeve
 	}
 	definitions := map[string]definition{
 		"POST /api/admin/change-password":                             {systemevent.ActionAuthPasswordChangeFailed, systemevent.CategorySecurity, "admin"},
+		"POST /api/admin/keys/{id}/reveal-secret":                     {systemevent.ActionAPIKeySecretViewed, systemevent.CategorySecurity, "client_api_key"},
 		"DELETE /api/admin/sessions/{id}":                             {systemevent.ActionAuthSessionRevoked, systemevent.CategorySecurity, "admin_session"},
 		"POST /api/admin/sessions/revoke-others":                      {systemevent.ActionAuthSessionsRevokedOthers, systemevent.CategorySecurity, "admin_session_collection"},
 		"POST /api/admin/keys":                                        {systemevent.ActionAPIKeyCreated, systemevent.CategoryAudit, "client_api_key"},

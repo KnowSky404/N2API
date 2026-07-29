@@ -1111,16 +1111,24 @@ test('api keys table has 7 visible columns with correct headers', () => {
   assert.doesNotMatch(apiKeysPage, />Key limits<\/th>/);
 });
 
-test('api keys prefix column can copy reusable secrets', () => {
-  assert.match(apiKeysPage, /copyAPIKeySecret/);
-  assert.match(apiKeysPage, /onclick=\{\(\) => copyAPIKeySecret\(key\.id\)\}/);
-  assert.match(apiKeysPage, /Copy full API key/);
+test('api keys prefix column requires password step-up before revealing secrets', () => {
+  assert.match(apiKeysPage, /openRevealKeyModal/);
+  assert.match(apiKeysPage, /onclick=\{\(\) => openRevealKeyModal\(key\)\}/);
+  assert.match(apiKeysPage, /Reveal full API key/);
+  assert.match(apiKeysPage, /type="password"/);
+  assert.match(apiKeysPage, /bind:value=\{revealKeyDialog\.currentPassword\}/);
+  assert.match(apiKeysPage, /revealKeyDialog\.currentPassword = ''/);
+  assert.match(apiKeysPage, /revealKeyDialog\.secret = ''/);
+  assert.match(apiKeysPage, /createKeyDialog\.secret = ''/);
+  assert.doesNotMatch(apiKeysPage, /localStorage|sessionStorage/);
   assert.doesNotMatch(apiKeysPage, /You can copy it again later from the Prefix column\./);
   assert.doesNotMatch(apiKeysPage, /It will not be shown again\./);
 
-  assert.match(adminState, /export async function copyAPIKeySecret/);
-  assert.match(adminState, /\/api\/admin\/keys\/\$\{id\}\/secret/);
-  assert.match(adminState, /payload\.secret/);
+  assert.match(adminState, /export async function revealAPIKeySecret/);
+  assert.match(adminState, /\/api\/admin\/keys\/\$\{id\}\/reveal-secret/);
+  assert.match(adminState, /method: 'POST'/);
+  assert.match(adminState, /JSON\.stringify\(\{ currentPassword \}\)/);
+  assert.doesNotMatch(adminState, /oneTimeSecret|copyAPIKeySecret/);
 });
 
 test('api keys page has an Edit action modal for per-key settings', () => {

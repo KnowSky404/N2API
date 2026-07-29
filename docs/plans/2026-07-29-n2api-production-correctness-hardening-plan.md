@@ -20,8 +20,8 @@ review, and atomic commit are complete.
 | Durable budget ledger | pending | Current budget reads aggregate Request Logs |
 | Bounded admin lists | pending | Current key list has N+1 budget reads and both lists are unbounded |
 | Database TLS identity | completed | Parsed pgx primary and fallback attempts are classified as plaintext, unverified TLS, or verified-full with independent accepted-risk gates |
-| Secret reveal step-up | pending | Current GET returns the full secret for an ordinary session |
-| Password hash migration | pending | Current PBKDF2 verifier is fixed-parameter and passwords are trimmed |
+| Secret reveal step-up | completed | Password-bearing POST, bounded three-dimensional throttling, sanitized auditing, no-store responses, and dialog-local secret state are implemented and verified |
+| Password hash migration | completed | Bounded Argon2id hashing, legacy PBKDF2 compare-and-swap migration, exact password bytes, and dummy verification are implemented and verified |
 | Secondary deployment and CI work | pending | Existing hardening is partial; required gates and resource bounds are absent |
 | Final acceptance | pending | Task 2 passed `make test`, `make test-control-connections`, focused `go vet`, Store race tests, `bash -n`, and `git diff --check` |
 
@@ -259,7 +259,7 @@ Commit: `fix(security): require verified database tls or explicit risk`
 
 ## Task 9: Require Password Step-Up For Secret Reveal
 
-Status: pending
+Status: completed
 Dependencies: Task 5 and Task 10 hasher interface
 
 Implementation:
@@ -277,6 +277,31 @@ Tests and acceptance:
   cleanup for created and revealed secrets, CLI invocation, and security events
   are covered.
 - Browser verification exercises reveal, copy, close, and retry behavior.
+
+Evidence:
+
+- The legacy authenticated GET now returns method-not-allowed. The replacement
+  POST revalidates the session, atomically reserves IP/admin/key admission in a
+  fixed-window 5-per-minute throttle with at most 4,096 entries, and only then
+  calls the shared password hasher before reading or decrypting a secret.
+- Unit and HTTP tests cover exact password bytes, empty and wrong passwords,
+  malformed payload accounting, missing/revoked keys, success and failure
+  accounting, all three throttle dimensions, stable `Retry-After`, strict
+  concurrent admission, bounded fail-closed storage, `Cache-Control: no-store`,
+  and sanitized success/failure events including distinct wrong-password and
+  event-store failure outcomes.
+- The API Keys page keeps created and revealed secrets plus the reveal password
+  only in component-local dialog state. Module-level state, URL state,
+  `localStorage`, and `sessionStorage` are not used; closing or losing the
+  session clears both dialogs.
+- `make test` passed all Go packages, Svelte diagnostics with 0 errors and 0
+  warnings, 204 Bun tests, and the production frontend build. Focused Admin and
+  HTTP race tests and focused `go vet` also passed.
+- `bunx playwright --version` resolved Playwright 1.62.0. A temporary
+  `@playwright/test` 1.61.1 harness under `/tmp` passed desktop and 390x844
+  mobile flows for wrong-password retry, 429 retry messaging, successful
+  reveal, clipboard copy, close/reopen cleanup, browser-storage absence,
+  console health, and viewport containment.
 
 Commit: `fix(security): require step-up for api key reveal`
 
@@ -321,6 +346,8 @@ Evidence:
   64 MiB-memory/op, 67,112,082 B/op, and 37 allocs/op over three iterations.
 
 Commit: `feat(auth): migrate administrator password hashing`
+
+Follow-up: `fix(auth): preserve administrator password bytes`
 
 ## Task 11: Complete Secondary Deployment And CI Gates
 

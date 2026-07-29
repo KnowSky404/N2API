@@ -53,7 +53,9 @@ func TestRestoredAPIKeySecretDecrypts(t *testing.T) {
 	var response struct {
 		Secret string `json:"secret"`
 	}
-	mustJSON(t, client, http.MethodGet, env.baseURL, "/api/admin/keys/"+strconv.FormatInt(keyID, 10)+"/secret", "restored_secret_read", nil, nil, &response, http.StatusOK)
+	mustJSON(t, client, http.MethodPost, env.baseURL, "/api/admin/keys/"+strconv.FormatInt(keyID, 10)+"/reveal-secret", "restored_secret_read", nil, map[string]string{
+		"currentPassword": env.adminPassword,
+	}, &response, http.StatusOK)
 	if response.Secret == "" {
 		t.Fatal("stage=restored_secret field=secret")
 	}

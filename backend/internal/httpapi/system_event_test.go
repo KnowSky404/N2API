@@ -149,7 +149,8 @@ func TestDisabledLoginThrottleRecordsEveryFailedLoginEvent(t *testing.T) {
 func TestAPIKeySecretReadFailsClosedWhenSecurityEventCannotBeStored(t *testing.T) {
 	recorder := &memorySystemEventRecorder{err: errors.New("event store unavailable")}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService(), recorder)
-	req := authenticatedSystemEventRequest("/api/admin/keys/7/secret")
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/keys/7/reveal-secret", strings.NewReader(`{"currentPassword":"secret"}`))
+	req.AddCookie(&http.Cookie{Name: adminSessionCookieName, Value: "valid-session"})
 	res := httptest.NewRecorder()
 	server.ServeHTTP(res, req)
 	if res.Code != http.StatusInternalServerError {

@@ -791,8 +791,23 @@ func (s *Service) CreateAPIKey(ctx context.Context, name string, routingPoolID *
 	return CreatedAPIKey{Key: key, Secret: token}, nil
 }
 
-func (s *Service) GetAPIKeySecret(ctx context.Context, id int64) (string, error) {
-	encryptedSecret, err := s.repo.GetAPIKeyEncryptedSecret(ctx, id)
+func (s *Service) RevealAPIKeySecret(ctx context.Context, adminID, keyID int64, currentPassword string) (string, error) {
+	if adminID <= 0 || keyID <= 0 {
+		return "", ErrUnauthorized
+	}
+	adminRecord, err := s.repo.FindBootstrapAdmin(ctx)
+	if err != nil {
+		return "", err
+	}
+	if adminRecord.ID != adminID {
+		return "", ErrUnauthorized
+	}
+	valid, _ := s.passwordHasher.Verify(adminRecord.PasswordHash, currentPassword)
+	if !valid {
+		return "", ErrUnauthorized
+	}
+
+	encryptedSecret, err := s.repo.GetAPIKeyEncryptedSecret(ctx, keyID)
 	if err != nil {
 		return "", err
 	}

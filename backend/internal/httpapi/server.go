@@ -30,10 +30,13 @@ import (
 const adminSessionCookieName = "n2api_admin_session"
 
 const (
-	adminLoginThrottleBaseDelay   = time.Second
-	adminLoginThrottleMaxDelay    = time.Minute
-	adminLoginThrottleEntryTTL    = 15 * time.Minute
-	adminLoginThrottleEventWindow = time.Minute
+	adminLoginThrottleBaseDelay    = time.Second
+	adminLoginThrottleMaxDelay     = time.Minute
+	adminLoginThrottleEntryTTL     = 15 * time.Minute
+	adminLoginThrottleEventWindow  = time.Minute
+	secretRevealThrottleLimit      = 5
+	secretRevealThrottleWindow     = time.Minute
+	secretRevealThrottleMaxEntries = 4096
 )
 
 type HealthChecker interface {
@@ -50,7 +53,7 @@ type AdminService interface {
 	RevokeOtherSessions(ctx context.Context, adminID int64, currentToken string) (int64, error)
 	ListAPIKeys(ctx context.Context) ([]admin.APIKey, error)
 	CreateAPIKey(ctx context.Context, name string, routingPoolID *int64) (admin.CreatedAPIKey, error)
-	GetAPIKeySecret(ctx context.Context, id int64) (string, error)
+	RevealAPIKeySecret(ctx context.Context, adminID, keyID int64, currentPassword string) (string, error)
 	RevokeAPIKey(ctx context.Context, id int64) (admin.APIKey, error)
 	DeleteRevokedAPIKey(ctx context.Context, id int64) error
 	UpdateAPIKeyName(ctx context.Context, id int64, name string) (admin.APIKey, error)
@@ -221,6 +224,12 @@ type selectionBlockedReasonCount struct {
 func NewServer(cfg config.Config, health HealthChecker, admins AdminService, providers ProviderService, options ...any) http.Handler {
 	mux := http.NewServeMux()
 	systemEvents := systemEventRecorderFromOptions(options...)
+	secretRevealThrottle := secretRevealThrottleFromOptions(options...)
+	if secretRevealThrottle == nil {
+		secretRevealThrottle = admin.NewSecretRevealThrottle(admin.SecretRevealThrottleConfig{
+			Limit: secretRevealThrottleLimit, Window: secretRevealThrottleWindow, MaxEntries: secretRevealThrottleMaxEntries,
+		})
+	}
 	loginThrottleFailures := cfg.AdminLoginThrottleFailures
 	if !cfg.AdminLoginThrottleEnabled {
 		loginThrottleFailures = 0
@@ -449,13 +458,18 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	requireAdmin := func(next func(http.ResponseWriter, *http.Request, admin.Admin)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			started := time.Now()
+			auditedRequest := r
+			captured := &statusCapturingResponseWriter{ResponseWriter: w}
+			defer func() {
+				recordAdminMutationFailure(auditedRequest.Context(), systemEvents, auditedRequest, captured.statusCode, captured.failureErrorCode, time.Since(started))
+			}()
 			if admins == nil {
-				writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+				writeError(captured, http.StatusServiceUnavailable, "service_unavailable")
 				return
 			}
 			token, ok := readSessionCookie(r)
 			if !ok {
-				writeError(w, http.StatusUnauthorized, "unauthorized")
+				writeError(captured, http.StatusUnauthorized, "unauthorized")
 				return
 			}
 			currentAdmin, err := admins.ValidateSession(r.Context(), token)
@@ -466,16 +480,14 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 						Action: systemevent.ActionAuthSessionRejected, Outcome: systemevent.OutcomeFailure,
 						Target: systemevent.Target{Type: "admin_session"}, ErrorCode: "invalid_session",
 					}, http.StatusUnauthorized, 0)
-					writeError(w, http.StatusUnauthorized, "unauthorized")
+					writeError(captured, http.StatusUnauthorized, "unauthorized")
 					return
 				}
-				writeError(w, http.StatusInternalServerError, "internal_error")
+				writeError(captured, http.StatusInternalServerError, "internal_error")
 				return
 			}
-			auditedRequest := withAdminEventActor(r, currentAdmin)
-			captured := &statusCapturingResponseWriter{ResponseWriter: w}
+			auditedRequest = withAdminEventActor(r, currentAdmin)
 			next(captured, auditedRequest, currentAdmin)
-			recordAdminMutationFailure(auditedRequest.Context(), systemEvents, auditedRequest, captured.statusCode, time.Since(started))
 		}
 	}
 	registerAlertingAdminRoutes(mux, requireAdmin, alertingAdminService, alertActionTester)
@@ -618,14 +630,38 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		})
 	}))
 
-	mux.HandleFunc("GET /api/admin/keys/{id}/secret", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
+	mux.HandleFunc("GET /api/admin/keys/{id}/secret", func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed")
+	})
+
+	mux.HandleFunc("POST /api/admin/keys/{id}/reveal-secret", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
 		id, err := parsePositivePathID(r, "id")
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		secret, err := admins.GetAPIKeySecret(r.Context(), id)
+		var body struct {
+			CurrentPassword string `json:"currentPassword"`
+		}
+		decision := secretRevealThrottle.BeginAttempt(requestInfoForRequest(r).ClientIP, currentAdmin.ID, id)
+		if !decision.Allowed {
+			setRetryAfter(w, decision.RetryAfter)
+			writeError(w, http.StatusTooManyRequests, "rate_limited")
+			return
+		}
+		if err := decodeJSON(w, r, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request")
+			return
+		}
+		secret, err := admins.RevealAPIKeySecret(r.Context(), currentAdmin.ID, id, body.CurrentPassword)
 		if err != nil {
+			if errors.Is(err, admin.ErrUnauthorized) {
+				if captured, ok := w.(*statusCapturingResponseWriter); ok {
+					captured.failureErrorCode = "invalid_current_password"
+				}
+				writeError(w, http.StatusBadRequest, "invalid_current_password")
+				return
+			}
 			if errors.Is(err, admin.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "not_found")
 				return
@@ -633,6 +669,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			writeError(w, http.StatusInternalServerError, "internal_error")
 			return
 		}
+		w.Header().Set("Cache-Control", "no-store")
 		if err := recordHTTPSystemEvent(r.Context(), systemEvents, systemevent.EventIntent{
 			Category: systemevent.CategorySecurity, Severity: systemevent.SeverityInfo,
 			Action: systemevent.ActionAPIKeySecretViewed, Outcome: systemevent.OutcomeSuccess,
@@ -3184,6 +3221,15 @@ func alertActionTesterFromOptions(options ...any) AlertActionTester {
 	for _, option := range options {
 		if tester, ok := option.(AlertActionTester); ok {
 			return tester
+		}
+	}
+	return nil
+}
+
+func secretRevealThrottleFromOptions(options ...any) *admin.SecretRevealThrottle {
+	for _, option := range options {
+		if throttle, ok := option.(*admin.SecretRevealThrottle); ok {
+			return throttle
 		}
 	}
 	return nil

@@ -113,6 +113,7 @@ type fakeAdminService struct {
 	revokeOthersCount    int64
 	revokeOthersErr      error
 	changePasswordErr    error
+	reveal               fakeSecretReveal
 	keys                 []admin.APIKey
 	deletedKeyID         int64
 	deleteKeyErr         error
@@ -198,6 +199,17 @@ type fakeAdminService struct {
 	ignoreUpcomingPricing admin.UsagePricing
 	ignoreUpcomingIgnored []string
 	ignoreUpcomingErr     error
+}
+
+type fakeSecretReveal struct {
+	mu               sync.Mutex
+	calls            int
+	adminID          int64
+	keyID            int64
+	password         string
+	expectedPassword string
+	secret           string
+	err              error
 }
 
 type fakeProviderService struct {
@@ -403,11 +415,30 @@ func (s *fakeAdminService) CreateAPIKey(_ context.Context, name string, routingP
 	return admin.CreatedAPIKey{Key: key, Secret: "n2api_new_secret"}, nil
 }
 
-func (s *fakeAdminService) GetAPIKeySecret(_ context.Context, id int64) (string, error) {
-	if id == 7 {
-		return "n2api_abc_secret", nil
+func (s *fakeAdminService) RevealAPIKeySecret(_ context.Context, adminID, keyID int64, currentPassword string) (string, error) {
+	s.reveal.mu.Lock()
+	defer s.reveal.mu.Unlock()
+	s.reveal.calls++
+	s.reveal.adminID = adminID
+	s.reveal.keyID = keyID
+	s.reveal.password = currentPassword
+	if s.reveal.err != nil {
+		return "", s.reveal.err
 	}
-	return "", admin.ErrNotFound
+	expectedPassword := s.reveal.expectedPassword
+	if expectedPassword == "" {
+		expectedPassword = "secret"
+	}
+	if currentPassword != expectedPassword {
+		return "", admin.ErrUnauthorized
+	}
+	if keyID != 7 {
+		return "", admin.ErrNotFound
+	}
+	if s.reveal.secret != "" {
+		return s.reveal.secret, nil
+	}
+	return "n2api_abc_secret", nil
 }
 
 func (s *fakeAdminService) RevokeAPIKey(_ context.Context, id int64) (admin.APIKey, error) {
@@ -2401,26 +2432,18 @@ func TestCreateAPIKeyRejectsMissingRoutingPool(t *testing.T) {
 	}
 }
 
-func TestGetAPIKeySecretReturnsReusableSecret(t *testing.T) {
-	admins := newFakeAdminService()
-	server := NewServer(config.Config{}, staticHealth{}, admins, nil)
+func TestLegacyGetAPIKeySecretIsMethodNotAllowed(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/keys/7/secret", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
 	server.ServeHTTP(recorder, req)
 
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405; body=%s", recorder.Code, recorder.Body.String())
 	}
-	var body struct {
-		Secret string `json:"secret"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.Secret != "n2api_abc_secret" {
-		t.Fatalf("secret = %q, want reusable secret", body.Secret)
+	if strings.Contains(recorder.Body.String(), "n2api_abc_secret") {
+		t.Fatal("legacy GET response leaked API key secret")
 	}
 }
 

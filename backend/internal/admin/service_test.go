@@ -535,7 +535,9 @@ func TestSessionManagementMarksCurrentAndRevokesByOwner(t *testing.T) {
 
 func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevoked(t *testing.T) {
 	repo := newMemoryRepo()
-	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionSecret: "test-encryption-secret"})
+	hasher := &revealPasswordHasher{validPassword: " exact admin password "}
+	repo.admin = Admin{ID: 1, Username: "owner", PasswordHash: "encoded-admin-password"}
+	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionSecret: "test-encryption-secret", PasswordHasher: hasher})
 	result, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
@@ -549,12 +551,15 @@ func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevok
 	if repo.keys[result.Key.ID].EncryptedSecret == "" || strings.Contains(repo.keys[result.Key.ID].EncryptedSecret, result.Secret) {
 		t.Fatalf("encrypted secret = %q, want encrypted non-plaintext value", repo.keys[result.Key.ID].EncryptedSecret)
 	}
-	revealed, err := service.GetAPIKeySecret(context.Background(), result.Key.ID)
+	revealed, err := service.RevealAPIKeySecret(context.Background(), 1, result.Key.ID, " exact admin password ")
 	if err != nil {
-		t.Fatalf("GetAPIKeySecret returned error: %v", err)
+		t.Fatalf("RevealAPIKeySecret returned error: %v", err)
 	}
 	if revealed != result.Secret {
-		t.Fatalf("GetAPIKeySecret = %q, want created secret", revealed)
+		t.Fatalf("RevealAPIKeySecret = %q, want created secret", revealed)
+	}
+	if hasher.verifiedHash != "encoded-admin-password" || hasher.verifiedPassword != " exact admin password " {
+		t.Fatalf("password verification = %q / %q, want exact stored hash and password bytes", hasher.verifiedHash, hasher.verifiedPassword)
 	}
 	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); err != nil {
 		t.Fatalf("AuthenticateAPIKey returned error: %v", err)
@@ -565,8 +570,29 @@ func TestCreateAPIKeyStoresRetrievableEncryptedSecretAndAuthenticateRejectsRevok
 	if _, err := service.AuthenticateAPIKey(context.Background(), result.Secret); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("AuthenticateAPIKey error = %v, want ErrUnauthorized", err)
 	}
-	if _, err := service.GetAPIKeySecret(context.Background(), result.Key.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("GetAPIKeySecret revoked error = %v, want ErrNotFound", err)
+	if _, err := service.RevealAPIKeySecret(context.Background(), 1, result.Key.ID, " exact admin password "); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RevealAPIKeySecret revoked error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRevealAPIKeySecretRejectsPasswordBeforeReadingSecret(t *testing.T) {
+	repo := newMemoryRepo()
+	repo.admin = Admin{ID: 1, Username: "owner", PasswordHash: "encoded-admin-password"}
+	hasher := &revealPasswordHasher{validPassword: "correct-password"}
+	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionSecret: "test-encryption-secret", PasswordHasher: hasher})
+	created, err := service.CreateAPIKey(context.Background(), "codex laptop", nil)
+	if err != nil {
+		t.Fatalf("CreateAPIKey returned error: %v", err)
+	}
+
+	for _, password := range []string{"", "wrong-password"} {
+		repo.getAPIKeySecretCalls = 0
+		if _, err := service.RevealAPIKeySecret(context.Background(), 1, created.Key.ID, password); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("RevealAPIKeySecret(%q) error = %v, want ErrUnauthorized", password, err)
+		}
+		if repo.getAPIKeySecretCalls != 0 {
+			t.Fatalf("secret reads for rejected password = %d, want 0", repo.getAPIKeySecretCalls)
+		}
 	}
 }
 
@@ -580,7 +606,9 @@ func TestAPIKeyEncryptionUsesCurrentKeyAndReadsLegacyPreviousKey(t *testing.T) {
 		t.Fatalf("NewKeyring returned error: %v", err)
 	}
 	repo := newMemoryRepo()
-	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionKeyring: keyring})
+	hasher := &revealPasswordHasher{validPassword: "owner-password"}
+	repo.admin = Admin{ID: 1, Username: "owner", PasswordHash: "encoded-admin-password"}
+	service := NewService(repo, Config{SessionTTL: time.Hour, EncryptionKeyring: keyring, PasswordHasher: hasher})
 	result, err := service.CreateAPIKey(context.Background(), "rotation fixture", nil)
 	if err != nil {
 		t.Fatalf("CreateAPIKey returned error: %v", err)
@@ -592,12 +620,12 @@ func TestAPIKeyEncryptionUsesCurrentKeyAndReadsLegacyPreviousKey(t *testing.T) {
 	key := repo.keys[result.Key.ID]
 	key.EncryptedSecret = legacyCiphertext
 	repo.keys[result.Key.ID] = key
-	revealed, err := service.GetAPIKeySecret(context.Background(), result.Key.ID)
+	revealed, err := service.RevealAPIKeySecret(context.Background(), 1, result.Key.ID, "owner-password")
 	if err != nil {
-		t.Fatalf("GetAPIKeySecret returned error for legacy previous key: %v", err)
+		t.Fatalf("RevealAPIKeySecret returned error for legacy previous key: %v", err)
 	}
 	if revealed != "legacy-oauth-refresh-token" {
-		t.Fatalf("GetAPIKeySecret = %q, want legacy-oauth-refresh-token", revealed)
+		t.Fatalf("RevealAPIKeySecret = %q, want legacy-oauth-refresh-token", revealed)
 	}
 }
 
@@ -2106,6 +2134,7 @@ type memoryRepo struct {
 	sessions                       map[string]memorySession
 	keys                           map[int64]memoryAPIKey
 	nextAPIKeyID                   int64
+	getAPIKeySecretCalls           int
 	authenticateErr                error
 	authenticateTouched            bool
 	authenticationTimes            []time.Time
@@ -2167,6 +2196,22 @@ type passwordChangeRaceRepo struct {
 
 type capturePasswordHasher struct {
 	verifiedHashes []string
+}
+
+type revealPasswordHasher struct {
+	validPassword    string
+	verifiedHash     string
+	verifiedPassword string
+}
+
+func (h *revealPasswordHasher) Hash(string) (string, error) {
+	return "encoded-new-password", nil
+}
+
+func (h *revealPasswordHasher) Verify(encoded, password string) (bool, bool) {
+	h.verifiedHash = encoded
+	h.verifiedPassword = password
+	return password == h.validPassword, false
 }
 
 func (h *capturePasswordHasher) Hash(string) (string, error) {
@@ -2381,6 +2426,7 @@ func (r *memoryRepo) CreateAPIKey(_ context.Context, name, hash, prefix, encrypt
 }
 
 func (r *memoryRepo) GetAPIKeyEncryptedSecret(_ context.Context, id int64) (string, error) {
+	r.getAPIKeySecretCalls++
 	key, ok := r.keys[id]
 	if !ok || key.RevokedAt != nil {
 		return "", ErrNotFound

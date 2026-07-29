@@ -1575,7 +1575,9 @@ test('api keys page uses modal to create keys and removes gateway model-settings
   assert.match(apiKeysSource, /loadRoutingPools/);
   assert.doesNotMatch(apiKeysSource, /loadUsageSummary/);
 
-  // The newly created secret remains available inside the create modal only.
-  assert.match(apiKeysSource, /oneTimeSecret/);
+  // The newly created secret remains available inside page-local dialog state only.
+  assert.match(apiKeysSource, /createKeyDialog = \$state/);
+  assert.match(apiKeysSource, /createKeyDialog\.secret/);
+  assert.doesNotMatch(adminStateSource, /oneTimeSecret/);
   assert.doesNotMatch(apiKeysSource, /You can copy it again later from the Prefix column\./);
 });
