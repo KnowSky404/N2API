@@ -116,16 +116,25 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		assertProcessReady(t, port)
 		listenerPID := waitForPostgresApplicationBackend(t, pool, store.PostgresApplicationNameSystemEventListener, 0)
 		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 2)
+		assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameSystemEventListener, 1)
 
-		var terminated bool
-		terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err := pool.QueryRow(terminateCtx, `SELECT pg_terminate_backend($1)`, listenerPID).Scan(&terminated)
-		terminateCancel()
-		if err != nil || !terminated {
-			t.Fatalf("terminate alert listener backend = terminated:%v err:%v", terminated, err)
+		for attempt := 1; attempt <= 2; attempt++ {
+			var terminated bool
+			terminateCtx, terminateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := pool.QueryRow(terminateCtx, `SELECT pg_terminate_backend($1)`, listenerPID).Scan(&terminated)
+			terminateCancel()
+			if err != nil || !terminated {
+				t.Fatalf("terminate alert listener backend attempt %d = terminated:%v err:%v", attempt, terminated, err)
+			}
+			nextPID := waitForPostgresApplicationBackend(t, pool, store.PostgresApplicationNameSystemEventListener, listenerPID)
+			if nextPID == listenerPID {
+				t.Fatalf("alert listener reconnect attempt %d reused terminated backend PID %d", attempt, listenerPID)
+			}
+			listenerPID = nextPID
+			assertProcessReady(t, port)
+			assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameAppPool, 2)
+			assertPostgresApplicationConnectionCount(t, pool, store.PostgresApplicationNameSystemEventListener, 1)
 		}
-		waitForPostgresApplicationBackend(t, pool, store.PostgresApplicationNameSystemEventListener, listenerPID)
-		assertProcessReady(t, port)
 		stopN2APIProcess(t, process, limitedURL, adminPassword, encryptionSecret)
 	})
 

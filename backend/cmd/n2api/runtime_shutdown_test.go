@@ -2,12 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -151,6 +159,194 @@ func TestRuntimeShutdownLetsLongRequestFinishDuringDrain(t *testing.T) {
 	if err := awaitTestError(t, shutdownDone, "runtime shutdown"); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
+}
+
+func TestRuntimeShutdownDrainsWaitingUpstreamAfterSIGTERM(t *testing.T) {
+	if os.Getenv("N2API_RUNTIME_SIGTERM_HELPER") == "1" {
+		runRuntimeSIGTERMHelper(t)
+		return
+	}
+
+	upstreamStarted := make(chan struct{}, 1)
+	releaseUpstream := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseUpstream) }) }
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case upstreamStarted <- struct{}{}:
+		default:
+		}
+		<-releaseUpstream
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	defer release()
+
+	reserved, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve helper listener: %v", err)
+	}
+	helperAddress := reserved.Addr().String()
+	if err := reserved.Close(); err != nil {
+		t.Fatalf("close reserved helper listener: %v", err)
+	}
+
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve test binary: %v", err)
+	}
+	command := exec.Command(testBinary, "-test.run=^TestRuntimeShutdownDrainsWaitingUpstreamAfterSIGTERM$")
+	command.Env = append(os.Environ(),
+		"N2API_RUNTIME_SIGTERM_HELPER=1",
+		"N2API_RUNTIME_SIGTERM_ADDR="+helperAddress,
+		"N2API_RUNTIME_SIGTERM_UPSTREAM="+upstream.URL,
+	)
+	var childLogs bytes.Buffer
+	command.Stdout = &childLogs
+	command.Stderr = &childLogs
+	if err := command.Start(); err != nil {
+		t.Fatalf("start SIGTERM helper: %v", err)
+	}
+	childDone := make(chan struct{})
+	var childErr error
+	go func() {
+		childErr = command.Wait()
+		close(childDone)
+	}()
+	t.Cleanup(func() {
+		release()
+		select {
+		case <-childDone:
+		default:
+			_ = command.Process.Kill()
+			<-childDone
+		}
+	})
+
+	waitForRuntimeHelperListener(t, helperAddress, childDone, &childLogs)
+	type responseResult struct {
+		status int
+		err    error
+	}
+	responseDone := make(chan responseResult, 1)
+	go func() {
+		response, requestErr := http.Get("http://" + helperAddress + "/waiting-upstream")
+		if requestErr != nil {
+			responseDone <- responseResult{err: requestErr}
+			return
+		}
+		_ = response.Body.Close()
+		responseDone <- responseResult{status: response.StatusCode}
+	}()
+	awaitTestSignal(t, upstreamStarted, "helper upstream request")
+
+	signaledAt := time.Now()
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal helper process: %v", err)
+	}
+	select {
+	case result := <-responseDone:
+		t.Fatalf("request completed before upstream release after SIGTERM: %+v; logs: %s", result, childLogs.String())
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+
+	select {
+	case result := <-responseDone:
+		if result.err != nil || result.status != http.StatusNoContent {
+			t.Fatalf("request result after SIGTERM = %+v; logs: %s", result, childLogs.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("request did not finish during SIGTERM drain; logs: %s", childLogs.String())
+	}
+	if elapsed := time.Since(signaledAt); elapsed < 100*time.Millisecond {
+		t.Fatalf("request completed after %s, before the controlled upstream release", elapsed)
+	}
+	select {
+	case <-childDone:
+		if childErr != nil {
+			t.Fatalf("SIGTERM helper exit: %v; logs: %s", childErr, childLogs.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("SIGTERM helper did not exit after drained request; logs: %s", childLogs.String())
+	}
+}
+
+func runRuntimeSIGTERMHelper(t *testing.T) {
+	address := os.Getenv("N2API_RUNTIME_SIGTERM_ADDR")
+	upstreamURL := os.Getenv("N2API_RUNTIME_SIGTERM_UPSTREAM")
+	if address == "" || upstreamURL == "" {
+		t.Fatal("SIGTERM helper configuration is incomplete")
+	}
+	listener, err := net.Listen("tcp4", address)
+	if err != nil {
+		t.Fatalf("listen for SIGTERM helper: %v", err)
+	}
+
+	requestCtx, cancelRequests := context.WithCancel(context.Background())
+	requests := newRuntimeRequestTracker()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		upstreamRequest, requestErr := http.NewRequestWithContext(request.Context(), http.MethodGet, upstreamURL, nil)
+		if requestErr != nil {
+			http.Error(w, "upstream request unavailable", http.StatusBadGateway)
+			return
+		}
+		response, requestErr := http.DefaultClient.Do(upstreamRequest)
+		if requestErr != nil {
+			http.Error(w, "upstream request failed", http.StatusBadGateway)
+			return
+		}
+		_ = response.Body.Close()
+		w.WriteHeader(response.StatusCode)
+	})
+	server := newHTTPServer(config.Config{}, requests.Wrap(handler), requestCtx)
+	servers := lifecycle.NewSupervisor(context.Background())
+	if err := servers.Start("sigterm_http", func(context.Context) error {
+		serveErr := server.Serve(listener)
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			return nil
+		}
+		return serveErr
+	}); err != nil {
+		t.Fatalf("start SIGTERM helper server: %v", err)
+	}
+	t.Cleanup(func() {
+		cancelRequests()
+		_ = server.Close()
+		servers.Stop()
+	})
+
+	readiness := lifecycle.NewReadiness()
+	readiness.MarkReady()
+	runtime := runtimeShutdown{
+		mainServer: server, readiness: readiness, servers: servers, requests: requests,
+		cancelRequests: cancelRequests, totalTimeout: 3 * time.Second, requestDrain: 2 * time.Second,
+	}
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	<-signalCtx.Done()
+	if err := runtime.run("signal"); err != nil {
+		t.Fatalf("SIGTERM runtime shutdown: %v", err)
+	}
+}
+
+func waitForRuntimeHelperListener(t *testing.T, address string, childDone <-chan struct{}, logs fmt.Stringer) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("tcp4", address, 50*time.Millisecond)
+		if err == nil {
+			_ = connection.Close()
+			return
+		}
+		select {
+		case <-childDone:
+			t.Fatalf("SIGTERM helper exited before listening; logs: %s", logs.String())
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("SIGTERM helper did not listen on %s; logs: %s", address, logs.String())
 }
 
 func TestRuntimeShutdownDrainsAndEventuallyCancelsSSE(t *testing.T) {
