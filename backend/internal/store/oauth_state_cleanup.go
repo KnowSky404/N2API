@@ -55,6 +55,9 @@ func (l *oauthStateCleanupLease) CountEligible(ctx context.Context, cutoff time.
 	if l == nil || l.conn == nil || cutoff.IsZero() {
 		return 0, errors.New("oauth state cleanup lease is invalid")
 	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	var count int64
 	err := l.conn.QueryRow(ctx, `
 		SELECT count(*)
@@ -67,6 +70,9 @@ func (l *oauthStateCleanupLease) CountEligible(ctx context.Context, cutoff time.
 func (l *oauthStateCleanupLease) DeleteEligibleBatch(ctx context.Context, cutoff time.Time, batchSize int) (int64, error) {
 	if l == nil || l.conn == nil || cutoff.IsZero() || batchSize < 1 || batchSize > oauthstatecleanup.MaxBatchSize {
 		return 0, errors.New("oauth state cleanup batch is invalid")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	tx, err := l.conn.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {

@@ -58,6 +58,9 @@ func TestOAuthStateCleanupRepositorySerializesWorkersAndHonorsCancellation(t *te
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
+	if _, err := first.CountEligible(canceled, time.Now()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled count error = %v", err)
+	}
 	if _, err := first.DeleteEligibleBatch(canceled, time.Now(), 1); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled delete error = %v", err)
 	}
