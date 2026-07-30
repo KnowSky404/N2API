@@ -70,10 +70,11 @@ Apply accepts only `--plan PATH`; it never accepts a replacement target. Apply
 rechecks every invariant while holding the shared lock and rejects expired,
 edited, or stale plans. Repeating an already healthy target returns `noop`.
 
-Plans and receipts are sanitized and stored at mode `0600`. Every mutating
-operation uses the same lock, records its operation ID, has bounded external
-commands, handles SIGINT/SIGTERM, and preserves a failure receipt. Never delete
-an unfamiliar lock or edit a plan to bypass a failed check.
+Plans and receipts are sanitized and stored at mode `0600`. Every plan and
+apply records an operation ID and receipt. Apply, `backup create`, and
+`restore drill` use the same lock, bound external commands, handle
+SIGINT/SIGTERM, and preserve a failure receipt. Never delete an unfamiliar lock
+or edit a plan to bypass a failed check.
 
 ## Routine Operations
 
@@ -170,6 +171,7 @@ BACKUP_DIR=/srv/n2api-backups
 PUBLIC_URL=https://n2api.example.com
 TARGET_IMAGE='ghcr.io/knowsky404/n2api:YYYYMMDDNN@sha256:<64-lowercase-hex-characters>'
 
+install -d -m 0700 "$(dirname "$ENV_FILE")" "$STATE_DIR" "$BACKUP_DIR"
 ./ops/n2api describe --format json
 ./ops/n2api --env-file "$ENV_FILE" --state-dir "$STATE_DIR" doctor --format json
 ./ops/n2api --env-file "$ENV_FILE" --state-dir "$STATE_DIR" config init \
@@ -205,9 +207,16 @@ CURRENT_IMAGE="$(jq -r '.current.n2api.configured_image' <<<"$CURRENT_STATUS")"
 TARGET_IMAGE="$(./ops/n2api --env-file "$ENV_FILE" --state-dir "$STATE_DIR" \
   image resolve --version YYYYMMDDNN --format json | jq -r '.current.image')"
 
+set +e
 BACKUP_RESULT="$(./ops/n2api --env-file "$ENV_FILE" --state-dir "$STATE_DIR" \
   backup create --evidence-class real_operator --format json)"
-BACKUP_ARCHIVE="$(jq -r '.artifacts[] | select(.type == "backup_archive") | .path' \
+BACKUP_STATUS=$?
+set -e
+[[ "$BACKUP_STATUS" -eq 3 ]] || { printf 'backup create failed\n' >&2; exit 1; }
+jq -e '.status == "attention" and .reason_code == "backup_created_off_host_attention"' \
+  <<<"$BACKUP_RESULT" >/dev/null
+BACKUP_ARCHIVE="$(jq -er \
+  '.artifacts[] | select(.type == "postgres_custom_archive") | .path' \
   <<<"$BACKUP_RESULT")"
 ./ops/n2api --env-file "$ENV_FILE" --state-dir "$STATE_DIR" \
   restore drill --archive "$BACKUP_ARCHIVE" --image "$CURRENT_IMAGE" \

@@ -37,6 +37,9 @@ for command in \
   'status --format json' \
   'image resolve --version YYYYMMDDNN --format json' \
   'backup create --evidence-class real_operator --format json' \
+  'BACKUP_STATUS=$?' \
+  '[[ "$BACKUP_STATUS" -eq 3 ]] || { printf '\''backup create failed\n'\'' >&2; exit 1; }' \
+  'select(.type == "postgres_custom_archive")' \
   'backup verify --archive "$BACKUP_ARCHIVE" --format json' \
   'restore drill --archive "$BACKUP_ARCHIVE" --image "$CURRENT_IMAGE" \' \
   'upgrade plan --image "$TARGET_IMAGE" --format json' \
@@ -62,5 +65,23 @@ jq -e '
   .current.plan_apply.apply_requires_plan == true and
   .current.plan_apply.live_database_restore_supported == false
 ' <<<"${describe}" >/dev/null || fail "describe contract does not point to the runbook"
+
+backup_fixture='{
+  "status":"attention",
+  "reason_code":"backup_created_off_host_attention",
+  "artifacts":[
+    {"type":"postgres_custom_archive","path":"/srv/n2api-backups/n2api-fixture.dump"},
+    {"type":"backup_metadata","path":"/srv/n2api-backups/n2api-fixture.metadata.json"}
+  ]
+}'
+backup_archive="$(jq -er \
+  '.artifacts[] | select(.type == "postgres_custom_archive") | .path' \
+  <<<"${backup_fixture}")" || fail "documented backup artifact selector failed"
+[[ "${backup_archive}" == /srv/n2api-backups/n2api-fixture.dump ]] ||
+  fail "documented backup artifact selector returned the wrong path"
+jq -e '
+  .status == "attention" and
+  .reason_code == "backup_created_off_host_attention"
+' <<<"${backup_fixture}" >/dev/null || fail "documented backup attention contract failed"
 
 printf 'PASS: agent operations documentation contract\n'
