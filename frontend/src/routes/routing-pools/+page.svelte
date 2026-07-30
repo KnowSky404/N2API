@@ -99,6 +99,13 @@
     }
   });
 
+  $effect(() => {
+    const query = routingPoolSearch.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!session.authenticated || query === routingPools.appliedQuery) return;
+    const timeout = setTimeout(() => void loadRoutingPools({ query }), 250);
+    return () => clearTimeout(timeout);
+  });
+
   /** @param {SubmitEvent} event */
   async function submitCreatePool(event) {
     event.preventDefault();
@@ -376,7 +383,7 @@
         <button
           class="ui-button ui-button--icon ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white text-[#0d0d0d] disabled:cursor-not-allowed disabled:opacity-60"
           disabled={routingPools.loading}
-          onclick={() => loadRoutingPools()}
+          onclick={() => loadRoutingPools({ query: routingPoolSearch })}
           aria-label={routingPools.loading ? 'Refreshing routing pools' : 'Refresh routing pools'}
           title="Refresh routing pools"
         >
@@ -470,6 +477,7 @@
         <input
           class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           type="search"
+          maxlength="200"
           placeholder="Search pools"
           bind:value={routingPoolSearch}
         />
@@ -494,7 +502,7 @@
       <p class="ui-loading-state mt-6 text-sm text-[#6e6e6e]" aria-live="polite">Loading routing pools...</p>
     {:else if routingPools.items.length === 0}
       <p class="mt-6 rounded-lg border border-dashed border-[#d9d9d9] bg-[#fafafa] p-6 text-sm text-[#6e6e6e]">
-        No routing pools configured.
+        {routingPools.appliedQuery ? 'No routing pools match your search.' : 'No routing pools configured.'}
       </p>
     {:else if visibleRoutingPools.length === 0}
       <div class="mt-6 rounded-lg border border-dashed border-[#d9d9d9] bg-[#fafafa] p-6 text-sm text-[#6e6e6e]">

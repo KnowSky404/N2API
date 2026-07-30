@@ -527,7 +527,7 @@ export const provider = $state({
 });
 /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
-/** @type {{ loading: boolean, loadingMore: boolean, saving: boolean, error: string, items: RoutingPool[], nextCursor: string, hasMore: boolean, newPoolName: string, newPoolDescription: string, newPoolFallbackPoolId: string }} */
+/** @type {{ loading: boolean, loadingMore: boolean, saving: boolean, error: string, items: RoutingPool[], nextCursor: string, hasMore: boolean, appliedQuery: string, newPoolName: string, newPoolDescription: string, newPoolFallbackPoolId: string }} */
 export const routingPools = $state({
   loading: false,
   loadingMore: false,
@@ -536,6 +536,7 @@ export const routingPools = $state({
   items: [],
   nextCursor: '',
   hasMore: false,
+  appliedQuery: '',
   newPoolName: '',
   newPoolDescription: '',
   newPoolFallbackPoolId: '0'
@@ -558,7 +559,7 @@ export const apiUpstreamForm = $state({
   submitting: false,
   error: ''
 });
-/** @type {{ loading: boolean, loadingMore: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], nextCursor: string, hasMore: boolean, newKeyName: string, newKeyRoutingPoolId: number }} */
+/** @type {{ loading: boolean, loadingMore: boolean, creating: boolean, saving: boolean, error: string, items: APIKey[], nextCursor: string, hasMore: boolean, appliedQuery: string, newKeyName: string, newKeyRoutingPoolId: number }} */
 export const apiKeys = $state({
   loading: false,
   loadingMore: false,
@@ -568,6 +569,7 @@ export const apiKeys = $state({
   items: [],
   nextCursor: '',
   hasMore: false,
+  appliedQuery: '',
   newKeyName: '',
   newKeyRoutingPoolId: 0
 });
@@ -1304,6 +1306,7 @@ function clearAPIKeys() {
     items: [],
     nextCursor: '',
     hasMore: false,
+    appliedQuery: '',
     newKeyName: '',
     newKeyRoutingPoolId: 0
   });
@@ -1501,6 +1504,7 @@ function clearProvider() {
     items: [],
     nextCursor: '',
     hasMore: false,
+    appliedQuery: '',
     newPoolName: '',
     newPoolDescription: '',
     newPoolFallbackPoolId: '0'
@@ -3256,7 +3260,12 @@ export async function disconnectProviderAccount(account) {
   }
 }
 
-/** @param {{ append?: boolean }} [options] */
+/** @param {unknown} query */
+function normalizeManagementListQuery(query) {
+  return String(query ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** @param {{ append?: boolean, query?: string }} [options] */
 export async function loadKeys(options = {}) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
@@ -3264,16 +3273,22 @@ export async function loadKeys(options = {}) {
   const append = Boolean(options.append);
   if (append && (apiKeys.loading || !apiKeys.hasMore || !apiKeys.nextCursor || apiKeys.loadingMore)) return;
   const requestSequence = ++apiKeyListRequestSequence;
+  const query = append ? apiKeys.appliedQuery : normalizeManagementListQuery(options.query);
 
   if (append) apiKeys.loadingMore = true;
   else {
     apiKeys.loading = true;
     apiKeys.loadingMore = false;
+    if (query !== apiKeys.appliedQuery) {
+      apiKeys.nextCursor = '';
+      apiKeys.hasMore = false;
+    }
   }
   apiKeys.error = '';
 
   try {
     const params = new URLSearchParams({ limit: '50' });
+    if (query) params.set('q', query);
     if (append) params.set('cursor', apiKeys.nextCursor);
     const payload = await requestJSON(`/api/admin/keys?${params.toString()}`);
     if (!isCurrentAuthenticated(version) || requestSequence !== apiKeyListRequestSequence) return;
@@ -3284,6 +3299,7 @@ export async function loadKeys(options = {}) {
       apiKeys.items = [...apiKeys.items, ...incoming.filter((key) => !existing.has(key.id))];
     } else {
       apiKeys.items = incoming;
+      apiKeys.appliedQuery = query;
       clearAPIKeySelection();
     }
     apiKeys.nextCursor = payload.nextCursor ?? '';
@@ -3302,23 +3318,29 @@ export async function loadMoreKeys() {
   return loadKeys({ append: true });
 }
 
-/** @param {{ append?: boolean }} [options] */
+/** @param {{ append?: boolean, query?: string }} [options] */
 export async function loadRoutingPools(options = {}) {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
 
   const append = Boolean(options.append);
-  if (append && (!routingPools.hasMore || !routingPools.nextCursor || routingPools.loadingMore)) return;
+  if (append && (routingPools.loading || !routingPools.hasMore || !routingPools.nextCursor || routingPools.loadingMore)) return;
   const requestSequence = ++routingPoolListRequestSequence;
+  const query = append ? routingPools.appliedQuery : normalizeManagementListQuery(options.query);
 
   if (append) routingPools.loadingMore = true;
   else {
     routingPools.loading = true;
     routingPools.loadingMore = false;
+    if (query !== routingPools.appliedQuery) {
+      routingPools.nextCursor = '';
+      routingPools.hasMore = false;
+    }
   }
   routingPools.error = '';
   try {
     const params = new URLSearchParams({ limit: '50' });
+    if (query) params.set('q', query);
     if (append) params.set('cursor', routingPools.nextCursor);
     const payload = await requestJSON(`/api/admin/routing-pools?${params.toString()}`);
     if (!isCurrentAuthenticated(version) || requestSequence !== routingPoolListRequestSequence) return;
@@ -3329,6 +3351,7 @@ export async function loadRoutingPools(options = {}) {
       routingPools.items = [...routingPools.items, ...incoming.filter((pool) => !existing.has(pool.id))];
     } else {
       routingPools.items = incoming;
+      routingPools.appliedQuery = query;
     }
     routingPools.nextCursor = payload.nextCursor ?? '';
     routingPools.hasMore = Boolean(payload.hasMore && routingPools.nextCursor);

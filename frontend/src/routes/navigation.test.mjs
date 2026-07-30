@@ -343,6 +343,7 @@ test('routing pools page manages account pools', () => {
     assert.match(poolsPage, new RegExp(label.replace(' ', '\\s+')), `routing pools page should include ${label}`);
   }
   assert.match(poolsPage, /apiKeys/);
+  assert.match(poolsPage, /No routing pools match your search\./);
   assert.match(poolsPage, /fallbackPoolId: Number\(pool\.fallbackPoolId \?\? 0\)/);
 
   // Modal state exists
@@ -1187,6 +1188,7 @@ test('api keys page filters key list locally', () => {
   // Old top-level summary removed; only bottom pagination summary remains
   assert.doesNotMatch(apiKeysPage, /Showing \{filteredAPIKeys\.length\} of \{apiKeys\.items\.length\}/);
   assert.match(apiKeysPage, /No API keys match your filters\./);
+  assert.match(apiKeysPage, /No API keys match your search\./);
 });
 
 test('api keys page disables keys reversibly', () => {

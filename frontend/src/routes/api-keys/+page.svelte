@@ -18,6 +18,7 @@
     gatewaySettings,
     getActiveKeys,
     loadGatewaySettings,
+    loadKeys,
     loadMoreKeys,
     loadModelRouting,
     loadRoutingPools,
@@ -563,6 +564,13 @@
       void loadGatewaySettings();
       void loadRoutingPools();
     }
+  });
+
+  $effect(() => {
+    const query = keySearch.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!session.authenticated || query === apiKeys.appliedQuery) return;
+    const timeout = setTimeout(() => void loadKeys({ query }), 250);
+    return () => clearTimeout(timeout);
   });
 
 
@@ -1545,6 +1553,7 @@
         <input
           class="mt-2 w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
           type="search"
+          maxlength="200"
           bind:value={keySearch}
           oninput={() => { keyPage = 1; }}
           placeholder="name, prefix, model, status"
@@ -1693,7 +1702,9 @@
     </tr>
   {:else if apiKeys.items.length === 0}
     <tr>
-      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">No API keys created yet.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">
+        {apiKeys.appliedQuery ? 'No API keys match your search.' : 'No API keys created yet.'}
+      </td>
     </tr>
   {:else if filteredAPIKeys.length === 0}
     <tr>

@@ -23,7 +23,8 @@ beforeEach(() => {
     error: '',
     items: [],
     nextCursor: '',
-    hasMore: false
+    hasMore: false,
+    appliedQuery: ''
   });
   Object.assign(routingPools, {
     loading: false,
@@ -31,7 +32,8 @@ beforeEach(() => {
     error: '',
     items: [],
     nextCursor: '',
-    hasMore: false
+    hasMore: false,
+    appliedQuery: ''
   });
   for (const key of Object.keys(selectedAPIKeyIds)) delete selectedAPIKeyIds[key];
 });
@@ -111,4 +113,78 @@ test('routing pool load-more appends without replacing the first page', async ()
   ]);
   assert.deepEqual(routingPools.items.map((pool) => pool.id), [4, 3]);
   assert.equal(routingPools.hasMore, false);
+});
+
+test('API key search replaces the page and load-more reuses the normalized query', async () => {
+  const paths = [];
+  globalThis.fetch = async (path) => {
+    paths.push(String(path));
+    if (paths.length === 1) {
+      return Response.json({ keys: [{ id: 8 }], nextCursor: 'matching-8', hasMore: true });
+    }
+    return Response.json({ keys: [{ id: 7 }], nextCursor: '', hasMore: false });
+  };
+
+  Object.assign(apiKeys, { items: [{ id: 99 }], nextCursor: 'unfiltered-99', hasMore: true });
+  await loadKeys({ query: '  CoDeX\tLaptop  ' });
+  await loadMoreKeys();
+
+  assert.deepEqual(paths, [
+    '/api/admin/keys?limit=50&q=codex+laptop',
+    '/api/admin/keys?limit=50&q=codex+laptop&cursor=matching-8'
+  ]);
+  assert.deepEqual(apiKeys.items.map((key) => key.id), [8, 7]);
+  assert.equal(apiKeys.appliedQuery, 'codex laptop');
+});
+
+test('newer API key search wins over a stale response', async () => {
+  const pending = new Map();
+  globalThis.fetch = (path) => new Promise((resolve) => pending.set(String(path), resolve));
+
+  const oldSearch = loadKeys({ query: 'old' });
+  const newSearch = loadKeys({ query: 'new' });
+  pending.get('/api/admin/keys?limit=50&q=new')(Response.json({ keys: [{ id: 2 }] }));
+  await newSearch;
+  pending.get('/api/admin/keys?limit=50&q=old')(Response.json({ keys: [{ id: 1 }] }));
+  await oldSearch;
+
+  assert.deepEqual(apiKeys.items, [{ id: 2 }]);
+  assert.equal(apiKeys.appliedQuery, 'new');
+});
+
+test('routing pool search replaces the page and load-more reuses the normalized query', async () => {
+  const paths = [];
+  globalThis.fetch = async (path) => {
+    paths.push(String(path));
+    if (paths.length === 1) {
+      return Response.json({ pools: [{ id: 8 }], nextCursor: 'matching-8', hasMore: true });
+    }
+    return Response.json({ pools: [{ id: 7 }], nextCursor: '', hasMore: false });
+  };
+
+  Object.assign(routingPools, { items: [{ id: 99 }], nextCursor: 'unfiltered-99', hasMore: true });
+  await loadRoutingPools({ query: '  Primary\nPool  ' });
+  await loadMoreRoutingPools();
+
+  assert.deepEqual(paths, [
+    '/api/admin/routing-pools?limit=50&q=primary+pool',
+    '/api/admin/routing-pools?limit=50&q=primary+pool&cursor=matching-8'
+  ]);
+  assert.deepEqual(routingPools.items.map((pool) => pool.id), [8, 7]);
+  assert.equal(routingPools.appliedQuery, 'primary pool');
+});
+
+test('newer routing pool search wins over a stale response', async () => {
+  const pending = new Map();
+  globalThis.fetch = (path) => new Promise((resolve) => pending.set(String(path), resolve));
+
+  const oldSearch = loadRoutingPools({ query: 'old' });
+  const newSearch = loadRoutingPools({ query: 'new' });
+  pending.get('/api/admin/routing-pools?limit=50&q=new')(Response.json({ pools: [{ id: 2 }] }));
+  await newSearch;
+  pending.get('/api/admin/routing-pools?limit=50&q=old')(Response.json({ pools: [{ id: 1 }] }));
+  await oldSearch;
+
+  assert.deepEqual(routingPools.items, [{ id: 2 }]);
+  assert.equal(routingPools.appliedQuery, 'new');
 });
