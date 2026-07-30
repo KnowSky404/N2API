@@ -31,8 +31,12 @@ case "${1:-}" in
     exit 0
     ;;
   image)
-    if [[ "${2:-}" == "inspect" && "${3:-}" == "--format" ]]; then
+    if [[ "${2:-}" == "inspect" && "${3:-}" == "--format" && "${4:-}" == *RepoDigests* ]]; then
       printf '["ghcr.io/knowsky404/n2api@%s"]\n' "${digest}"
+      exit 0
+    fi
+    if [[ "${2:-}" == "inspect" && "${3:-}" == "--format" && "${4:-}" == *'.Id'* ]]; then
+      printf 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n'
       exit 0
     fi
     if [[ "${2:-}" == "inspect" ]]; then
@@ -50,6 +54,15 @@ case "${1:-}" in
     if [[ " $* " == *" ps --status running --quiet "* ]]; then
       exit 0
     fi
+    if [[ " $* " == *" ps --all --format json "* ]]; then
+      jq -cn '{ID:"fake-n2api",Name:"deploy-n2api-1",Project:"deploy",Service:"n2api",State:"running",Health:"healthy",ExitCode:0,Publishers:[{URL:"127.0.0.1",TargetPort:3000,PublishedPort:3000,Protocol:"tcp"}]}'
+      jq -cn '{ID:"fake-postgres",Name:"deploy-postgres-1",Project:"deploy",Service:"postgres",State:"running",Health:"healthy",ExitCode:0,Publishers:[]}'
+      exit 0
+    fi
+    if [[ " $* " == *" exec --no-TTY postgres psql "* ]]; then
+      printf '50\n'
+      exit 0
+    fi
     if [[ " $* " == *" run --rm --no-deps --pull never -T n2api admin validate-config "* ]]; then
       jq -cn '{
         schema_version:"n2api.config-validation/v1",
@@ -57,6 +70,34 @@ case "${1:-}" in
         reason_code:"configuration_valid",
         postgres_password_check:"matched"
       }'
+      exit 0
+    fi
+    if [[ " $* " == *" logs --since "* ]]; then
+      printf 'n2api | status=ok password=do-not-retain\n'
+      exit 0
+    fi
+    ;;
+  inspect)
+    if [[ " $* " == *'{{.State.Running}}|{{.Config.Image}}|{{.Image}}'* ]]; then
+      printf 'true|ghcr.io/knowsky404/n2api:2026073001@%s|sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' "${digest}"
+      exit 0
+    fi
+    if [[ " $* " == *'{{.Name}}|{{.State.Running}}'* ]]; then
+      printf '/deploy-n2api-1|true|healthy|ghcr.io/knowsky404/n2api:2026073001@%s|sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|true|["ALL"]|["no-new-privileges:true"]|{"/tmp":"rw,noexec,nosuid,nodev,size=16m"}\n' "${digest}"
+      exit 0
+    fi
+    ;;
+  exec)
+    if [[ " $* " == *'/livez'* ]]; then
+      jq -cn '{status:"ok"}'
+      exit 0
+    fi
+    if [[ " $* " == *'/readyz'* ]]; then
+      jq -cn '{status:"ok",components:{database:"ready",runtime:"ready"}}'
+      exit 0
+    fi
+    if [[ " $* " == *'/version'* ]]; then
+      jq -cn '{version:"2026073001"}'
       exit 0
     fi
     ;;

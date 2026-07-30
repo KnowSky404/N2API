@@ -19,6 +19,8 @@ source "${N2API_OPS_ROOT}/lib/env.sh"
 source "${N2API_OPS_ROOT}/lib/docker.sh"
 # shellcheck source=ops/lib/checks.sh
 source "${N2API_OPS_ROOT}/lib/checks.sh"
+# shellcheck source=ops/lib/runtime.sh
+source "${N2API_OPS_ROOT}/lib/runtime.sh"
 
 N2API_FORMAT="text"
 N2API_ENV_FILE="${N2API_REPO_ROOT}/.env"
@@ -533,6 +535,291 @@ n2api_image() {
   esac
 }
 
+n2api_status() {
+  (($# == 0)) || n2api_usage_error "status_unexpected_argument"
+  local current running_count failed_count status reason summary exit_code=0
+  n2api_checks_reset
+  if ! n2api_check_env_file; then
+    n2api_emit "status" "read_only" "failed" false \
+      "status_configuration_unavailable" "Status could not load a safe environment file" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  if ! timeout "${N2API_TIMEOUT_SECONDS}" docker info >/dev/null 2>&1; then
+    n2api_check_add "docker.daemon" "failed" "docker_daemon_unavailable" "Docker daemon is unavailable"
+    n2api_emit "status" "read_only" "failed" false \
+      "status_unavailable" "Runtime status is unavailable" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  if ! current="$(n2api_runtime_snapshot_json)"; then
+    n2api_check_add "runtime.snapshot" "failed" "runtime_snapshot_failed" "Runtime status could not be collected"
+    n2api_emit "status" "read_only" "failed" false \
+      "status_unavailable" "Runtime status is unavailable" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  running_count="$(jq '[.compose.services[] | select(.state == "running")] | length' <<<"${current}")"
+  failed_count="$(jq '[.probes[] | select(.status? == "failed")] | length' <<<"${current}")"
+  if ((running_count == 0)); then
+    status="attention"; reason="stack_not_running"; summary="N2API stack is not running"; exit_code=${N2API_EXIT_ATTENTION}
+  elif ((failed_count > 0)); then
+    status="attention"; reason="runtime_attention_required"; summary="N2API runtime has failed probes"; exit_code=${N2API_EXIT_ATTENTION}
+  else
+    status="succeeded"; reason="status_available"; summary="N2API runtime status collected"
+  fi
+  n2api_emit "status" "read_only" "${status}" false "${reason}" "${summary}" \
+    "${current}" '{}' '[]' '["Use verify basic before or after a service change"]'
+  exit "${exit_code}"
+}
+
+n2api_verify_basic() {
+  local expected_image current container failed status reason summary exit_code=0
+  n2api_checks_reset
+  if ! n2api_check_env_file; then
+    n2api_emit "verify.basic" "read_only" "failed" false \
+      "verification_configuration_unavailable" "Verification could not load a safe environment file" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  expected_image="$(n2api_env_get N2API_IMAGE)"
+  if ! current="$(n2api_runtime_snapshot_json)"; then
+    n2api_check_add "runtime.snapshot" "failed" "runtime_snapshot_failed" "Runtime snapshot failed"
+    current='{}'
+  fi
+  container="$(jq -r '.n2api.name // empty' <<<"${current}")"
+  if [[ -n "${container}" && "$(jq -r '.n2api.running // false' <<<"${current}")" == true ]]; then
+    n2api_check_add "runtime.n2api" "passed" "n2api_running" "N2API container is running"
+  else
+    n2api_check_add "runtime.n2api" "failed" "n2api_not_running" "N2API container is not running"
+  fi
+  if [[ "$(jq -r '.n2api.health // "unavailable"' <<<"${current}")" == healthy ]]; then
+    n2api_check_add "runtime.health" "passed" "n2api_healthy" "N2API container is healthy"
+  else
+    n2api_check_add "runtime.health" "failed" "n2api_unhealthy" "N2API container is not healthy"
+  fi
+  if [[ "$(jq -r '.postgres.health // "unavailable"' <<<"${current}")" == healthy ]]; then
+    n2api_check_add "runtime.postgres" "passed" "postgres_healthy" "PostgreSQL is healthy"
+  else
+    n2api_check_add "runtime.postgres" "failed" "postgres_unhealthy" "PostgreSQL is not healthy"
+  fi
+  for probe_name in livez readyz version; do
+    if [[ "$(jq -r --arg name "${probe_name}" '.probes[$name].status // "unavailable"' <<<"${current}")" == passed ]]; then
+      n2api_check_add "probe.${probe_name}" "passed" "probe_passed" "Runtime probe passed"
+    else
+      n2api_check_add "probe.${probe_name}" "failed" "probe_failed" "Runtime probe failed"
+    fi
+  done
+  if [[ -n "${container}" ]] && "${N2API_REPO_ROOT}/dev/verification/verify-release-image.sh" \
+    --container "${container}" "${expected_image}" >/dev/null 2>&1; then
+    n2api_check_add "runtime.image" "passed" "running_image_verified" "Running container matches the exact image"
+  else
+    n2api_check_add "runtime.image" "failed" "running_image_mismatch" "Running container does not match the exact image"
+  fi
+  if jq -e '
+    .n2api.security.read_only_root == true and
+    (.n2api.security.cap_drop | index("ALL")) != null and
+    (.n2api.security.security_opt | index("no-new-privileges:true")) != null and
+    (.n2api.security.tmpfs["/tmp"] | contains("noexec") and contains("nosuid") and contains("nodev"))
+  ' <<<"${current}" >/dev/null 2>&1; then
+    n2api_check_add "runtime.security" "passed" "runtime_restrictions_verified" "Runtime restrictions are active"
+  else
+    n2api_check_add "runtime.security" "failed" "runtime_restrictions_missing" "Runtime restrictions are incomplete"
+  fi
+  failed="$(n2api_checks_count failed)"
+  if ((failed > 0)); then
+    status="blocked"; reason="basic_verification_failed"; summary="Basic deployment verification failed"; exit_code=${N2API_EXIT_BLOCKED}
+  else
+    status="succeeded"; reason="basic_verification_passed"; summary="Basic deployment verification passed"
+  fi
+  n2api_emit "verify.basic" "read_only" "${status}" false "${reason}" "${summary}" \
+    "${current}" "$(jq -cn --arg image "${expected_image}" '{image:$image}')" '[]' '[]'
+  exit "${exit_code}"
+}
+
+n2api_verify_authenticated() {
+  local password_file="" password username origin cookie_jar login_json health_file login_status health_status
+  while (($# > 0)); do
+    case "$1" in
+      --admin-password-file) (($# >= 2)) || n2api_usage_error "missing_admin_password_file"; password_file=$2; shift 2 ;;
+      *) n2api_usage_error "unknown_authenticated_verify_option" ;;
+    esac
+  done
+  n2api_check_env_file || {
+    n2api_emit "verify.authenticated" "read_only" "failed" false \
+      "verification_configuration_unavailable" "Environment file is unavailable" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  if [[ -n "${password_file}" ]]; then
+    password="$(n2api_read_protected_secret "${password_file}")" || n2api_usage_error "admin_password_file_unsafe"
+  elif [[ -t 0 ]]; then
+    read -rsp 'Administrator password: ' password </dev/tty
+    printf '\n' >/dev/tty
+  else
+    n2api_usage_error "authenticated_verify_requires_password_file_or_tty"
+  fi
+  username="$(n2api_env_get N2API_ADMIN_USERNAME admin)"
+  origin="$(n2api_env_get N2API_PUBLIC_URL)"
+  origin="${origin%/}"
+  cookie_jar="$(mktemp)"
+  health_file="$(mktemp)"
+  chmod 600 -- "${cookie_jar}" "${health_file}"
+  trap 'rm -f -- "${cookie_jar:-}" "${health_file:-}"; unset password' EXIT INT TERM
+  login_json="$(jq -cn --arg username "${username}" --arg password "${password}" '{username:$username,password:$password}')"
+  login_status="$(printf '%s' "${login_json}" | timeout "${N2API_TIMEOUT_SECONDS}" curl -sS \
+    -o /dev/null -w '%{http_code}' \
+    --cookie-jar "${cookie_jar}" \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    "${origin}/api/admin/login" 2>/dev/null || true)"
+  unset password login_json
+  if [[ "${login_status}" == 200 ]]; then
+    health_status="$(timeout "${N2API_TIMEOUT_SECONDS}" curl -sS \
+      -o "${health_file}" -w '%{http_code}' \
+      --cookie "${cookie_jar}" \
+      "${origin}/api/admin/health" 2>/dev/null || true)"
+  else
+    health_status="unavailable"
+  fi
+  if [[ "${health_status}" == 200 ]] && jq -e '
+    .status == "ok" and (.build | type == "object") and (.tasks | type == "object")
+  ' "${health_file}" >/dev/null 2>&1; then
+    rm -f -- "${cookie_jar}" "${health_file}"
+    trap - EXIT INT TERM
+    n2api_emit "verify.authenticated" "read_only" "succeeded" false \
+      "authenticated_verification_passed" "Authenticated operational health passed" \
+      '{"admin_health":"passed","task_state":"available"}' '{}' '[]' '[]'
+  else
+    rm -f -- "${cookie_jar}" "${health_file}"
+    trap - EXIT INT TERM
+    n2api_emit "verify.authenticated" "read_only" "blocked" false \
+      "authenticated_verification_failed" "Authenticated operational health failed" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_BLOCKED}"
+  fi
+}
+
+n2api_verify_gateway() {
+  local api_key_file="" model="" allow=false api_key origin curl_config models_file response_file request_file
+  local models_status response_status
+  while (($# > 0)); do
+    case "$1" in
+      --api-key-file) (($# >= 2)) || n2api_usage_error "missing_api_key_file"; api_key_file=$2; shift 2 ;;
+      --model) (($# >= 2)) || n2api_usage_error "missing_model"; model=$2; shift 2 ;;
+      --allow-upstream-call) allow=true; shift ;;
+      *) n2api_usage_error "unknown_gateway_verify_option" ;;
+    esac
+  done
+  [[ "${allow}" == true ]] || n2api_usage_error "gateway_verify_requires_upstream_consent"
+  [[ -n "${api_key_file}" && -n "${model}" && "${model}" != *$'\n'* ]] || n2api_usage_error "gateway_verify_requires_key_and_model"
+  n2api_check_env_file || n2api_usage_error "gateway_verify_environment_unavailable"
+  api_key="$(n2api_read_protected_secret "${api_key_file}")" || n2api_usage_error "api_key_file_unsafe"
+  case "${api_key}" in
+    *$'\r'*|*$'\n'*|*'"'*|*'\\'*) n2api_usage_error "api_key_file_invalid" ;;
+  esac
+  origin="$(n2api_env_get N2API_PUBLIC_URL)"
+  origin="${origin%/}"
+  curl_config="$(mktemp)"; models_file="$(mktemp)"; response_file="$(mktemp)"; request_file="$(mktemp)"
+  chmod 600 -- "${curl_config}" "${models_file}" "${response_file}" "${request_file}"
+  trap 'rm -f -- "${curl_config:-}" "${models_file:-}" "${response_file:-}" "${request_file:-}"; unset api_key' EXIT INT TERM
+  printf 'header = "Authorization: Bearer %s"\n' "${api_key//\"/}" >"${curl_config}"
+  unset api_key
+  models_status="$(timeout "${N2API_TIMEOUT_SECONDS}" curl -sS --config "${curl_config}" \
+    -o "${models_file}" -w '%{http_code}' "${origin}/v1/models" 2>/dev/null || true)"
+  jq -cn --arg model "${model}" '{model:$model,input:"N2API operator verification",stream:true,max_output_tokens:16}' >"${request_file}"
+  if [[ "${models_status}" == 200 ]] && jq -e --arg model "${model}" '.object == "list" and ([.data[].id] | index($model) != null)' "${models_file}" >/dev/null 2>&1; then
+    response_status="$(timeout "${N2API_TIMEOUT_SECONDS}" curl -sS --config "${curl_config}" \
+      -H 'Content-Type: application/json' \
+      -H 'Accept: text/event-stream' \
+      --data-binary "@${request_file}" \
+      -o "${response_file}" -w '%{http_code}' "${origin}/v1/responses" 2>/dev/null || true)"
+  else
+    response_status="unavailable"
+  fi
+  if [[ "${response_status}" == 200 ]] && rg -q 'response\.completed' "${response_file}"; then
+    rm -f -- "${curl_config}" "${models_file}" "${response_file}" "${request_file}"
+    trap - EXIT INT TERM
+    n2api_emit "verify.gateway" "high_risk" "succeeded" false \
+      "gateway_verification_passed" "Explicit gateway verification passed" \
+      "$(jq -cn --arg model "${model}" '{models:"passed",streaming_response:"passed",model:$model,body_retained:false}')" \
+      '{}' '[]' '[]'
+  else
+    rm -f -- "${curl_config}" "${models_file}" "${response_file}" "${request_file}"
+    trap - EXIT INT TERM
+    n2api_emit "verify.gateway" "high_risk" "blocked" false \
+      "gateway_verification_failed" "Explicit gateway verification failed" \
+      '{"body_retained":false}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_BLOCKED}"
+  fi
+}
+
+n2api_verify() {
+  local level="basic"
+  if (($# >= 2)) && [[ "$1" == "--level" ]]; then
+    level=$2
+    shift 2
+  fi
+  case "${level}" in
+    basic) (($# == 0)) || n2api_usage_error "basic_verify_unexpected_argument"; n2api_verify_basic ;;
+    authenticated) n2api_verify_authenticated "$@" ;;
+    gateway) n2api_verify_gateway "$@" ;;
+    *) n2api_usage_error "invalid_verify_level" ;;
+  esac
+}
+
+n2api_logs() {
+  (($# >= 1)) || n2api_usage_error "logs_requires_service"
+  local service=$1 since="1h" tail_lines=200 follow=false log_tmp status
+  shift
+  case "${service}" in n2api|postgres|postgres-backup) ;; *) n2api_usage_error "invalid_log_service" ;; esac
+  while (($# > 0)); do
+    case "$1" in
+      --since) (($# >= 2)) || n2api_usage_error "missing_logs_since"; since=$2; shift 2 ;;
+      --tail) (($# >= 2)) || n2api_usage_error "missing_logs_tail"; tail_lines=$2; shift 2 ;;
+      --follow) follow=true; shift ;;
+      *) n2api_usage_error "unknown_logs_option" ;;
+    esac
+  done
+  [[ "${since}" =~ ^[0-9]+[smhdw]$ || "${since}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$ ]] || n2api_usage_error "invalid_logs_since"
+  n2api_require_uint_range "logs_tail" "${tail_lines}" 1 10000
+  n2api_check_env_file >/dev/null || n2api_usage_error "logs_environment_unavailable"
+  if [[ "${follow}" == true ]]; then
+    if [[ "${N2API_FORMAT}" == json ]]; then
+      set +e
+      n2api_compose logs --since "${since}" --tail "${tail_lines}" --follow "${service}" 2>&1 \
+        | n2api_redact_stream \
+        | while IFS= read -r line; do
+            jq -cn --arg schema_version "n2api.ops.log/v1" --arg service "${service}" --arg line "${line}" \
+              '{schema_version:$schema_version,service:$service,line:$line}'
+          done
+      status=${PIPESTATUS[0]}
+      set -e
+      exit "${status}"
+    fi
+    n2api_compose logs --since "${since}" --tail "${tail_lines}" --follow "${service}" 2>&1 | n2api_redact_stream
+    return
+  fi
+  log_tmp="$(mktemp)"
+  trap 'rm -f -- "${log_tmp:-}"' EXIT INT TERM
+  set +e
+  n2api_compose logs --since "${since}" --tail "${tail_lines}" "${service}" 2>&1 | n2api_redact_stream >"${log_tmp}"
+  status=${PIPESTATUS[0]}
+  set -e
+  if [[ ${status} -ne 0 ]]; then
+    rm -f -- "${log_tmp}"
+    trap - EXIT INT TERM
+    n2api_emit "logs" "read_only" "failed" false "logs_unavailable" "Service logs are unavailable" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  if [[ "${N2API_FORMAT}" == json ]]; then
+    sed 's/^/[log] /' "${log_tmp}" >&2
+    rm -f -- "${log_tmp}"
+    trap - EXIT INT TERM
+    n2api_emit "logs" "read_only" "succeeded" false "logs_emitted" "Bounded service logs were emitted to stderr" \
+      "$(jq -cn --arg service "${service}" --arg since "${since}" --argjson tail "${tail_lines}" '{service:$service,since:$since,tail:$tail,stream:"stderr"}')" \
+      '{}' '[]' '[]'
+  else
+    sed -n '1,10000p' "${log_tmp}"
+    rm -f -- "${log_tmp}"
+    trap - EXIT INT TERM
+  fi
+}
+
 n2api_help() {
   cat <<'EOF'
 usage: ./ops/n2api [global options] COMMAND [ARGUMENTS]
@@ -598,7 +885,19 @@ case "$1" in
     shift
     n2api_image "$@"
     ;;
-  status|verify|logs|backup|restore|deploy|upgrade|rollback)
+  status)
+    shift
+    n2api_status "$@"
+    ;;
+  verify)
+    shift
+    n2api_verify "$@"
+    ;;
+  logs)
+    shift
+    n2api_logs "$@"
+    ;;
+  backup|restore|deploy|upgrade|rollback)
     command=$1
     shift
     n2api_not_implemented "${command}${*:+ $*}"

@@ -208,6 +208,58 @@ assert_jq "${unsafe_config}" '
   ([.checks[] | select(.reason_code == "env_file_permissions_unsafe")] | length) == 1
 '
 
+chmod 600 -- "${generated_env}"
+runtime_state="${test_root}/runtime-state/n2api"
+mkdir -p -- "${runtime_state}/operations" "${runtime_state}/locks"
+chmod 700 -- "${test_root}/runtime-state" "${runtime_state}" "${runtime_state}/operations" "${runtime_state}/locks"
+
+status_output="$(PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" \
+  --state-dir "${runtime_state}" \
+  status --format json)"
+assert_jq "${status_output}" '
+  .status == "succeeded" and
+  .reason_code == "status_available" and
+  .current.n2api.running == true and
+  .current.n2api.health == "healthy" and
+  .current.postgres.health == "healthy" and
+  .current.postgres.schema.value == 50 and
+  .current.probes.livez.status == "passed" and
+  .current.probes.readyz.status == "passed" and
+  .current.probes.version.status == "passed" and
+  .current.backup.availability == "unavailable" and
+  .current.restore_drill.availability == "unavailable"
+'
+
+basic_output="$(PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" \
+  --state-dir "${runtime_state}" \
+  verify --level basic --format json)"
+assert_jq "${basic_output}" '
+  .status == "succeeded" and
+  .reason_code == "basic_verification_passed" and
+  ([.checks[] | select(.status == "failed")] | length) == 0 and
+  ([.checks[] | select(.name == "runtime.security" and .status == "passed")] | length) == 1
+'
+
+PATH="${fake_path}" "${cli}" --env-file "${generated_env}" \
+  logs n2api --tail 10 --since 5m --format json \
+  >"${test_root}/logs.stdout" 2>"${test_root}/logs.stderr"
+jq -e '.reason_code == "logs_emitted" and .current.tail == 10' "${test_root}/logs.stdout" >/dev/null || fail "logs_json_envelope"
+rg -q 'password=\[REDACTED\]' "${test_root}/logs.stderr" || fail "logs_redaction_missing"
+if rg -q 'do-not-retain' "${test_root}/logs.stderr"; then
+  fail "logs_secret_retained"
+fi
+
+set +e
+PATH="${fake_path}" "${cli}" --env-file "${generated_env}" verify --level gateway \
+  --api-key-file "${generated_env}" --model gpt-test --format json \
+  >"${test_root}/gateway-no-consent.stdout" 2>"${test_root}/gateway-no-consent.stderr"
+gateway_consent_status=$?
+set -e
+[[ ${gateway_consent_status} -eq 64 ]] || fail "gateway_consent_exit"
+rg -q 'gateway_verify_requires_upstream_consent' "${test_root}/gateway-no-consent.stderr" || fail "gateway_consent_reason"
+
 for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
   [[ -e "${retained}" ]] || continue
   if rg -n --fixed-strings "${postgres_secret}" "${retained}" >/dev/null 2>&1 ||
@@ -217,4 +269,4 @@ for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
   fi
 done
 
-printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image\n'
+printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image_runtime\n'
