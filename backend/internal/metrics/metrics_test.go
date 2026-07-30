@@ -101,6 +101,21 @@ func TestAPIKeyLastUsedMetricsExposeOnlyBoundedOutcomes(t *testing.T) {
 	}
 }
 
+func TestAPIKeyBudgetMaintenanceMetricsKeepTheirTaskLabel(t *testing.T) {
+	r := New(nil)
+	r.ObserveBackgroundTaskRun("api_key_budget_maintenance", "success", time.Second)
+	recorder := httptest.NewRecorder()
+	r.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := recorder.Body.String()
+
+	if want := `n2api_background_task_runs_total{outcome="success",task="api_key_budget_maintenance"} 1`; !strings.Contains(body, want) {
+		t.Fatalf("metrics missing %q", want)
+	}
+	if prohibited := `n2api_background_task_runs_total{outcome="success",task="other"} 1`; strings.Contains(body, prohibited) {
+		t.Fatalf("budget maintenance run was classified as other: %q", prohibited)
+	}
+}
+
 func TestGatewaySettingsMetricsExposeOnlyBoundedRuntimeState(t *testing.T) {
 	r := New(nil)
 	r.SetGatewaySettingsSnapshot(true, true, time.Now().Add(-5*time.Second))

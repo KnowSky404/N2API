@@ -61,7 +61,7 @@ request identifiers are explicitly prohibited.
 | `usage_source` | `responses`, `chat_completions`, `stream`, `gemini_usage_metadata`, `anthropic_usage`, `json`, `missing`, `other` | Normalize the fixed values emitted by `gateway.Usage.Source`. |
 | `token_type` | `input`, `output`, `cached_input`, `reasoning` | Fixed counter dimension; total tokens are derived from input and output. |
 | `provider_state` | `active`, `disabled`, `rate_limited`, `circuit_open`, `expired`, `other` | Normalize the fixed provider account states. |
-| `task` | `provider_auto_test`, `request_log_retention`, `system_event_retention`, `api_key_purge`, `response_affinity_retention`, `api_key_budget_monitor`, `routing_exhaustion_projector`, `other` | Fixed background task registry; adding a task requires a contract update. |
+| `task` | `provider_auto_test`, `request_log_retention`, `system_event_retention`, `api_key_purge`, `response_affinity_retention`, `api_key_budget_monitor`, `api_key_budget_maintenance`, `routing_exhaustion_projector`, `other` | Fixed background task registry; adding a task requires a contract update. |
 | `scope` | `gateway`, `api_key`, `provider_account`, `other` | Fixed enforcement scope; never derived from an object name or ID. |
 | `outcome` | Metric-specific fixed allowlist documented below | Never use raw errors. Unexpected values become `other`. |
 | `reason` | Metric-specific fixed allowlist documented below | Never use raw gateway, provider, or task error strings. |
@@ -140,11 +140,11 @@ last-used outcome is `updated`, `skipped`, `failure`, or `other`.
 
 | Metric | Type and unit | Labels | Max series | Operator use case |
 | --- | --- | --- | ---: | --- |
-| `n2api_background_task_runs_total` | Counter, runs | `task`, `outcome` | 48 | Success/failure/partial/skip/cancel rates per fixed task. |
-| `n2api_background_task_duration_seconds` | Histogram, seconds | `task` | 104 | Runtime and stuck-task diagnosis without raw error labels. |
-| `n2api_background_task_running` | Gauge, boolean `0` or `1` | `task` | 8 | Current in-process task activity. |
-| `n2api_background_task_last_success_timestamp_seconds` | Gauge, Unix seconds | `task` | 8 | Alert on stale successful execution. |
-| `n2api_background_task_last_failure_timestamp_seconds` | Gauge, Unix seconds | `task` | 8 | Correlate recent failures with System Events. |
+| `n2api_background_task_runs_total` | Counter, runs | `task`, `outcome` | 54 | Success/failure/partial/skip/cancel rates per fixed task. |
+| `n2api_background_task_duration_seconds` | Histogram, seconds | `task` | 117 | Runtime and stuck-task diagnosis without raw error labels. |
+| `n2api_background_task_running` | Gauge, boolean `0` or `1` | `task` | 9 | Current in-process task activity. |
+| `n2api_background_task_last_success_timestamp_seconds` | Gauge, Unix seconds | `task` | 9 | Alert on stale successful execution. |
+| `n2api_background_task_last_failure_timestamp_seconds` | Gauge, Unix seconds | `task` | 9 | Correlate recent failures with System Events. |
 
 Task `outcome` is `success`, `failure`, `partial`, `skipped`, `canceled`, or
 `other`. The duration histogram uses buckets `0.1`, `0.5`, `1`, `5`, `10`,

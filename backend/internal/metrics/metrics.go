@@ -16,7 +16,7 @@ import (
 const (
 	MaxOwnedSeries            = 1600
 	MaxScrapeSeries           = 2000
-	MaxInitializedOwnedSeries = 1529
+	MaxInitializedOwnedSeries = 1551
 )
 
 var (
@@ -27,7 +27,7 @@ var (
 	usageSources        = []string{"responses", "chat_completions", "stream", "gemini_usage_metadata", "anthropic_usage", "json", "missing", "other"}
 	tokenTypes          = []string{"input", "output", "cached_input", "reasoning"}
 	providerStates      = []string{"active", "disabled", "rate_limited", "circuit_open", "expired", "other"}
-	tasks               = []string{"provider_auto_test", "request_log_retention", "system_event_retention", "api_key_purge", "response_affinity_retention", "api_key_budget_monitor", "routing_exhaustion_projector", "other"}
+	tasks               = []string{"provider_auto_test", "request_log_retention", "system_event_retention", "api_key_purge", "response_affinity_retention", "api_key_budget_monitor", "api_key_budget_maintenance", "routing_exhaustion_projector", "other"}
 	taskOutcomes        = []string{"success", "failure", "partial", "skipped", "canceled", "other"}
 	upstreamOutcomes    = []string{"success", "http_error", "transport_error", "refresh_retry", "canceled", "other"}
 	fallbackReasons     = []string{"account_concurrency", "transport_error", "retryable_status", "other"}
