@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://n2api.local/schemas/ops-plan-v1.json",
+  "title": "N2API operator plan",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "operation_id",
+    "operation",
+    "created_at",
+    "expires_at",
+    "risk",
+    "source",
+    "target",
+    "invariants",
+    "checks",
+    "blocked_reasons",
+    "integrity"
+  ],
+  "properties": {
+    "schema_version": { "const": "n2api.ops.plan/v1" },
+    "operation_id": { "type": "string" },
+    "operation": { "enum": ["deploy", "upgrade", "rollback"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "risk": { "enum": ["service_change", "high_risk"] },
+    "source": { "type": "object" },
+    "target": { "type": "object" },
+    "invariants": { "type": "object" },
+    "checks": { "type": "array" },
+    "blocked_reasons": { "type": "array", "items": { "type": "string" } },
+    "integrity": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

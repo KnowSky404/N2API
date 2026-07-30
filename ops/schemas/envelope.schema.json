@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://n2api.local/schemas/ops-envelope-v1.json",
+  "title": "N2API operator result envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "operation_id",
+    "command",
+    "risk",
+    "status",
+    "changed",
+    "started_at",
+    "finished_at",
+    "reason_code",
+    "summary",
+    "checks",
+    "current",
+    "target",
+    "artifacts",
+    "next_actions"
+  ],
+  "properties": {
+    "schema_version": { "const": "n2api.ops/v1" },
+    "operation_id": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^op-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$" }
+      ]
+    },
+    "command": { "type": "string", "minLength": 1 },
+    "risk": {
+      "enum": ["read_only", "local_write", "service_change", "high_risk"]
+    },
+    "status": {
+      "enum": ["succeeded", "noop", "attention", "blocked", "failed", "contended"]
+    },
+    "changed": { "type": "boolean" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" },
+    "reason_code": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "summary": { "type": "string" },
+    "checks": { "type": "array", "items": { "type": "object" } },
+    "current": { "type": "object" },
+    "target": { "type": "object" },
+    "artifacts": { "type": "array" },
+    "next_actions": { "type": "array", "items": { "type": "string" } }
+  }
+}

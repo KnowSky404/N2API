@@ -1,0 +1,252 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+umask 077
+
+N2API_OPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+N2API_REPO_ROOT="$(cd "${N2API_OPS_ROOT}/.." && pwd -P)"
+
+# shellcheck source=ops/lib/core.sh
+source "${N2API_OPS_ROOT}/lib/core.sh"
+# shellcheck source=ops/lib/output.sh
+source "${N2API_OPS_ROOT}/lib/output.sh"
+# shellcheck source=ops/lib/state.sh
+source "${N2API_OPS_ROOT}/lib/state.sh"
+
+N2API_FORMAT="text"
+N2API_ENV_FILE="${N2API_REPO_ROOT}/.env"
+N2API_PROJECT_NAME="deploy"
+N2API_TIMEOUT_SECONDS=120
+N2API_STATE_DIR="$(n2api_default_state_dir)"
+N2API_COMPOSE_FILES=("${N2API_REPO_ROOT}/deploy/compose.release.yaml")
+
+declare -a n2api_command_args=()
+
+n2api_parse_global_options() {
+  local value
+  while (($# > 0)); do
+    case "$1" in
+      --format)
+        (($# >= 2)) || n2api_usage_error "missing_format_value"
+        N2API_FORMAT="$2"
+        shift 2
+        ;;
+      --format=*)
+        N2API_FORMAT="${1#*=}"
+        shift
+        ;;
+      --env-file)
+        (($# >= 2)) || n2api_usage_error "missing_env_file_value"
+        N2API_ENV_FILE="$2"
+        shift 2
+        ;;
+      --env-file=*)
+        N2API_ENV_FILE="${1#*=}"
+        shift
+        ;;
+      --compose-file)
+        (($# >= 2)) || n2api_usage_error "missing_compose_file_value"
+        if [[ ${#N2API_COMPOSE_FILES[@]} -eq 1 && "${N2API_COMPOSE_FILES[0]}" == "${N2API_REPO_ROOT}/deploy/compose.release.yaml" ]]; then
+          N2API_COMPOSE_FILES=()
+        fi
+        N2API_COMPOSE_FILES+=("$2")
+        shift 2
+        ;;
+      --compose-file=*)
+        if [[ ${#N2API_COMPOSE_FILES[@]} -eq 1 && "${N2API_COMPOSE_FILES[0]}" == "${N2API_REPO_ROOT}/deploy/compose.release.yaml" ]]; then
+          N2API_COMPOSE_FILES=()
+        fi
+        N2API_COMPOSE_FILES+=("${1#*=}")
+        shift
+        ;;
+      --project-name)
+        (($# >= 2)) || n2api_usage_error "missing_project_name_value"
+        N2API_PROJECT_NAME="$2"
+        shift 2
+        ;;
+      --project-name=*)
+        N2API_PROJECT_NAME="${1#*=}"
+        shift
+        ;;
+      --state-dir)
+        (($# >= 2)) || n2api_usage_error "missing_state_dir_value"
+        N2API_STATE_DIR="$2"
+        shift 2
+        ;;
+      --state-dir=*)
+        N2API_STATE_DIR="${1#*=}"
+        shift
+        ;;
+      --timeout)
+        (($# >= 2)) || n2api_usage_error "missing_timeout_value"
+        N2API_TIMEOUT_SECONDS="$2"
+        shift 2
+        ;;
+      --timeout=*)
+        N2API_TIMEOUT_SECONDS="${1#*=}"
+        shift
+        ;;
+      *)
+        n2api_command_args+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  case "${N2API_FORMAT}" in
+    text|json) ;;
+    *) n2api_usage_error "invalid_format" ;;
+  esac
+  n2api_require_uint_range "timeout" "${N2API_TIMEOUT_SECONDS}" 1 3600
+  n2api_validate_project_name "${N2API_PROJECT_NAME}" || n2api_usage_error "invalid_project_name"
+}
+
+n2api_describe_current_json() {
+  jq -cn \
+    --arg cli_version "${N2API_OPS_CLI_VERSION}" \
+    --arg schema_version "${N2API_OPS_SCHEMA_VERSION}" \
+    --arg plan_schema_version "${N2API_PLAN_SCHEMA_VERSION}" \
+    --arg default_compose "deploy/compose.release.yaml" \
+    --arg default_project "deploy" \
+    --arg manual "docs/agent-operations.md" \
+    '{
+      cli_version: $cli_version,
+      schema_version: $schema_version,
+      plan_schema_version: $plan_schema_version,
+      global_options: [
+        "--format text|json",
+        "--env-file PATH",
+        "--compose-file PATH (repeatable)",
+        "--project-name NAME",
+        "--state-dir PATH",
+        "--timeout SECONDS"
+      ],
+      defaults: {
+        compose_files: [$default_compose],
+        project: $default_project,
+        env_file: ".env",
+        state: "${XDG_STATE_HOME:-$HOME/.local/state}/n2api",
+        backup: "N2API_BACKUP_DIR or backups/",
+        plan_ttl_seconds: 900
+      },
+      services: ["n2api", "postgres", "postgres-backup"],
+      health_endpoints: ["/livez", "/readyz", "/version", "/api/admin/health"],
+      plan_apply: {
+        operations: ["deploy", "upgrade", "rollback"],
+        apply_requires_plan: true,
+        stale_invariants_fail_closed: true,
+        live_database_restore_supported: false
+      },
+      commands: [
+        {name:"describe",risk:"read_only",mutation:"none"},
+        {name:"doctor",risk:"read_only",mutation:"none"},
+        {name:"config init",risk:"local_write",mutation:"config_file"},
+        {name:"config validate",risk:"read_only",mutation:"ephemeral_validation_container"},
+        {name:"image resolve",risk:"local_write",mutation:"image_cache"},
+        {name:"image inspect",risk:"read_only",mutation:"none"},
+        {name:"status",risk:"read_only",mutation:"none"},
+        {name:"verify basic",risk:"read_only",mutation:"none"},
+        {name:"verify authenticated",risk:"read_only",mutation:"temporary_credentials"},
+        {name:"verify gateway",risk:"high_risk",mutation:"explicit_upstream_request"},
+        {name:"logs",risk:"read_only",mutation:"none"},
+        {name:"backup create",risk:"local_write",mutation:"backup_archive"},
+        {name:"backup list",risk:"read_only",mutation:"none"},
+        {name:"backup verify",risk:"read_only",mutation:"none"},
+        {name:"restore drill",risk:"local_write",mutation:"isolated_temporary_stack"},
+        {name:"operations list",risk:"read_only",mutation:"none"},
+        {name:"operations show",risk:"read_only",mutation:"none"},
+        {name:"deploy plan",risk:"local_write",mutation:"plan_file"},
+        {name:"deploy apply",risk:"service_change",mutation:"live_stack"},
+        {name:"upgrade plan",risk:"local_write",mutation:"plan_file_and_image_cache"},
+        {name:"upgrade apply",risk:"service_change",mutation:"live_stack"},
+        {name:"rollback plan",risk:"local_write",mutation:"plan_file"},
+        {name:"rollback apply",risk:"high_risk",mutation:"live_stack"}
+      ],
+      required_tools: ["bash", "docker", "docker compose v2", "curl", "jq", "openssl", "flock", "timeout", "coreutils"],
+      exit_codes: {
+        succeeded_or_noop: 0,
+        attention: 3,
+        blocked: 4,
+        contended: 5,
+        failed: 6,
+        usage: 64,
+        timeout: 124,
+        interrupted: 130,
+        terminated: 143
+      },
+      manual: $manual
+    }'
+}
+
+n2api_describe() {
+  (($# == 0)) || n2api_usage_error "describe_unexpected_argument"
+  local current
+  current="$(n2api_describe_current_json)"
+  n2api_emit "describe" "read_only" "succeeded" false \
+    "capabilities_described" "N2API operator capabilities" \
+    "${current}" '{}' '[]' '["Run doctor before planning a production change"]'
+}
+
+n2api_help() {
+  cat <<'EOF'
+usage: ./ops/n2api [global options] COMMAND [ARGUMENTS]
+
+Start with:
+  ./ops/n2api describe --format json
+
+Commands:
+  describe, doctor, config, image, status, verify, logs, backup, restore,
+  operations, deploy, upgrade, rollback
+
+Global options:
+  --format text|json
+  --env-file PATH
+  --compose-file PATH (repeatable)
+  --project-name NAME
+  --state-dir PATH
+  --timeout SECONDS
+EOF
+}
+
+n2api_not_implemented() {
+  local command=$1
+  n2api_emit "${command}" "read_only" "blocked" false \
+    "command_not_implemented" "Command is specified but not implemented" \
+    '{}' '{}' '[]' '["Use describe to inspect the current contract"]'
+  exit "${N2API_EXIT_BLOCKED}"
+}
+
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+n2api_parse_global_options "$@"
+set -- "${n2api_command_args[@]}"
+
+if (($# == 0)); then
+  n2api_help
+  exit 0
+fi
+
+case "$1" in
+  -h|--help|help)
+    (($# == 1)) || n2api_usage_error "help_unexpected_argument"
+    n2api_help
+    ;;
+  describe)
+    shift
+    n2api_describe "$@"
+    ;;
+  operations)
+    shift
+    n2api_operations "$@"
+    ;;
+  doctor|config|image|status|verify|logs|backup|restore|deploy|upgrade|rollback)
+    command=$1
+    shift
+    n2api_not_implemented "${command}${*:+ $*}"
+    ;;
+  *)
+    n2api_usage_error "unknown_command"
+    ;;
+esac
