@@ -12,8 +12,8 @@ n2api_compose_command() {
 
 n2api_compose() {
   n2api_compose_command
-  env N2API_ENV_FILE="${N2API_ENV_FILE}" \
-    timeout "${N2API_TIMEOUT_SECONDS}" "${N2API_COMPOSE_CMD[@]}" "$@"
+  export N2API_ENV_FILE
+  n2api_run_timeout "${N2API_COMPOSE_CMD[@]}" "$@"
 }
 
 n2api_host_platform() {
@@ -45,7 +45,7 @@ n2api_image_reference_is_valid() {
 
 n2api_image_manifest_json() {
   local image=$1
-  timeout "${N2API_TIMEOUT_SECONDS}" docker manifest inspect "${image}" 2>/dev/null
+  n2api_run_timeout docker manifest inspect "${image}" 2>/dev/null
 }
 
 n2api_image_inspect_json() {
@@ -73,7 +73,7 @@ n2api_resolve_version() {
   local version=$1 tag_ref repo_digests digest image
   n2api_calver_is_valid "${version}" || return 1
   tag_ref="${N2API_RELEASE_REPOSITORY}:${version}"
-  timeout "${N2API_TIMEOUT_SECONDS}" docker pull --quiet "${tag_ref}" >/dev/null || return 1
+  n2api_run_timeout docker pull --quiet "${tag_ref}" >/dev/null || return 1
   repo_digests="$(docker image inspect --format '{{json .RepoDigests}}' "${tag_ref}" 2>/dev/null)" || return 1
   digest="$(jq -r --arg repository "${N2API_RELEASE_REPOSITORY}" '
     [.[] | select(startswith($repository + "@sha256:"))] | first // empty

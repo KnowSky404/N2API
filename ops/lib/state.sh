@@ -80,11 +80,32 @@ n2api_state_init() {
   fi
 }
 
+n2api_state_integrity_key_is_safe() {
+  local key_file="${N2API_STATE_DIR}/keys/integrity.key" owner mode
+  [[ -f "${key_file}" && ! -L "${key_file}" ]] || return 1
+  owner="$(n2api_path_owner "${key_file}")" || return 1
+  mode="$(n2api_path_mode "${key_file}")" || return 1
+  [[ "${owner}" == "$(id -u)" ]] || return 1
+  ! n2api_mode_has_group_or_other_access "${mode}"
+}
+
 n2api_state_hmac_file() {
   local path=$1 key
+  n2api_state_integrity_key_is_safe || return 1
   key="$(tr -d '\r\n' <"${N2API_STATE_DIR}/keys/integrity.key")"
   [[ "${key}" =~ ^[0-9a-f]{64}$ ]] || return 1
   openssl dgst -sha256 -mac HMAC -macopt "hexkey:${key}" -- "${path}" | awk '{print $NF}'
+}
+
+n2api_state_hmac_json() {
+  local document=$1 key canonical
+  n2api_state_integrity_key_is_safe || return 1
+  key="$(tr -d '\r\n' <"${N2API_STATE_DIR}/keys/integrity.key")"
+  [[ "${key}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  canonical="$(jq -ceS 'del(.integrity_hmac)' <<<"${document}")" || return 1
+  printf '%s' "${canonical}" |
+    openssl dgst -sha256 -mac HMAC -macopt "hexkey:${key}" |
+    awk '{print $NF}'
 }
 
 n2api_operation_write() {

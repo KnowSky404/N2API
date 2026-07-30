@@ -3,10 +3,19 @@
 set -euo pipefail
 
 digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+fake_mode="${N2API_FAKE_DOCKER_MODE:-}"
+
+ignore_term_forever() {
+  trap '' TERM
+  while :; do sleep 0.1; done
+}
 
 case "${1:-}" in
   info)
     exit 0
+    ;;
+  system)
+    [[ "${2:-}" == "df" ]] && exit 0
     ;;
   buildx)
     exit 1
@@ -28,9 +37,22 @@ case "${1:-}" in
     fi
     ;;
   pull)
+    if [[ "${fake_mode}" == "image_pull_ignore_term" ]]; then
+      ignore_term_forever
+    elif [[ "${fake_mode}" == "image_pull_wait" ]]; then
+      while :; do sleep 0.1; done
+    fi
     exit 0
     ;;
+  run)
+    if [[ " $* " == *" --entrypoint pg_restore "* && " $* " == *" --list "* ]]; then
+      exit 0
+    fi
+    ;;
   image)
+    if [[ "${2:-}" == "ls" ]]; then
+      exit 0
+    fi
     if [[ "${2:-}" == "inspect" && "${3:-}" == "--format" && "${4:-}" == *RepoDigests* ]]; then
       printf '["ghcr.io/knowsky404/n2api@%s"]\n' "${digest}"
       exit 0
@@ -43,6 +65,20 @@ case "${1:-}" in
       exit 0
     fi
     ;;
+  ps)
+    exit 0
+    ;;
+  container|network|volume)
+    if [[ "${2:-}" == "ls" || "${2:-}" == "rm" ]]; then
+      exit 0
+    fi
+    if [[ "${1:-}" == "container" && "${2:-}" == "inspect" ]]; then
+      exit 1
+    fi
+    if [[ "${1:-}" == "volume" && "${2:-}" == "inspect" ]]; then
+      exit 1
+    fi
+    ;;
   compose)
     if [[ " $* " == *" version --short "* ]]; then
       printf '2.40.3\n'
@@ -51,7 +87,17 @@ case "${1:-}" in
     if [[ " $* " == *" config --quiet "* ]]; then
       exit 0
     fi
+    if [[ " $* " == *" config --images "* ]]; then
+      printf 'ghcr.io/knowsky404/n2api:2026073001@%s\n' "${digest}"
+      printf 'postgres:18.4-alpine3.23@sha256:%s\n' "$(printf 'c%.0s' {1..64})"
+      exit 0
+    fi
     if [[ " $* " == *" ps --status running --quiet "* ]]; then
+      exit 0
+    fi
+    if [[ " $* " == *" ps --quiet postgres "* ]]; then
+      [[ "${fake_mode}" != "no_postgres" ]] || exit 0
+      printf 'fake-postgres\n'
       exit 0
     fi
     if [[ " $* " == *" ps --all --format json "* ]]; then
@@ -59,8 +105,63 @@ case "${1:-}" in
       jq -cn '{ID:"fake-postgres",Name:"deploy-postgres-1",Project:"deploy",Service:"postgres",State:"running",Health:"healthy",ExitCode:0,Publishers:[]}'
       exit 0
     fi
+    if [[ " $* " == *" exec --no-TTY postgres pg_dump "* ]]; then
+      if [[ "${fake_mode}" == "pg_dump_ignore_term" ]]; then
+        [[ -z "${N2API_FAKE_DOCKER_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_READY_FILE}"
+        ignore_term_forever
+      elif [[ "${fake_mode}" == "pg_dump_wait" ]]; then
+        [[ -z "${N2API_FAKE_DOCKER_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_READY_FILE}"
+        while [[ ! -e "${N2API_FAKE_DOCKER_RELEASE_FILE:?set N2API_FAKE_DOCKER_RELEASE_FILE}" ]]; do sleep 0.1; done
+      fi
+      printf 'PGDMP-fake-custom-archive\n'
+      [[ "${fake_mode}" != "pg_dump_fail" ]] || exit 1
+      exit 0
+    fi
+    if [[ " $* " == *" exec --no-TTY postgres pg_restore --list "* ]]; then
+      if [[ "${fake_mode}" == "archive_list_ignore_term" ]]; then
+        ignore_term_forever
+      elif [[ "${fake_mode}" == "archive_list_wait" ]]; then
+        while :; do sleep 0.1; done
+      fi
+      [[ "${fake_mode}" != "archive_list_fail" ]] || exit 1
+      exit 0
+    fi
+    if [[ "${fake_mode}" == "restore_wait" && " $* " == *" up --detach --wait postgres "* ]]; then
+      [[ -z "${N2API_FAKE_DOCKER_RESTORE_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_RESTORE_READY_FILE}"
+      while :; do sleep 0.1; done
+    fi
+    if [[ "${fake_mode}" == "restore_pause" && " $* " == *" up --detach --wait postgres "* ]]; then
+      [[ -z "${N2API_FAKE_DOCKER_RESTORE_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_RESTORE_READY_FILE}"
+      while [[ ! -e "${N2API_FAKE_DOCKER_RESTORE_RELEASE_FILE:?set N2API_FAKE_DOCKER_RESTORE_RELEASE_FILE}" ]]; do sleep 0.1; done
+      exit 0
+    fi
+    if [[ "${fake_mode}" == "restore_cleanup_fail" && " $* " == *" down --volumes --remove-orphans --rmi local "* ]]; then
+      exit 1
+    fi
+    if [[ " $* " == *" up --detach --wait postgres "* ||
+      " $* " == *" up --detach --build --wait mock-openai n2api "* ||
+      " $* " == *" build gateway-restore "* ||
+      " $* " == *" down --volumes --remove-orphans --rmi local "* ]]; then
+      exit 0
+    fi
+    if [[ " $* " == *" exec --no-TTY postgres pg_restore "* ]]; then
+      exit 0
+    fi
     if [[ " $* " == *" exec --no-TTY postgres psql "* ]]; then
-      printf '50\n'
+      case "$*" in
+        *'COALESCE(max(version_id)'*) printf '50\n' ;;
+        *'FROM admins'*) printf '1\n' ;;
+        *'FROM provider_accounts'*) printf '1\n' ;;
+        *'FROM client_api_keys WHERE'*) printf '\n' ;;
+        *'FROM client_api_keys'*) printf '0\n' ;;
+        *'FROM request_logs'*) printf '0\n' ;;
+        *'provider_account_credentials'*) printf '0\n' ;;
+        *) printf '0\n' ;;
+      esac
+      exit 0
+    fi
+    if [[ " $* " == *" run --rm gateway-restore "* ]]; then
+      [[ "${fake_mode}" != "restore_gateway_fail" ]] || exit 1
       exit 0
     fi
     if [[ " $* " == *" run --rm --no-deps --pull never -T n2api admin validate-config "* ]]; then

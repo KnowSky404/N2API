@@ -42,6 +42,31 @@ n2api_validate_operation_id() {
   [[ "$1" =~ ^op-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$ ]]
 }
 
+n2api_timeout_kill_after() {
+  local grace=10
+  if ((N2API_TIMEOUT_SECONDS < grace)); then
+    grace=${N2API_TIMEOUT_SECONDS}
+  fi
+  printf '%s\n' "${grace}"
+}
+
+n2api_status_is_timeout() {
+  [[ "$1" -eq 124 || "$1" -eq 137 ]]
+}
+
+n2api_run_timeout() {
+  local child_pid status
+  timeout --signal=TERM --kill-after="$(n2api_timeout_kill_after)" \
+    "${N2API_TIMEOUT_SECONDS}" "$@" &
+  child_pid=$!
+  if wait "${child_pid}" 2>/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+  return "${status}"
+}
+
 n2api_path_mode() {
   stat -c '%a' -- "$1"
 }

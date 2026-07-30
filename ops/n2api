@@ -6,6 +6,7 @@ umask 077
 
 N2API_OPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 N2API_REPO_ROOT="$(cd "${N2API_OPS_ROOT}/.." && pwd -P)"
+exec {N2API_OUTPUT_FD}>&1
 
 # shellcheck source=ops/lib/core.sh
 source "${N2API_OPS_ROOT}/lib/core.sh"
@@ -21,6 +22,10 @@ source "${N2API_OPS_ROOT}/lib/docker.sh"
 source "${N2API_OPS_ROOT}/lib/checks.sh"
 # shellcheck source=ops/lib/runtime.sh
 source "${N2API_OPS_ROOT}/lib/runtime.sh"
+# shellcheck source=ops/lib/backup.sh
+source "${N2API_OPS_ROOT}/lib/backup.sh"
+# shellcheck source=ops/lib/restore.sh
+source "${N2API_OPS_ROOT}/lib/restore.sh"
 
 N2API_FORMAT="text"
 N2API_ENV_FILE="${N2API_REPO_ROOT}/.env"
@@ -171,7 +176,7 @@ n2api_describe_current_json() {
         {name:"rollback plan",risk:"local_write",mutation:"plan_file"},
         {name:"rollback apply",risk:"high_risk",mutation:"live_stack"}
       ],
-      required_tools: ["bash", "docker", "docker compose v2", "curl", "jq", "openssl", "flock", "timeout", "coreutils"],
+      required_tools: ["bash", "docker", "docker compose v2", "curl", "jq", "openssl", "flock", "setsid", "timeout", "coreutils"],
       exit_codes: {
         succeeded_or_noop: 0,
         attention: 3,
@@ -217,7 +222,7 @@ n2api_doctor() {
       ;;
   esac
 
-  for tool in docker curl jq openssl flock timeout sha256sum df stat ss; do
+  for tool in docker curl jq openssl flock setsid timeout sha256sum df stat ss; do
     n2api_check_command "${tool}"
   done
 
@@ -897,7 +902,15 @@ case "$1" in
     shift
     n2api_logs "$@"
     ;;
-  backup|restore|deploy|upgrade|rollback)
+  backup)
+    shift
+    n2api_backup "$@"
+    ;;
+  restore)
+    shift
+    n2api_restore "$@"
+    ;;
+  deploy|upgrade|rollback)
     command=$1
     shift
     n2api_not_implemented "${command}${*:+ $*}"

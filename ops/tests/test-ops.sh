@@ -32,6 +32,7 @@ assert_jq "${describe}" '
   .status == "succeeded" and
   .changed == false and
   .current.cli_version == "1.0.0" and
+  (.current.required_tools | index("setsid")) != null and
   .current.plan_apply.apply_requires_plan == true and
   .current.plan_apply.live_database_restore_supported == false and
   ([.current.commands[].name] | index("upgrade apply")) != null and
@@ -101,7 +102,7 @@ set -e
 [[ ${unsafe_status} -eq 6 ]] || fail "unsafe_state_exit"
 assert_jq "${unsafe}" '.reason_code == "unsafe_state_directory" and .status == "failed"'
 
-for schema in envelope plan receipt; do
+for schema in envelope plan receipt backup restore; do
   jq -e '."$schema" == "https://json-schema.org/draft/2020-12/schema"' \
     "${repo_root}/ops/schemas/${schema}.schema.json" >/dev/null || fail "invalid_${schema}_schema"
 done
@@ -260,6 +261,477 @@ set -e
 [[ ${gateway_consent_status} -eq 64 ]] || fail "gateway_consent_exit"
 rg -q 'gateway_verify_requires_upstream_consent' "${test_root}/gateway-no-consent.stderr" || fail "gateway_consent_reason"
 
+backup_state="${test_root}/backup-state/n2api"
+set +e
+backup_output="$(PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" \
+  --state-dir "${backup_state}" \
+  backup create --evidence-class ci_fixture --format json)"
+backup_status=$?
+set -e
+[[ ${backup_status} -eq 3 ]] || fail "backup_create_attention_exit"
+assert_jq "${backup_output}" '
+  .command == "backup.create" and
+  .status == "attention" and
+  .changed == true and
+  .reason_code == "backup_created_off_host_attention" and
+  .current.schema_version == "n2api.ops.backup/v1" and
+  .current.source_schema_version == 50 and
+  .current.source_image == "'"${image}"'" and
+  .current.evidence_class == "ci_fixture" and
+  .current.verified == true and
+  .current.off_host_status == "attention_missing" and
+  (.current.size_bytes > 0) and
+  (.current.checksum | test("^[0-9a-f]{64}$")) and
+  (.current.integrity_hmac | test("^[0-9a-f]{64}$")) and
+  (.current.operation_id | test("^op-"))
+'
+archive="$(jq -r '.artifacts[] | select(.type == "postgres_custom_archive") | .path' <<<"${backup_output}")"
+metadata_file="$(jq -r '.artifacts[] | select(.type == "backup_metadata") | .path' <<<"${backup_output}")"
+[[ -s "${archive}" && -s "${metadata_file}" ]] || fail "backup_artifacts_missing"
+[[ "$(stat -c '%a' -- "${archive}")" == "600" ]] || fail "backup_archive_mode"
+[[ "$(stat -c '%a' -- "${metadata_file}")" == "600" ]] || fail "backup_metadata_mode"
+[[ "$(sha256sum -- "${archive}" | awk '{print $1}')" == "$(jq -r '.checksum' "${metadata_file}")" ]] || fail "backup_checksum"
+jq -e --arg image "${image}" --arg archive_name "$(basename -- "${archive}")" '
+  .schema_version == "n2api.ops.backup/v1" and
+  .archive == $archive_name and
+  .source_image == $image and
+  .source_schema_version == 50 and
+  .evidence_class == "ci_fixture" and
+  .verified == true and
+  .off_host_status == "attention_missing" and
+  (.integrity_hmac | test("^[0-9a-f]{64}$"))
+' "${metadata_file}" >/dev/null || fail "backup_metadata_contract"
+jq -e --slurpfile schema "${repo_root}/ops/schemas/backup.schema.json" \
+  '(keys | sort) == ($schema[0].required | sort)' "${metadata_file}" >/dev/null || fail "backup_metadata_schema_shape"
+
+backup_list="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" backup list --format json)"
+assert_jq "${backup_list}" '
+  .command == "backup.list" and
+  .status == "succeeded" and
+  (.current.backups | length) == 1 and
+  .current.backups[0].verified == true and
+  .current.backups[0].evidence_class == "ci_fixture"
+'
+
+backup_verify="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  backup verify --archive "${archive}" --format json)"
+assert_jq "${backup_verify}" '
+  .command == "backup.verify" and
+  .status == "succeeded" and
+  .current.archive_list_status == "passed" and
+  .current.metadata_checksum_status == "matched" and
+  .current.metadata_integrity_status == "matched" and
+  .current.restore_proven == false
+'
+
+backup_verify_fallback="$(N2API_FAKE_DOCKER_MODE=no_postgres PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${backup_state}" \
+  backup verify --archive "${archive}" --format json)"
+assert_jq "${backup_verify_fallback}" '.status == "succeeded" and .current.archive_list_status == "passed"'
+
+tampered_archive="${backup_dir}/n2api-20260730T000000Z-ffffffffffff.dump"
+tampered_metadata="${backup_dir}/n2api-20260730T000000Z-ffffffffffff.metadata.json"
+cp -- "${archive}" "${tampered_archive}"
+chmod 600 -- "${tampered_archive}"
+jq '.archive = "n2api-20260730T000000Z-ffffffffffff.dump" | .checksum = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
+  "${metadata_file}" >"${tampered_metadata}"
+chmod 600 -- "${tampered_metadata}"
+set +e
+tampered_output="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  backup verify --archive "${tampered_archive}" --format json)"
+tampered_status=$?
+set -e
+[[ ${tampered_status} -eq 4 ]] || fail "backup_checksum_mismatch_exit"
+assert_jq "${tampered_output}" '.reason_code == "backup_checksum_mismatch" and .status == "blocked"'
+
+forged_archive="${backup_dir}/n2api-20260730T000001Z-eeeeeeeeeeee.dump"
+forged_metadata="${backup_dir}/n2api-20260730T000001Z-eeeeeeeeeeee.metadata.json"
+cp -- "${archive}" "${forged_archive}"
+chmod 600 -- "${forged_archive}"
+jq '.archive = "n2api-20260730T000001Z-eeeeeeeeeeee.dump" | .off_host_status = "recorded"' \
+  "${metadata_file}" >"${forged_metadata}"
+chmod 600 -- "${forged_metadata}"
+set +e
+forged_output="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  backup verify --archive "${forged_archive}" --format json)"
+forged_status=$?
+set -e
+[[ ${forged_status} -eq 4 ]] || fail "backup_off_host_forgery_exit"
+assert_jq "${forged_output}" '.reason_code == "backup_metadata_invalid" and .status == "blocked"'
+
+dump_count_before="$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.dump' | wc -l | tr -d ' ')"
+metadata_count_before="$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.metadata.json' | wc -l | tr -d ' ')"
+set +e
+backup_failure="$(N2API_FAKE_DOCKER_MODE=pg_dump_fail PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" \
+  --state-dir "${test_root}/backup-failure-state/n2api" \
+  backup create --evidence-class ci_fixture --format json)"
+backup_failure_status=$?
+set -e
+[[ ${backup_failure_status} -eq 6 ]] || fail "backup_failure_exit"
+assert_jq "${backup_failure}" '.status == "failed" and .reason_code == "backup_dump_failed" and .current.stage == "dump"'
+[[ "$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.dump' | wc -l | tr -d ' ')" == "${dump_count_before}" ]] || fail "backup_failure_archive_published"
+[[ "$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.metadata.json' | wc -l | tr -d ' ')" == "${metadata_count_before}" ]] || fail "backup_failure_metadata_published"
+[[ -z "$(find "${backup_dir}" -maxdepth 1 -type f -name '.n2api-*.tmp' -print -quit)" ]] || fail "backup_failure_temp_retained"
+
+set +e
+backup_publish_failure="$(N2API_FAKE_MV_MODE=backup_metadata_publish_fail PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" \
+  --state-dir "${test_root}/backup-publish-failure-state/n2api" \
+  backup create --evidence-class ci_fixture --format json)"
+backup_publish_failure_status=$?
+set -e
+[[ ${backup_publish_failure_status} -eq 6 ]] || fail "backup_publish_failure_exit"
+assert_jq "${backup_publish_failure}" '
+  .status == "failed" and
+  .reason_code == "backup_metadata_publish_failed" and
+  .current.stage == "publish"
+'
+[[ "$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.dump' | wc -l | tr -d ' ')" == "${dump_count_before}" ]] || fail "backup_publish_failure_archive_retained"
+[[ "$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.metadata.json' | wc -l | tr -d ' ')" == "${metadata_count_before}" ]] || fail "backup_publish_failure_metadata_retained"
+[[ -z "$(find "${backup_dir}" -maxdepth 1 -type f -name '.n2api-*.tmp' -print -quit)" ]] || fail "backup_publish_failure_temp_retained"
+
+signal_state="${test_root}/backup-signal-state/n2api"
+signal_ready="${test_root}/backup-signal.ready"
+signal_release="${test_root}/backup-signal.release"
+env \
+  PATH="${fake_path}" \
+  N2API_FAKE_DOCKER_MODE=pg_dump_wait \
+  N2API_FAKE_DOCKER_READY_FILE="${signal_ready}" \
+  N2API_FAKE_DOCKER_RELEASE_FILE="${signal_release}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${signal_state}" \
+    backup create --evidence-class ci_fixture --format json \
+    >"${test_root}/backup-signal.stdout" 2>"${test_root}/backup-signal.stderr" &
+signal_pid=$!
+for _ in {1..100}; do
+  [[ -e "${signal_ready}" ]] && break
+  sleep 0.05
+done
+if [[ ! -e "${signal_ready}" ]]; then
+  kill -TERM "${signal_pid}" 2>/dev/null || true
+  touch "${signal_release}"
+  wait "${signal_pid}" 2>/dev/null || true
+  fail "backup_signal_not_ready"
+fi
+kill -TERM "${signal_pid}"
+set +e
+wait "${signal_pid}"
+signal_status=$?
+set -e
+[[ ${signal_status} -eq 143 ]] || fail "backup_signal_exit"
+jq -e '.status == "failed" and .reason_code == "backup_interrupted" and .current.signal == "TERM"' \
+  "${test_root}/backup-signal.stdout" >/dev/null || fail "backup_signal_receipt"
+[[ -z "$(find "${backup_dir}" -maxdepth 1 -type f -name '.n2api-*.tmp' -print -quit)" ]] || fail "backup_signal_temp_retained"
+[[ "$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.dump' | wc -l | tr -d ' ')" == "${dump_count_before}" ]] || fail "backup_signal_archive_published"
+
+double_signal_state="${test_root}/backup-double-signal-state/n2api"
+double_signal_ready="${test_root}/backup-double-signal.ready"
+env \
+  PATH="${fake_path}" \
+  N2API_FAKE_DOCKER_MODE=pg_dump_ignore_term \
+  N2API_FAKE_DOCKER_READY_FILE="${double_signal_ready}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${double_signal_state}" --timeout 1 \
+    backup create --evidence-class ci_fixture --format json \
+    >"${test_root}/backup-double-signal.stdout" 2>"${test_root}/backup-double-signal.stderr" &
+double_signal_pid=$!
+for _ in {1..100}; do
+  [[ -e "${double_signal_ready}" ]] && break
+  sleep 0.05
+done
+[[ -e "${double_signal_ready}" ]] || fail "backup_double_signal_not_ready"
+kill -TERM "${double_signal_pid}"
+sleep 0.05
+kill -TERM "${double_signal_pid}" 2>/dev/null || true
+set +e
+wait "${double_signal_pid}"
+double_signal_status=$?
+set -e
+[[ ${double_signal_status} -eq 143 ]] || fail "backup_double_signal_exit"
+[[ -z "$(find "${backup_dir}" -maxdepth 1 -type f -name '.n2api-*.tmp' -print -quit)" ]] || fail "backup_double_signal_temp_retained"
+(
+  exec 8>"${double_signal_state}/locks/operator.lock"
+  flock --nonblock 8
+) || fail "backup_double_signal_lock_retained"
+
+set +e
+backup_timeout="$(N2API_FAKE_DOCKER_MODE=pg_dump_wait N2API_FAKE_DOCKER_RELEASE_FILE="${test_root}/never-release" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" \
+  --state-dir "${test_root}/backup-timeout-state/n2api" --timeout 1 \
+  backup create --evidence-class ci_fixture --format json)"
+backup_timeout_status=$?
+set -e
+[[ ${backup_timeout_status} -eq 124 ]] || fail "backup_timeout_exit"
+assert_jq "${backup_timeout}" '.status == "failed" and .reason_code == "backup_dump_timeout" and .current.stage == "dump"'
+
+set +e
+backup_kill_timeout="$(N2API_FAKE_DOCKER_MODE=pg_dump_ignore_term PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${test_root}/backup-kill-timeout-state/n2api" --timeout 1 \
+  backup create --evidence-class ci_fixture --format json)"
+backup_kill_timeout_status=$?
+set -e
+[[ ${backup_kill_timeout_status} -eq 124 ]] || fail "backup_kill_timeout_exit"
+assert_jq "${backup_kill_timeout}" '.status == "failed" and .reason_code == "backup_dump_timeout"'
+
+set +e
+backup_list_timeout="$(N2API_FAKE_DOCKER_MODE=archive_list_wait PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${test_root}/backup-list-timeout-state/n2api" --timeout 1 \
+  backup create --evidence-class ci_fixture --format json)"
+backup_list_timeout_status=$?
+set -e
+[[ ${backup_list_timeout_status} -eq 124 ]] || fail "backup_list_timeout_exit"
+assert_jq "${backup_list_timeout}" '.status == "failed" and .reason_code == "backup_archive_list_timeout" and .current.stage == "archive_list"'
+
+lock_ready="${test_root}/backup-lock.ready"
+(
+  exec 8>"${backup_state}/locks/operator.lock"
+  flock 8
+  touch "${lock_ready}"
+  sleep 30
+) &
+lock_pid=$!
+for _ in {1..100}; do
+  [[ -e "${lock_ready}" ]] && break
+  sleep 0.05
+done
+[[ -e "${lock_ready}" ]] || fail "backup_lock_not_ready"
+set +e
+contended_output="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  backup create --evidence-class ci_fixture --format json)"
+contended_status=$?
+set -e
+kill -TERM "${lock_pid}" 2>/dev/null || true
+wait "${lock_pid}" 2>/dev/null || true
+[[ ${contended_status} -eq 5 ]] || fail "backup_lock_contended_exit"
+assert_jq "${contended_output}" '.status == "contended" and .reason_code == "operation_lock_contended"'
+
+admin_secret_file="${test_root}/restore-admin.secret"
+encryption_secret_file="${test_root}/restore-encryption.secret"
+printf '%s\n' 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK_ADMIN' >"${admin_secret_file}"
+printf '%s\n' 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK_ENCRYPTION' >"${encryption_secret_file}"
+chmod 600 -- "${admin_secret_file}" "${encryption_secret_file}"
+fixture_archive="${test_root}/fixture.dump"
+cp -- "${archive}" "${fixture_archive}"
+chmod 600 -- "${fixture_archive}"
+
+fixture_restore_state="${test_root}/fixture-restore-state/n2api"
+fixture_restore="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${fixture_restore_state}" \
+  restore drill \
+  --archive "${fixture_archive}" \
+  --image "${image}" \
+  --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" \
+  --encryption-secret-file "${encryption_secret_file}" \
+  --format json)"
+assert_jq "${fixture_restore}" '
+  .status == "succeeded" and
+  .reason_code == "restore_drill_passed" and
+  .current.schema_version == "n2api.ops.restore/v1" and
+  .current.evidence_class == "ci_fixture" and
+  (.current.backup_id | startswith("fixture-")) and
+  .current.cleanup_status == "passed" and
+  .current.schema_version_value == 50
+'
+jq -e --slurpfile schema "${repo_root}/ops/schemas/restore.schema.json" \
+  '(.current | keys | sort) == ($schema[0].required | sort)' <<<"${fixture_restore}" >/dev/null || fail "restore_evidence_schema_shape"
+[[ -z "$(find "${fixture_restore_state}/restore-runtime/active" -type f -print -quit 2>/dev/null)" ]] || fail "fixture_restore_active_marker_retained"
+
+race_archive="${test_root}/race-fixture.dump"
+race_checksum="$(sha256sum -- "${fixture_archive}" | awk '{print $1}')"
+cp -- "${fixture_archive}" "${race_archive}"
+chmod 600 -- "${race_archive}"
+race_ready="${test_root}/restore-race.ready"
+race_release="${test_root}/restore-race.release"
+env \
+  PATH="${fake_path}" \
+  N2API_FAKE_DOCKER_MODE=restore_pause \
+  N2API_FAKE_DOCKER_RESTORE_READY_FILE="${race_ready}" \
+  N2API_FAKE_DOCKER_RESTORE_RELEASE_FILE="${race_release}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${test_root}/restore-race-state/n2api" \
+    restore drill \
+    --archive "${race_archive}" \
+    --image "${image}" \
+    --evidence-class ci_fixture \
+    --admin-password-file "${admin_secret_file}" \
+    --encryption-secret-file "${encryption_secret_file}" \
+    --format json \
+    >"${test_root}/restore-race.stdout" 2>"${test_root}/restore-race.stderr" &
+race_pid=$!
+for _ in {1..100}; do
+  [[ -e "${race_ready}" ]] && break
+  sleep 0.05
+done
+if [[ ! -e "${race_ready}" ]]; then
+  kill -TERM "${race_pid}" 2>/dev/null || true
+  touch "${race_release}"
+  wait "${race_pid}" 2>/dev/null || true
+  fail "restore_race_not_ready"
+fi
+printf 'replaced-after-staging\n' >"${race_archive}"
+touch "${race_release}"
+wait "${race_pid}" || fail "restore_race_exit"
+jq -e --arg checksum "${race_checksum}" '
+  .status == "succeeded" and .current.archive_checksum == $checksum
+' "${test_root}/restore-race.stdout" >/dev/null || fail "restore_race_checksum_binding"
+
+set +e
+fixture_as_real="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" \
+  --state-dir "${backup_state}" \
+  restore drill \
+  --archive "${archive}" \
+  --image "${image}" \
+  --evidence-class real_operator \
+  --admin-password-file "${admin_secret_file}" \
+  --encryption-secret-file "${encryption_secret_file}" \
+  --format json)"
+fixture_as_real_status=$?
+set -e
+[[ ${fixture_as_real_status} -eq 6 ]] || fail "fixture_promoted_to_real"
+assert_jq "${fixture_as_real}" '.status == "failed" and .reason_code == "fixture_restore_cannot_be_promoted"'
+
+restore_failure_state="${test_root}/restore-failure-state/n2api"
+set +e
+restore_failure="$(N2API_FAKE_DOCKER_MODE=restore_gateway_fail PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${restore_failure_state}" \
+  restore drill \
+  --archive "${fixture_archive}" \
+  --image "${image}" \
+  --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" \
+  --encryption-secret-file "${encryption_secret_file}" \
+  --format json)"
+restore_failure_status=$?
+set -e
+[[ ${restore_failure_status} -eq 6 ]] || fail "restore_failure_exit"
+assert_jq "${restore_failure}" '
+  .status == "failed" and
+  .reason_code == "restore_drill_failed" and
+  .current.stage == "gateway" and
+  .current.cleanup_status == "passed" and
+  .current.evidence_class == "ci_fixture"
+'
+[[ -z "$(find "${restore_failure_state}/restore-runtime/active" -type f -print -quit 2>/dev/null)" ]] || fail "restore_failure_active_marker_retained"
+
+restore_cleanup_failure_state="${test_root}/restore-cleanup-failure-state/n2api"
+set +e
+restore_cleanup_failure="$(N2API_FAKE_DOCKER_MODE=restore_cleanup_fail PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${restore_cleanup_failure_state}" \
+  restore drill \
+  --archive "${fixture_archive}" \
+  --image "${image}" \
+  --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" \
+  --encryption-secret-file "${encryption_secret_file}" \
+  --format json)"
+restore_cleanup_failure_status=$?
+set -e
+[[ ${restore_cleanup_failure_status} -eq 6 ]] || fail "restore_cleanup_failure_exit"
+assert_jq "${restore_cleanup_failure}" '
+  .status == "failed" and
+  .reason_code == "restore_drill_failed" and
+  .current.stage == "cleanup" and
+  .current.cleanup_status == "failed"
+'
+
+restore_timeout_state="${test_root}/restore-timeout-state/n2api"
+set +e
+restore_timeout="$(N2API_FAKE_DOCKER_MODE=restore_wait PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${restore_timeout_state}" --timeout 1 \
+  restore drill \
+  --archive "${fixture_archive}" \
+  --image "${image}" \
+  --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" \
+  --encryption-secret-file "${encryption_secret_file}" \
+  --format json)"
+restore_timeout_status=$?
+set -e
+[[ ${restore_timeout_status} -eq 124 ]] || fail "restore_timeout_exit"
+assert_jq "${restore_timeout}" '.status == "failed" and .reason_code == "restore_drill_timeout"'
+[[ -z "$(find "${restore_timeout_state}" -maxdepth 1 -type f -name '.restore-*' -print -quit 2>/dev/null)" ]] || fail "restore_timeout_temp_retained"
+
+set +e
+restore_pull_timeout="$(N2API_FAKE_DOCKER_MODE=image_pull_wait PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${test_root}/restore-pull-timeout-state/n2api" --timeout 1 \
+  restore drill --archive "${fixture_archive}" --image "${image}" --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" --encryption-secret-file "${encryption_secret_file}" --format json)"
+restore_pull_timeout_status=$?
+set -e
+[[ ${restore_pull_timeout_status} -eq 124 ]] || fail "restore_pull_timeout_exit"
+assert_jq "${restore_pull_timeout}" '.status == "failed" and .reason_code == "restore_image_pull_timeout" and .current.stage == "image_pull"'
+
+set +e
+restore_pull_kill_timeout="$(N2API_FAKE_DOCKER_MODE=image_pull_ignore_term PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${test_root}/restore-pull-kill-timeout-state/n2api" --timeout 1 \
+  restore drill --archive "${fixture_archive}" --image "${image}" --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" --encryption-secret-file "${encryption_secret_file}" --format json)"
+restore_pull_kill_timeout_status=$?
+set -e
+[[ ${restore_pull_kill_timeout_status} -eq 124 ]] || fail "restore_pull_kill_timeout_exit"
+assert_jq "${restore_pull_kill_timeout}" '.status == "failed" and .reason_code == "restore_image_pull_timeout"'
+
+set +e
+restore_list_timeout="$(N2API_FAKE_DOCKER_MODE=archive_list_wait PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${test_root}/restore-list-timeout-state/n2api" --timeout 1 \
+  restore drill --archive "${fixture_archive}" --image "${image}" --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" --encryption-secret-file "${encryption_secret_file}" --format json)"
+restore_list_timeout_status=$?
+set -e
+[[ ${restore_list_timeout_status} -eq 124 ]] || fail "restore_list_timeout_exit"
+assert_jq "${restore_list_timeout}" '.status == "failed" and .reason_code == "restore_archive_list_timeout" and .current.stage == "archive_list"'
+
+restore_signal_state="${test_root}/restore-signal-state/n2api"
+restore_signal_ready="${test_root}/restore-signal.ready"
+env \
+  PATH="${fake_path}" \
+  N2API_FAKE_DOCKER_MODE=restore_wait \
+  N2API_FAKE_DOCKER_RESTORE_READY_FILE="${restore_signal_ready}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${restore_signal_state}" --timeout 30 \
+    restore drill \
+    --archive "${fixture_archive}" \
+    --image "${image}" \
+    --evidence-class ci_fixture \
+    --admin-password-file "${admin_secret_file}" \
+    --encryption-secret-file "${encryption_secret_file}" \
+    --format json \
+    >"${test_root}/restore-signal.stdout" 2>"${test_root}/restore-signal.stderr" &
+restore_signal_pid=$!
+for _ in {1..100}; do
+  [[ -e "${restore_signal_ready}" ]] && break
+  sleep 0.05
+done
+if [[ ! -e "${restore_signal_ready}" ]]; then
+  kill -TERM "${restore_signal_pid}" 2>/dev/null || true
+  wait "${restore_signal_pid}" 2>/dev/null || true
+  fail "restore_signal_not_ready"
+fi
+kill -TERM "${restore_signal_pid}"
+set +e
+wait "${restore_signal_pid}"
+restore_signal_status=$?
+set -e
+[[ ${restore_signal_status} -eq 143 ]] || fail "restore_signal_exit"
+jq -e '
+  .status == "failed" and
+  .reason_code == "restore_drill_interrupted" and
+  .current.signal == "TERM" and
+  (.current.cleanup_status == "passed" or .current.cleanup_status == "unknown")
+' "${test_root}/restore-signal.stdout" >/dev/null || fail "restore_signal_receipt"
+[[ -z "$(find "${restore_signal_state}" -maxdepth 1 -type f -name '.restore-*' -print -quit 2>/dev/null)" ]] || fail "restore_signal_temp_retained"
+
+for protected_output in \
+  "${backup_state}" \
+  "${fixture_restore_state}" \
+  "${restore_failure_state}" \
+  "${restore_cleanup_failure_state}" \
+  "${restore_timeout_state}" \
+  "${restore_signal_state}" \
+  "${backup_dir}"; do
+  if rg -n 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK' "${protected_output}" >/dev/null 2>&1; then
+    fail "restore_secret_canary_retained"
+  fi
+done
+
 for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
   [[ -e "${retained}" ]] || continue
   if rg -n --fixed-strings "${postgres_secret}" "${retained}" >/dev/null 2>&1 ||
@@ -269,4 +741,4 @@ for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
   fi
 done
 
-printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image_runtime\n'
+printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image_runtime_backup_restore\n'

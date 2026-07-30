@@ -71,6 +71,11 @@ cleanup() {
   if [[ ${status} -eq 0 && ${cleanup_failed} -ne 0 ]]; then
     status=1
   fi
+  if [[ ${cleanup_failed} -eq 0 ]]; then
+    echo "restore_cleanup_status=passed" >&2
+  else
+    echo "restore_cleanup_status=failed" >&2
+  fi
   if [[ ${status} -ne 0 ]]; then
     echo "restore_status=failed stage=${stage}" >&2
   fi

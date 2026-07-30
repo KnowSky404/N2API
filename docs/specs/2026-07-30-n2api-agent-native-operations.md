@@ -292,6 +292,9 @@ renames the archive and metadata, and records UTC time, ID, size, checksum,
 source digest, schema, verification status, and off-host status. Failure or
 interruption removes only the exact temporary files. No retention deletion or
 upload occurs. Missing encrypted off-host evidence yields `attention`.
+Metadata also records `ci_fixture` or `real_operator` provenance and is bound to
+the protected operator state with HMAC. The CLI does not accept a bare metadata
+edit as off-host custody evidence.
 
 `backup verify` proves archive structure and checksum only. It never reports a
 successful restore.
@@ -303,6 +306,9 @@ records cleanup status, and classifies evidence as `ci_fixture` or
 `real_operator`. Candidate and current-image drills are distinct. Fixture
 evidence can never satisfy a real-operator upgrade gate. Secrets are obtained
 through protected files or interactive input and are unset on every exit.
+After acquiring the lock, the controller stages a protected archive copy and
+binds the evidence to its checksum. The complete isolated wrapper is bounded by
+the global timeout, and controller signals are forwarded to its process group.
 
 ## 14. Plan And Apply
 

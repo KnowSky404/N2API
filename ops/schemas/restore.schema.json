@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://n2api.local/schemas/ops-restore-v1.json",
+  "title": "N2API isolated restore evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "operation_id",
+    "evidence_class",
+    "backup_id",
+    "archive_checksum",
+    "image",
+    "schema_version_value",
+    "archive_list_status",
+    "restore_status",
+    "readiness_status",
+    "restored_secret_status",
+    "gateway_status",
+    "cleanup_status",
+    "finished_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "n2api.ops.restore/v1" },
+    "operation_id": { "type": "string", "pattern": "^op-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$" },
+    "evidence_class": { "enum": ["ci_fixture", "real_operator"] },
+    "backup_id": { "type": "string", "pattern": "^(backup-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}|fixture-[0-9a-f]{12})$" },
+    "archive_checksum": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "image": { "type": "string", "pattern": "^ghcr\\.io/knowsky404/n2api:20[0-9]{8}@sha256:[0-9a-f]{64}$" },
+    "schema_version_value": { "type": "integer", "minimum": 1 },
+    "archive_list_status": { "const": "passed" },
+    "restore_status": { "const": "passed" },
+    "readiness_status": { "const": "passed" },
+    "restored_secret_status": { "enum": ["passed", "skipped_no_reusable_key"] },
+    "gateway_status": { "const": "passed" },
+    "cleanup_status": { "const": "passed" },
+    "finished_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -75,7 +75,10 @@ n2api_latest_backup_json() {
     .schema_version == "n2api.ops.backup/v1" and
     (.backup_id | type == "string") and
     (.created_at | type == "string") and
-    (.checksum | test("^[0-9a-f]{64}$"))
+    (.checksum | test("^[0-9a-f]{64}$")) and
+    (.integrity_hmac | test("^[0-9a-f]{64}$")) and
+    (.evidence_class == "ci_fixture" or .evidence_class == "real_operator") and
+    .off_host_status == "attention_missing"
   ' "${latest}" >/dev/null 2>&1; then
     jq -cn --arg directory "${backup_dir}" '{availability:"invalid",directory:$directory}'
     return
@@ -89,8 +92,10 @@ n2api_latest_backup_json() {
     checksum,
     source_image,
     schema_version_value:.source_schema_version,
+    evidence_class,
     verified,
-    off_host_status
+    off_host_status,
+    integrity_status:"unverified_snapshot"
   }' "${latest}"
 }
 
@@ -133,6 +138,7 @@ n2api_latest_restore_evidence_json() {
     evidence_class:(.current.evidence_class // "unknown"),
     image:(.target.image // null),
     backup_id:(.current.backup_id // null),
+    archive_checksum:(.current.archive_checksum // null),
     status
   }' "${latest}"
 }
