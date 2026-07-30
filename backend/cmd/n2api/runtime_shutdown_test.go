@@ -278,6 +278,8 @@ func runRuntimeSIGTERMHelper(t *testing.T) {
 	if address == "" || upstreamURL == "" {
 		t.Fatal("SIGTERM helper configuration is incomplete")
 	}
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	listener, err := net.Listen("tcp4", address)
 	if err != nil {
 		t.Fatalf("listen for SIGTERM helper: %v", err)
@@ -322,8 +324,6 @@ func runRuntimeSIGTERMHelper(t *testing.T) {
 		mainServer: server, readiness: readiness, servers: servers, requests: requests,
 		cancelRequests: cancelRequests, totalTimeout: 3 * time.Second, requestDrain: 2 * time.Second,
 	}
-	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stopSignals()
 	<-signalCtx.Done()
 	if err := runtime.run("signal"); err != nil {
 		t.Fatalf("SIGTERM runtime shutdown: %v", err)
