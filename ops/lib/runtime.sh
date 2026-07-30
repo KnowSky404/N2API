@@ -143,6 +143,75 @@ n2api_latest_restore_evidence_json() {
   }' "${latest}"
 }
 
+n2api_real_backup_evidence_json() {
+  local expected_image=$1 expected_schema=$2 backup_dir metadata_file archive metadata actual_checksum now_epoch created_epoch age
+  backup_dir="$(n2api_backup_directory)"
+  [[ -d "${backup_dir}" && ! -L "${backup_dir}" ]] || return 1
+  metadata_file="$(find "${backup_dir}" -maxdepth 1 -type f -name 'n2api-*.metadata.json' -print 2>/dev/null | sort | tail -n 1)"
+  [[ -n "${metadata_file}" ]] || return 1
+  archive="${metadata_file%.metadata.json}.dump"
+  metadata="$(n2api_backup_metadata_json "${metadata_file}" "${archive}")" || return 1
+  n2api_backup_metadata_hmac_valid "${metadata}" || return 1
+  actual_checksum="$(sha256sum -- "${archive}" | awk '{print $1}')" || return 1
+  [[ "${actual_checksum}" == "$(jq -r '.checksum' <<<"${metadata}")" ]] || return 1
+  [[ "$(jq -r '.evidence_class' <<<"${metadata}")" == real_operator ]] || return 1
+  [[ "$(jq -r '.source_image' <<<"${metadata}")" == "${expected_image}" ]] || return 1
+  [[ "$(jq -r '.source_schema_version' <<<"${metadata}")" == "${expected_schema}" ]] || return 1
+  created_epoch="$(date -u -d "$(jq -r '.created_at' <<<"${metadata}")" +%s 2>/dev/null || printf 0)"
+  now_epoch="$(date -u +%s)"
+  ((created_epoch > 0 && created_epoch <= now_epoch)) || return 1
+  age=$((now_epoch - created_epoch))
+  ((age <= 86400)) || return 1
+  jq -c \
+    --arg archive_path "${archive}" \
+    --arg metadata_path "${metadata_file}" \
+    --argjson age_seconds "${age}" \
+    '. + {availability:"available",archive_path:$archive_path,metadata_path:$metadata_path,age_seconds:$age_seconds,metadata_hmac:.integrity_hmac}' \
+    <<<"${metadata}"
+}
+
+n2api_real_restore_evidence_json() {
+  local image=$1 backup_id=$2 checksum=$3 path document finished_epoch now_epoch age
+  n2api_state_is_safe "${N2API_STATE_DIR}" || return 1
+  while IFS= read -r path; do
+    [[ -f "${path}" && ! -L "${path}" ]] || continue
+    document="$(jq -ce . "${path}" 2>/dev/null)" || continue
+    n2api_operation_integrity_valid "${document}" || continue
+    jq -e \
+      --arg image "${image}" \
+      --arg backup_id "${backup_id}" \
+      --arg checksum "${checksum}" '
+      .command == "restore.drill" and
+      .status == "succeeded" and
+      .current.evidence_class == "real_operator" and
+      .current.backup_id == $backup_id and
+      .current.archive_checksum == $checksum and
+      .target.image == $image and
+      .current.cleanup_status == "passed"
+    ' <<<"${document}" >/dev/null 2>&1 || continue
+    finished_epoch="$(date -u -d "$(jq -r '.finished_at' <<<"${document}")" +%s 2>/dev/null || printf 0)"
+    now_epoch="$(date -u +%s)"
+    ((finished_epoch > 0 && finished_epoch <= now_epoch)) || continue
+    age=$((now_epoch - finished_epoch))
+    ((age <= 86400)) || continue
+    jq -c --argjson age_seconds "${age}" '{
+      availability:"available",
+      operation_id,
+      finished_at,
+      age_seconds:$age_seconds,
+      evidence_class:.current.evidence_class,
+      image:.target.image,
+      backup_id:.current.backup_id,
+      archive_checksum:.current.archive_checksum,
+      schema_version_value:.current.schema_version_value,
+      cleanup_status:.current.cleanup_status,
+      receipt_hmac:.integrity_hmac
+    }' <<<"${document}"
+    return 0
+  done < <(find "${N2API_STATE_DIR}/operations" -maxdepth 1 -type f -name 'op-*.json' -print 2>/dev/null | sort -r)
+  return 1
+}
+
 n2api_lock_status_json() {
   local metadata lock_file pid operation_id held="unknown" lock_fd
   if ! n2api_state_is_safe "${N2API_STATE_DIR}" 2>/dev/null; then
@@ -194,6 +263,7 @@ n2api_runtime_snapshot_json() {
   local livez='{"availability":"unavailable"}' readyz='{"availability":"unavailable"}' version='{"availability":"unavailable"}'
   local backup restore git lock operation compose_files
 
+  export N2API_ENV_FILE
   ps_raw="$(n2api_compose ps --all --format json 2>/dev/null)" || return 1
   if [[ -n "${ps_raw}" ]]; then
     services="$(jq -sc 'map({id:.ID,name:.Name,project:.Project,service:.Service,state:.State,health:(if .Health == "" then "unavailable" else .Health end),exit_code:.ExitCode,publishers:.Publishers})' <<<"${ps_raw}")" || return 1

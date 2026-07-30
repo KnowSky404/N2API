@@ -19,6 +19,18 @@ assert_jq() {
   jq -e "${expression}" <<<"${document}" >/dev/null || fail "jq_assertion_failed"
 }
 
+sign_json_file() {
+  local file=$1 key_file=$2 canonical integrity_hmac tmp
+  canonical="$(jq -ceS 'del(.integrity_hmac)' "${file}")"
+  integrity_hmac="$(printf '%s' "${canonical}" |
+    openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(tr -d '\r\n' <"${key_file}")" |
+    awk '{print $NF}')"
+  tmp="${file}.signed"
+  jq --arg integrity_hmac "${integrity_hmac}" '.integrity_hmac = $integrity_hmac' "${file}" >"${tmp}"
+  mv -- "${tmp}" "${file}"
+  chmod 600 -- "${file}"
+}
+
 [[ -x "${cli}" ]] || fail "cli_not_executable"
 
 state_dir="${test_root}/state/n2api"
@@ -737,6 +749,426 @@ assert_jq "${fixture_restore}" '
 jq -e --slurpfile schema "${repo_root}/ops/schemas/restore.schema.json" \
   '(.current | keys | sort) == ($schema[0].required | sort)' <<<"${fixture_restore}" >/dev/null || fail "restore_evidence_schema_shape"
 [[ -z "$(find "${fixture_restore_state}/restore-runtime/active" -type f -print -quit 2>/dev/null)" ]] || fail "fixture_restore_active_marker_retained"
+
+set +e
+real_backup_output="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  backup create --evidence-class real_operator --format json)"
+real_backup_status=$?
+set -e
+[[ ${real_backup_status} -eq 3 ]] || fail "real_backup_attention_exit"
+real_archive="$(jq -r '.artifacts[] | select(.type == "postgres_custom_archive") | .path' <<<"${real_backup_output}")"
+real_metadata="$(jq -r '.artifacts[] | select(.type == "backup_metadata") | .path' <<<"${real_backup_output}")"
+real_backup_id="$(jq -r '.current.backup_id' <<<"${real_backup_output}")"
+candidate_image="ghcr.io/knowsky404/n2api:2026073002@sha256:$(printf 'b%.0s' {1..64})"
+source_env="${test_root}/upgrade-source.env"
+cp -- "${generated_env}" "${source_env}"
+chmod 600 -- "${source_env}"
+
+set +e
+missing_evidence_plan="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+missing_evidence_status=$?
+set -e
+[[ ${missing_evidence_status} -eq 4 ]] || fail "missing_upgrade_evidence_exit"
+missing_evidence_path="$(jq -r '.artifacts[0].path' <<<"${missing_evidence_plan}")"
+jq -e '
+  (.blocked_reasons | index("current_restore_missing")) != null and
+  (.blocked_reasons | index("candidate_restore_missing")) != null
+' "${missing_evidence_path}" >/dev/null || fail "missing_upgrade_evidence_blockers"
+
+fixture_current_restore="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  restore drill --archive "${real_archive}" --image "${image}" --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" --encryption-secret-file "${encryption_secret_file}" --format json)"
+fixture_candidate_restore="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  restore drill --archive "${real_archive}" --image "${candidate_image}" --evidence-class ci_fixture \
+  --admin-password-file "${admin_secret_file}" --encryption-secret-file "${encryption_secret_file}" --format json)"
+assert_jq "${fixture_current_restore}" '.status == "succeeded" and .current.evidence_class == "ci_fixture"'
+assert_jq "${fixture_candidate_restore}" '.status == "succeeded" and .current.evidence_class == "ci_fixture"'
+set +e
+fixture_upgrade_plan="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+fixture_upgrade_status=$?
+set -e
+[[ ${fixture_upgrade_status} -eq 4 ]] || fail "fixture_upgrade_evidence_exit"
+fixture_upgrade_path="$(jq -r '.artifacts[0].path' <<<"${fixture_upgrade_plan}")"
+jq -e '
+  (.blocked_reasons | index("current_restore_missing")) != null and
+  (.blocked_reasons | index("candidate_restore_missing")) != null
+' "${fixture_upgrade_path}" >/dev/null || fail "fixture_upgrade_evidence_promoted"
+
+current_real_restore="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  restore drill --archive "${real_archive}" --image "${image}" --evidence-class real_operator \
+  --admin-password-file "${admin_secret_file}" --encryption-secret-file "${encryption_secret_file}" --format json)"
+assert_jq "${current_real_restore}" '
+  .status == "succeeded" and .current.evidence_class == "real_operator" and .current.backup_id == "'"${real_backup_id}"'"
+'
+candidate_real_restore="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  restore drill --archive "${real_archive}" --image "${candidate_image}" --evidence-class real_operator \
+  --admin-password-file "${admin_secret_file}" --encryption-secret-file "${encryption_secret_file}" --format json)"
+assert_jq "${candidate_real_restore}" '
+  .status == "succeeded" and .current.evidence_class == "real_operator" and .target.image == "'"${candidate_image}"'"
+'
+evidence_key="${backup_state}/keys/integrity.key"
+current_restore_receipt="${backup_state}/operations/$(jq -r '.operation_id' <<<"${current_real_restore}").json"
+candidate_restore_receipt="${backup_state}/operations/$(jq -r '.operation_id' <<<"${candidate_real_restore}").json"
+
+cp -- "${real_metadata}" "${test_root}/real-metadata.valid"
+jq --arg created_at "$(date -u -d '+10 minutes' +'%Y-%m-%dT%H:%M:%SZ')" \
+  '.created_at = $created_at' "${real_metadata}" >"${real_metadata}.future"
+mv -- "${real_metadata}.future" "${real_metadata}"
+sign_json_file "${real_metadata}" "${evidence_key}"
+set +e
+future_backup_plan="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+future_backup_status=$?
+set -e
+[[ ${future_backup_status} -eq 4 ]] || fail "future_backup_upgrade_exit"
+future_backup_path="$(jq -r '.artifacts[0].path' <<<"${future_backup_plan}")"
+jq -e '(.blocked_reasons | index("backup_missing")) != null' "${future_backup_path}" >/dev/null ||
+  fail "future_backup_upgrade_not_blocked"
+
+jq --arg created_at "$(date -u -d '-2 days' +'%Y-%m-%dT%H:%M:%SZ')" \
+  '.created_at = $created_at' "${real_metadata}" >"${real_metadata}.stale"
+mv -- "${real_metadata}.stale" "${real_metadata}"
+sign_json_file "${real_metadata}" "${evidence_key}"
+set +e
+stale_backup_plan="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+stale_backup_status=$?
+set -e
+[[ ${stale_backup_status} -eq 4 ]] || fail "stale_backup_upgrade_exit"
+stale_backup_path="$(jq -r '.artifacts[0].path' <<<"${stale_backup_plan}")"
+jq -e '(.blocked_reasons | index("backup_missing")) != null' "${stale_backup_path}" >/dev/null ||
+  fail "stale_backup_upgrade_not_blocked"
+mv -- "${test_root}/real-metadata.valid" "${real_metadata}"
+chmod 600 -- "${real_metadata}"
+
+cp -- "${current_restore_receipt}" "${test_root}/current-restore.valid"
+jq --arg finished_at "$(date -u -d '+10 minutes' +'%Y-%m-%dT%H:%M:%SZ')" \
+  '.finished_at = $finished_at' "${current_restore_receipt}" >"${current_restore_receipt}.future"
+mv -- "${current_restore_receipt}.future" "${current_restore_receipt}"
+sign_json_file "${current_restore_receipt}" "${evidence_key}"
+set +e
+future_restore_plan="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+future_restore_status=$?
+set -e
+[[ ${future_restore_status} -eq 4 ]] || fail "future_restore_upgrade_exit"
+future_restore_path="$(jq -r '.artifacts[0].path' <<<"${future_restore_plan}")"
+jq -e '(.blocked_reasons | index("current_restore_missing")) != null' "${future_restore_path}" >/dev/null ||
+  fail "future_restore_upgrade_not_blocked"
+mv -- "${test_root}/current-restore.valid" "${current_restore_receipt}"
+chmod 600 -- "${current_restore_receipt}"
+
+cp -- "${candidate_restore_receipt}" "${test_root}/candidate-restore.valid"
+jq --arg finished_at "$(date -u -d '-2 days' +'%Y-%m-%dT%H:%M:%SZ')" \
+  '.finished_at = $finished_at' "${candidate_restore_receipt}" >"${candidate_restore_receipt}.stale"
+mv -- "${candidate_restore_receipt}.stale" "${candidate_restore_receipt}"
+sign_json_file "${candidate_restore_receipt}" "${evidence_key}"
+set +e
+stale_restore_plan="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+stale_restore_status=$?
+set -e
+[[ ${stale_restore_status} -eq 4 ]] || fail "stale_restore_upgrade_exit"
+stale_restore_path="$(jq -r '.artifacts[0].path' <<<"${stale_restore_plan}")"
+jq -e '(.blocked_reasons | index("candidate_restore_missing")) != null' "${stale_restore_path}" >/dev/null ||
+  fail "stale_restore_upgrade_not_blocked"
+mv -- "${test_root}/candidate-restore.valid" "${candidate_restore_receipt}"
+chmod 600 -- "${candidate_restore_receipt}"
+
+upgrade_docker_log="${test_root}/upgrade-docker.log"
+upgrade_plan_output="$(N2API_FAKE_DOCKER_LOG="${upgrade_docker_log}" PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+assert_jq "${upgrade_plan_output}" '
+  .command == "upgrade.plan" and .status == "succeeded" and .reason_code == "upgrade_plan_created"
+'
+upgrade_plan_path="$(jq -r '.artifacts[0].path' <<<"${upgrade_plan_output}")"
+jq -e --arg backup_id "${real_backup_id}" --arg current_image "${image}" --arg candidate_image "${candidate_image}" '
+  .source.runtime.configured_image == $current_image and
+  .target.image.reference == $candidate_image and
+  .target.rollback_image == $current_image and
+  .evidence.backup.backup_id == $backup_id and
+  .evidence.backup.evidence_class == "real_operator" and
+  .evidence.current_restore.evidence_class == "real_operator" and
+  .evidence.candidate_restore.evidence_class == "real_operator" and
+  (.invariants.current_restore_hmac | test("^[0-9a-f]{64}$")) and
+  (.invariants.candidate_restore_hmac | test("^[0-9a-f]{64}$"))
+' "${upgrade_plan_path}" >/dev/null || fail "upgrade_plan_evidence_contract"
+rg -q '(^| )pull( |$)' "${upgrade_docker_log}" || fail "upgrade_plan_candidate_not_pulled"
+if rg -q '(^| )up( |$)' "${upgrade_docker_log}"; then
+  fail "upgrade_plan_recreated_stack"
+fi
+
+cp -- "${real_archive}" "${test_root}/real-archive.valid"
+tr 'P' 'Q' <"${real_archive}" >"${real_archive}.tampered"
+mv -- "${real_archive}.tampered" "${real_archive}"
+chmod 600 -- "${real_archive}"
+[[ "$(stat -c '%s' -- "${real_archive}")" == "$(jq -r '.size_bytes' "${real_metadata}")" ]] ||
+  fail "same_size_archive_fixture_invalid"
+set +e
+tampered_archive_plan="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade plan --image "${candidate_image}" --format json)"
+tampered_archive_plan_status=$?
+tampered_archive_apply_log="${test_root}/tampered-archive-apply.log"
+tampered_archive_apply="$(N2API_FAKE_DOCKER_LOG="${tampered_archive_apply_log}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+tampered_archive_apply_status=$?
+set -e
+mv -- "${test_root}/real-archive.valid" "${real_archive}"
+chmod 600 -- "${real_archive}"
+[[ ${tampered_archive_plan_status} -eq 4 ]] || fail "tampered_archive_upgrade_plan_exit"
+tampered_archive_plan_path="$(jq -r '.artifacts[0].path' <<<"${tampered_archive_plan}")"
+jq -e '(.blocked_reasons | index("backup_missing")) != null' "${tampered_archive_plan_path}" >/dev/null ||
+  fail "tampered_archive_upgrade_plan_not_blocked"
+[[ ${tampered_archive_apply_status} -eq 4 ]] || fail "tampered_archive_upgrade_apply_exit"
+assert_jq "${tampered_archive_apply}" '.status == "blocked" and .reason_code == "stale_plan_detected"'
+if rg -q '(^| )up( |$)' "${tampered_archive_apply_log}"; then
+  fail "tampered_archive_upgrade_mutated_stack"
+fi
+grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "tampered_archive_upgrade_mutated_env"
+
+cp -- "${candidate_restore_receipt}" "${test_root}/candidate-restore.before-tamper"
+jq '.current.cleanup_status = "failed"' "${candidate_restore_receipt}" >"${candidate_restore_receipt}.tampered"
+mv -- "${candidate_restore_receipt}.tampered" "${candidate_restore_receipt}"
+chmod 600 -- "${candidate_restore_receipt}"
+set +e
+tampered_restore_upgrade_output="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+tampered_restore_upgrade_status=$?
+set -e
+mv -- "${test_root}/candidate-restore.before-tamper" "${candidate_restore_receipt}"
+chmod 600 -- "${candidate_restore_receipt}"
+[[ ${tampered_restore_upgrade_status} -eq 4 ]] || fail "tampered_restore_upgrade_exit"
+assert_jq "${tampered_restore_upgrade_output}" '.status == "blocked" and .reason_code == "stale_plan_detected"'
+
+cp -- "${real_metadata}" "${test_root}/real-metadata.before-tamper"
+jq '.size_bytes += 1' "${real_metadata}" >"${real_metadata}.tampered"
+mv -- "${real_metadata}.tampered" "${real_metadata}"
+chmod 600 -- "${real_metadata}"
+set +e
+tampered_upgrade_output="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+tampered_upgrade_status=$?
+set -e
+mv -- "${test_root}/real-metadata.before-tamper" "${real_metadata}"
+chmod 600 -- "${real_metadata}"
+[[ ${tampered_upgrade_status} -eq 4 ]] || fail "tampered_upgrade_evidence_exit"
+assert_jq "${tampered_upgrade_output}" '.status == "blocked" and .reason_code == "stale_plan_detected"'
+
+upgrade_lock_ready="${test_root}/upgrade-lock.ready"
+(
+  exec 8>"${backup_state}/locks/operator.lock"
+  flock 8
+  touch "${upgrade_lock_ready}"
+  sleep 30
+) &
+upgrade_lock_pid=$!
+for _ in {1..100}; do
+  [[ -e "${upgrade_lock_ready}" ]] && break
+  sleep 0.05
+done
+[[ -e "${upgrade_lock_ready}" ]] || fail "upgrade_lock_not_ready"
+set +e
+upgrade_contended_log="${test_root}/upgrade-contended.log"
+upgrade_contended_output="$(N2API_FAKE_DOCKER_LOG="${upgrade_contended_log}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_contended_status=$?
+set -e
+kill -TERM "${upgrade_lock_pid}" 2>/dev/null || true
+wait "${upgrade_lock_pid}" 2>/dev/null || true
+[[ ${upgrade_contended_status} -eq 5 ]] || fail "upgrade_lock_contended_exit"
+assert_jq "${upgrade_contended_output}" '.status == "contended" and .reason_code == "operation_lock_contended" and .changed == false'
+upgrade_contended_receipt="${backup_state}/operations/$(jq -r '.operation_id' <<<"${upgrade_contended_output}").json"
+jq -e '(.integrity_hmac | test("^[0-9a-f]{64}$"))' "${upgrade_contended_receipt}" >/dev/null ||
+  fail "upgrade_lock_contended_receipt_unsigned"
+if rg -q '(^| )up( |$)' "${upgrade_contended_log}"; then
+  fail "upgrade_lock_contended_mutated_stack"
+fi
+
+set +e
+upgrade_pull_timeout="$(N2API_FAKE_DOCKER_MODE=image_pull_wait PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" --timeout 1 \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_pull_timeout_status=$?
+set -e
+[[ ${upgrade_pull_timeout_status} -eq 124 ]] || fail "upgrade_pull_timeout_exit"
+assert_jq "${upgrade_pull_timeout}" '
+  .status == "failed" and .reason_code == "image_pull_timeout" and .changed == false and
+  .current.stage == "image_pull" and .current.source_schema == 50
+'
+grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "upgrade_pull_timeout_mutated_env"
+(
+  exec 8>"${backup_state}/locks/operator.lock"
+  flock --nonblock 8
+) || fail "upgrade_pull_timeout_lock_retained"
+
+upgrade_pull_signal_ready="${test_root}/upgrade-pull-signal.ready"
+env \
+  PATH="${fake_path}" \
+  N2API_FAKE_DOCKER_MODE=image_pull_wait \
+  N2API_FAKE_DOCKER_READY_FILE="${upgrade_pull_signal_ready}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" --timeout 30 \
+  upgrade apply --plan "${upgrade_plan_path}" --format json \
+  >"${test_root}/upgrade-pull-signal.stdout" 2>"${test_root}/upgrade-pull-signal.stderr" &
+upgrade_pull_signal_pid=$!
+for _ in {1..100}; do
+  [[ -e "${upgrade_pull_signal_ready}" ]] && break
+  sleep 0.05
+done
+if [[ ! -e "${upgrade_pull_signal_ready}" ]]; then
+  kill -TERM "${upgrade_pull_signal_pid}" 2>/dev/null || true
+  wait "${upgrade_pull_signal_pid}" 2>/dev/null || true
+  fail "upgrade_pull_signal_not_ready"
+fi
+kill -TERM "${upgrade_pull_signal_pid}"
+set +e
+wait "${upgrade_pull_signal_pid}"
+upgrade_pull_signal_status=$?
+set -e
+[[ ${upgrade_pull_signal_status} -eq 143 ]] || fail "upgrade_pull_signal_exit"
+jq -e '
+  .status == "failed" and .reason_code == "operation_interrupted" and .changed == false and
+  .current.stage == "image_pull" and .current.signal == "TERM"
+' "${test_root}/upgrade-pull-signal.stdout" >/dev/null || fail "upgrade_pull_signal_receipt"
+grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "upgrade_pull_signal_mutated_env"
+(
+  exec 8>"${backup_state}/locks/operator.lock"
+  flock --nonblock 8
+) || fail "upgrade_pull_signal_lock_retained"
+
+set +e
+upgrade_env_failure="$(N2API_FAKE_MV_MODE=upgrade_env_publish_fail PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_env_failure_status=$?
+set -e
+[[ ${upgrade_env_failure_status} -eq 6 ]] || fail "upgrade_env_failure_exit"
+assert_jq "${upgrade_env_failure}" '
+  .status == "failed" and .reason_code == "environment_update_failed" and .changed == false and
+  .current.stage == "persist_target" and .current.source_schema == 50
+'
+grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "upgrade_env_failure_mutated_env"
+
+upgrade_stack_file="${test_root}/upgrade-stack.running"
+touch "${upgrade_stack_file}"
+upgrade_compose_failure_log="${test_root}/upgrade-compose-failure.log"
+set +e
+upgrade_compose_failure="$(N2API_FAKE_DOCKER_MODE=upgrade_apply_fail \
+  N2API_FAKE_DOCKER_STACK_FILE="${upgrade_stack_file}" \
+  N2API_FAKE_DOCKER_LOG="${upgrade_compose_failure_log}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_compose_failure_status=$?
+set -e
+[[ ${upgrade_compose_failure_status} -eq 6 ]] || fail "upgrade_compose_failure_exit"
+assert_jq "${upgrade_compose_failure}" '
+  .status == "failed" and .reason_code == "compose_apply_failed" and .changed == true and
+  .current.stage == "compose_apply" and .current.source_schema == 50 and
+  .current.observed_schema == 50 and .current.observed_image == "'"${candidate_image}"'"
+'
+grep -Fxq "N2API_IMAGE=${candidate_image}" "${generated_env}" || fail "upgrade_compose_failure_reverted_env"
+if rg -q '(^| )(down|rollback)( |$)|volume rm|down --volumes' "${upgrade_compose_failure_log}"; then
+  fail "upgrade_compose_failure_automatic_rollback"
+fi
+cp -- "${source_env}" "${generated_env}"
+chmod 600 -- "${generated_env}"
+
+set +e
+upgrade_compose_timeout="$(N2API_FAKE_DOCKER_MODE=upgrade_apply_wait \
+  N2API_FAKE_DOCKER_STACK_FILE="${upgrade_stack_file}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" --timeout 1 \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_compose_timeout_status=$?
+set -e
+[[ ${upgrade_compose_timeout_status} -eq 124 ]] || fail "upgrade_compose_timeout_exit"
+assert_jq "${upgrade_compose_timeout}" '
+  .status == "failed" and .reason_code == "readiness_timeout" and .changed == true and
+  .current.stage == "compose_apply" and .current.source_schema == 50 and .current.observed_schema == 50
+'
+grep -Fxq "N2API_IMAGE=${candidate_image}" "${generated_env}" || fail "upgrade_compose_timeout_reverted_env"
+(
+  exec 8>"${backup_state}/locks/operator.lock"
+  flock --nonblock 8
+) || fail "upgrade_compose_timeout_lock_retained"
+cp -- "${source_env}" "${generated_env}"
+chmod 600 -- "${generated_env}"
+
+upgrade_compose_signal_ready="${test_root}/upgrade-compose-signal.ready"
+env \
+  PATH="${fake_path}" \
+  N2API_FAKE_DOCKER_MODE=upgrade_apply_wait \
+  N2API_FAKE_DOCKER_STACK_FILE="${upgrade_stack_file}" \
+  N2API_FAKE_DOCKER_READY_FILE="${upgrade_compose_signal_ready}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" --timeout 30 \
+  upgrade apply --plan "${upgrade_plan_path}" --format json \
+  >"${test_root}/upgrade-compose-signal.stdout" 2>"${test_root}/upgrade-compose-signal.stderr" &
+upgrade_compose_signal_pid=$!
+for _ in {1..100}; do
+  [[ -e "${upgrade_compose_signal_ready}" ]] && break
+  sleep 0.05
+done
+if [[ ! -e "${upgrade_compose_signal_ready}" ]]; then
+  kill -TERM "${upgrade_compose_signal_pid}" 2>/dev/null || true
+  wait "${upgrade_compose_signal_pid}" 2>/dev/null || true
+  fail "upgrade_compose_signal_not_ready"
+fi
+kill -TERM "${upgrade_compose_signal_pid}"
+set +e
+wait "${upgrade_compose_signal_pid}"
+upgrade_compose_signal_status=$?
+set -e
+[[ ${upgrade_compose_signal_status} -eq 143 ]] || fail "upgrade_compose_signal_exit"
+jq -e '
+  .status == "failed" and .reason_code == "operation_interrupted" and .changed == true and
+  .current.stage == "compose_apply" and .current.signal == "TERM" and
+  .current.source_schema == 50 and .current.observed_schema == 50
+' "${test_root}/upgrade-compose-signal.stdout" >/dev/null || fail "upgrade_compose_signal_receipt"
+grep -Fxq "N2API_IMAGE=${candidate_image}" "${generated_env}" || fail "upgrade_compose_signal_reverted_env"
+cp -- "${source_env}" "${generated_env}"
+chmod 600 -- "${generated_env}"
+
+upgrade_mismatch_schema_file="${test_root}/upgrade-mismatch-schema.version"
+set +e
+upgrade_schema_mismatch="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_mismatch_schema_file}" \
+  N2API_FAKE_DOCKER_TARGET_SCHEMA_VERSION=52 PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_schema_mismatch_status=$?
+set -e
+[[ ${upgrade_schema_mismatch_status} -eq 6 ]] || fail "upgrade_schema_mismatch_exit"
+assert_jq "${upgrade_schema_mismatch}" '
+  .status == "failed" and .reason_code == "candidate_schema_mismatch" and .changed == true and
+  .current.source_schema == 50 and .current.observed_schema == 52
+'
+grep -Fxq "N2API_IMAGE=${candidate_image}" "${generated_env}" || fail "upgrade_schema_mismatch_reverted_env"
+cp -- "${source_env}" "${generated_env}"
+chmod 600 -- "${generated_env}"
+
+upgrade_schema_file="${test_root}/upgrade-schema.version"
+upgrade_apply_output="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" \
+  N2API_FAKE_DOCKER_TARGET_SCHEMA_VERSION=51 PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+assert_jq "${upgrade_apply_output}" '
+  .command == "upgrade.apply" and .status == "succeeded" and .reason_code == "upgrade_applied" and
+  .changed == true and .target.running_identity == "verified" and
+  .current.source_schema == 50 and .current.target_schema == 51
+'
+[[ "$(<"${upgrade_schema_file}")" == 51 ]] || fail "upgrade_schema_not_advanced"
+grep -Fxq "N2API_IMAGE=${candidate_image}" "${generated_env}" || fail "upgrade_target_not_persisted"
+upgrade_noop_log="${test_root}/upgrade-noop.log"
+upgrade_noop_output="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" \
+  N2API_FAKE_DOCKER_LOG="${upgrade_noop_log}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+assert_jq "${upgrade_noop_output}" '.status == "noop" and .reason_code == "target_already_healthy" and .changed == false'
+if rg -q '(^| )(pull|up|pg_dump|rollback)( |$)|/v1/' "${upgrade_noop_log}"; then
+  fail "upgrade_noop_performed_mutation_or_provider_call"
+fi
 
 race_archive="${test_root}/race-fixture.dump"
 race_checksum="$(sha256sum -- "${fixture_archive}" | awk '{print $1}')"

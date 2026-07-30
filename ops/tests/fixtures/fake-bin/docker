@@ -4,6 +4,19 @@ set -euo pipefail
 
 digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 fake_mode="${N2API_FAKE_DOCKER_MODE:-}"
+current_image="ghcr.io/knowsky404/n2api:2026073001@${digest}"
+schema_version=50
+if [[ -f "${N2API_ENV_FILE:-}" && ! -L "${N2API_ENV_FILE:-}" ]]; then
+  configured_image="$(sed -n 's/^N2API_IMAGE=//p' "${N2API_ENV_FILE}" | tail -n 1)"
+  [[ -z "${configured_image}" ]] || current_image="${configured_image}"
+fi
+if [[ -f "${N2API_FAKE_DOCKER_SCHEMA_FILE:-}" && ! -L "${N2API_FAKE_DOCKER_SCHEMA_FILE:-}" ]]; then
+  recorded_schema="$(tr -d '[:space:]' <"${N2API_FAKE_DOCKER_SCHEMA_FILE}")"
+  [[ "${recorded_schema}" =~ ^[1-9][0-9]*$ ]] && schema_version="${recorded_schema}"
+fi
+if [[ "${N2API_RESTORE_IMAGE:-}" == *":2026073002@sha256:"* ]]; then
+  schema_version=51
+fi
 if [[ -n "${N2API_FAKE_DOCKER_LOG:-}" ]]; then
   printf '%s\n' "$*" >>"${N2API_FAKE_DOCKER_LOG}"
 fi
@@ -35,7 +48,9 @@ case "${1:-}" in
       exit 0
     fi
     if [[ "${2:-}" == "inspect" ]]; then
-      jq -cn --arg digest "${digest}" '{
+      inspected_digest=${3##*@}
+      [[ "${inspected_digest}" == sha256:* ]] || inspected_digest=${digest}
+      jq -cn --arg digest "${inspected_digest}" '{
         schemaVersion:2,
         mediaType:"application/vnd.oci.image.index.v1+json",
         manifests:[
@@ -48,8 +63,10 @@ case "${1:-}" in
     ;;
   pull)
     if [[ "${fake_mode}" == "image_pull_ignore_term" ]]; then
+      [[ -z "${N2API_FAKE_DOCKER_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_READY_FILE}"
       ignore_term_forever
     elif [[ "${fake_mode}" == "image_pull_wait" ]]; then
+      [[ -z "${N2API_FAKE_DOCKER_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_READY_FILE}"
       while :; do sleep 0.1; done
     fi
     exit 0
@@ -64,7 +81,13 @@ case "${1:-}" in
       exit 0
     fi
     if [[ "${2:-}" == "inspect" && "${3:-}" == "--format" && "${4:-}" == *RepoDigests* ]]; then
-      printf '["ghcr.io/knowsky404/n2api@%s"]\n' "${digest}"
+      inspected_image=${5:-${current_image}}
+      if [[ "${inspected_image}" == *@sha256:* ]]; then
+        inspected_digest=${inspected_image##*@}
+      else
+        inspected_digest=${digest}
+      fi
+      printf '["ghcr.io/knowsky404/n2api@%s"]\n' "${inspected_digest}"
       exit 0
     fi
     if [[ "${2:-}" == "inspect" && "${3:-}" == "--format" && "${4:-}" == *'.Id'* ]]; then
@@ -99,7 +122,7 @@ case "${1:-}" in
       exit 0
     fi
     if [[ " $* " == *" config --images "* ]]; then
-      printf 'ghcr.io/knowsky404/n2api:2026073001@%s\n' "${digest}"
+      printf '%s\n' "${current_image}"
       printf 'postgres:18.4-alpine3.23@sha256:%s\n' "$(printf 'c%.0s' {1..64})"
       exit 0
     fi
@@ -151,9 +174,10 @@ case "${1:-}" in
     if [[ "${fake_mode}" == "restore_cleanup_fail" && " $* " == *" down --volumes --remove-orphans --rmi local "* ]]; then
       exit 1
     fi
-    if [[ " $* " == *" up --detach --wait "* && "${fake_mode}" == deploy_* ]]; then
-      [[ "${fake_mode}" != "deploy_apply_fail" ]] || exit 1
-      if [[ "${fake_mode}" == "deploy_apply_wait" ]]; then
+    if [[ " $* " == *" up --detach --wait "* &&
+      ("${fake_mode}" == deploy_* || "${fake_mode}" == upgrade_apply_*) ]]; then
+      [[ "${fake_mode}" != "deploy_apply_fail" && "${fake_mode}" != "upgrade_apply_fail" ]] || exit 1
+      if [[ "${fake_mode}" == "deploy_apply_wait" || "${fake_mode}" == "upgrade_apply_wait" ]]; then
         [[ -z "${N2API_FAKE_DOCKER_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_READY_FILE}"
         while :; do sleep 0.1; done
       fi
@@ -161,9 +185,14 @@ case "${1:-}" in
       exit 0
     fi
     if [[ " $* " == *" up --detach --wait postgres "* ||
+      " $* " == *" up --detach --wait n2api "* ||
       " $* " == *" up --detach --build --wait mock-openai n2api "* ||
       " $* " == *" build gateway-restore "* ||
       " $* " == *" down --volumes --remove-orphans --rmi local "* ]]; then
+      if [[ " $* " == *" up --detach --wait n2api "* && -n "${N2API_FAKE_DOCKER_SCHEMA_FILE:-}" &&
+        "${N2API_FAKE_DOCKER_TARGET_SCHEMA_VERSION:-}" =~ ^[1-9][0-9]*$ ]]; then
+        printf '%s\n' "${N2API_FAKE_DOCKER_TARGET_SCHEMA_VERSION}" >"${N2API_FAKE_DOCKER_SCHEMA_FILE}"
+      fi
       exit 0
     fi
     if [[ " $* " == *" exec --no-TTY postgres pg_restore "* ]]; then
@@ -172,7 +201,7 @@ case "${1:-}" in
     if [[ " $* " == *" exec --no-TTY postgres psql "* ]]; then
       [[ "${stack_running}" == true ]] || exit 1
       case "$*" in
-        *'COALESCE(max(version_id)'*) printf '50\n' ;;
+        *'COALESCE(max(version_id)'*) printf '%s\n' "${schema_version}" ;;
         *'FROM admins'*) printf '1\n' ;;
         *'FROM provider_accounts'*) printf '1\n' ;;
         *'FROM client_api_keys WHERE'*) printf '\n' ;;
@@ -203,11 +232,11 @@ case "${1:-}" in
     ;;
   inspect)
     if [[ " $* " == *'{{.State.Running}}|{{.Config.Image}}|{{.Image}}'* ]]; then
-      printf 'true|ghcr.io/knowsky404/n2api:2026073001@%s|sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' "${digest}"
+      printf 'true|%s|sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n' "${current_image}"
       exit 0
     fi
     if [[ " $* " == *'{{.Name}}|{{.State.Running}}'* ]]; then
-      printf '/deploy-n2api-1|true|healthy|ghcr.io/knowsky404/n2api:2026073001@%s|sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|true|["ALL"]|["no-new-privileges:true"]|{"/tmp":"rw,noexec,nosuid,nodev,size=16m"}\n' "${digest}"
+      printf '/deploy-n2api-1|true|healthy|%s|sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|true|["ALL"]|["no-new-privileges:true"]|{"/tmp":"rw,noexec,nosuid,nodev,size=16m"}\n' "${current_image}"
       exit 0
     fi
     ;;

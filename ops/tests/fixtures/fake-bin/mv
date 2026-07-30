@@ -6,5 +6,9 @@ if [[ "${N2API_FAKE_MV_MODE:-}" == "backup_metadata_publish_fail" &&
   " $* " == *".metadata.tmp "* && " $* " == *".metadata.json "* ]]; then
   exit 1
 fi
+if [[ "${N2API_FAKE_MV_MODE:-}" == "upgrade_env_publish_fail" &&
+  " $* " == *".n2api-env-upgrade."* ]]; then
+  exit 1
+fi
 
 exec /usr/bin/mv "$@"
