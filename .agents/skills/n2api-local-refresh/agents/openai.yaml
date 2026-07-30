@@ -1,0 +1,4 @@
+interface:
+  display_name: "N2API Local Refresh"
+  short_description: "Refresh and verify the local N2API Compose stack"
+  default_prompt: "Use $n2api-local-refresh to rebuild, recreate, and verify the local N2API stack safely."

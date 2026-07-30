@@ -62,6 +62,18 @@
 - Prefer Docker Compose for local full-stack verification.
 - Do not introduce Node.js, npm, npx, pnpm, or yarn unless Bun cannot support a required package or workflow.
 
+## Operations Skills
+- Use `.agents/skills/n2api-local-refresh/SKILL.md` for the required
+  non-destructive local Compose rebuild, recreation, verification, and builder
+  cache cleanup after code or functionality changes.
+- Use `.agents/skills/n2api-production-operations/SKILL.md` for production
+  status, deploy, upgrade, backup, restore-drill, failure, and rollback work.
+- Use `./ops/n2api` as the canonical production interface. Begin with read-only
+  discovery, preserve plan/apply separation, protect secrets, and distinguish
+  application rollback from manual database restore.
+- Report repository evidence separately from external owner gates. Do not infer
+  production, provider, off-host, release, or GitHub evidence that was not run.
+
 ## Browser Verification
 - When rendered frontend behavior needs verification, use the Browser plugin first when it is available. If it is unavailable, you MUST attempt Playwright through Bunx before falling back to source-level tests or build-only checks.
 - Start the fallback with `bunx playwright --version`. A missing Playwright dependency in `package.json` is not a reason to skip browser verification because Bunx can resolve the CLI on demand.

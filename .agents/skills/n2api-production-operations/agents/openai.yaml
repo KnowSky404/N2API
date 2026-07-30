@@ -1,0 +1,4 @@
+interface:
+  display_name: "N2API Production Operations"
+  short_description: "Plan guarded N2API production operations safely"
+  default_prompt: "Use $n2api-production-operations to inspect and plan this N2API production operation safely."
