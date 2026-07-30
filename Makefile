@@ -9,6 +9,7 @@ test:
 
 test-ops:
 	ops/tests/test-ops.sh
+	dev/ci/test-agent-operations-docs.sh
 
 ops-describe:
 	./ops/n2api describe --format json

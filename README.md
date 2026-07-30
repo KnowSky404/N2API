@@ -52,9 +52,11 @@ release loopback, LAN, IPv6, dual-stack, and Docker-network-only bindings.
 Production deployments must set `N2API_IMAGE` to a readable CalVer tag plus its
 exact manifest digest. The release Compose stack applies separate bounded
 application and PostgreSQL resources, and optional Compose overrides mount
-core and metrics secrets from regular files. See
-[Deploy a Published Image](docs/manual.md#deploy-a-published-image) for the
-validated combinations and running-image verification command.
+core and metrics secrets from regular files. Use the repository-local
+[`./ops/n2api` workflow](docs/agent-operations.md) for discovery, preflight,
+plan/apply deployment, backup, upgrade, verification, and guarded rollback. The
+[complete manual](docs/manual.md#deploy-a-published-image) retains lower-level
+Compose details for diagnosis and owner-controlled fallback.
 
 ## Basic Setup
 
@@ -77,6 +79,7 @@ manual. It includes detailed deployment, upgrade, provider-account, routing,
 gateway-limit, request-log, and downstream Codex CLI guidance.
 
 - [N2API manual](docs/manual.md)
+- [Agent-native production operations](docs/agent-operations.md)
 - [Brand assets](docs/brand/README.md)
 - [UI design source of truth](DESIGN.md)
 

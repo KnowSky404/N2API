@@ -8,6 +8,7 @@ path; detailed usage and operations guidance belongs here.
 
 - [Quick start](../README.md#quick-start)
 - [Basic setup](../README.md#basic-setup)
+- [Agent-native production operations](agent-operations.md)
 - [Complete manual](manual.md)
 - [Development resource lifecycle](development.md)
 
@@ -21,7 +22,8 @@ path; detailed usage and operations guidance belongs here.
 - [Operator restore drill record](restore-drill-record.md)
 - [Docker installation on Ubuntu 24.04 ARM64](manual.md#install-docker-on-ubuntu-2404-arm64)
 - [Production deployment](manual.md#deploy-a-published-image)
-- [Backup, upgrade, and rollback](manual.md#back-up-and-upgrade)
+- [Canonical deployment, backup, upgrade, and rollback](agent-operations.md)
+- [Lower-level backup and upgrade details](manual.md#back-up-and-upgrade)
 - [Portable configuration export](manual.md#portable-configuration-export)
 - [Downstream Codex CLI](manual.md#downstream-codex-cli)
 - [Provider accounts, API keys, and routing](manual.md#provider-accounts)

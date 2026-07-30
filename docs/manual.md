@@ -448,6 +448,19 @@ only to a trusted administrator.
 
 ## Deploy a Published Image
 
+The [agent-native operations runbook](agent-operations.md) is the canonical production operations entry point.
+Use `./ops/n2api describe --format json`, then the documented doctor,
+configuration, and deploy plan/apply sequence. The
+CLI validates exact image manifests, protects secrets and operation state,
+rejects stale plans, and records sanitized receipts.
+
+### Lower-level Compose fallback
+
+The commands below explain the underlying release inputs for an owner-managed
+diagnostic or recovery path. They are not the default Agent workflow and must
+not be used to bypass the canonical CLI's plan, evidence, lock, exact-digest,
+secret, or receipt contracts.
+
 Check out the release being deployed, copy the example environment file, and
 pin the same immutable version in `.env`:
 
@@ -1032,6 +1045,25 @@ and one streaming `/v1/responses` request with that key.
 
 ## Back Up and Upgrade
 
+Use the [canonical operations runbook](agent-operations.md#backup-and-restore-drill)
+for signed backups, isolated restore evidence, upgrade plan/apply, and guarded
+application rollback. The canonical sequence starts with:
+
+```bash
+./ops/n2api --env-file .env backup create --evidence-class real_operator --format json
+./ops/n2api --env-file .env backup list --format json
+```
+
+The first command can return attention exit `3` after successfully publishing
+the archive because encrypted off-host custody remains an owner gate.
+
+### Lower-level Compose fallback
+
+The raw commands in this section are retained for diagnosis and an
+owner-controlled recovery when the canonical CLI cannot express the required
+action. They do not create signed operator evidence or operation receipts and
+must not replace the CLI's production workflow.
+
 Create a PostgreSQL custom-format backup before every upgrade:
 
 ```bash
@@ -1146,8 +1178,9 @@ source because it retains encrypted credentials and all operational state.
 Continue taking and verifying database backups even when configuration exports
 are stored separately.
 
-For an upgrade or rollback, change `N2API_IMAGE` to the target CalVer, then pull
-and recreate the stack:
+For a lower-level upgrade, change `N2API_IMAGE` to the exact target
+`tag@digest`, then pull and recreate the stack. This bypasses plan/apply and is
+therefore an owner-controlled fallback, not an Agent default:
 
 ```bash
 docker compose -f deploy/compose.release.yaml --env-file .env pull
