@@ -3,32 +3,109 @@
   "$id": "https://n2api.local/schemas/ops-plan-v1.json",
   "title": "N2API operator plan",
   "type": "object",
+  "additionalProperties": false,
   "required": [
-    "schema_version",
-    "operation_id",
-    "operation",
-    "created_at",
-    "expires_at",
-    "risk",
-    "source",
-    "target",
-    "invariants",
-    "checks",
-    "blocked_reasons",
-    "integrity"
+    "schema_version", "operation_id", "operation", "created_at", "expires_at",
+    "risk", "source", "target", "evidence", "invariants", "checks",
+    "blocked_reasons", "integrity_hmac"
   ],
   "properties": {
     "schema_version": { "const": "n2api.ops.plan/v1" },
-    "operation_id": { "type": "string" },
+    "operation_id": { "type": "string", "pattern": "^op-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$" },
     "operation": { "enum": ["deploy", "upgrade", "rollback"] },
     "created_at": { "type": "string", "format": "date-time" },
     "expires_at": { "type": "string", "format": "date-time" },
     "risk": { "enum": ["service_change", "high_risk"] },
-    "source": { "type": "object" },
-    "target": { "type": "object" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["git", "compose", "environment", "host", "runtime"],
+      "properties": {
+        "git": {
+          "type": "object", "additionalProperties": false,
+          "required": ["commit", "tag", "dirty"],
+          "properties": {
+            "commit": { "type": ["string", "null"] },
+            "tag": { "type": ["string", "null"] },
+            "dirty": { "type": "boolean" }
+          }
+        },
+        "compose": {
+          "type": "object", "additionalProperties": false,
+          "required": ["project", "files", "inputs_hmac", "config_hmac"],
+          "properties": {
+            "project": { "type": "string" },
+            "files": { "type": "array", "items": { "type": "string" } },
+            "inputs_hmac": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "config_hmac": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "environment": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "hmac"],
+          "properties": {
+            "path": { "type": "string" },
+            "hmac": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        "host": {
+          "type": "object", "additionalProperties": false,
+          "required": ["platform"],
+          "properties": { "platform": { "type": "string" } }
+        },
+        "runtime": {
+          "type": "object", "additionalProperties": false,
+          "required": [
+            "services_fingerprint", "services_count", "configured_image", "image_id",
+            "schema_version", "postgres_volume_name", "postgres_volume_exists"
+          ],
+          "properties": {
+            "services_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "services_count": { "type": "integer", "minimum": 0 },
+            "configured_image": { "type": ["string", "null"] },
+            "image_id": { "type": ["string", "null"] },
+            "schema_version": { "type": ["integer", "null"] },
+            "postgres_volume_name": { "type": "string" },
+            "postgres_volume_exists": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["image", "migration_possible", "rollback_image"],
+      "properties": {
+        "image": {
+          "type": "object", "additionalProperties": false,
+          "required": ["reference", "repository", "tag", "digest", "platforms"],
+          "properties": {
+            "reference": { "type": "string" },
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "platforms": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "migration_possible": { "type": "boolean" },
+        "rollback_image": { "type": ["string", "null"] }
+      }
+    },
+    "evidence": { "type": "object" },
     "invariants": { "type": "object" },
-    "checks": { "type": "array" },
-    "blocked_reasons": { "type": "array", "items": { "type": "string" } },
-    "integrity": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "status", "reason_code", "summary"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "enum": ["passed", "attention", "blocked", "failed"] },
+          "reason_code": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "summary": { "type": "string" }
+        }
+      }
+    },
+    "blocked_reasons": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_]+$" } },
+    "integrity_hmac": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
   }
 }

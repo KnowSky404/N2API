@@ -26,6 +26,10 @@ source "${N2API_OPS_ROOT}/lib/runtime.sh"
 source "${N2API_OPS_ROOT}/lib/backup.sh"
 # shellcheck source=ops/lib/restore.sh
 source "${N2API_OPS_ROOT}/lib/restore.sh"
+# shellcheck source=ops/lib/plan.sh
+source "${N2API_OPS_ROOT}/lib/plan.sh"
+# shellcheck source=ops/lib/apply.sh
+source "${N2API_OPS_ROOT}/lib/apply.sh"
 
 N2API_FORMAT="text"
 N2API_ENV_FILE="${N2API_REPO_ROOT}/.env"
@@ -910,7 +914,19 @@ case "$1" in
     shift
     n2api_restore "$@"
     ;;
-  deploy|upgrade|rollback)
+  deploy)
+    operation=$1
+    shift
+    (($# >= 1)) || n2api_usage_error "deploy_requires_plan_or_apply"
+    action=$1
+    shift
+    case "${action}" in
+      plan) n2api_plan_operation "${operation}" "$@" ;;
+      apply) n2api_apply_operation "${operation}" "$@" ;;
+      *) n2api_usage_error "unknown_deploy_action" ;;
+    esac
+    ;;
+  upgrade|rollback)
     command=$1
     shift
     n2api_not_implemented "${command}${*:+ $*}"

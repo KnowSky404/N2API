@@ -4,6 +4,16 @@ set -euo pipefail
 
 digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 fake_mode="${N2API_FAKE_DOCKER_MODE:-}"
+if [[ -n "${N2API_FAKE_DOCKER_LOG:-}" ]]; then
+  printf '%s\n' "$*" >>"${N2API_FAKE_DOCKER_LOG}"
+fi
+stack_running=true
+if [[ "${fake_mode}" == deploy_* ]]; then
+  stack_running=false
+  if [[ -n "${N2API_FAKE_DOCKER_STACK_FILE:-}" && -e "${N2API_FAKE_DOCKER_STACK_FILE}" ]]; then
+    stack_running=true
+  fi
+fi
 
 ignore_term_forever() {
   trap '' TERM
@@ -76,6 +86,7 @@ case "${1:-}" in
       exit 1
     fi
     if [[ "${1:-}" == "volume" && "${2:-}" == "inspect" ]]; then
+      [[ "${fake_mode}" == deploy_* && "${stack_running}" == true ]] && exit 0
       exit 1
     fi
     ;;
@@ -97,10 +108,12 @@ case "${1:-}" in
     fi
     if [[ " $* " == *" ps --quiet postgres "* ]]; then
       [[ "${fake_mode}" != "no_postgres" ]] || exit 0
+      [[ "${stack_running}" == true ]] || exit 0
       printf 'fake-postgres\n'
       exit 0
     fi
     if [[ " $* " == *" ps --all --format json "* ]]; then
+      [[ "${stack_running}" == true ]] || exit 0
       jq -cn '{ID:"fake-n2api",Name:"deploy-n2api-1",Project:"deploy",Service:"n2api",State:"running",Health:"healthy",ExitCode:0,Publishers:[{URL:"127.0.0.1",TargetPort:3000,PublishedPort:3000,Protocol:"tcp"}]}'
       jq -cn '{ID:"fake-postgres",Name:"deploy-postgres-1",Project:"deploy",Service:"postgres",State:"running",Health:"healthy",ExitCode:0,Publishers:[]}'
       exit 0
@@ -138,6 +151,15 @@ case "${1:-}" in
     if [[ "${fake_mode}" == "restore_cleanup_fail" && " $* " == *" down --volumes --remove-orphans --rmi local "* ]]; then
       exit 1
     fi
+    if [[ " $* " == *" up --detach --wait "* && "${fake_mode}" == deploy_* ]]; then
+      [[ "${fake_mode}" != "deploy_apply_fail" ]] || exit 1
+      if [[ "${fake_mode}" == "deploy_apply_wait" ]]; then
+        [[ -z "${N2API_FAKE_DOCKER_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_READY_FILE}"
+        while :; do sleep 0.1; done
+      fi
+      [[ -z "${N2API_FAKE_DOCKER_STACK_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_STACK_FILE}"
+      exit 0
+    fi
     if [[ " $* " == *" up --detach --wait postgres "* ||
       " $* " == *" up --detach --build --wait mock-openai n2api "* ||
       " $* " == *" build gateway-restore "* ||
@@ -148,6 +170,7 @@ case "${1:-}" in
       exit 0
     fi
     if [[ " $* " == *" exec --no-TTY postgres psql "* ]]; then
+      [[ "${stack_running}" == true ]] || exit 1
       case "$*" in
         *'COALESCE(max(version_id)'*) printf '50\n' ;;
         *'FROM admins'*) printf '1\n' ;;

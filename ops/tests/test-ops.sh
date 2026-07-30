@@ -261,6 +261,208 @@ set -e
 [[ ${gateway_consent_status} -eq 64 ]] || fail "gateway_consent_exit"
 rg -q 'gateway_verify_requires_upstream_consent' "${test_root}/gateway-no-consent.stderr" || fail "gateway_consent_reason"
 
+deploy_state="${test_root}/deploy-state/n2api"
+deploy_stack_file="${test_root}/deploy-stack.running"
+deploy_docker_log="${test_root}/deploy-docker.log"
+deploy_plan_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful \
+  N2API_FAKE_DOCKER_STACK_FILE="${deploy_stack_file}" \
+  N2API_FAKE_DOCKER_LOG="${deploy_docker_log}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${deploy_state}" \
+  deploy plan --format json)"
+assert_jq "${deploy_plan_output}" '
+  .command == "deploy.plan" and
+  .status == "succeeded" and
+  .reason_code == "deploy_plan_created" and
+  .changed == true
+'
+deploy_plan_path="$(jq -r '.artifacts[] | select(.type == "operation_plan") | .path' <<<"${deploy_plan_output}")"
+deploy_plan_id="$(jq -r '.current.plan_operation_id' <<<"${deploy_plan_output}")"
+[[ -f "${deploy_plan_path}" && "$(stat -c '%a' -- "${deploy_plan_path}")" == 600 ]] || fail "deploy_plan_file_mode"
+jq -e '
+  .schema_version == "n2api.ops.plan/v1" and
+  .operation == "deploy" and
+  .source.runtime.services_count == 0 and
+  .source.runtime.postgres_volume_exists == false and
+  .blocked_reasons == [] and
+  (.integrity_hmac | test("^[0-9a-f]{64}$"))
+' "${deploy_plan_path}" >/dev/null || fail "deploy_plan_contract"
+if rg -q '(^| )pull( |$)|(^| )up( |$)' "${deploy_docker_log}"; then
+  fail "deploy_plan_mutated_docker_state"
+fi
+deploy_plan_receipt="${deploy_state}/operations/${deploy_plan_id}.json"
+[[ -f "${deploy_plan_receipt}" && "$(stat -c '%a' -- "${deploy_plan_receipt}")" == 600 ]] || fail "deploy_plan_receipt_mode"
+
+tampered_plan="${test_root}/tampered-plan.json"
+jq '.target.image.tag = "tampered"' "${deploy_plan_path}" >"${tampered_plan}"
+chmod 600 -- "${tampered_plan}"
+set +e
+tampered_plan_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful N2API_FAKE_DOCKER_STACK_FILE="${deploy_stack_file}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${deploy_state}" \
+  deploy apply --plan "${tampered_plan}" --format json)"
+tampered_plan_status=$?
+set -e
+[[ ${tampered_plan_status} -eq 4 ]] || fail "deploy_tampered_plan_exit"
+assert_jq "${tampered_plan_output}" '.status == "blocked" and .reason_code == "plan_integrity_invalid"'
+
+expired_plan="${test_root}/expired-plan.json"
+jq '.expires_at = "2000-01-01T00:00:00Z" | del(.integrity_hmac)' "${deploy_plan_path}" >"${expired_plan}"
+expired_canonical="$(jq -ceS 'del(.integrity_hmac)' "${expired_plan}")"
+expired_hmac="$(printf '%s' "${expired_canonical}" |
+  openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(tr -d '\r\n' <"${deploy_state}/keys/integrity.key")" |
+  awk '{print $NF}')"
+jq --arg integrity_hmac "${expired_hmac}" '. + {integrity_hmac:$integrity_hmac}' "${expired_plan}" >"${expired_plan}.signed"
+mv -- "${expired_plan}.signed" "${expired_plan}"
+chmod 600 -- "${expired_plan}"
+set +e
+expired_plan_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful N2API_FAKE_DOCKER_STACK_FILE="${deploy_stack_file}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${deploy_state}" \
+  deploy apply --plan "${expired_plan}" --format json)"
+expired_plan_status=$?
+set -e
+[[ ${expired_plan_status} -eq 4 ]] || fail "deploy_expired_plan_exit"
+assert_jq "${expired_plan_output}" '.status == "blocked" and .reason_code == "plan_expired"'
+
+cp -- "${generated_env}" "${test_root}/generated-env.before-drift"
+printf '# drift\n' >>"${generated_env}"
+set +e
+drift_plan_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful N2API_FAKE_DOCKER_STACK_FILE="${deploy_stack_file}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${deploy_state}" \
+  deploy apply --plan "${deploy_plan_path}" --format json)"
+drift_plan_status=$?
+set -e
+mv -- "${test_root}/generated-env.before-drift" "${generated_env}"
+chmod 600 -- "${generated_env}"
+[[ ${drift_plan_status} -eq 4 ]] || fail "deploy_env_drift_exit"
+assert_jq "${drift_plan_output}" '.status == "blocked" and .reason_code == "stale_plan_detected"'
+
+deploy_apply_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful \
+  N2API_FAKE_DOCKER_STACK_FILE="${deploy_stack_file}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${deploy_state}" \
+  deploy apply --plan "${deploy_plan_path}" --format json)"
+assert_jq "${deploy_apply_output}" '
+  .command == "deploy.apply" and
+  .status == "succeeded" and
+  .changed == true and
+  .reason_code == "deploy_applied" and
+  .target.running_identity == "verified"
+'
+[[ -e "${deploy_stack_file}" ]] || fail "deploy_apply_stack_not_created"
+
+deploy_noop_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful \
+  N2API_FAKE_DOCKER_STACK_FILE="${deploy_stack_file}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${deploy_state}" \
+  deploy apply --plan "${deploy_plan_path}" --format json)"
+assert_jq "${deploy_noop_output}" '
+  .status == "noop" and .changed == false and .reason_code == "target_already_healthy"
+'
+
+set +e
+existing_deploy_plan="$(N2API_FAKE_DOCKER_MODE=deploy_stateful \
+  N2API_FAKE_DOCKER_STACK_FILE="${deploy_stack_file}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${test_root}/existing-deploy-state/n2api" \
+  deploy plan --format json)"
+existing_deploy_plan_status=$?
+set -e
+[[ ${existing_deploy_plan_status} -eq 4 ]] || fail "existing_deploy_plan_exit"
+assert_jq "${existing_deploy_plan}" '
+  .status == "blocked" and .reason_code == "deploy_plan_blocked"
+'
+existing_deploy_plan_path="$(jq -r '.artifacts[0].path' <<<"${existing_deploy_plan}")"
+jq -e '
+  (.blocked_reasons | index("first_deploy_service_exists")) != null and
+  (.blocked_reasons | index("first_deploy_volume_exists")) != null
+' "${existing_deploy_plan_path}" >/dev/null || fail "existing_deploy_blockers"
+
+failed_deploy_state="${test_root}/failed-deploy-state/n2api"
+failed_deploy_stack="${test_root}/failed-deploy-stack.running"
+failed_deploy_plan_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful N2API_FAKE_DOCKER_STACK_FILE="${failed_deploy_stack}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${failed_deploy_state}" deploy plan --format json)"
+failed_deploy_plan_path="$(jq -r '.artifacts[0].path' <<<"${failed_deploy_plan_output}")"
+set +e
+failed_deploy_output="$(N2API_FAKE_DOCKER_MODE=deploy_apply_fail N2API_FAKE_DOCKER_STACK_FILE="${failed_deploy_stack}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${failed_deploy_state}" \
+  deploy apply --plan "${failed_deploy_plan_path}" --format json)"
+failed_deploy_status=$?
+set -e
+[[ ${failed_deploy_status} -eq 6 ]] || fail "failed_deploy_exit"
+assert_jq "${failed_deploy_output}" '.status == "failed" and .reason_code == "compose_apply_failed"'
+[[ ! -e "${failed_deploy_stack}" ]] || fail "failed_deploy_automatic_recovery"
+
+set +e
+timeout_deploy_output="$(N2API_FAKE_DOCKER_MODE=deploy_apply_wait N2API_FAKE_DOCKER_STACK_FILE="${failed_deploy_stack}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${failed_deploy_state}" --timeout 1 \
+  deploy apply --plan "${failed_deploy_plan_path}" --format json)"
+timeout_deploy_status=$?
+set -e
+[[ ${timeout_deploy_status} -eq 124 ]] || fail "timeout_deploy_exit"
+assert_jq "${timeout_deploy_output}" '.status == "failed" and .reason_code == "readiness_timeout"'
+(
+  exec 8>"${failed_deploy_state}/locks/operator.lock"
+  flock --nonblock 8
+) || fail "timeout_deploy_lock_retained"
+
+signal_deploy_state="${test_root}/signal-deploy-state/n2api"
+signal_deploy_stack="${test_root}/signal-deploy-stack.running"
+signal_deploy_ready="${test_root}/signal-deploy.ready"
+signal_deploy_plan_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful N2API_FAKE_DOCKER_STACK_FILE="${signal_deploy_stack}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${signal_deploy_state}" deploy plan --format json)"
+signal_deploy_plan_path="$(jq -r '.artifacts[0].path' <<<"${signal_deploy_plan_output}")"
+
+deploy_lock_ready="${test_root}/deploy-lock.ready"
+(
+  exec 8>"${signal_deploy_state}/locks/operator.lock"
+  flock 8
+  touch "${deploy_lock_ready}"
+  sleep 30
+) &
+deploy_lock_pid=$!
+for _ in {1..100}; do
+  [[ -e "${deploy_lock_ready}" ]] && break
+  sleep 0.05
+done
+[[ -e "${deploy_lock_ready}" ]] || fail "deploy_lock_not_ready"
+set +e
+contended_deploy_output="$(N2API_FAKE_DOCKER_MODE=deploy_stateful N2API_FAKE_DOCKER_STACK_FILE="${signal_deploy_stack}" \
+  PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${signal_deploy_state}" \
+  deploy apply --plan "${signal_deploy_plan_path}" --format json)"
+contended_deploy_status=$?
+set -e
+kill -TERM "${deploy_lock_pid}" 2>/dev/null || true
+wait "${deploy_lock_pid}" 2>/dev/null || true
+[[ ${contended_deploy_status} -eq 5 ]] || fail "contended_deploy_exit"
+assert_jq "${contended_deploy_output}" '.status == "contended" and .reason_code == "operation_lock_contended"'
+
+env \
+  PATH="${fake_path}" \
+  N2API_FAKE_DOCKER_MODE=deploy_apply_wait \
+  N2API_FAKE_DOCKER_STACK_FILE="${signal_deploy_stack}" \
+  N2API_FAKE_DOCKER_READY_FILE="${signal_deploy_ready}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${signal_deploy_state}" --timeout 30 \
+  deploy apply --plan "${signal_deploy_plan_path}" --format json \
+  >"${test_root}/signal-deploy.stdout" 2>"${test_root}/signal-deploy.stderr" &
+signal_deploy_pid=$!
+for _ in {1..100}; do
+  [[ -e "${signal_deploy_ready}" ]] && break
+  sleep 0.05
+done
+if [[ ! -e "${signal_deploy_ready}" ]]; then
+  kill -TERM "${signal_deploy_pid}" 2>/dev/null || true
+  wait "${signal_deploy_pid}" 2>/dev/null || true
+  fail "signal_deploy_not_ready"
+fi
+kill -TERM "${signal_deploy_pid}"
+set +e
+wait "${signal_deploy_pid}"
+signal_deploy_status=$?
+set -e
+[[ ${signal_deploy_status} -eq 143 ]] || fail "signal_deploy_exit"
+jq -e '.status == "failed" and .reason_code == "operation_interrupted" and .current.signal == "TERM"' \
+  "${test_root}/signal-deploy.stdout" >/dev/null || fail "signal_deploy_receipt"
+(
+  exec 8>"${signal_deploy_state}/locks/operator.lock"
+  flock --nonblock 8
+) || fail "signal_deploy_lock_retained"
+
 backup_state="${test_root}/backup-state/n2api"
 set +e
 backup_output="$(PATH="${fake_path}" "${cli}" \
@@ -741,4 +943,4 @@ for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
   fi
 done
 
-printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image_runtime_backup_restore\n'
+printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image_runtime_backup_restore_deploy\n'

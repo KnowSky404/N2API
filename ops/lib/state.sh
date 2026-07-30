@@ -102,18 +102,20 @@ n2api_state_hmac_json() {
   n2api_state_integrity_key_is_safe || return 1
   key="$(tr -d '\r\n' <"${N2API_STATE_DIR}/keys/integrity.key")"
   [[ "${key}" =~ ^[0-9a-f]{64}$ ]] || return 1
-  canonical="$(jq -ceS 'del(.integrity_hmac)' <<<"${document}")" || return 1
+  canonical="$(jq -ceS 'if type == "object" then del(.integrity_hmac) else . end' <<<"${document}")" || return 1
   printf '%s' "${canonical}" |
     openssl dgst -sha256 -mac HMAC -macopt "hexkey:${key}" |
     awk '{print $NF}'
 }
 
 n2api_operation_write() {
-  local operation_id=$1 document=$2 target tmp
+  local operation_id=$1 document=$2 target tmp integrity_hmac
   n2api_validate_operation_id "${operation_id}" || return 1
   n2api_state_init || return 1
   target="${N2API_STATE_DIR}/operations/${operation_id}.json"
   [[ ! -e "${target}" ]] || return 1
+  integrity_hmac="$(n2api_state_hmac_json "${document}")" || return 1
+  document="$(jq -ce --arg integrity_hmac "${integrity_hmac}" '. + {integrity_hmac:$integrity_hmac}' <<<"${document}")" || return 1
   tmp="$(mktemp "${N2API_STATE_DIR}/operations/.${operation_id}.XXXXXX")"
   if ! jq -ce . <<<"${document}" >"${tmp}"; then
     rm -f -- "${tmp}"
@@ -121,6 +123,14 @@ n2api_operation_write() {
   fi
   chmod 600 -- "${tmp}"
   mv -- "${tmp}" "${target}"
+}
+
+n2api_operation_integrity_valid() {
+  local document=$1 expected actual
+  expected="$(jq -r '.integrity_hmac // empty' <<<"${document}")"
+  [[ "${expected}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  actual="$(n2api_state_hmac_json "${document}")" || return 1
+  [[ "${actual}" == "${expected}" ]]
 }
 
 n2api_lock_acquire() {

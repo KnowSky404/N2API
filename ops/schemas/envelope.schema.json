@@ -45,6 +45,7 @@
     "current": { "type": "object" },
     "target": { "type": "object" },
     "artifacts": { "type": "array" },
-    "next_actions": { "type": "array", "items": { "type": "string" } }
+    "next_actions": { "type": "array", "items": { "type": "string" } },
+    "integrity_hmac": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
   }
 }
