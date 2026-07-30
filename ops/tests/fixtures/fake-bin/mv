@@ -10,5 +10,11 @@ if [[ "${N2API_FAKE_MV_MODE:-}" == "upgrade_env_publish_fail" &&
   " $* " == *".n2api-env-upgrade."* ]]; then
   exit 1
 fi
+if [[ "${N2API_FAKE_MV_MODE:-}" == "upgrade_env_publish_term" &&
+  " $* " == *".n2api-env-upgrade."* ]]; then
+  /usr/bin/mv "$@"
+  kill -TERM "${PPID}"
+  exit 0
+fi
 
 exec /usr/bin/mv "$@"

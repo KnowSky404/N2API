@@ -1025,11 +1025,14 @@ if [[ ! -e "${upgrade_pull_signal_ready}" ]]; then
   fail "upgrade_pull_signal_not_ready"
 fi
 kill -TERM "${upgrade_pull_signal_pid}"
+upgrade_pull_signal_started="$(date +%s)"
 set +e
 wait "${upgrade_pull_signal_pid}"
 upgrade_pull_signal_status=$?
 set -e
+upgrade_pull_signal_elapsed=$(( $(date +%s) - upgrade_pull_signal_started ))
 [[ ${upgrade_pull_signal_status} -eq 143 ]] || fail "upgrade_pull_signal_exit"
+((upgrade_pull_signal_elapsed <= 6)) || fail "upgrade_pull_signal_unbounded_observation"
 jq -e '
   .status == "failed" and .reason_code == "operation_interrupted" and .changed == false and
   .current.stage == "image_pull" and .current.signal == "TERM"
@@ -1052,6 +1055,21 @@ assert_jq "${upgrade_env_failure}" '
   .current.stage == "persist_target" and .current.source_schema == 50
 '
 grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "upgrade_env_failure_mutated_env"
+
+set +e
+upgrade_env_publish_term="$(N2API_FAKE_MV_MODE=upgrade_env_publish_term PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_env_publish_term_status=$?
+set -e
+[[ ${upgrade_env_publish_term_status} -eq 143 ]] || fail "upgrade_env_publish_term_exit"
+assert_jq "${upgrade_env_publish_term}" '
+  .status == "failed" and .reason_code == "operation_interrupted" and .changed == true and
+  .current.stage == "persist_target" and .current.observed_image == "'"${candidate_image}"'"
+'
+grep -Fxq "N2API_IMAGE=${candidate_image}" "${generated_env}" || fail "upgrade_env_publish_term_lost_target"
+cp -- "${source_env}" "${generated_env}"
+chmod 600 -- "${generated_env}"
 
 upgrade_stack_file="${test_root}/upgrade-stack.running"
 touch "${upgrade_stack_file}"
@@ -1169,6 +1187,32 @@ assert_jq "${upgrade_noop_output}" '.status == "noop" and .reason_code == "targe
 if rg -q '(^| )(pull|up|pg_dump|rollback)( |$)|/v1/' "${upgrade_noop_log}"; then
   fail "upgrade_noop_performed_mutation_or_provider_call"
 fi
+
+cp -- "${candidate_restore_receipt}" "${test_root}/candidate-restore.noop-valid"
+jq '.current.cleanup_status = "failed"' "${candidate_restore_receipt}" >"${candidate_restore_receipt}.noop-tampered"
+mv -- "${candidate_restore_receipt}.noop-tampered" "${candidate_restore_receipt}"
+chmod 600 -- "${candidate_restore_receipt}"
+set +e
+upgrade_noop_stale_evidence="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_noop_stale_evidence_status=$?
+set -e
+mv -- "${test_root}/candidate-restore.noop-valid" "${candidate_restore_receipt}"
+chmod 600 -- "${candidate_restore_receipt}"
+[[ ${upgrade_noop_stale_evidence_status} -eq 4 ]] || fail "upgrade_noop_stale_evidence_exit"
+assert_jq "${upgrade_noop_stale_evidence}" '.status == "blocked" and .reason_code == "stale_plan_detected" and .changed == false'
+
+printf '52\n' >"${upgrade_schema_file}"
+set +e
+upgrade_noop_schema_drift="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  upgrade apply --plan "${upgrade_plan_path}" --format json)"
+upgrade_noop_schema_drift_status=$?
+set -e
+printf '51\n' >"${upgrade_schema_file}"
+[[ ${upgrade_noop_schema_drift_status} -eq 4 ]] || fail "upgrade_noop_schema_drift_exit"
+assert_jq "${upgrade_noop_schema_drift}" '.status == "blocked" and .reason_code == "stale_plan_detected" and .changed == false'
 
 set +e
 rollback_restore_block="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
