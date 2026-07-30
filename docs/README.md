@@ -40,6 +40,7 @@ path; detailed usage and operations guidance belongs here.
 - [Production correctness design](specs/2026-07-29-n2api-production-correctness-hardening.md)
 - [Production correctness implementation plan](plans/2026-07-29-n2api-production-correctness-hardening-plan.md)
 - [Production correctness acceptance report](production-correctness-hardening-acceptance.md)
+- [Agent-native operations acceptance report](agent-native-operations-acceptance.md)
 - [Reliability and operations plans](plans/README.md)
 - [Historical implementation specifications](superpowers/specs/)
 - [Historical implementation plans](superpowers/plans/)
