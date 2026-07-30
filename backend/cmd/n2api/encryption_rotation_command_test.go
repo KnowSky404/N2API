@@ -22,7 +22,7 @@ func TestRunEncryptionRotationGateCommandParsesConfirmationAndWritesJSON(t *test
 	}, &stdout, &stderr, nil, nil, func(_ context.Context, options encryptionrotation.Options) (encryptionrotation.Result, error) {
 		got = options
 		return encryptionrotation.Result{Status: encryptionrotation.StatusReady, DryRun: true}, nil
-	})
+	}, nil)
 	if code != 0 || got.BackupIdentifier != "restore-record-20260723-01" || got.BackupCreatedAt.Location() != time.UTC || got.BackupRestoredAt.Location() != time.UTC {
 		t.Fatalf("code=%d options=%+v", code, got)
 	}
@@ -36,7 +36,7 @@ func TestRunEncryptionRotationGateCommandMapsBlockedAndContended(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		code := runAdminCommandWithOperations(context.Background(), validRotationGateArgs(), &stdout, &stderr, nil, nil, func(context.Context, encryptionrotation.Options) (encryptionrotation.Result, error) {
 			return encryptionrotation.Result{Status: status, DryRun: true}, nil
-		})
+		}, nil)
 		if code != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"status":"`+status+`"`) {
 			t.Fatalf("status=%s code=%d stdout=%q stderr=%q", status, code, stdout.String(), stderr.String())
 		}
@@ -54,7 +54,7 @@ func TestRunEncryptionRotationGateCommandRejectsInvalidArguments(t *testing.T) {
 		code := runAdminCommandWithOperations(context.Background(), args, &stdout, &stderr, nil, nil, func(context.Context, encryptionrotation.Options) (encryptionrotation.Result, error) {
 			called = true
 			return encryptionrotation.Result{}, nil
-		})
+		}, nil)
 		if code != 2 || called || stdout.Len() != 0 || !strings.HasPrefix(stderr.String(), "usage: n2api admin check-encryption-rotation") {
 			t.Fatalf("args=%q code=%d called=%v stdout=%q stderr=%q", args, code, called, stdout.String(), stderr.String())
 		}
@@ -66,7 +66,7 @@ func TestRunEncryptionRotationGateCommandLogsOnlyStableFailureCode(t *testing.T)
 	var stdout, stderr bytes.Buffer
 	code := runAdminCommandWithOperations(context.Background(), validRotationGateArgs(), &stdout, &stderr, nil, nil, func(context.Context, encryptionrotation.Options) (encryptionrotation.Result, error) {
 		return encryptionrotation.Result{}, errors.New(canary)
-	})
+	}, nil)
 	if code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), `"error_code":"encryption_rotation_gate_failed"`) {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -79,7 +79,7 @@ func TestRunEncryptionRotationGateCommandMapsOutputFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	code := runAdminCommandWithOperations(context.Background(), validRotationGateArgs(), failingWriter{}, &stderr, nil, nil, func(context.Context, encryptionrotation.Options) (encryptionrotation.Result, error) {
 		return encryptionrotation.Result{Status: encryptionrotation.StatusReady, DryRun: true}, nil
-	})
+	}, nil)
 	if code != 2 || !strings.Contains(stderr.String(), `"error_code":"encryption_rotation_gate_output_failed"`) {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}

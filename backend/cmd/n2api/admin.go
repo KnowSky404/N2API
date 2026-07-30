@@ -21,16 +21,20 @@ import (
 type verifyEncryptionFunc func(context.Context) (encryptioninventory.Report, error)
 type cleanupOAuthStatesFunc func(context.Context, oauthstatecleanup.Options) (oauthstatecleanup.Result, error)
 type checkEncryptionRotationFunc func(context.Context, encryptionrotation.Options) (encryptionrotation.Result, error)
+type validateConfigFunc func() config.ConfigValidationReport
 
 func runAdminCommand(ctx context.Context, args []string, stdout, stderr io.Writer, verify verifyEncryptionFunc) int {
-	return runAdminCommandWithOperations(ctx, args, stdout, stderr, verify, nil, nil)
+	return runAdminCommandWithOperations(ctx, args, stdout, stderr, verify, nil, nil, nil)
 }
 
 func runAdminCommandWithCleanup(ctx context.Context, args []string, stdout, stderr io.Writer, verify verifyEncryptionFunc, cleanup cleanupOAuthStatesFunc) int {
-	return runAdminCommandWithOperations(ctx, args, stdout, stderr, verify, cleanup, nil)
+	return runAdminCommandWithOperations(ctx, args, stdout, stderr, verify, cleanup, nil, nil)
 }
 
-func runAdminCommandWithOperations(ctx context.Context, args []string, stdout, stderr io.Writer, verify verifyEncryptionFunc, cleanup cleanupOAuthStatesFunc, rotationGate checkEncryptionRotationFunc) int {
+func runAdminCommandWithOperations(ctx context.Context, args []string, stdout, stderr io.Writer, verify verifyEncryptionFunc, cleanup cleanupOAuthStatesFunc, rotationGate checkEncryptionRotationFunc, validateConfig validateConfigFunc) int {
+	if len(args) >= 2 && args[0] == "admin" && args[1] == "validate-config" {
+		return runValidateConfigCommand(args[2:], stdout, stderr, validateConfig)
+	}
 	if len(args) >= 2 && args[0] == "admin" && args[1] == "cleanup-expired-oauth-states" {
 		return runCleanupOAuthStatesCommand(ctx, args[2:], stdout, stderr, cleanup)
 	}
@@ -51,6 +55,22 @@ func runAdminCommandWithOperations(ctx context.Context, args []string, stdout, s
 		return 2
 	}
 	if report.Status == encryptioninventory.StatusFailed {
+		return 1
+	}
+	return 0
+}
+
+func runValidateConfigCommand(args []string, stdout, stderr io.Writer, validate validateConfigFunc) int {
+	if len(args) != 0 || validate == nil {
+		fmt.Fprintln(stderr, "usage: n2api admin validate-config")
+		return 2
+	}
+	report := validate()
+	if err := json.NewEncoder(stdout).Encode(report); err != nil {
+		fmt.Fprintln(stderr, "write validate-config report failed")
+		return 2
+	}
+	if report.Status != config.ConfigValidationStatusValid {
 		return 1
 	}
 	return 0
@@ -160,6 +180,12 @@ func newVerifyEncryptionFunc(getenv func(string) string) verifyEncryptionFunc {
 			return encryptioninventory.Report{}, fmt.Errorf("encrypted credential inventory failed")
 		}
 		return report, nil
+	}
+}
+
+func newValidateConfigFunc(getenv func(string) string) validateConfigFunc {
+	return func() config.ConfigValidationReport {
+		return config.Validate(getenv)
 	}
 }
 

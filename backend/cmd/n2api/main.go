@@ -189,7 +189,7 @@ func main() {
 		if exitCode := runAdminCommandWithOperations(
 			ctx, os.Args[1:], os.Stdout, os.Stderr,
 			newVerifyEncryptionFunc(os.Getenv), newCleanupOAuthStatesFunc(os.Getenv),
-			newCheckEncryptionRotationFunc(os.Getenv),
+			newCheckEncryptionRotationFunc(os.Getenv), newValidateConfigFunc(os.Getenv),
 		); exitCode != 0 {
 			os.Exit(exitCode)
 		}
