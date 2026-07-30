@@ -914,10 +914,10 @@ case "$1" in
     shift
     n2api_restore "$@"
     ;;
-  deploy|upgrade)
+  deploy|upgrade|rollback)
     operation=$1
     shift
-    (($# >= 1)) || n2api_usage_error "deploy_requires_plan_or_apply"
+    (($# >= 1)) || n2api_usage_error "operation_requires_plan_or_apply"
     action=$1
     shift
     case "${action}" in
@@ -925,11 +925,6 @@ case "$1" in
       apply) n2api_apply_operation "${operation}" "$@" ;;
       *) n2api_usage_error "unknown_operation_action" ;;
     esac
-    ;;
-  rollback)
-    command=$1
-    shift
-    n2api_not_implemented "${command}${*:+ $*}"
     ;;
   *)
     n2api_usage_error "unknown_command"

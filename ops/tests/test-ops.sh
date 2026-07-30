@@ -1170,6 +1170,123 @@ if rg -q '(^| )(pull|up|pg_dump|rollback)( |$)|/v1/' "${upgrade_noop_log}"; then
   fail "upgrade_noop_performed_mutation_or_provider_call"
 fi
 
+set +e
+rollback_restore_block="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  rollback plan --restore-database --format json)"
+rollback_restore_status=$?
+rollback_volume_block="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  rollback plan --delete-volumes --format json)"
+rollback_volume_status=$?
+set -e
+[[ ${rollback_restore_status} -eq 4 ]] || fail "rollback_live_restore_exit"
+[[ ${rollback_volume_status} -eq 4 ]] || fail "rollback_volume_deletion_exit"
+assert_jq "${rollback_restore_block}" '.reason_code == "live_database_restore_unsupported" and .changed == false'
+assert_jq "${rollback_volume_block}" '.reason_code == "volume_deletion_forbidden" and .changed == false'
+
+set +e
+missing_rollback_plan="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${test_root}/missing-rollback-state/n2api" \
+  rollback plan --format json)"
+missing_rollback_status=$?
+set -e
+[[ ${missing_rollback_status} -eq 4 ]] || fail "rollback_missing_previous_exit"
+missing_rollback_path="$(jq -r '.artifacts[0].path' <<<"${missing_rollback_plan}")"
+jq -e '(.blocked_reasons | index("rollback_previous_target_missing")) != null' "${missing_rollback_path}" >/dev/null ||
+  fail "rollback_missing_previous_not_blocked"
+
+set +e
+incompatible_rollback_plan="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" rollback plan --format json)"
+incompatible_rollback_status=$?
+set -e
+[[ ${incompatible_rollback_status} -eq 4 ]] || fail "rollback_schema_unproven_exit"
+incompatible_rollback_path="$(jq -r '.artifacts[0].path' <<<"${incompatible_rollback_plan}")"
+jq -e '(.blocked_reasons | index("schema_compatibility_unproven")) != null' "${incompatible_rollback_path}" >/dev/null ||
+  fail "rollback_schema_unproven_not_blocked"
+
+upgrade_success_receipt="${backup_state}/operations/$(jq -r '.operation_id' <<<"${upgrade_apply_output}").json"
+safe_rollback_operation_id="op-20990101T000000Z-cafebabefeed"
+safe_rollback_receipt="${backup_state}/operations/${safe_rollback_operation_id}.json"
+jq \
+  --arg operation_id "${safe_rollback_operation_id}" \
+  --arg finished_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+  '.operation_id = $operation_id |
+   .started_at = $finished_at |
+   .finished_at = $finished_at |
+   .current.source_schema = 51 |
+   .current.target_schema = 51 |
+   del(.integrity_hmac)' \
+  "${upgrade_success_receipt}" >"${safe_rollback_receipt}"
+chmod 600 -- "${safe_rollback_receipt}"
+sign_json_file "${safe_rollback_receipt}" "${evidence_key}"
+
+set +e
+unavailable_rollback_plan="$(N2API_FAKE_DOCKER_MODE=rollback_pull_unavailable \
+  N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" rollback plan --format json)"
+unavailable_rollback_status=$?
+set -e
+[[ ${unavailable_rollback_status} -eq 4 ]] || fail "rollback_image_unavailable_exit"
+unavailable_rollback_path="$(jq -r '.artifacts[0].path' <<<"${unavailable_rollback_plan}")"
+jq -e '(.blocked_reasons | index("rollback_previous_image_unavailable")) != null' "${unavailable_rollback_path}" >/dev/null ||
+  fail "rollback_image_unavailable_not_blocked"
+
+rollback_plan_output="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" rollback plan --format json)"
+assert_jq "${rollback_plan_output}" '
+  .command == "rollback.plan" and .status == "succeeded" and .reason_code == "rollback_plan_created" and
+  .changed == true and .target.image == "'"${image}"'" and
+  .target.database_restore == false and .target.volume_deletion == false
+'
+rollback_plan_path="$(jq -r '.artifacts[0].path' <<<"${rollback_plan_output}")"
+jq -e --arg candidate "${candidate_image}" --arg previous "${image}" --arg receipt "${safe_rollback_operation_id}" '
+  .risk == "high_risk" and .source.runtime.configured_image == $candidate and
+  .target.image.reference == $previous and .target.database_restore == false and .target.volume_deletion == false and
+  .evidence.previous_operation.operation_id == $receipt and
+  .evidence.compatibility.status == "proven" and .evidence.compatibility.basis == "schema_unchanged"
+' "${rollback_plan_path}" >/dev/null || fail "rollback_plan_contract"
+
+cp -- "${safe_rollback_receipt}" "${test_root}/safe-rollback-receipt.valid"
+jq '.current.target_schema = 52' "${safe_rollback_receipt}" >"${safe_rollback_receipt}.tampered"
+mv -- "${safe_rollback_receipt}.tampered" "${safe_rollback_receipt}"
+chmod 600 -- "${safe_rollback_receipt}"
+set +e
+tampered_rollback_apply="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  rollback apply --plan "${rollback_plan_path}" --format json)"
+tampered_rollback_status=$?
+set -e
+mv -- "${test_root}/safe-rollback-receipt.valid" "${safe_rollback_receipt}"
+chmod 600 -- "${safe_rollback_receipt}"
+[[ ${tampered_rollback_status} -eq 4 ]] || fail "rollback_receipt_tamper_exit"
+assert_jq "${tampered_rollback_apply}" '.status == "blocked" and .reason_code == "stale_plan_detected" and .changed == false'
+
+rollback_apply_log="${test_root}/rollback-apply.log"
+rollback_apply_output="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" \
+  N2API_FAKE_DOCKER_LOG="${rollback_apply_log}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  rollback apply --plan "${rollback_plan_path}" --format json)"
+assert_jq "${rollback_apply_output}" '
+  .command == "rollback.apply" and .risk == "high_risk" and .status == "succeeded" and
+  .reason_code == "rollback_applied" and .changed == true and
+  .current.source_schema == 51 and .current.target_schema == 51 and
+  .target.database_restore == false and .target.volume_deletion == false
+'
+grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "rollback_target_not_persisted"
+if rg -q '(^| )(down|volume rm|pg_restore)( |$)|down --volumes' "${rollback_apply_log}"; then
+  fail "rollback_performed_database_or_volume_mutation"
+fi
+
+rollback_noop_log="${test_root}/rollback-noop.log"
+rollback_noop_output="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" \
+  N2API_FAKE_DOCKER_LOG="${rollback_noop_log}" PATH="${fake_path}" \
+  "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
+  rollback apply --plan "${rollback_plan_path}" --format json)"
+assert_jq "${rollback_noop_output}" '.status == "noop" and .reason_code == "target_already_healthy" and .changed == false'
+if rg -q '(^| )(pull|up|pg_dump|pg_restore|down)( |$)|volume rm|/v1/' "${rollback_noop_log}"; then
+  fail "rollback_noop_performed_mutation_or_provider_call"
+fi
+
 race_archive="${test_root}/race-fixture.dump"
 race_checksum="$(sha256sum -- "${fixture_archive}" | awk '{print $1}')"
 cp -- "${fixture_archive}" "${race_archive}"

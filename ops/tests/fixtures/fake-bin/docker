@@ -48,6 +48,9 @@ case "${1:-}" in
       exit 0
     fi
     if [[ "${2:-}" == "inspect" ]]; then
+      if [[ "${fake_mode}" == "rollback_manifest_unavailable" && "${3:-}" == *":2026073001@sha256:"* ]]; then
+        exit 1
+      fi
       inspected_digest=${3##*@}
       [[ "${inspected_digest}" == sha256:* ]] || inspected_digest=${digest}
       jq -cn --arg digest "${inspected_digest}" '{
@@ -62,7 +65,9 @@ case "${1:-}" in
     fi
     ;;
   pull)
-    if [[ "${fake_mode}" == "image_pull_ignore_term" ]]; then
+    if [[ "${fake_mode}" == "rollback_pull_unavailable" && "${*: -1}" == *":2026073001@sha256:"* ]]; then
+      exit 1
+    elif [[ "${fake_mode}" == "image_pull_ignore_term" ]]; then
       [[ -z "${N2API_FAKE_DOCKER_READY_FILE:-}" ]] || : >"${N2API_FAKE_DOCKER_READY_FILE}"
       ignore_term_forever
     elif [[ "${fake_mode}" == "image_pull_wait" ]]; then

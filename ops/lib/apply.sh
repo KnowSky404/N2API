@@ -40,9 +40,10 @@ n2api_apply_cleanup() {
 
 n2api_apply_receipt() {
   local status=$1 changed=$2 reason=$3 summary=$4 current=${5:-'{}'} target=${6:-'{}'} next_actions=${7:-'[]'}
-  local document
+  local document risk="service_change"
+  [[ "${N2API_APPLY_COMMAND}" != rollback ]] || risk="high_risk"
   document="$(n2api_envelope_json \
-    "${N2API_APPLY_COMMAND}.apply" "service_change" "${status}" "${changed}" "${reason}" "${summary}" \
+    "${N2API_APPLY_COMMAND}.apply" "${risk}" "${status}" "${changed}" "${reason}" "${summary}" \
     "${current}" "${target}" '[]' "${next_actions}" \
     "${N2API_APPLY_OPERATION_ID}" "${N2API_APPLY_STARTED_AT}")"
   n2api_operation_write "${N2API_APPLY_OPERATION_ID}" "${document}" || return 1
@@ -58,7 +59,8 @@ n2api_apply_cleanup_signal() {
 
 n2api_apply_finish() {
   local status=$1 changed=$2 reason=$3 summary=$4 current=$5 target=$6 next_actions=$7 exit_code=$8
-  local receipt_status=0
+  local receipt_status=0 risk="service_change"
+  [[ "${N2API_APPLY_COMMAND}" != rollback ]] || risk="high_risk"
   trap - EXIT INT TERM
   trap 'n2api_apply_cleanup_signal 130' INT
   trap 'n2api_apply_cleanup_signal 143' TERM
@@ -66,7 +68,7 @@ n2api_apply_finish() {
   n2api_apply_cleanup
   trap - INT TERM
   if [[ ${receipt_status} -ne 0 ]]; then
-    n2api_emit "${N2API_APPLY_COMMAND}.apply" "service_change" "failed" "${changed}" \
+    n2api_emit "${N2API_APPLY_COMMAND}.apply" "${risk}" "failed" "${changed}" \
       "operation_receipt_failed" "Operation finished but its receipt could not be written" \
       "${current}" "${target}" '[]' '["Preserve external evidence and repair operator state"]'
     exit "${N2API_EXIT_FAILED}"
@@ -80,7 +82,7 @@ n2api_apply_signal() {
   trap 'n2api_apply_cleanup_signal 130' INT
   trap 'n2api_apply_cleanup_signal 143' TERM
   n2api_apply_stop_child "${signal}"
-  if [[ "${N2API_APPLY_COMMAND}" == upgrade ]]; then
+  if [[ "${N2API_APPLY_COMMAND}" == upgrade || "${N2API_APPLY_COMMAND}" == rollback ]]; then
     current="$(n2api_upgrade_observation_json "${N2API_APPLY_STAGE}" "" "${signal}")"
   else
     current="$(jq -cn \
@@ -215,6 +217,32 @@ n2api_upgrade_evidence_matches_plan() {
   ' <<<"${plan}" >/dev/null || return 1
   rollback_manifest="$(n2api_image_inspect_json "${source_image}")" || return 1
   [[ "$(jq -r '.digest' <<<"${rollback_manifest}")" == "$(jq -r '.invariants.rollback_manifest_digest' <<<"${plan}")" ]]
+}
+
+n2api_previous_receipt_matches_plan() {
+  local plan=$1 operation_id path document
+  operation_id="$(jq -r '.evidence.previous_operation.operation_id // empty' <<<"${plan}")"
+  n2api_validate_operation_id "${operation_id}" || return 1
+  path="${N2API_STATE_DIR}/operations/${operation_id}.json"
+  [[ -f "${path}" && ! -L "${path}" ]] || return 1
+  document="$(jq -ce . "${path}" 2>/dev/null)" || return 1
+  n2api_operation_integrity_valid "${document}" || return 1
+  jq -e --argjson receipt "${document}" '
+    .invariants.previous_receipt_hmac == $receipt.integrity_hmac and
+    .evidence.previous_operation.receipt_hmac == $receipt.integrity_hmac and
+    .evidence.previous_operation.current_image == $receipt.target.image and
+    .evidence.previous_operation.previous_image == $receipt.target.rollback_image and
+    .evidence.previous_operation.source_schema == $receipt.current.source_schema and
+    .evidence.previous_operation.target_schema == $receipt.current.target_schema and
+    .source.runtime.configured_image == $receipt.target.image and
+    .target.image.reference == $receipt.target.rollback_image and
+    .source.runtime.schema_version == $receipt.current.target_schema and
+    .evidence.compatibility.current_schema == $receipt.current.source_schema and
+    $receipt.current.source_schema == $receipt.current.target_schema and
+    ($receipt.command == "upgrade.apply" or $receipt.command == "rollback.apply") and
+    $receipt.status == "succeeded" and
+    $receipt.changed == true
+  ' <<<"${plan}" >/dev/null
 }
 
 n2api_env_replace_image() {
@@ -518,12 +546,170 @@ n2api_upgrade_apply() {
     "${current}" "${target}" '["Complete off-host custody and external ingress owner gates"]' 0
 }
 
+n2api_rollback_apply() {
+  local plan_path="" plan runtime context target_manifest expiry_epoch now_epoch lock_status source_image source_schema
+  local target current after container pull_status compose_status reason exit_code target_schema before_env_image
+  while (($# > 0)); do
+    case "$1" in
+      --plan) (($# >= 2)) || n2api_usage_error "missing_plan_path"; plan_path=$2; shift 2 ;;
+      --restore|--restore-database|--live-restore)
+        n2api_emit "rollback.apply" "high_risk" "blocked" false "live_database_restore_unsupported" "Live database restore is not supported" '{}' '{}' '[]' '[]'
+        exit "${N2API_EXIT_BLOCKED}"
+        ;;
+      --delete-volumes|--volumes|--down-volumes)
+        n2api_emit "rollback.apply" "high_risk" "blocked" false "volume_deletion_forbidden" "Rollback never deletes production volumes" '{}' '{}' '[]' '[]'
+        exit "${N2API_EXIT_BLOCKED}"
+        ;;
+      *) n2api_usage_error "rollback_apply_accepts_only_plan" ;;
+    esac
+  done
+  [[ -n "${plan_path}" ]] || n2api_usage_error "rollback_apply_requires_plan"
+  N2API_APPLY_OPERATION_ID="$(n2api_operation_id)"
+  N2API_APPLY_STARTED_AT="$(n2api_now)"
+  N2API_APPLY_COMMAND="rollback"
+  N2API_APPLY_LIVE_CHANGED=false
+  N2API_APPLY_SOURCE_IMAGE=""
+  N2API_APPLY_SOURCE_SCHEMA=""
+  trap 'n2api_apply_cleanup' EXIT
+  trap 'n2api_apply_signal INT 130' INT
+  trap 'n2api_apply_signal TERM 143' TERM
+  if ! n2api_plan_read "${plan_path}" rollback plan; then
+    n2api_apply_receipt "blocked" false "${N2API_PLAN_READ_REASON}" "Rollback plan is unsafe or invalid" '{}' '{}' '["Create a new rollback plan"]' || true
+    exit "${N2API_EXIT_BLOCKED}"
+  fi
+  N2API_APPLY_PLAN_OPERATION_ID="$(jq -r '.operation_id' <<<"${plan}")"
+  N2API_APPLY_TARGET_IMAGE="$(jq -r '.target.image.reference // empty' <<<"${plan}")"
+  source_image="$(jq -r '.source.runtime.configured_image // empty' <<<"${plan}")"
+  source_schema="$(jq -r '.source.runtime.schema_version // empty' <<<"${plan}")"
+  target_schema="$(jq -r '.evidence.compatibility.current_schema // empty' <<<"${plan}")"
+  N2API_APPLY_SOURCE_IMAGE="${source_image}"
+  N2API_APPLY_SOURCE_SCHEMA="${source_schema}"
+  if [[ "$(jq -r '.blocked_reasons | length' <<<"${plan}")" -gt 0 ]]; then
+    n2api_apply_receipt "blocked" false "plan_contains_blockers" "Blocked rollback plan cannot be applied" '{}' '{}' '["Create a safe rollback plan"]' || true
+    exit "${N2API_EXIT_BLOCKED}"
+  fi
+  if [[ "$(jq -r '.evidence.compatibility.status // empty' <<<"${plan}")" != proven ]] ||
+    [[ "$(jq -r '.evidence.compatibility.basis // empty' <<<"${plan}")" != schema_unchanged ]]; then
+    n2api_apply_receipt "blocked" false "schema_compatibility_unproven" "Rollback schema compatibility is not proven" '{}' '{}' '[]' || true
+    exit "${N2API_EXIT_BLOCKED}"
+  fi
+  expiry_epoch="$(date -u -d "$(jq -r '.expires_at' <<<"${plan}")" +%s 2>/dev/null || printf 0)"
+  now_epoch="$(date -u +%s)"
+  if ((expiry_epoch <= now_epoch)); then
+    n2api_apply_receipt "blocked" false "plan_expired" "Rollback plan has expired" '{}' '{}' '["Create a fresh rollback plan"]' || true
+    exit "${N2API_EXIT_BLOCKED}"
+  fi
+  n2api_check_env_file >/dev/null || {
+    n2api_apply_receipt "blocked" false "stale_plan_detected" "Rollback environment is unavailable" '{}' '{}' '["Create a fresh rollback plan"]' || true
+    exit "${N2API_EXIT_BLOCKED}"
+  }
+  before_env_image="$(n2api_env_get N2API_IMAGE)"
+  target_manifest="$(n2api_image_inspect_json "${N2API_APPLY_TARGET_IMAGE}")" || {
+    n2api_apply_receipt "blocked" false "rollback_previous_image_unavailable" "Rollback target image is unavailable" '{}' '{}' '[]' || true
+    exit "${N2API_EXIT_BLOCKED}"
+  }
+  set +e
+  n2api_lock_acquire "${N2API_APPLY_OPERATION_ID}"
+  lock_status=$?
+  set -e
+  if [[ ${lock_status} -eq 2 ]]; then
+    n2api_apply_receipt "contended" false "operation_lock_contended" "Another operator action holds the lock" '{}' '{}' '["Wait for the active operation"]' || true
+    exit "${N2API_EXIT_CONTENDED}"
+  elif [[ ${lock_status} -ne 0 ]]; then
+    n2api_apply_receipt "failed" false "operation_state_unsafe" "Operator lock could not be acquired safely" '{}' '{}' '[]' || true
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  N2API_APPLY_LOCKED=true
+  runtime="$(n2api_runtime_snapshot_json)" ||
+    n2api_apply_finish "failed" false "runtime_snapshot_failed" "Runtime snapshot failed after acquiring the operation lock" \
+      "$(n2api_upgrade_observation_json "runtime_snapshot")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${N2API_EXIT_FAILED}"
+  context="$(n2api_plan_context_json "${runtime}")" ||
+    n2api_apply_finish "failed" false "plan_context_failed" "Apply context could not be verified after acquiring the operation lock" \
+      "$(n2api_upgrade_observation_json "plan_context" "${runtime}")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${N2API_EXIT_FAILED}"
+  if [[ "${before_env_image}" == "${N2API_APPLY_TARGET_IMAGE}" ]] &&
+    [[ "$(jq -r '.postgres.schema.value // empty' <<<"${runtime}")" == "${target_schema}" ]] &&
+    n2api_runtime_exact_target_healthy "${runtime}" "${N2API_APPLY_TARGET_IMAGE}"; then
+    container="$(jq -r '.n2api.name' <<<"${runtime}")"
+    if env N2API_ENV_FILE="${N2API_ENV_FILE}" \
+      "${N2API_REPO_ROOT}/dev/verification/verify-release-image.sh" --container "${container}" "${N2API_APPLY_TARGET_IMAGE}" >/dev/null 2>&1; then
+      n2api_apply_finish "noop" false "target_already_healthy" "Exact rollback target is already healthy" \
+        "$(jq -cn --arg plan_operation_id "${N2API_APPLY_PLAN_OPERATION_ID}" '{plan_operation_id:$plan_operation_id,stage:"noop"}')" \
+        "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' 0
+    fi
+  fi
+  if ! n2api_apply_static_invariants_match "${plan}" "${context}" "${target_manifest}" ||
+    ! n2api_apply_runtime_invariants_match "${plan}" "${context}" ||
+    ! n2api_previous_receipt_matches_plan "${plan}"; then
+    n2api_apply_finish "blocked" false "stale_plan_detected" "Rollback plan invariants or receipt evidence changed" \
+      "$(n2api_upgrade_observation_json "invariants" "${runtime}")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" \
+      '["Create a fresh rollback plan"]' "${N2API_EXIT_BLOCKED}"
+  fi
+  if [[ "${source_schema}" != "${target_schema}" ]] ||
+    [[ "$(jq -r '.postgres.schema.value // empty' <<<"${runtime}")" != "${target_schema}" ]]; then
+    n2api_apply_finish "blocked" false "schema_compatibility_unproven" "Live schema no longer matches proven rollback compatibility" \
+      "$(n2api_upgrade_observation_json "compatibility" "${runtime}")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${N2API_EXIT_BLOCKED}"
+  fi
+  N2API_APPLY_STAGE="image_pull"
+  set +e
+  n2api_apply_run_tracked docker pull --quiet "${N2API_APPLY_TARGET_IMAGE}" >/dev/null 2>&1
+  pull_status=$?
+  set -e
+  if [[ ${pull_status} -ne 0 ]]; then
+    if n2api_status_is_timeout "${pull_status}"; then reason="image_pull_timeout"; exit_code=124; else reason="image_pull_failed"; exit_code=${N2API_EXIT_FAILED}; fi
+    n2api_apply_finish "failed" false "${reason}" "Rollback target image pull failed" \
+      "$(n2api_upgrade_observation_json "image_pull")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${exit_code}"
+  fi
+  n2api_local_image_digest_matches "${N2API_APPLY_TARGET_IMAGE}" ||
+    n2api_apply_finish "failed" false "image_identity_mismatch" "Pulled rollback image does not match the plan" \
+      "$(n2api_upgrade_observation_json "image_pull")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${N2API_EXIT_FAILED}"
+  N2API_APPLY_STAGE="persist_target"
+  n2api_env_replace_image "${N2API_APPLY_TARGET_IMAGE}" ||
+    n2api_apply_finish "failed" false "environment_update_failed" "Rollback target could not be persisted atomically" \
+      "$(n2api_upgrade_observation_json "persist_target")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${N2API_EXIT_FAILED}"
+  N2API_APPLY_LIVE_CHANGED=true
+  N2API_APPLY_STAGE="compose_apply"
+  n2api_compose_command
+  set +e
+  n2api_apply_run_tracked env N2API_ENV_FILE="${N2API_ENV_FILE}" "${N2API_COMPOSE_CMD[@]}" up --detach --wait n2api
+  compose_status=$?
+  set -e
+  if n2api_status_is_timeout "${compose_status}"; then
+    n2api_apply_finish "failed" true "readiness_timeout" "Rollback exceeded its readiness timeout" \
+      "$(n2api_upgrade_observation_json "compose_apply")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' 124
+  elif [[ ${compose_status} -ne 0 ]]; then
+    n2api_apply_finish "failed" true "compose_apply_failed" "Rollback Compose apply failed" \
+      "$(n2api_upgrade_observation_json "compose_apply")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${N2API_EXIT_FAILED}"
+  fi
+  N2API_APPLY_STAGE="verification"
+  after="$(n2api_runtime_snapshot_json)" ||
+    n2api_apply_finish "failed" true "basic_verification_failed" "Post-rollback runtime snapshot failed" \
+      "$(n2api_upgrade_observation_json "verification")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" '[]' "${N2API_EXIT_FAILED}"
+  container="$(jq -r '.n2api.name // empty' <<<"${after}")"
+  if ! n2api_runtime_exact_target_healthy "${after}" "${N2API_APPLY_TARGET_IMAGE}" ||
+    [[ "$(jq -r '.postgres.schema.value // empty' <<<"${after}")" != "${target_schema}" ]] ||
+    [[ -z "${container}" ]] ||
+    ! env N2API_ENV_FILE="${N2API_ENV_FILE}" \
+      "${N2API_REPO_ROOT}/dev/verification/verify-release-image.sh" --container "${container}" "${N2API_APPLY_TARGET_IMAGE}" >/dev/null 2>&1; then
+    n2api_apply_finish "failed" true "basic_verification_failed" "Post-rollback verification failed" \
+      "$(n2api_upgrade_observation_json "verification" "${after}")" "$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" '{image:$image}')" \
+      '["Preserve evidence; live database restore remains a manual owner decision"]' "${N2API_EXIT_FAILED}"
+  fi
+  current="$(jq -cn --arg plan_operation_id "${N2API_APPLY_PLAN_OPERATION_ID}" --arg source_image "${source_image}" \
+    --argjson source_schema "${source_schema}" --argjson target_schema "${target_schema}" \
+    '{plan_operation_id:$plan_operation_id,stage:"completed",source_image:$source_image,source_schema:$source_schema,target_schema:$target_schema,basic_verification:"passed"}')"
+  target="$(jq -cn --arg image "${N2API_APPLY_TARGET_IMAGE}" --arg rollback_image "${source_image}" \
+    '{image:$image,rollback_image:$rollback_image,running_identity:"verified",database_restore:false,volume_deletion:false}')"
+  n2api_apply_finish "succeeded" true "rollback_applied" "Application image rollback applied and verified without database restore" \
+    "${current}" "${target}" '["Keep database restore as a separate documented manual path"]' 0
+}
+
 n2api_apply_operation() {
   local operation=$1
   shift
   case "${operation}" in
     deploy) n2api_deploy_apply "$@" ;;
     upgrade) n2api_upgrade_apply "$@" ;;
+    rollback) n2api_rollback_apply "$@" ;;
     *) n2api_usage_error "unsupported_apply_operation" ;;
   esac
 }

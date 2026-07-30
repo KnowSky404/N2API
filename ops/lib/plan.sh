@@ -148,6 +148,37 @@ n2api_plan_blocked_reasons() {
   jq -c '[.[] | select(.status == "failed" or .status == "blocked") | .reason_code] | unique' <<<"${N2API_CHECKS_JSON}"
 }
 
+n2api_previous_application_receipt_json() {
+  local current_image=$1 path document
+  n2api_state_is_safe "${N2API_STATE_DIR}" || return 1
+  while IFS= read -r path; do
+    [[ -f "${path}" && ! -L "${path}" ]] || continue
+    document="$(jq -ce . "${path}" 2>/dev/null)" || continue
+    n2api_operation_integrity_valid "${document}" || continue
+    jq -e --arg current_image "${current_image}" '
+      (.command == "upgrade.apply" or .command == "rollback.apply") and
+      .status == "succeeded" and
+      .changed == true and
+      .target.image == $current_image and
+      (.target.rollback_image | type == "string") and
+      (.current.source_schema | type == "number") and
+      (.current.target_schema | type == "number")
+    ' <<<"${document}" >/dev/null 2>&1 || continue
+    jq -c '{
+      operation_id,
+      command,
+      finished_at,
+      current_image:.target.image,
+      previous_image:.target.rollback_image,
+      source_schema:.current.source_schema,
+      target_schema:.current.target_schema,
+      receipt_hmac:.integrity_hmac
+    }' <<<"${document}"
+    return 0
+  done < <(find "${N2API_STATE_DIR}/operations" -maxdepth 1 -type f -name 'op-*.json' -print 2>/dev/null | sort -r)
+  return 1
+}
+
 n2api_deploy_plan() {
   (($# == 0)) || n2api_usage_error "deploy_plan_unexpected_argument"
   local operation_id started_at expires_at target_image target_manifest runtime context blocked plan path document
@@ -419,12 +450,151 @@ n2api_upgrade_plan() {
   exit "${exit_code}"
 }
 
+n2api_rollback_plan_blocked_request() {
+  local reason=$1 summary=$2
+  n2api_emit "rollback.plan" "local_write" "blocked" false "${reason}" "${summary}" \
+    '{}' '{}' '[]' '["Application rollback never performs live database restore or volume deletion"]'
+  exit "${N2API_EXIT_BLOCKED}"
+}
+
+n2api_rollback_plan() {
+  local operation_id started_at expires_at runtime context current_image current_schema previous='{}' previous_image=""
+  local previous_manifest='{}' compatibility_status="unproven" compatibility_basis="unavailable"
+  local blocked plan path document status reason summary exit_code=0 artifacts pull_status=1
+  if (($# > 0)); then
+    case "$1" in
+      --restore|--restore-database|--live-restore)
+        n2api_rollback_plan_blocked_request "live_database_restore_unsupported" "Live database restore is not a rollback operation"
+        ;;
+      --delete-volumes|--volumes|--down-volumes)
+        n2api_rollback_plan_blocked_request "volume_deletion_forbidden" "Rollback never deletes production volumes"
+        ;;
+      *) n2api_usage_error "rollback_plan_unexpected_argument" ;;
+    esac
+  fi
+  operation_id="$(n2api_operation_id)"
+  started_at="$(n2api_now)"
+  expires_at="$(date -u -d '+15 minutes' +'%Y-%m-%dT%H:%M:%SZ')"
+  n2api_state_init || {
+    n2api_emit "rollback.plan" "local_write" "failed" false "operation_state_unsafe" "Operator state could not be initialized safely" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  if ! n2api_config_host_checks; then :; fi
+  runtime="$(n2api_runtime_snapshot_json)" || {
+    n2api_emit "rollback.plan" "local_write" "failed" false "runtime_snapshot_failed" "Runtime snapshot failed" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  context="$(n2api_plan_context_json "${runtime}")" || {
+    n2api_emit "rollback.plan" "local_write" "failed" false "plan_context_failed" "Plan context could not be protected" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  current_image="$(jq -r '.source.runtime.configured_image // empty' <<<"${context}")"
+  current_schema="$(jq -r '.source.runtime.schema_version // empty' <<<"${context}")"
+  if previous="$(n2api_previous_application_receipt_json "${current_image}")"; then
+    previous_image="$(jq -r '.previous_image // empty' <<<"${previous}")"
+    n2api_check_add "rollback.previous" "passed" "rollback_previous_target_recorded" "A signed successful receipt records the exact previous image"
+  else
+    previous='{"availability":"unavailable"}'
+    n2api_check_add "rollback.previous" "failed" "rollback_previous_target_missing" "No signed successful receipt records a previous image for the live target"
+  fi
+  if [[ -n "${previous_image}" ]]; then
+    set +e
+    n2api_run_timeout docker pull --quiet "${previous_image}" >/dev/null 2>&1
+    pull_status=$?
+    set -e
+  fi
+  if [[ ${pull_status} -eq 0 ]] && previous_manifest="$(n2api_image_inspect_json "${previous_image}")" &&
+    n2api_local_image_digest_matches "${previous_image}"; then
+    n2api_check_add "rollback.image" "passed" "rollback_previous_image_available" "The exact previous image digest is available"
+  else
+    previous_manifest='{}'
+    n2api_check_add "rollback.image" "failed" "rollback_previous_image_unavailable" "The exact previous image digest is unavailable"
+  fi
+  if [[ "${current_schema}" =~ ^[1-9][0-9]*$ ]] &&
+    [[ "$(jq -r '.source_schema // empty' <<<"${previous}")" == "${current_schema}" ]] &&
+    [[ "$(jq -r '.target_schema // empty' <<<"${previous}")" == "${current_schema}" ]]; then
+    compatibility_status="proven"
+    compatibility_basis="schema_unchanged"
+    n2api_check_add "rollback.compatibility" "passed" "schema_compatibility_proven" "The successful operation and live runtime prove that schema did not change"
+  else
+    n2api_check_add "rollback.compatibility" "failed" "schema_compatibility_unproven" "The previous image is not proven compatible with the live schema"
+  fi
+  blocked="$(n2api_plan_blocked_reasons)"
+  plan="$(jq -cn \
+    --arg schema_version "${N2API_PLAN_SCHEMA_VERSION}" \
+    --arg operation_id "${operation_id}" \
+    --arg created_at "${started_at}" \
+    --arg expires_at "${expires_at}" \
+    --argjson context "${context}" \
+    --arg current_image "${current_image}" \
+    --arg previous_image "${previous_image}" \
+    --arg current_schema "${current_schema}" \
+    --arg compatibility_status "${compatibility_status}" \
+    --arg compatibility_basis "${compatibility_basis}" \
+    --argjson previous "${previous}" \
+    --argjson manifest "${previous_manifest}" \
+    --argjson checks "${N2API_CHECKS_JSON}" \
+    --argjson blocked "${blocked}" '
+    {
+      schema_version:$schema_version,
+      operation_id:$operation_id,
+      operation:"rollback",
+      created_at:$created_at,
+      expires_at:$expires_at,
+      risk:"high_risk",
+      source:$context.source,
+      target:{
+        image:{reference:(if $previous_image == "" then null else $previous_image end),digest:($manifest.digest // null),platforms:($manifest.platforms // [])},
+        rollback_image:(if $current_image == "" then null else $current_image end),
+        database_restore:false,
+        volume_deletion:false
+      },
+      evidence:{
+        previous_operation:$previous,
+        compatibility:{
+          status:$compatibility_status,
+          basis:$compatibility_basis,
+          current_schema:(if ($current_schema | test("^[0-9]+$")) then ($current_schema | tonumber) else null end)
+        }
+      },
+      invariants:($context.invariants + {
+        target_manifest_digest:($manifest.digest // null),
+        previous_receipt_hmac:($previous.receipt_hmac // null),
+        compatibility_status:$compatibility_status
+      }),
+      checks:$checks,
+      blocked_reasons:$blocked
+    }')"
+  path="$(n2api_plan_write "${plan}")" || {
+    n2api_emit "rollback.plan" "local_write" "failed" false "plan_write_failed" "Rollback plan could not be written" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  artifacts="$(jq -cn --arg path "${path}" '[{type:"operation_plan",path:$path}]')"
+  if [[ "$(jq -r 'length' <<<"${blocked}")" -gt 0 ]]; then
+    status="blocked"; reason="rollback_plan_blocked"; summary="Rollback plan contains blocking safety checks"; exit_code=${N2API_EXIT_BLOCKED}
+  else
+    status="succeeded"; reason="rollback_plan_created"; summary="Rollback plan created with proven image and schema compatibility"
+  fi
+  document="$(n2api_envelope_json "rollback.plan" "local_write" "${status}" true "${reason}" "${summary}" \
+    "$(jq -cn --arg plan "${path}" --arg current_image "${current_image}" --arg current_schema "${current_schema}" \
+      '{plan:$plan,current_image:$current_image,current_schema:(if ($current_schema|test("^[0-9]+$")) then ($current_schema|tonumber) else null end)}')" \
+    "$(jq -cn --arg image "${previous_image}" '{image:(if $image == "" then null else $image end),database_restore:false,volume_deletion:false}')" \
+    "${artifacts}" '["Review every check, then run rollback apply --plan PATH"]' "${operation_id}" "${started_at}")"
+  n2api_operation_write "${operation_id}" "${document}" || {
+    n2api_emit "rollback.plan" "local_write" "failed" true "operation_receipt_failed" "Plan was written but its receipt failed" '{}' '{}' "${artifacts}" '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  n2api_emit_document "${document}"
+  exit "${exit_code}"
+}
+
 n2api_plan_operation() {
   local operation=$1
   shift
   case "${operation}" in
     deploy) n2api_deploy_plan "$@" ;;
     upgrade) n2api_upgrade_plan "$@" ;;
+    rollback) n2api_rollback_plan "$@" ;;
     *) n2api_usage_error "unsupported_plan_operation" ;;
   esac
 }
