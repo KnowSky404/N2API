@@ -13,6 +13,12 @@ source "${N2API_OPS_ROOT}/lib/core.sh"
 source "${N2API_OPS_ROOT}/lib/output.sh"
 # shellcheck source=ops/lib/state.sh
 source "${N2API_OPS_ROOT}/lib/state.sh"
+# shellcheck source=ops/lib/env.sh
+source "${N2API_OPS_ROOT}/lib/env.sh"
+# shellcheck source=ops/lib/docker.sh
+source "${N2API_OPS_ROOT}/lib/docker.sh"
+# shellcheck source=ops/lib/checks.sh
+source "${N2API_OPS_ROOT}/lib/checks.sh"
 
 N2API_FORMAT="text"
 N2API_ENV_FILE="${N2API_REPO_ROOT}/.env"
@@ -188,6 +194,345 @@ n2api_describe() {
     "${current}" '{}' '[]' '["Run doctor before planning a production change"]'
 }
 
+n2api_doctor() {
+  (($# == 0)) || n2api_usage_error "doctor_unexpected_argument"
+  local daemon_available=false env_available=false manifest_backend="" service_ids="" port listener_count=0
+  local failed attention status reason summary current exit_code=0 architecture
+  n2api_checks_reset
+
+  if [[ "$(uname -s)" == "Linux" ]]; then
+    n2api_check_add "host.os" "passed" "operating_system_supported" "Linux is supported"
+  else
+    n2api_check_add "host.os" "failed" "operating_system_unsupported" "Only Linux is supported"
+  fi
+  architecture="$(n2api_host_platform)"
+  case "${architecture}" in
+    linux/amd64|linux/arm64)
+      n2api_check_add "host.architecture" "passed" "architecture_supported" "Host architecture is supported"
+      ;;
+    *)
+      n2api_check_add "host.architecture" "failed" "architecture_unsupported" "Host architecture is unsupported"
+      ;;
+  esac
+
+  for tool in docker curl jq openssl flock timeout sha256sum df stat ss; do
+    n2api_check_command "${tool}"
+  done
+
+  if command -v docker >/dev/null 2>&1; then
+    if timeout "${N2API_TIMEOUT_SECONDS}" docker info >/dev/null 2>&1; then
+      daemon_available=true
+      n2api_check_add "docker.daemon" "passed" "docker_daemon_available" "Docker daemon is available to the current user"
+    else
+      n2api_check_add "docker.daemon" "failed" "docker_daemon_unavailable" "Docker daemon is unavailable to the current user"
+    fi
+    if docker compose version --short 2>/dev/null | awk -F. '$1 == 2 {found=1} END {exit !found}'; then
+      n2api_check_add "docker.compose" "passed" "compose_v2_available" "Docker Compose v2 is available"
+    else
+      n2api_check_add "docker.compose" "failed" "compose_v2_unavailable" "Docker Compose v2 is required"
+    fi
+    if manifest_backend="$(n2api_manifest_backend_available)"; then
+      n2api_check_add "docker.manifest" "passed" "manifest_inspector_available" "Manifest inspection is available"
+    else
+      n2api_check_add "docker.manifest" "failed" "manifest_inspector_unavailable" "Buildx or docker manifest is required"
+    fi
+  fi
+
+  n2api_check_disk "${N2API_ENV_FILE}"
+  if n2api_check_env_file; then
+    env_available=true
+    n2api_check_backup_directory
+  fi
+  n2api_check_state_path
+
+  if [[ "${daemon_available}" == true && "${env_available}" == true ]]; then
+    if n2api_compose config --quiet >/dev/null 2>&1; then
+      n2api_check_add "compose.config" "passed" "compose_config_valid" "Compose configuration validates"
+    else
+      n2api_check_add "compose.config" "failed" "compose_config_invalid" "Compose configuration does not validate"
+    fi
+
+    service_ids="$(n2api_compose ps --status running --quiet 2>/dev/null || true)"
+    if [[ -n "${service_ids}" ]]; then
+      n2api_check_add "compose.services" "passed" "services_running" "One or more project services are running"
+    else
+      n2api_check_add "compose.services" "passed" "services_not_running" "No project services are running"
+    fi
+
+    port="$(n2api_env_get N2API_PORT 3000)"
+    if [[ -z "${service_ids}" && "${port}" =~ ^[0-9]+$ ]] && command -v ss >/dev/null 2>&1; then
+      listener_count="$(ss -H -lnt 2>/dev/null | awk -v suffix=":${port}" '$4 ~ (suffix "$" ) {count++} END {print count+0}')"
+      if ((listener_count > 0)); then
+        n2api_check_add "host.port" "failed" "port_in_use" "Configured port is already in use"
+      else
+        n2api_check_add "host.port" "passed" "port_available" "Configured port is available"
+      fi
+    else
+      n2api_check_add "host.port" "passed" "port_owned_or_not_applicable" "Port conflict check is not applicable to the current running stack"
+    fi
+
+    if n2api_image_reference_is_valid "$(n2api_env_get N2API_IMAGE)"; then
+      if n2api_image_inspect_json "$(n2api_env_get N2API_IMAGE)" >/dev/null; then
+        n2api_check_add "image.platform" "passed" "image_platform_available" "Target image contains supported and current platforms"
+      else
+        n2api_check_add "image.platform" "failed" "image_platform_unavailable" "Target image manifest or host platform is unavailable"
+      fi
+    else
+      n2api_check_add "image.platform" "failed" "immutable_image_required" "Target image is not an exact N2API CalVer digest"
+    fi
+  fi
+
+  failed="$(n2api_checks_count failed)"
+  attention="$(n2api_checks_count attention)"
+  if ((failed > 0)); then
+    status="blocked"
+    reason="doctor_preflight_blocked"
+    summary="Host preflight found blocking checks"
+    exit_code=${N2API_EXIT_BLOCKED}
+  elif ((attention > 0)); then
+    status="attention"
+    reason="doctor_attention_required"
+    summary="Host preflight requires operator attention"
+    exit_code=${N2API_EXIT_ATTENTION}
+  else
+    status="succeeded"
+    reason="doctor_preflight_passed"
+    summary="Host preflight passed"
+  fi
+  current="$(jq -cn \
+    --arg os "$(uname -s)" \
+    --arg platform "${architecture}" \
+    --arg manifest_backend "${manifest_backend:-unavailable}" \
+    --arg env_file "${N2API_ENV_FILE}" \
+    --arg state_dir "${N2API_STATE_DIR}" \
+    --arg project "${N2API_PROJECT_NAME}" \
+    '{os:$os,platform:$platform,manifest_backend:$manifest_backend,env_file:$env_file,state_dir:$state_dir,project:$project}')"
+  n2api_emit "doctor" "read_only" "${status}" false "${reason}" "${summary}" \
+    "${current}" '{}' '[]' '["Resolve every failed check before plan or apply"]'
+  exit "${exit_code}"
+}
+
+n2api_config_init() {
+  local public_url="" image="" version="" accepted_risks="" bind_address="" backup_dir="" admin_username="admin"
+  local postgres_password admin_password encryption_secret database_url target_dir tmp target resolved_from_version=false
+  while (($# > 0)); do
+    case "$1" in
+      --public-url) (($# >= 2)) || n2api_usage_error "missing_public_url"; public_url=$2; shift 2 ;;
+      --image) (($# >= 2)) || n2api_usage_error "missing_image"; image=$2; shift 2 ;;
+      --version) (($# >= 2)) || n2api_usage_error "missing_version"; version=$2; shift 2 ;;
+      --accepted-risks) (($# >= 2)) || n2api_usage_error "missing_accepted_risks"; accepted_risks=$2; shift 2 ;;
+      --bind-address) (($# >= 2)) || n2api_usage_error "missing_bind_address"; bind_address=$2; shift 2 ;;
+      --backup-dir) (($# >= 2)) || n2api_usage_error "missing_backup_dir"; backup_dir=$2; shift 2 ;;
+      --admin-username) (($# >= 2)) || n2api_usage_error "missing_admin_username"; admin_username=$2; shift 2 ;;
+      *) n2api_usage_error "unknown_config_init_option" ;;
+    esac
+  done
+  [[ -n "${public_url}" && -n "${accepted_risks}" && -n "${bind_address}" && -n "${backup_dir}" ]] || n2api_usage_error "config_init_missing_required_option"
+  [[ -n "${image}" || -n "${version}" ]] || n2api_usage_error "config_init_requires_image_or_version"
+  [[ -z "${image}" || -z "${version}" ]] || n2api_usage_error "config_init_image_version_conflict"
+  n2api_public_url_is_valid "${public_url}" || n2api_usage_error "invalid_public_url"
+  n2api_bind_address_is_valid "${bind_address}" || n2api_usage_error "invalid_bind_address"
+  n2api_accepted_risks_are_valid "${accepted_risks}" || n2api_usage_error "invalid_accepted_risks"
+  [[ "${backup_dir}" == /* && "${backup_dir}" != *$'\n'* ]] || n2api_usage_error "invalid_backup_directory"
+  [[ "${admin_username}" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || n2api_usage_error "invalid_admin_username"
+  [[ "${accepted_risks}" == *database-plaintext* && "${accepted_risks}" == *public-bind* ]] || n2api_usage_error "required_risk_not_accepted"
+  if [[ "${public_url}" == http://* && "${accepted_risks}" != *public-http* ]]; then
+    n2api_usage_error "public_http_risk_not_accepted"
+  fi
+  if [[ -n "${version}" ]]; then
+    resolved_from_version=true
+    image="$(n2api_resolve_version "${version}")" || {
+      n2api_emit "config.init" "local_write" "failed" false \
+        "image_resolution_failed" "Release image could not be resolved" '{}' '{}' '[]' '[]'
+      exit "${N2API_EXIT_FAILED}"
+    }
+  fi
+  n2api_image_reference_is_valid "${image}" || n2api_usage_error "invalid_immutable_image"
+  if ! n2api_image_inspect_json "${image}" >/dev/null; then
+    n2api_emit "config.init" "local_write" "failed" false \
+      "image_inspection_failed" "Immutable image manifest or host platform is unavailable" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  if [[ "${resolved_from_version}" == false ]] && ! timeout "${N2API_TIMEOUT_SECONDS}" docker pull --quiet "${image}" >/dev/null; then
+    n2api_emit "config.init" "local_write" "failed" false \
+      "image_pull_failed" "Immutable image could not be pulled" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+
+  target=${N2API_ENV_FILE}
+  if [[ -e "${target}" || -L "${target}" ]]; then
+    n2api_emit "config.init" "local_write" "failed" false \
+      "env_file_exists" "Environment file already exists" \
+      "$(jq -cn --arg path "${target}" '{env_file:$path}')" '{}' '[]' \
+      '["Choose a new --env-file path or validate the existing file"]'
+    exit "${N2API_EXIT_FAILED}"
+  fi
+  target_dir="$(dirname -- "${target}")"
+  [[ -d "${target_dir}" && ! -L "${target_dir}" && -w "${target_dir}" ]] || {
+    n2api_emit "config.init" "local_write" "failed" false \
+      "env_parent_unsafe" "Environment file parent is unsafe" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+
+  postgres_password="$(openssl rand -hex 24)"
+  admin_password="$(openssl rand -base64 36 | tr -d '\r\n')"
+  encryption_secret="$(openssl rand -base64 48 | tr -d '\r\n')"
+  [[ "${postgres_password}" != "${admin_password}" && "${admin_password}" != "${encryption_secret}" && "${postgres_password}" != "${encryption_secret}" ]] || {
+    n2api_emit "config.init" "local_write" "failed" false \
+      "secret_generation_failed" "Independent secrets could not be generated" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  database_url="postgres://n2api:${postgres_password}@postgres:5432/n2api?sslmode=disable"
+  tmp="$(mktemp "${target_dir}/.n2api-env.XXXXXX")"
+  trap 'rm -f -- "${tmp:-}"' EXIT INT TERM
+  {
+    printf 'N2API_IMAGE=%s\n' "${image}"
+    printf 'N2API_HOST=0.0.0.0\n'
+    printf 'N2API_PORT=3000\n'
+    printf 'N2API_PUBLIC_URL=%s\n' "$(n2api_env_quote "${public_url}")"
+    printf 'N2API_BIND_ADDRESS=%s\n' "${bind_address}"
+    printf 'N2API_ACCEPT_RISKS=%s\n' "${accepted_risks}"
+    printf 'N2API_BACKUP_DIR=%s\n' "$(n2api_env_quote "${backup_dir}")"
+    printf 'POSTGRES_DB=n2api\nPOSTGRES_USER=n2api\n'
+    printf 'POSTGRES_PASSWORD=%s\n' "${postgres_password}"
+    printf 'DATABASE_URL=%s\n' "${database_url}"
+    printf 'N2API_ADMIN_USERNAME=%s\n' "${admin_username}"
+    printf 'N2API_ADMIN_PASSWORD=%s\n' "${admin_password}"
+    printf 'N2API_ENCRYPTION_SECRET=%s\n' "${encryption_secret}"
+    printf 'N2API_ENCRYPTION_KEY_ID=default\n'
+  } >"${tmp}"
+  chmod 600 -- "${tmp}"
+  mv -- "${tmp}" "${target}"
+  trap - EXIT INT TERM
+  n2api_emit "config.init" "local_write" "succeeded" true \
+    "configuration_initialized" "Production configuration initialized" '{}' \
+    "$(jq -cn --arg env_file "${target}" --arg image "${image}" --arg public_url "${public_url}" --arg backup_dir "${backup_dir}" '{env_file:$env_file,image:$image,public_url:$public_url,backup_dir:$backup_dir}')" \
+    "$(jq -cn --arg path "${target}" '[{type:"env_file",path:$path,mode:"0600"}]')" \
+    '["Run config validate", "Run doctor before deploy plan"]'
+}
+
+n2api_config_validate() {
+  (($# == 0)) || n2api_usage_error "config_validate_unexpected_argument"
+  local host_valid=false app_valid=false app_output="" app_reason="" failed status reason summary exit_code
+  local postgres_password_source app_status
+  local -a validation_run=(run --rm --no-deps --pull never -T)
+  if n2api_config_host_checks; then
+    host_valid=true
+  fi
+  if [[ "${host_valid}" == true ]]; then
+    if docker image inspect "$(n2api_env_get N2API_IMAGE)" >/dev/null 2>&1; then
+      postgres_password_source="$(n2api_env_get N2API_POSTGRES_PASSWORD_SOURCE_FILE)"
+      if [[ -n "${postgres_password_source}" ]]; then
+        validation_run+=(
+          --volume "${postgres_password_source}:/run/secrets/n2api_ops_postgres_password:ro"
+          --env POSTGRES_PASSWORD=
+          --env POSTGRES_PASSWORD_FILE=/run/secrets/n2api_ops_postgres_password
+        )
+      fi
+      validation_run+=(n2api admin validate-config)
+      set +e
+      app_output="$(n2api_compose "${validation_run[@]}" 2>/dev/null)"
+      app_status=$?
+      set -e
+      if [[ ${app_status} -eq 0 ]] && jq -e '
+        .schema_version == "n2api.config-validation/v1" and
+        .status == "valid" and
+        .reason_code == "configuration_valid"
+      ' <<<"${app_output}" >/dev/null 2>&1; then
+        app_valid=true
+        n2api_check_add "application.config" "passed" "application_configuration_valid" "Application configuration semantics are valid"
+      else
+        app_reason="$(jq -r '.reason_code // "configuration_invalid"' <<<"${app_output}" 2>/dev/null || printf 'configuration_invalid')"
+        n2api_check_add "application.config" "failed" "${app_reason}" "Application configuration semantics are invalid"
+      fi
+    else
+      n2api_check_add "application.config" "failed" "application_image_unavailable" "Exact application image is unavailable locally"
+    fi
+  else
+    n2api_check_add "application.config" "failed" "host_configuration_invalid" "Application validation was not run because host checks failed"
+  fi
+  failed="$(n2api_checks_count failed)"
+  if ((failed == 0)) && [[ "${app_valid}" == true ]]; then
+    status="succeeded"; reason="configuration_valid"; summary="Configuration validation passed"; exit_code=0
+  else
+    status="blocked"; reason="configuration_invalid"; summary="Configuration validation found blocking checks"; exit_code=${N2API_EXIT_BLOCKED}
+  fi
+  n2api_emit "config.validate" "read_only" "${status}" false "${reason}" "${summary}" \
+    "$(jq -cn --arg env_file "${N2API_ENV_FILE}" --arg image "$(n2api_env_get N2API_IMAGE)" '{env_file:$env_file,image:$image}')" \
+    '{}' '[]' '["Resolve every failed check before planning deployment"]'
+  exit "${exit_code}"
+}
+
+n2api_config() {
+  (($# >= 1)) || n2api_usage_error "config_requires_command"
+  local subcommand=$1
+  shift
+  case "${subcommand}" in
+    init) n2api_config_init "$@" ;;
+    validate) n2api_config_validate "$@" ;;
+    *) n2api_usage_error "unknown_config_command" ;;
+  esac
+}
+
+n2api_image_resolve() {
+  local version="" image current
+  while (($# > 0)); do
+    case "$1" in
+      --version) (($# >= 2)) || n2api_usage_error "missing_version"; version=$2; shift 2 ;;
+      *) n2api_usage_error "unknown_image_resolve_option" ;;
+    esac
+  done
+  [[ -n "${version}" ]] || n2api_usage_error "image_resolve_requires_version"
+  image="$(n2api_resolve_version "${version}")" || {
+    n2api_emit "image.resolve" "local_write" "failed" false \
+      "image_resolution_failed" "Release image could not be resolved" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  current="$(n2api_image_inspect_json "${image}")" || {
+    n2api_emit "image.resolve" "local_write" "failed" false \
+      "image_inspection_failed" "Resolved image could not be inspected" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_FAILED}"
+  }
+  n2api_emit "image.resolve" "local_write" "succeeded" true \
+    "image_resolved" "Release version resolved to an immutable image" \
+    "${current}" '{}' '[]' '["Use the exact image in config init or an operation plan"]'
+}
+
+n2api_image_inspect_command() {
+  local image="" current
+  while (($# > 0)); do
+    case "$1" in
+      --image) (($# >= 2)) || n2api_usage_error "missing_image"; image=$2; shift 2 ;;
+      *) n2api_usage_error "unknown_image_inspect_option" ;;
+    esac
+  done
+  [[ -n "${image}" ]] || n2api_usage_error "image_inspect_requires_image"
+  if ! n2api_image_reference_is_valid "${image}"; then
+    n2api_emit "image.inspect" "read_only" "blocked" false \
+      "immutable_image_required" "Image must be an exact N2API CalVer digest" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_BLOCKED}"
+  fi
+  current="$(n2api_image_inspect_json "${image}")" || {
+    n2api_emit "image.inspect" "read_only" "blocked" false \
+      "image_platform_unavailable" "Image manifest or host platform is unavailable" '{}' '{}' '[]' '[]'
+    exit "${N2API_EXIT_BLOCKED}"
+  }
+  n2api_emit "image.inspect" "read_only" "succeeded" false \
+    "image_inspection_passed" "Immutable image manifest is supported" \
+    "${current}" '{}' '[]' '[]'
+}
+
+n2api_image() {
+  (($# >= 1)) || n2api_usage_error "image_requires_command"
+  local subcommand=$1
+  shift
+  case "${subcommand}" in
+    resolve) n2api_image_resolve "$@" ;;
+    inspect) n2api_image_inspect_command "$@" ;;
+    *) n2api_usage_error "unknown_image_command" ;;
+  esac
+}
+
 n2api_help() {
   cat <<'EOF'
 usage: ./ops/n2api [global options] COMMAND [ARGUMENTS]
@@ -241,7 +586,19 @@ case "$1" in
     shift
     n2api_operations "$@"
     ;;
-  doctor|config|image|status|verify|logs|backup|restore|deploy|upgrade|rollback)
+  doctor)
+    shift
+    n2api_doctor "$@"
+    ;;
+  config)
+    shift
+    n2api_config "$@"
+    ;;
+  image)
+    shift
+    n2api_image "$@"
+    ;;
+  status|verify|logs|backup|restore|deploy|upgrade|rollback)
     command=$1
     shift
     n2api_not_implemented "${command}${*:+ $*}"

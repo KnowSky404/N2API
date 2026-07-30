@@ -110,4 +110,111 @@ if rg -n 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK' "${test_root}" >/dev/null 2>&1; 
   fail "secret_canary_leaked"
 fi
 
-printf 'ops_test_status=passed scope=discovery_state_operations\n'
+fake_bin="${repo_root}/ops/tests/fixtures/fake-bin"
+fake_path="${fake_bin}:${PATH}"
+config_dir="${test_root}/config"
+mkdir -p -- "${config_dir}"
+chmod 700 -- "${config_dir}"
+generated_env="${config_dir}/production.env"
+backup_dir="${test_root}/backups"
+image="ghcr.io/knowsky404/n2api:2026073001@sha256:$(printf 'a%.0s' {1..64})"
+
+init_output="$(PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" \
+  config init \
+  --public-url https://n2api.example.test \
+  --image "${image}" \
+  --accepted-risks public-bind,database-plaintext \
+  --bind-address 127.0.0.1 \
+  --backup-dir "${backup_dir}" \
+  --format json)"
+assert_jq "${init_output}" '
+  .command == "config.init" and
+  .status == "succeeded" and
+  .changed == true and
+  .reason_code == "configuration_initialized"
+'
+[[ "$(stat -c '%a' -- "${generated_env}")" == "600" ]] || fail "config_init_mode"
+grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "config_init_image"
+postgres_secret="$(sed -n 's/^POSTGRES_PASSWORD=//p' "${generated_env}")"
+admin_secret="$(sed -n 's/^N2API_ADMIN_PASSWORD=//p' "${generated_env}")"
+encryption_secret="$(sed -n 's/^N2API_ENCRYPTION_SECRET=//p' "${generated_env}")"
+[[ -n "${postgres_secret}" && -n "${admin_secret}" && -n "${encryption_secret}" ]] || fail "config_init_secret_missing"
+[[ "${postgres_secret}" != "${admin_secret}" && "${admin_secret}" != "${encryption_secret}" ]] || fail "config_init_secret_reused"
+for secret_value in "${postgres_secret}" "${admin_secret}" "${encryption_secret}"; do
+  [[ "${init_output}" != *"${secret_value}"* ]] || fail "config_init_secret_stdout"
+done
+
+set +e
+PATH="${fake_path}" "${cli}" --env-file "${generated_env}" config init \
+  --public-url https://n2api.example.test \
+  --image "${image}" \
+  --accepted-risks public-bind,database-plaintext \
+  --bind-address 127.0.0.1 \
+  --backup-dir "${backup_dir}" \
+  --format json >"${test_root}/init-existing.stdout"
+existing_status=$?
+set -e
+[[ ${existing_status} -eq 6 ]] || fail "config_init_overwrite_exit"
+jq -e '.reason_code == "env_file_exists"' "${test_root}/init-existing.stdout" >/dev/null || fail "config_init_overwrite_reason"
+
+validate_output="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" config validate --format json)"
+assert_jq "${validate_output}" '
+  .command == "config.validate" and
+  .status == "succeeded" and
+  .reason_code == "configuration_valid" and
+  ([.checks[].name] | index("application.config")) != null
+'
+
+doctor_output="$(PATH="${fake_path}" "${cli}" \
+  --env-file "${generated_env}" \
+  --state-dir "${test_root}/doctor-state/n2api" \
+  doctor --format json || true)"
+assert_jq "${doctor_output}" '
+  (.status == "attention" or .status == "succeeded") and
+  ([.checks[] | select(.name == "docker.manifest" and .status == "passed")] | length) == 1 and
+  ([.checks[] | select(.name == "image.platform" and .status == "passed")] | length) == 1
+'
+[[ ! -e "${test_root}/doctor-state/n2api" ]] || fail "doctor_created_state"
+
+inspect_output="$(PATH="${fake_path}" "${cli}" image inspect --image "${image}" --format json)"
+assert_jq "${inspect_output}" '
+  .status == "succeeded" and
+  .current.digest == "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" and
+  (.current.platforms | index("linux/amd64")) != null and
+  (.current.platforms | index("linux/arm64")) != null
+'
+
+resolve_output="$(PATH="${fake_path}" "${cli}" image resolve --version 2026073001 --format json)"
+assert_jq "${resolve_output}" ".status == \"succeeded\" and .current.image == \"${image}\""
+
+set +e
+moving_output="$(PATH="${fake_path}" "${cli}" image inspect \
+  --image "ghcr.io/knowsky404/n2api:latest@sha256:$(printf 'a%.0s' {1..64})" \
+  --format json)"
+moving_status=$?
+set -e
+[[ ${moving_status} -eq 4 ]] || fail "moving_tag_exit"
+assert_jq "${moving_output}" '.reason_code == "immutable_image_required"'
+
+chmod 644 -- "${generated_env}"
+set +e
+unsafe_config="$(PATH="${fake_path}" "${cli}" --env-file "${generated_env}" config validate --format json)"
+unsafe_config_status=$?
+set -e
+[[ ${unsafe_config_status} -eq 4 ]] || fail "unsafe_env_config_exit"
+assert_jq "${unsafe_config}" '
+  .reason_code == "configuration_invalid" and
+  ([.checks[] | select(.reason_code == "env_file_permissions_unsafe")] | length) == 1
+'
+
+for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
+  [[ -e "${retained}" ]] || continue
+  if rg -n --fixed-strings "${postgres_secret}" "${retained}" >/dev/null 2>&1 ||
+    rg -n --fixed-strings "${admin_secret}" "${retained}" >/dev/null 2>&1 ||
+    rg -n --fixed-strings "${encryption_secret}" "${retained}" >/dev/null 2>&1; then
+    fail "generated_secret_retained"
+  fi
+done
+
+printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image\n'

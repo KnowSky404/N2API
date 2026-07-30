@@ -13,7 +13,7 @@ n2api_emit() {
   local command=$1 risk=$2 status=$3 changed=$4 reason_code=$5 summary=$6
   local current_json=$7 target_json=$8 artifacts_json=$9 next_actions_json=${10}
   local operation_id=${11:-} started_at=${12:-$(n2api_now)} finished_at
-  local document
+  local checks_json=${N2API_CHECKS_JSON:-[]} document
   finished_at="$(n2api_now)"
 
   document="$(jq -cn \
@@ -27,6 +27,7 @@ n2api_emit() {
     --arg finished_at "${finished_at}" \
     --arg reason_code "${reason_code}" \
     --arg summary "${summary}" \
+    --argjson checks "${checks_json}" \
     --argjson current "${current_json}" \
     --argjson target "${target_json}" \
     --argjson artifacts "${artifacts_json}" \
@@ -42,7 +43,7 @@ n2api_emit() {
       finished_at: $finished_at,
       reason_code: $reason_code,
       summary: $summary,
-      checks: [],
+      checks: $checks,
       current: $current,
       target: $target,
       artifacts: $artifacts,

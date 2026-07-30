@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+case "${1:-}" in
+  info)
+    exit 0
+    ;;
+  buildx)
+    exit 1
+    ;;
+  manifest)
+    if [[ "${2:-}" == "inspect" && "${3:-}" == "--help" ]]; then
+      exit 0
+    fi
+    if [[ "${2:-}" == "inspect" ]]; then
+      jq -cn --arg digest "${digest}" '{
+        schemaVersion:2,
+        mediaType:"application/vnd.oci.image.index.v1+json",
+        manifests:[
+          {digest:$digest,platform:{os:"linux",architecture:"amd64"}},
+          {digest:$digest,platform:{os:"linux",architecture:"arm64"}}
+        ]
+      }'
+      exit 0
+    fi
+    ;;
+  pull)
+    exit 0
+    ;;
+  image)
+    if [[ "${2:-}" == "inspect" && "${3:-}" == "--format" ]]; then
+      printf '["ghcr.io/knowsky404/n2api@%s"]\n' "${digest}"
+      exit 0
+    fi
+    if [[ "${2:-}" == "inspect" ]]; then
+      exit 0
+    fi
+    ;;
+  compose)
+    if [[ " $* " == *" version --short "* ]]; then
+      printf '2.40.3\n'
+      exit 0
+    fi
+    if [[ " $* " == *" config --quiet "* ]]; then
+      exit 0
+    fi
+    if [[ " $* " == *" ps --status running --quiet "* ]]; then
+      exit 0
+    fi
+    if [[ " $* " == *" run --rm --no-deps --pull never -T n2api admin validate-config "* ]]; then
+      jq -cn '{
+        schema_version:"n2api.config-validation/v1",
+        status:"valid",
+        reason_code:"configuration_valid",
+        postgres_password_check:"matched"
+      }'
+      exit 0
+    fi
+    ;;
+esac
+
+printf 'unexpected fake docker invocation: %s\n' "$*" >&2
+exit 99
