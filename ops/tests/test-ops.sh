@@ -1536,4 +1536,4 @@ for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
   fi
 done
 
-printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image_runtime_backup_restore_deploy\n'
+printf 'ops_test_status=passed scope=discovery_state_operations_host_config_image_runtime_backup_restore_deploy_upgrade_rollback\n'

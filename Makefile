@@ -1,11 +1,20 @@
 SHELL := /usr/bin/env bash
 
-.PHONY: test test-go-quality test-critical-race test-control-connections test-postgres-faults test-request-log-profile test-management-list-profile test-production-deploy test-e2e test-contracts test-playwright playwright-install \
+.PHONY: test test-ops ops-describe ops-doctor test-go-quality test-critical-race test-control-connections test-postgres-faults test-request-log-profile test-management-list-profile test-production-deploy test-e2e test-contracts test-playwright playwright-install \
 	disk-check disk-check-heavy clean-dev-artifacts clean-dev-artifacts-deep \
 	test-dev-artifacts test-restore-backup backup-dev
 
 test:
 	dev/testing/run.sh unit
+
+test-ops:
+	ops/tests/test-ops.sh
+
+ops-describe:
+	./ops/n2api describe --format json
+
+ops-doctor:
+	./ops/n2api doctor --format json
 
 test-go-quality:
 	dev/testing/run.sh go-quality

@@ -379,6 +379,18 @@ grep -Fq 'snapshot_development_stack' "${restore_driver}" ||
   fail "restore scenario driver does not protect the development stack"
 grep -Fq 'test-restore-backup:' "${repo_root}/Makefile" ||
   fail "managed restore scenario Make target is missing"
+grep -Fq 'test-ops:' "${repo_root}/Makefile" ||
+  fail "operator safety test Make target is missing"
+grep -Fq 'ops-describe:' "${repo_root}/Makefile" ||
+  fail "operator discovery Make target is missing"
+grep -Fq 'ops-doctor:' "${repo_root}/Makefile" ||
+  fail "operator doctor Make target is missing"
+grep -Fq $'\tops/tests/test-ops.sh' "${repo_root}/Makefile" ||
+  fail "operator safety target does not use the canonical test runner"
+grep -Fq $'\t./ops/n2api describe --format json' "${repo_root}/Makefile" ||
+  fail "operator discovery target does not use the canonical CLI"
+grep -Fq $'\t./ops/n2api doctor --format json' "${repo_root}/Makefile" ||
+  fail "operator doctor target does not use the canonical CLI"
 grep -Fq 'previous_encryption_keys=' "${restore_driver}" ||
   fail "restore scenario does not configure a previous encryption key"
 grep -Fq 'encryption=previous_key' "${restore_driver}" ||
