@@ -719,7 +719,7 @@ n2api_verify_gateway() {
   n2api_check_env_file || n2api_usage_error "gateway_verify_environment_unavailable"
   api_key="$(n2api_read_protected_secret "${api_key_file}")" || n2api_usage_error "api_key_file_unsafe"
   case "${api_key}" in
-    *$'\r'*|*$'\n'*|*'"'*|*'\\'*) n2api_usage_error "api_key_file_invalid" ;;
+    *$'\r'*|*$'\n'*|*$'"'*|*$'\\'*) n2api_usage_error "api_key_file_invalid" ;;
   esac
   origin="$(n2api_env_get N2API_PUBLIC_URL)"
   origin="${origin%/}"

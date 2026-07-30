@@ -78,6 +78,10 @@ jobs:
             exit 1
           fi
           "$RUNNER_TEMP/n2api-security-bin/actionlint" -shellcheck "$shellcheck_path"
+          "$shellcheck_path" -x \
+            ops/n2api \
+            ops/tests/test-ops.sh \
+            ops/tests/fixtures/fake-bin/*
           bash dev/ci/verify-pinned-dependencies.sh
 
   codeql:

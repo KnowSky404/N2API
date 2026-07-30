@@ -99,10 +99,16 @@ job_block() {
 }
 
 image_job="$(job_block image)"
+correctness_job="$(job_block correctness)"
 publish_job="$(job_block publish-platform)"
 manifest_job="$(job_block manifest)"
 
 grep -Fq '  merge_group:' "$workflow"
+grep -Fq '          - test-ops' <<< "$correctness_job"
+if grep -Fq 'packages: write' <<< "$correctness_job"; then
+  echo "correctness job unexpectedly has package write permission" >&2
+  exit 1
+fi
 grep -Fq '      contents: read' <<< "$image_job"
 if grep -Fq 'packages: write' <<< "$image_job"; then
   echo "image build job unexpectedly has package write permission" >&2
@@ -113,6 +119,11 @@ grep -Fq '      packages: write' <<< "$publish_job"
 grep -Fq '      - name: Download tested platform image' <<< "$publish_job"
 grep -Fq '      - name: Validate and load tested platform image' <<< "$publish_job"
 grep -Fq '    needs: publish-platform' <<< "$manifest_job"
+
+security_workflow="$repo_root/.github/workflows/security.yml"
+grep -Fq '            ops/n2api' "$security_workflow"
+grep -Fq '          "$shellcheck_path" -x \' "$security_workflow"
+grep -Fq '            ops/tests/test-ops.sh' "$security_workflow"
 
 stable_workflow="$repo_root/.github/workflows/stable-image-security.yml"
 grep -Fq '  schedule:' "$stable_workflow"

@@ -364,6 +364,12 @@ grep -Fq 'docker unpause' <<<"${postgres_faults_block}" ||
   fail "PostgreSQL fault runner does not recover the database container"
 grep -Fq 'test-postgres-faults' "${repo_root}/.github/workflows/ci-image.yml" ||
   fail "CI correctness matrix does not run the PostgreSQL fault gate"
+grep -Fq '          - test-ops' "${repo_root}/.github/workflows/ci-image.yml" ||
+  fail "CI correctness matrix does not run the operator safety gate"
+grep -Fq '            ops/n2api' "${repo_root}/.github/workflows/security.yml" ||
+  fail "security workflow does not ShellCheck the canonical operator CLI"
+grep -Fq '          "$shellcheck_path" -x \' "${repo_root}/.github/workflows/security.yml" ||
+  fail "security workflow does not follow canonical operator library sources"
 grep -Fq -- '--rmi local' "${repo_root}/dev/verification/restore-backup.sh" ||
   fail "restore cleanup does not remove local test images"
 grep -Fq 'disk-check.sh" --heavy' "${repo_root}/dev/verification/restore-backup.sh" ||
