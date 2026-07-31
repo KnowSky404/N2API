@@ -119,7 +119,7 @@ for schema in envelope plan receipt backup restore; do
     "${repo_root}/ops/schemas/${schema}.schema.json" >/dev/null || fail "invalid_${schema}_schema"
 done
 
-if rg -n 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK' "${test_root}" >/dev/null 2>&1; then
+if grep -R -n -F -- 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK' "${test_root}" >/dev/null 2>&1; then
   fail "secret_canary_leaked"
 fi
 
@@ -259,8 +259,8 @@ PATH="${fake_path}" "${cli}" --env-file "${generated_env}" \
   logs n2api --tail 10 --since 5m --format json \
   >"${test_root}/logs.stdout" 2>"${test_root}/logs.stderr"
 jq -e '.reason_code == "logs_emitted" and .current.tail == 10' "${test_root}/logs.stdout" >/dev/null || fail "logs_json_envelope"
-rg -q 'password=\[REDACTED\]' "${test_root}/logs.stderr" || fail "logs_redaction_missing"
-if rg -q 'do-not-retain' "${test_root}/logs.stderr"; then
+grep -Fq -- 'password=[REDACTED]' "${test_root}/logs.stderr" || fail "logs_redaction_missing"
+if grep -Fq -- 'do-not-retain' "${test_root}/logs.stderr"; then
   fail "logs_secret_retained"
 fi
 
@@ -271,7 +271,7 @@ PATH="${fake_path}" "${cli}" --env-file "${generated_env}" verify --level gatewa
 gateway_consent_status=$?
 set -e
 [[ ${gateway_consent_status} -eq 64 ]] || fail "gateway_consent_exit"
-rg -q 'gateway_verify_requires_upstream_consent' "${test_root}/gateway-no-consent.stderr" || fail "gateway_consent_reason"
+grep -Fq -- 'gateway_verify_requires_upstream_consent' "${test_root}/gateway-no-consent.stderr" || fail "gateway_consent_reason"
 
 deploy_state="${test_root}/deploy-state/n2api"
 deploy_stack_file="${test_root}/deploy-stack.running"
@@ -298,7 +298,7 @@ jq -e '
   .blocked_reasons == [] and
   (.integrity_hmac | test("^[0-9a-f]{64}$"))
 ' "${deploy_plan_path}" >/dev/null || fail "deploy_plan_contract"
-if rg -q '(^| )pull( |$)|(^| )up( |$)' "${deploy_docker_log}"; then
+if grep -Eq -- '(^| )pull( |$)|(^| )up( |$)' "${deploy_docker_log}"; then
   fail "deploy_plan_mutated_docker_state"
 fi
 deploy_plan_receipt="${deploy_state}/operations/${deploy_plan_id}.json"
@@ -896,8 +896,8 @@ jq -e --arg backup_id "${real_backup_id}" --arg current_image "${image}" --arg c
   (.invariants.current_restore_hmac | test("^[0-9a-f]{64}$")) and
   (.invariants.candidate_restore_hmac | test("^[0-9a-f]{64}$"))
 ' "${upgrade_plan_path}" >/dev/null || fail "upgrade_plan_evidence_contract"
-rg -q '(^| )pull( |$)' "${upgrade_docker_log}" || fail "upgrade_plan_candidate_not_pulled"
-if rg -q '(^| )up( |$)' "${upgrade_docker_log}"; then
+grep -Eq -- '(^| )pull( |$)' "${upgrade_docker_log}" || fail "upgrade_plan_candidate_not_pulled"
+if grep -Eq -- '(^| )up( |$)' "${upgrade_docker_log}"; then
   fail "upgrade_plan_recreated_stack"
 fi
 
@@ -925,7 +925,7 @@ jq -e '(.blocked_reasons | index("backup_missing")) != null' "${tampered_archive
   fail "tampered_archive_upgrade_plan_not_blocked"
 [[ ${tampered_archive_apply_status} -eq 4 ]] || fail "tampered_archive_upgrade_apply_exit"
 assert_jq "${tampered_archive_apply}" '.status == "blocked" and .reason_code == "stale_plan_detected"'
-if rg -q '(^| )up( |$)' "${tampered_archive_apply_log}"; then
+if grep -Eq -- '(^| )up( |$)' "${tampered_archive_apply_log}"; then
   fail "tampered_archive_upgrade_mutated_stack"
 fi
 grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "tampered_archive_upgrade_mutated_env"
@@ -985,7 +985,7 @@ assert_jq "${upgrade_contended_output}" '.status == "contended" and .reason_code
 upgrade_contended_receipt="${backup_state}/operations/$(jq -r '.operation_id' <<<"${upgrade_contended_output}").json"
 jq -e '(.integrity_hmac | test("^[0-9a-f]{64}$"))' "${upgrade_contended_receipt}" >/dev/null ||
   fail "upgrade_lock_contended_receipt_unsigned"
-if rg -q '(^| )up( |$)' "${upgrade_contended_log}"; then
+if grep -Eq -- '(^| )up( |$)' "${upgrade_contended_log}"; then
   fail "upgrade_lock_contended_mutated_stack"
 fi
 
@@ -1089,7 +1089,7 @@ assert_jq "${upgrade_compose_failure}" '
   .current.observed_schema == 50 and .current.observed_image == "'"${candidate_image}"'"
 '
 grep -Fxq "N2API_IMAGE=${candidate_image}" "${generated_env}" || fail "upgrade_compose_failure_reverted_env"
-if rg -q '(^| )(down|rollback)( |$)|volume rm|down --volumes' "${upgrade_compose_failure_log}"; then
+if grep -Eq -- '(^| )(down|rollback)( |$)|volume rm|down --volumes' "${upgrade_compose_failure_log}"; then
   fail "upgrade_compose_failure_automatic_rollback"
 fi
 cp -- "${source_env}" "${generated_env}"
@@ -1184,7 +1184,7 @@ upgrade_noop_output="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" \
   "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
   upgrade apply --plan "${upgrade_plan_path}" --format json)"
 assert_jq "${upgrade_noop_output}" '.status == "noop" and .reason_code == "target_already_healthy" and .changed == false'
-if rg -q '(^| )(pull|up|pg_dump|rollback)( |$)|/v1/' "${upgrade_noop_log}"; then
+if grep -Eq -- '(^| )(pull|up|pg_dump|rollback)( |$)|/v1/' "${upgrade_noop_log}"; then
   fail "upgrade_noop_performed_mutation_or_provider_call"
 fi
 
@@ -1317,7 +1317,7 @@ assert_jq "${rollback_apply_output}" '
   .target.database_restore == false and .target.volume_deletion == false
 '
 grep -Fxq "N2API_IMAGE=${image}" "${generated_env}" || fail "rollback_target_not_persisted"
-if rg -q '(^| )(down|volume rm|pg_restore)( |$)|down --volumes' "${rollback_apply_log}"; then
+if grep -Eq -- '(^| )(down|volume rm|pg_restore)( |$)|down --volumes' "${rollback_apply_log}"; then
   fail "rollback_performed_database_or_volume_mutation"
 fi
 
@@ -1327,7 +1327,7 @@ rollback_noop_output="$(N2API_FAKE_DOCKER_SCHEMA_FILE="${upgrade_schema_file}" \
   "${cli}" --env-file "${generated_env}" --state-dir "${backup_state}" \
   rollback apply --plan "${rollback_plan_path}" --format json)"
 assert_jq "${rollback_noop_output}" '.status == "noop" and .reason_code == "target_already_healthy" and .changed == false'
-if rg -q '(^| )(pull|up|pg_dump|pg_restore|down)( |$)|volume rm|/v1/' "${rollback_noop_log}"; then
+if grep -Eq -- '(^| )(pull|up|pg_dump|pg_restore|down)( |$)|volume rm|/v1/' "${rollback_noop_log}"; then
   fail "rollback_noop_performed_mutation_or_provider_call"
 fi
 
@@ -1522,16 +1522,16 @@ for protected_output in \
   "${restore_timeout_state}" \
   "${restore_signal_state}" \
   "${backup_dir}"; do
-  if rg -n 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK' "${protected_output}" >/dev/null 2>&1; then
+  if grep -R -n -F -- 'N2API_TEST_SECRET_CANARY_DO_NOT_LEAK' "${protected_output}" >/dev/null 2>&1; then
     fail "restore_secret_canary_retained"
   fi
 done
 
 for retained in "${test_root}"/*.stdout "${test_root}"/*.stderr; do
   [[ -e "${retained}" ]] || continue
-  if rg -n --fixed-strings "${postgres_secret}" "${retained}" >/dev/null 2>&1 ||
-    rg -n --fixed-strings "${admin_secret}" "${retained}" >/dev/null 2>&1 ||
-    rg -n --fixed-strings "${encryption_secret}" "${retained}" >/dev/null 2>&1; then
+  if grep -n -F -- "${postgres_secret}" "${retained}" >/dev/null 2>&1 ||
+    grep -n -F -- "${admin_secret}" "${retained}" >/dev/null 2>&1 ||
+    grep -n -F -- "${encryption_secret}" "${retained}" >/dev/null 2>&1; then
     fail "generated_secret_retained"
   fi
 done
