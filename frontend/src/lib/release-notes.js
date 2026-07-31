@@ -34,14 +34,14 @@ export function renderReleaseNotes(notes) {
     try {
       const target = new URL(href, window.location.href);
       if (target.protocol !== 'https:') {
-        link.removeAttribute('href');
+        link.replaceWith(...Array.from(link.childNodes));
         continue;
       }
       link.setAttribute('href', target.href);
       link.setAttribute('target', '_blank');
       link.setAttribute('rel', 'noopener noreferrer');
     } catch {
-      link.removeAttribute('href');
+      link.replaceWith(...Array.from(link.childNodes));
     }
   }
   return template.innerHTML;

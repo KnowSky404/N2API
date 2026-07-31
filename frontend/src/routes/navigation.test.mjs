@@ -151,6 +151,7 @@ test('release updates are reachable, dismissible per version, and render sanitiz
   assert.match(releaseNotes, /ALLOWED_TAGS:\s*allowedTags/);
   assert.match(releaseNotes, /ALLOWED_ATTR:\s*\['href', 'title'\]/);
   assert.match(releaseNotes, /target\.protocol !== 'https:'/);
+  assert.equal((releaseNotes.match(/link\.replaceWith/g) ?? []).length, 2, 'unsafe and malformed links should render as plain content');
 });
 
 test('shared page content expands on wide and HiDPI displays without changing the 1080p cap', () => {
