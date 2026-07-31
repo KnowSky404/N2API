@@ -71,6 +71,15 @@
   });
 
   $effect(() => {
+    if (!gatewaySettings.saved) return;
+    configurationExport.notice = {
+      kind: 'success',
+      title: 'Runtime limits saved',
+      message: 'Gateway concurrency, rate limits, and retention settings are current.'
+    };
+  });
+
+  $effect(() => {
     if (!session.authenticated) {
       gatewayRequested = false;
       return;
@@ -313,7 +322,13 @@
     </section>
 
     <!-- Runtime limits -->
-    <section class="rounded-lg border border-[#ededed] bg-white p-6">
+    <section class="relative rounded-lg border border-[#ededed] bg-white p-6">
+      {#if gatewaySettings.saving}
+        <div class="ui-loading-overlay" aria-label="Saving gateway runtime limits" aria-live="polite">
+          <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+          <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+        </div>
+      {/if}
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 class="ui-section-title">Runtime limits</h2>
@@ -472,9 +487,6 @@
             <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving}>
               {gatewaySettings.saving ? 'Saving' : 'Save runtime limits'}
             </button>
-            {#if gatewaySettings.saved}
-              <span class="text-sm text-[#0a7a5e]">Runtime limits saved.</span>
-            {/if}
             <button type="button" class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#d9d9d9] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60" disabled={gatewaySettings.saving || gatewaySettings.cleanupRunning || gatewaySettings.data.requestLogRetentionStatus.running || gatewaySettings.data.requestLogRetentionDays <= 0} onclick={cleanupRequestLogs}>
               {gatewaySettings.cleanupRunning ? 'Cleaning' : 'Clean request logs'}
             </button>

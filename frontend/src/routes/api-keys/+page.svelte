@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { Copy, Pencil, Plus, ScrollText, SquareCheckBig, Trash2, X } from 'lucide-svelte';
+  import { Copy, LoaderCircle, Pencil, Plus, ScrollText, SquareCheckBig, Trash2, X } from 'lucide-svelte';
   import { copyText } from '$lib/clipboard.js';
   import {
     apiKeys,
@@ -52,6 +52,9 @@
   let editingKeyId = $state(0);
   let editingKeyDraft = $state(/** @type {import('$lib/admin-state.svelte.js').APIKey | null} */ (null));
   let editKeySaving = $state(false);
+  let apiKeyMutationBusy = $state(false);
+  let togglingAPIKeyId = $state(0);
+  let apiKeyNotice = $state(/** @type {{ title: string, message: string } | null} */ (null));
   const editingKey = $derived(editingKeyDraft);
   let logsKeyId = $state(0);
   const logsKey = $derived(apiKeys.items.find((key) => key.id === logsKeyId) ?? null);
@@ -114,6 +117,47 @@
       return apiKeySearchText(key).includes(query);
     })
   );
+
+  $effect(() => {
+    if (!apiKeyNotice) return;
+    const current = apiKeyNotice;
+    const timer = setTimeout(() => {
+      if (apiKeyNotice === current) apiKeyNotice = null;
+    }, 4000);
+    return () => clearTimeout(timer);
+  });
+
+  /** @param {string} title @param {string} message */
+  function showAPIKeySuccess(title, message) {
+    apiKeyNotice = { title, message };
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').APIKey} key @param {boolean} enabled */
+  async function toggleAPIKeyDisabled(key, enabled) {
+    if (togglingAPIKeyId || apiKeyMutationBusy || apiKeys.saving) return;
+    togglingAPIKeyId = key.id;
+    try {
+      if (await setAPIKeyDisabled(key.id, !enabled)) {
+        showAPIKeySuccess('API key saved', `${key.name} is now ${enabled ? 'enabled' : 'disabled'}.`);
+      }
+    } finally {
+      togglingAPIKeyId = 0;
+    }
+  }
+
+  /** @param {boolean} disabled */
+  async function setSelectedAPIKeysDisabled(disabled) {
+    if (apiKeyMutationBusy || apiKeys.saving) return;
+    const count = selectedEditableAPIKeys.length;
+    apiKeyMutationBusy = true;
+    try {
+      if (await bulkSetSelectedAPIKeysDisabled(disabled)) {
+        showAPIKeySuccess('API keys saved', `${count} selected key${count === 1 ? '' : 's'} ${disabled ? 'disabled' : 'enabled'}.`);
+      }
+    } finally {
+      apiKeyMutationBusy = false;
+    }
+  }
 
   // --- Pagination state ---
   let keyPage = $state(1);
@@ -311,13 +355,14 @@
   }
 
   function closeBulkEditModal() {
-    if (apiKeys.saving) return;
+    if (apiKeyMutationBusy || apiKeys.saving) return;
     bulkEditModalOpen = false;
   }
 
   /** @param {SubmitEvent} event */
   async function submitBulkEdit(event) {
     event.preventDefault();
+    if (apiKeyMutationBusy) return;
     const selectedIds = [...selectedEditableAPIKeys];
     /** @type {{
      *   applyStatus?: boolean,
@@ -376,14 +421,20 @@
       apiKeys.error = 'Select at least one section to apply';
       return;
     }
-    await bulkUpdateSelectedAPIKeys(patch);
-    const bulkError = apiKeys.error;
-    for (const id of selectedIds) {
-      if (apiKeys.items.some((key) => key.id === id && !key.revokedAt)) {
-        selectedAPIKeyIds[String(id)] = true;
+    apiKeyMutationBusy = true;
+    try {
+      await bulkUpdateSelectedAPIKeys(patch);
+      const bulkError = apiKeys.error;
+      for (const id of selectedIds) {
+        if (apiKeys.items.some((key) => key.id === id && !key.revokedAt)) {
+          selectedAPIKeyIds[String(id)] = true;
+        }
       }
+      if (bulkError) apiKeys.error = `Bulk save may have partially applied: ${bulkError}`;
+      else showAPIKeySuccess('API keys saved', `${selectedIds.length} selected key${selectedIds.length === 1 ? '' : 's'} updated.`);
+    } finally {
+      apiKeyMutationBusy = false;
     }
-    if (bulkError) apiKeys.error = `Bulk save may have partially applied: ${bulkError}`;
   }
 
   /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
@@ -450,6 +501,14 @@
     const target = deleteConfirmKeyPopover;
     if (!target || deleteConfirmBusy) return;
 
+    const count = target.bulkAction === 'revoke'
+      ? selectedEditableAPIKeys.length
+      : target.bulkAction === 'purge'
+        ? selectedRevokedAPIKeys.length
+        : 1;
+    const keyName = target.key?.name ?? '';
+    const permanently = target.bulkAction === 'purge' || Boolean(target.key?.revokedAt);
+
     deleteConfirmBusy = true;
     apiKeys.error = '';
     try {
@@ -462,7 +521,15 @@
       } else if (target.key) {
         await revokeKey(target.key.id);
       }
-      if (!apiKeys.error) deleteConfirmKeyPopover = null;
+      if (!apiKeys.error) {
+        deleteConfirmKeyPopover = null;
+        showAPIKeySuccess(
+          permanently ? 'API key permanently deleted' : 'API key deleted',
+          count === 1 && keyName
+            ? `${keyName} was ${permanently ? 'permanently removed' : 'revoked'}.`
+            : `${count} selected key${count === 1 ? '' : 's'} ${permanently ? 'permanently removed' : 'revoked'}.`
+        );
+      }
     } finally {
       deleteConfirmBusy = false;
     }
@@ -481,7 +548,7 @@
   /** @param {SubmitEvent} event */
   async function submitEditKey(event) {
     event.preventDefault();
-    if (!editingKeyDraft || editKeySaving) return;
+    if (!editingKeyDraft || apiKeyMutationBusy) return;
 
     const snap = {
       id: editingKeyDraft.id,
@@ -506,6 +573,7 @@
     }
 
     editKeySaving = true;
+    apiKeyMutationBusy = true;
     try {
       await updateAPIKeyName(snap.id, snap.name);
       if (apiKeys.error) return;
@@ -538,8 +606,10 @@
         return;
       }
       openEditModal(snap.id);
+      showAPIKeySuccess('API key saved', `${snap.name} access, routing, limits, and budgets are current.`);
     } finally {
       editKeySaving = false;
+      apiKeyMutationBusy = false;
     }
   }
 
@@ -714,7 +784,22 @@
 </svelte:head>
 
 <AuthGate>
-<div class="ui-page min-w-0 max-w-full overflow-x-hidden">
+{#if apiKeyNotice}
+  <div class="fixed right-4 top-4 z-[70] flex w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-lg border border-emerald-200 bg-white p-4 shadow-lg" role="status" aria-live="polite">
+    <div class="min-w-0 flex-1">
+      <p class="text-sm font-semibold text-[#0d0d0d]">{apiKeyNotice.title}</p>
+      <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{apiKeyNotice.message}</p>
+    </div>
+    <button class="ui-button ui-button--icon size-7 shrink-0 text-[#6e6e6e] hover:bg-[#f5f5f5]" type="button" onclick={() => { apiKeyNotice = null; }} aria-label="Dismiss API key notification" title="Dismiss notification"><X class="size-4" aria-hidden="true" /></button>
+  </div>
+{/if}
+<div class="ui-page relative min-w-0 max-w-full overflow-x-hidden">
+  {#if (apiKeyMutationBusy || togglingAPIKeyId || apiKeys.saving) && !createKeyModalOpen && !bulkEditModalOpen && !editingKey}
+    <div class="ui-loading-overlay" aria-label="API key operation in progress" aria-live="polite">
+      <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+      <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+    </div>
+  {/if}
   <header class="ui-page-header">
     <div class="ui-page-heading">
       <h1 class="ui-page-title">API keys</h1>
@@ -749,7 +834,13 @@
       aria-modal="true"
       aria-label="Create API key"
     >
-      <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+      <div class="ui-modal-panel ui-modal-panel--md relative w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        {#if apiKeys.creating}
+          <div class="ui-loading-overlay" aria-label="Creating API key" aria-live="polite">
+            <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+            <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+          </div>
+        {/if}
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Create API key</h3>
           <button
@@ -898,7 +989,13 @@
       aria-modal="true"
       aria-label="Bulk edit API keys"
     >
-      <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+      <div class="ui-modal-panel ui-modal-panel--md relative w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        {#if apiKeyMutationBusy}
+          <div class="ui-loading-overlay" aria-label="Saving selected API keys" aria-live="polite">
+            <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+            <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+          </div>
+        {/if}
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Bulk edit API keys</h3>
           <button
@@ -1118,13 +1215,13 @@
 
           </div>
           <div class="ui-modal-actions flex justify-end gap-3">
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={apiKeys.saving} onclick={closeBulkEditModal}>Cancel</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={apiKeyMutationBusy || apiKeys.saving} onclick={closeBulkEditModal}>Cancel</button>
             <button
               class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
               type="submit"
-              disabled={apiKeys.saving || selectedEditableAPIKeys.length === 0}
+              disabled={apiKeyMutationBusy || apiKeys.saving || selectedEditableAPIKeys.length === 0}
             >
-              {apiKeys.saving ? 'Saving' : 'Save'}
+              {apiKeyMutationBusy || apiKeys.saving ? 'Saving' : 'Save'}
             </button>
           </div>
         </form>
@@ -1139,7 +1236,13 @@
       aria-modal="true"
       aria-label="Edit API key"
     >
-      <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+      <div class="ui-modal-panel ui-modal-panel--md relative w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        {#if apiKeyMutationBusy}
+          <div class="ui-loading-overlay" aria-label="Saving API key" aria-live="polite">
+            <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+            <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+          </div>
+        {/if}
         <div class="mb-4 flex items-center justify-between">
           <h3 class="text-lg font-semibold text-[#0d0d0d]">Edit key &middot; {editingKey.name}</h3>
           <button
@@ -1621,7 +1724,7 @@
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={apiKeys.saving}
+          disabled={apiKeyMutationBusy || apiKeys.saving}
           onclick={openBulkEditModal}
         >
           <SquareCheckBig class="size-3.5" aria-hidden="true" />
@@ -1630,23 +1733,23 @@
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={apiKeys.saving}
-          onclick={() => bulkSetSelectedAPIKeysDisabled(false)}
+          disabled={apiKeyMutationBusy || apiKeys.saving}
+          onclick={() => setSelectedAPIKeysDisabled(false)}
         >
           Enable
         </button>
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={apiKeys.saving}
-          onclick={() => bulkSetSelectedAPIKeysDisabled(true)}
+          disabled={apiKeyMutationBusy || apiKeys.saving}
+          onclick={() => setSelectedAPIKeysDisabled(true)}
         >
           Disable
         </button>
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={apiKeys.saving || deleteConfirmBusy || selectedEditableAPIKeys.length === 0}
+          disabled={apiKeyMutationBusy || apiKeys.saving || deleteConfirmBusy || selectedEditableAPIKeys.length === 0}
           onclick={openBulkDeleteConfirm}
         >
           Delete
@@ -1654,7 +1757,7 @@
         <button
           class="ui-button ui-button--sm ui-button--danger inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={apiKeys.saving || deleteConfirmBusy || selectedRevokedAPIKeys.length === 0}
+          disabled={apiKeyMutationBusy || apiKeys.saving || deleteConfirmBusy || selectedRevokedAPIKeys.length === 0}
           onclick={openBulkPermanentDeleteConfirm}
         >
           Permanently delete
@@ -1662,7 +1765,7 @@
         <button
           class="ui-button ui-button--sm ui-button--secondary inline-flex items-center gap-1.5 rounded-md border border-[#e5e5e5] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
           type="button"
-          disabled={apiKeys.saving}
+          disabled={apiKeyMutationBusy || apiKeys.saving}
           onclick={clearAPIKeySelection}
         >
           Clear
@@ -1759,10 +1862,11 @@
                   type="checkbox"
                   role="switch"
                   checked={!key.disabledAt}
+                  disabled={Boolean(togglingAPIKeyId) || apiKeyMutationBusy || apiKeys.saving}
                   aria-label={`Set ${key.name} ${key.disabledAt ? 'enabled' : 'disabled'}`}
-                  onchange={() => setAPIKeyDisabled(key.id, !key.disabledAt)}
+                  onchange={(event) => toggleAPIKeyDisabled(key, event.currentTarget.checked)}
                 />
-                <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f]"></span>
+                <span class="relative inline-flex h-5 w-9 shrink-0 rounded-full bg-[#d9d9d9] transition-colors after:absolute after:left-0.5 after:top-0.5 after:size-4 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:bg-[#10a37f] peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[#10a37f] peer-disabled:cursor-not-allowed peer-disabled:opacity-60"></span>
                 <span class="text-xs text-[#6e6e6e]">{key.disabledAt ? 'Disabled' : 'Enabled'}</span>
               </label>
             {/if}
@@ -1874,6 +1978,12 @@
     class="fixed z-50 w-72 rounded-xl border border-[#ededed] bg-white p-4 shadow-[0_4px_16px_rgba(13,13,13,0.08)]"
     style="top: {deleteConfirmKeyPopover.top}px; left: {deleteConfirmKeyPopover.left}px;"
   >
+    {#if deleteConfirmBusy}
+      <div class="ui-loading-overlay" aria-label="Deleting API key" aria-live="polite">
+        <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+        <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+      </div>
+    {/if}
     <p class="text-sm font-medium text-[#0d0d0d]">
       {deleteConfirmKeyPopover.bulkAction === 'purge'
         ? 'Permanently delete selected API keys?'

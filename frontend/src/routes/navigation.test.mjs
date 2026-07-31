@@ -519,6 +519,36 @@ test('routing pools page manages account pools', () => {
   assert.match(adminState, /replaceRoutingPoolAccounts/);
 });
 
+test('configuration mutations show blocking progress and transient success feedback', () => {
+  for (const [name, source, busyPattern, successPattern] of [
+    ['routing pools', routingPoolsPage, /routingPoolMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Routing pool saved/],
+    ['providers', providersPage, /providerMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Provider account saved/],
+    ['API keys', apiKeysPage, /apiKeyMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /API key saved/],
+    ['fingerprints', readText('src/routes/fingerprints/+page.svelte'), /fingerprintMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Fingerprint profile saved/],
+    ['gateway runtime limits', gatewayPage, /gatewaySettings\.saving[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Runtime limits saved/]
+  ]) {
+    assert.match(source, busyPattern, `${name} should show the standard thinking overlay while saving`);
+    assert.match(source, successPattern, `${name} should announce a successful save`);
+  }
+
+  for (const [name, source] of [
+    ['routing pools', routingPoolsPage],
+    ['providers', providersPage],
+    ['API keys', apiKeysPage],
+    ['fingerprints', readText('src/routes/fingerprints/+page.svelte')]
+  ]) {
+    assert.match(source, /role=\{[^}]*'status'[^}]*\}|role="status"/, `${name} success feedback should expose status semantics`);
+    assert.match(source, /aria-live="polite"/, `${name} success feedback should be announced politely`);
+  }
+
+  assert.match(routingPoolsPage, /if \(!editingRoutingPoolDraft \|\| routingPoolMutationBusy\) return/);
+  assert.match(routingPoolsPage, /routingPoolMutationBusy = true[\s\S]*?finally[\s\S]*?routingPoolMutationBusy = false/);
+  assert.match(apiKeysPage, /if \(!editingKeyDraft \|\| apiKeyMutationBusy\) return/);
+  assert.match(apiKeysPage, /setSelectedAPIKeysDisabled[\s\S]*?showAPIKeySuccess\('API keys saved'/);
+  assert.match(apiKeysPage, /deleteConfirmBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</);
+  assert.match(providersPage, /runProviderAccountAction[\s\S]*?showProviderSuccess\('Provider account updated'/);
+});
+
 test('gateway page manages runtime limits and usage visibility', () => {
   for (const label of [
     'Gateway readiness',
@@ -1222,7 +1252,10 @@ test('api keys page disables keys reversibly', () => {
   assert.match(apiKeysPage, /keyStatusFilter === 'disabled'/);
   assert.match(apiKeysPage, /role="switch"/);
   assert.match(apiKeysPage, /checked=\{!key\.disabledAt\}/);
-  assert.match(apiKeysPage, /onchange=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
+  assert.match(apiKeysPage, /function toggleAPIKeyDisabled\(key, enabled\)/);
+  assert.match(apiKeysPage, /if \(togglingAPIKeyId \|\| apiKeyMutationBusy \|\| apiKeys\.saving\) return/);
+  assert.match(apiKeysPage, /disabled=\{Boolean\(togglingAPIKeyId\) \|\| apiKeyMutationBusy \|\| apiKeys\.saving\}/);
+  assert.match(apiKeysPage, /onchange=\{\(event\) => toggleAPIKeyDisabled\(key, event\.currentTarget\.checked\)\}/);
   assert.match(apiKeysPage, /\{#if key\.revokedAt\}/);
   assert.match(apiKeysPage, /\{:else\}/);
   assert.match(adminState, /@property \{string \| null\} disabledAt/);
@@ -1886,6 +1919,8 @@ test('usage pricing supports official OpenAI sync', () => {
   assert.match(adminState, /savePricingRows/);
   assert.match(adminState, /savePricingRows[\s\S]*?PUT[\s\S]*?await loadUsagePricing\(\)/,
     'savePricingRows must call await loadUsagePricing() after PUT success');
+  assert.match(adminState, /savePricingRows[\s\S]*?await loadUsagePricing\(\)[\s\S]*?usagePricing\.saved = true/,
+    'savePricingRows must preserve the saved signal after reloading pricing');
 
   // Row Save calls commitPricingRow (save+reload), and Cancel restores the draft snapshot.
   assert.match(pricingPage, /commitPricingRow/);

@@ -8,7 +8,7 @@
     session,
     updateFingerprintProfile,
   } from '$lib/admin-state.svelte.js';
-  import { Pencil, Plus, Trash2, X } from 'lucide-svelte';
+  import { LoaderCircle, Pencil, Plus, Trash2, X } from 'lucide-svelte';
 
   import AuthGate from '$lib/AuthGate.svelte';
 
@@ -21,6 +21,8 @@
   let deletingBusy = $state(false);
   let selectedTemplate = $state('');
   let formError = $state('');
+  let fingerprintNotice = $state(/** @type {{ title: string, message: string } | null} */ (null));
+  const fingerprintMutationBusy = $derived(fingerprintProfiles.saving || deletingBusy);
   const deletingProfile = $derived(
     fingerprintProfiles.items.find((profile) => profile.id === deletingId) ?? null
   );
@@ -39,6 +41,20 @@
     requested = true;
     loadFingerprintProfiles();
   });
+
+  $effect(() => {
+    if (!fingerprintNotice) return;
+    const current = fingerprintNotice;
+    const timer = setTimeout(() => {
+      if (fingerprintNotice === current) fingerprintNotice = null;
+    }, 4000);
+    return () => clearTimeout(timer);
+  });
+
+  /** @param {string} title @param {string} message */
+  function showFingerprintSuccess(title, message) {
+    fingerprintNotice = { title, message };
+  }
 
   function blankForm() {
     return { name: '', description: '', userAgent: '', tlsFingerprint: '', headersText: '', enabled: true };
@@ -117,6 +133,7 @@
   /** @param {Event} e */
   async function handleSubmit(e) {
     e.preventDefault();
+    if (fingerprintMutationBusy) return;
     let headers = /** @type {Record<string, string>} */ ({});
     try {
       if (form.headersText.trim()) {
@@ -141,13 +158,18 @@
       enabled: form.enabled,
     };
 
+    const wasEditing = Boolean(editingId);
+    const profileName = input.name;
     let ok;
     if (editingId) {
       ok = await updateFingerprintProfile(editingId, input);
     } else {
       ok = await createFingerprintProfile(input);
     }
-    if (ok) resetForm();
+    if (ok) {
+      resetForm();
+      showFingerprintSuccess('Fingerprint profile saved', `${profileName} was ${wasEditing ? 'updated' : 'created'}.`);
+    }
   }
 
   /** @param {number} id */
@@ -166,7 +188,11 @@
     deletingBusy = true;
     try {
       const ok = await deleteFingerprintProfile(deletingProfile.id);
-      if (ok) deletingId = null;
+      if (ok) {
+        const name = deletingProfile.name;
+        deletingId = null;
+        showFingerprintSuccess('Fingerprint profile deleted', `${name} was removed.`);
+      }
     } finally {
       deletingBusy = false;
     }
@@ -178,7 +204,16 @@
 </svelte:head>
 
 <AuthGate>
-  <div class="ui-page">
+  {#if fingerprintNotice}
+    <div class="fixed right-4 top-4 z-[70] flex w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-lg border border-emerald-200 bg-white p-4 shadow-lg" role="status" aria-live="polite">
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold text-[#0d0d0d]">{fingerprintNotice.title}</p>
+        <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{fingerprintNotice.message}</p>
+      </div>
+      <button class="ui-button ui-button--icon size-7 shrink-0 text-[#6e6e6e] hover:bg-[#f5f5f5]" type="button" onclick={() => { fingerprintNotice = null; }} aria-label="Dismiss fingerprint notification" title="Dismiss notification"><X class="size-4" aria-hidden="true" /></button>
+    </div>
+  {/if}
+  <div class="ui-page relative">
     <header class="ui-page-header">
       <div class="ui-page-heading">
         <h1 class="ui-page-title">Fingerprint profiles</h1>
@@ -237,7 +272,13 @@
     <!-- Form modal -->
     {#if showForm}
       <div class="ui-modal-backdrop ui-modal-backdrop--top" role="dialog" aria-modal="true" aria-labelledby="fingerprint-form-title">
-      <section class="ui-modal-panel ui-modal-panel--lg">
+      <section class="ui-modal-panel ui-modal-panel--lg relative">
+        {#if fingerprintProfiles.saving}
+          <div class="ui-loading-overlay" aria-label="Saving fingerprint profile" aria-live="polite">
+            <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+            <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+          </div>
+        {/if}
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 id="fingerprint-form-title" class="text-lg font-semibold text-[#0d0d0d]">{editingId ? 'Edit' : 'New'} profile</h2>
@@ -290,7 +331,7 @@
             <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:opacity-60" disabled={fingerprintProfiles.saving} type="submit">
               {fingerprintProfiles.saving ? 'Saving' : editingId ? 'Save' : 'Create'}
             </button>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d]" type="button" onclick={resetForm}>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d]" type="button" disabled={fingerprintMutationBusy} onclick={resetForm}>
               Cancel
             </button>
           </div>
@@ -304,7 +345,13 @@
 
     {#if deletingProfile}
       <div class="ui-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-fingerprint-title">
-        <div class="ui-modal-panel ui-modal-panel--sm">
+        <div class="ui-modal-panel ui-modal-panel--sm relative">
+          {#if deletingBusy}
+            <div class="ui-loading-overlay" aria-label="Deleting fingerprint profile" aria-live="polite">
+              <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+              <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+            </div>
+          {/if}
           <div class="flex items-start justify-between gap-4">
             <div>
               <h2 id="delete-fingerprint-title" class="text-lg font-semibold text-[#0d0d0d]">Delete fingerprint profile?</h2>

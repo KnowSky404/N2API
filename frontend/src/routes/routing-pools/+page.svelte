@@ -1,6 +1,6 @@
 <script>
   import { page } from '$app/state';
-  import { Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
+  import { LoaderCircle, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-svelte';
   import {
     apiKeys,
     createRoutingPool,
@@ -27,7 +27,10 @@
   let showCreateModal = $state(false);
   let editingRoutingPoolId = $state(0);
   let deletingRoutingPoolId = $state(0);
+  let routingPoolMutationBusy = $state(false);
+  let routingPoolNotice = $state(/** @type {{ title: string, message: string } | null} */ (null));
   let editingRoutingPoolDraft = $state(/** @type {import('$lib/admin-state.svelte.js').RoutingPool | null} */ (null));
+  const routingPoolBusy = $derived(routingPoolMutationBusy || routingPools.saving);
   const visibleRoutingPools = $derived(
     routingPools.items.filter((pool) => {
       if (selectedRoutingPoolId !== 'all' && String(pool.id) !== selectedRoutingPoolId) return false;
@@ -43,13 +46,34 @@
     routingPools.items.find((pool) => pool.id === deletingRoutingPoolId) ?? null
   );
 
+  $effect(() => {
+    if (!routingPoolNotice) return;
+    const current = routingPoolNotice;
+    const timer = setTimeout(() => {
+      if (routingPoolNotice === current) routingPoolNotice = null;
+    }, 4000);
+    return () => clearTimeout(timer);
+  });
+
+  /** @param {string} title @param {string} message */
+  function showRoutingPoolSuccess(title, message) {
+    routingPoolNotice = { title, message };
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool @param {boolean} enabled */
   async function setRoutingPoolEnabled(pool, enabled) {
+    if (routingPoolMutationBusy) return;
     const previous = pool.enabled;
     pool.enabled = enabled;
-    await updateRoutingPool(pool);
-    if (routingPools.error) {
-      pool.enabled = previous;
+    routingPoolMutationBusy = true;
+    try {
+      if (await updateRoutingPool(pool)) {
+        showRoutingPoolSuccess('Routing pool saved', `${routingPoolLabel(pool)} is now ${enabled ? 'enabled' : 'disabled'}.`);
+      } else {
+        pool.enabled = previous;
+      }
+    } finally {
+      routingPoolMutationBusy = false;
     }
   }
 
@@ -60,14 +84,22 @@
   }
 
   function closeDeleteRoutingPool() {
-    if (routingPools.saving) return;
+    if (routingPoolBusy) return;
     deletingRoutingPoolId = 0;
   }
 
   async function confirmDeleteRoutingPool() {
-    if (!deletingRoutingPool) return;
-    await deleteRoutingPool(deletingRoutingPool.id);
-    if (!routingPools.error) deletingRoutingPoolId = 0;
+    if (!deletingRoutingPool || routingPoolMutationBusy) return;
+    const name = routingPoolLabel(deletingRoutingPool);
+    routingPoolMutationBusy = true;
+    try {
+      if (await deleteRoutingPool(deletingRoutingPool.id)) {
+        deletingRoutingPoolId = 0;
+        showRoutingPoolSuccess('Routing pool deleted', `${name} was removed.`);
+      }
+    } finally {
+      routingPoolMutationBusy = false;
+    }
   }
 
   /** @param {string} search */
@@ -109,7 +141,16 @@
   /** @param {SubmitEvent} event */
   async function submitCreatePool(event) {
     event.preventDefault();
-    await createRoutingPool();
+    if (routingPoolMutationBusy) return;
+    const name = routingPools.newPoolName.trim();
+    routingPoolMutationBusy = true;
+    try {
+      if (await createRoutingPool()) {
+        showRoutingPoolSuccess('Routing pool created', `${name} is ready to configure.`);
+      }
+    } finally {
+      routingPoolMutationBusy = false;
+    }
   }
 
   function openCreatePoolModal() {
@@ -121,7 +162,7 @@
   }
 
   function closeCreatePoolModal() {
-    if (routingPools.saving) return;
+    if (routingPoolBusy) return;
     showCreateModal = false;
     routingPools.error = '';
     routingPools.newPoolName = '';
@@ -146,7 +187,7 @@
   }
 
   function closeRoutingPoolEditor() {
-    if (routingPools.saving) return;
+    if (routingPoolBusy) return;
     editingRoutingPoolId = 0;
     editingRoutingPoolDraft = null;
   }
@@ -154,33 +195,37 @@
   /** @param {SubmitEvent} event */
   async function saveRoutingPool(event) {
     event.preventDefault();
-    if (!editingRoutingPoolDraft || routingPools.saving) return;
+    if (!editingRoutingPoolDraft || routingPoolMutationBusy) return;
 
     const draft = {
       ...editingRoutingPoolDraft,
       accounts: (editingRoutingPoolDraft.accounts ?? []).map((account) => ({ ...account })),
       accountIds: [...(editingRoutingPoolDraft.accountIds ?? [])]
     };
-    await updateRoutingPool(draft);
-    if (routingPools.error) return;
+    routingPoolMutationBusy = true;
+    try {
+      if (!(await updateRoutingPool(draft))) return;
 
-    const accounts = (draft.accounts ?? [])
-      .map((account) => ({
-        accountId: Number(account.accountId),
-        priority: Math.max(0, Number(account.priority || 0))
-      }))
-      .filter((account) => account.accountId > 0)
-      .sort((a, b) => a.priority - b.priority || a.accountId - b.accountId);
-    await replaceRoutingPoolAccounts(draft.id, accounts);
-    if (routingPools.error) {
-      routingPools.error = `Pool details were saved, but membership failed: ${routingPools.error}`;
-      const partiallySaved = routingPools.items.find((pool) => pool.id === draft.id);
-      if (partiallySaved) openRoutingPoolEditor(partiallySaved);
-      return;
+      const accounts = (draft.accounts ?? [])
+        .map((account) => ({
+          accountId: Number(account.accountId),
+          priority: Math.max(0, Number(account.priority || 0))
+        }))
+        .filter((account) => account.accountId > 0)
+        .sort((a, b) => a.priority - b.priority || a.accountId - b.accountId);
+      if (!(await replaceRoutingPoolAccounts(draft.id, accounts))) {
+        routingPools.error = `Pool details were saved, but membership failed: ${routingPools.error}`;
+        const partiallySaved = routingPools.items.find((pool) => pool.id === draft.id);
+        if (partiallySaved) openRoutingPoolEditor(partiallySaved);
+        return;
+      }
+
+      const saved = routingPools.items.find((pool) => pool.id === draft.id);
+      if (saved) openRoutingPoolEditor(saved);
+      showRoutingPoolSuccess('Routing pool saved', `${routingPoolLabel(draft)} details and membership are current.`);
+    } finally {
+      routingPoolMutationBusy = false;
     }
-
-    const saved = routingPools.items.find((pool) => pool.id === draft.id);
-    if (saved) openRoutingPoolEditor(saved);
   }
 
   /**
@@ -354,7 +399,22 @@
 </svelte:head>
 
 <AuthGate>
-  <div class="ui-page min-w-0">
+  {#if routingPoolNotice}
+    <div class="fixed right-4 top-4 z-[70] flex w-[min(24rem,calc(100vw-2rem))] items-start gap-3 rounded-lg border border-emerald-200 bg-white p-4 shadow-lg" role="status" aria-live="polite">
+      <div class="min-w-0 flex-1">
+        <p class="text-sm font-semibold text-[#0d0d0d]">{routingPoolNotice.title}</p>
+        <p class="mt-1 text-sm leading-5 text-[#6e6e6e]">{routingPoolNotice.message}</p>
+      </div>
+      <button class="ui-button ui-button--icon size-7 shrink-0 text-[#6e6e6e] hover:bg-[#f5f5f5]" type="button" onclick={() => { routingPoolNotice = null; }} aria-label="Dismiss routing pool notification" title="Dismiss notification"><X class="size-4" aria-hidden="true" /></button>
+    </div>
+  {/if}
+  <div class="ui-page relative min-w-0">
+    {#if routingPoolMutationBusy && !showCreateModal && !deletingRoutingPool && !editingRoutingPool}
+      <div class="ui-loading-overlay" aria-label="Routing pool operation in progress" aria-live="polite">
+        <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+        <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+      </div>
+    {/if}
     <header class="ui-page-header">
       <div class="ui-page-heading">
         <h1 class="ui-page-title">Routing pools</h1>
@@ -407,13 +467,19 @@
         aria-modal="true"
         aria-label="Create routing pool"
       >
-        <div class="ui-modal-panel ui-modal-panel--md w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+        <div class="ui-modal-panel ui-modal-panel--md relative w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto rounded-lg border border-[#ededed] bg-white p-6 shadow-lg">
+          {#if routingPoolMutationBusy}
+            <div class="ui-loading-overlay" aria-label="Creating routing pool" aria-live="polite">
+              <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+              <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+            </div>
+          {/if}
           <div class="mb-4 flex items-center justify-between">
             <h3 class="text-lg font-semibold text-[#0d0d0d]">Create routing pool</h3>
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#6e6e6e] hover:bg-[#f5f5f5] hover:text-[#0d0d0d]"
               type="button"
-              disabled={routingPools.saving}
+              disabled={routingPoolBusy}
               onclick={closeCreatePoolModal}
               aria-label="Close create routing pool modal"
               title="Close"
@@ -461,9 +527,9 @@
             </label>
             </div>
             <div class="ui-modal-actions flex justify-end gap-3">
-              <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={routingPools.saving} onclick={closeCreatePoolModal}>Cancel</button>
-              <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={routingPools.saving}>
-                {routingPools.saving ? "Saving" : "Save"}
+              <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={routingPoolBusy} onclick={closeCreatePoolModal}>Cancel</button>
+              <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={routingPoolBusy}>
+                {routingPoolBusy ? "Saving" : "Save"}
               </button>
             </div>
           </form>
@@ -622,13 +688,19 @@
 
 {#if deletingRoutingPool}
   <div class="ui-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-routing-pool-title">
-    <div class="ui-modal-panel ui-modal-panel--sm">
+    <div class="ui-modal-panel ui-modal-panel--sm relative">
+      {#if routingPoolMutationBusy}
+        <div class="ui-loading-overlay" aria-label="Deleting routing pool" aria-live="polite">
+          <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+          <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+        </div>
+      {/if}
       <div class="flex items-start justify-between gap-4">
         <div>
           <h2 id="delete-routing-pool-title" class="text-lg font-semibold text-[#0d0d0d]">Delete routing pool?</h2>
           <p class="mt-2 text-sm text-[#6e6e6e]">{routingPoolLabel(deletingRoutingPool)} will be removed. Bound API keys must be reassigned separately.</p>
         </div>
-        <button class="ui-button ui-button--icon" type="button" disabled={routingPools.saving} onclick={closeDeleteRoutingPool} aria-label="Close delete routing pool dialog">
+        <button class="ui-button ui-button--icon" type="button" disabled={routingPoolBusy} onclick={closeDeleteRoutingPool} aria-label="Close delete routing pool dialog">
           <X class="size-4" aria-hidden="true" />
         </button>
       </div>
@@ -636,9 +708,9 @@
         <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{routingPools.error}</p>
       {/if}
       <div class="ui-modal-actions">
-        <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={routingPools.saving} onclick={closeDeleteRoutingPool}>Cancel</button>
-        <button class="ui-button ui-button--sm ui-button--danger-filled" type="button" disabled={routingPools.saving} onclick={confirmDeleteRoutingPool}>
-          {routingPools.saving ? 'Deleting' : 'Delete pool'}
+        <button class="ui-button ui-button--sm ui-button--secondary" type="button" disabled={routingPoolBusy} onclick={closeDeleteRoutingPool}>Cancel</button>
+        <button class="ui-button ui-button--sm ui-button--danger-filled" type="button" disabled={routingPoolBusy} onclick={confirmDeleteRoutingPool}>
+          {routingPoolBusy ? 'Deleting' : 'Delete pool'}
         </button>
       </div>
     </div>
@@ -652,7 +724,13 @@
     class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
     role="presentation"
   >
-    <div class="ui-modal-panel ui-modal-panel--xl w-full max-w-4xl rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${routingPoolLabel(pool)}`}>
+    <div class="ui-modal-panel ui-modal-panel--xl relative w-full max-w-4xl rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${routingPoolLabel(pool)}`}>
+      {#if routingPoolMutationBusy}
+        <div class="ui-loading-overlay" aria-label="Saving routing pool" aria-live="polite">
+          <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+          <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+        </div>
+      {/if}
       <form class="grid gap-5" onsubmit={saveRoutingPool}>
       <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
         <div class="min-w-0">
@@ -662,7 +740,7 @@
         <button
           class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
-          disabled={routingPools.saving}
+          disabled={routingPoolBusy}
           onclick={closeRoutingPoolEditor}
           aria-label="Close edit pool modal"
           title="Close"
@@ -856,8 +934,8 @@
           <p class="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700" role="alert">{routingPools.error}</p>
         {/if}
         <div class="ui-modal-actions flex justify-end gap-3">
-          <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={routingPools.saving} onclick={closeRoutingPoolEditor}>Cancel</button>
-          <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={routingPools.saving}>{routingPools.saving ? 'Saving' : 'Save'}</button>
+          <button class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" type="button" disabled={routingPoolBusy} onclick={closeRoutingPoolEditor}>Cancel</button>
+          <button class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60" type="submit" disabled={routingPoolBusy}>{routingPoolBusy ? 'Saving' : 'Save'}</button>
         </div>
       </div>
       </form>

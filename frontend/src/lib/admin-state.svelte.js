@@ -3470,12 +3470,12 @@ export async function loadMoreRoutingPools() {
 
 export async function createRoutingPool() {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   const name = routingPools.newPoolName.trim();
   if (!name) {
     routingPools.error = 'Routing pool name cannot be empty';
-    return;
+    return false;
   }
 
   routingPools.saving = true;
@@ -3484,7 +3484,7 @@ export async function createRoutingPool() {
   if (!Number.isInteger(fallbackPoolId) || fallbackPoolId < 0) {
     routingPools.error = 'Fallback pool selection is invalid';
     routingPools.saving = false;
-    return;
+    return false;
   }
   try {
     const payload = await requestJSON('/api/admin/routing-pools', {
@@ -3501,9 +3501,11 @@ export async function createRoutingPool() {
     routingPools.newPoolName = '';
     routingPools.newPoolDescription = '';
     routingPools.newPoolFallbackPoolId = '0';
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     routingPools.error = error instanceof Error ? error.message : 'Failed to create routing pool';
+    return false;
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     routingPools.saving = false;
@@ -3513,7 +3515,7 @@ export async function createRoutingPool() {
 /** @param {RoutingPool} pool */
 export async function updateRoutingPool(pool) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   routingPools.saving = true;
   routingPools.error = '';
@@ -3521,7 +3523,7 @@ export async function updateRoutingPool(pool) {
   if (!Number.isInteger(fallbackPoolId) || fallbackPoolId < 0 || fallbackPoolId === Number(pool.id)) {
     routingPools.error = 'Fallback pool selection is invalid';
     routingPools.saving = false;
-    return;
+    return false;
   }
   try {
     const payload = await requestJSON(`/api/admin/routing-pools/${pool.id}`, {
@@ -3535,9 +3537,11 @@ export async function updateRoutingPool(pool) {
     });
     if (!isCurrentAuthenticated(version)) return;
     routingPools.items = routingPools.items.map((item) => (item.id === pool.id ? payload.pool : item));
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     routingPools.error = error instanceof Error ? error.message : 'Failed to update routing pool';
+    return false;
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     routingPools.saving = false;
@@ -3547,7 +3551,7 @@ export async function updateRoutingPool(pool) {
 /** @param {number} poolId */
 export async function deleteRoutingPool(poolId) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   routingPools.saving = true;
   routingPools.error = '';
@@ -3558,9 +3562,11 @@ export async function deleteRoutingPool(poolId) {
     await loadRoutingPools();
     if (!isCurrentAuthenticated(version)) return;
     await loadKeys();
+    return !routingPools.error;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     routingPools.error = error instanceof Error ? error.message : 'Failed to delete routing pool';
+    return false;
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     routingPools.saving = false;
@@ -3573,7 +3579,7 @@ export async function deleteRoutingPool(poolId) {
  */
 export async function replaceRoutingPoolAccounts(poolId, accounts) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   routingPools.saving = true;
   routingPools.error = '';
@@ -3584,9 +3590,11 @@ export async function replaceRoutingPoolAccounts(poolId, accounts) {
     });
     if (!isCurrentAuthenticated(version)) return;
     routingPools.items = routingPools.items.map((pool) => (pool.id === poolId ? payload.pool : pool));
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     routingPools.error = error instanceof Error ? error.message : 'Failed to save pool membership';
+    return false;
   } finally {
     if (!isCurrentAuthenticated(version)) return;
     routingPools.saving = false;
@@ -3881,7 +3889,7 @@ export async function updateAPIKeyName(keyId, name) {
  */
 export async function setAPIKeyDisabled(keyId, disabled) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   apiKeys.error = '';
   try {
@@ -3892,9 +3900,11 @@ export async function setAPIKeyDisabled(keyId, disabled) {
     if (!isCurrentAuthenticated(version)) return;
     apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
     await loadRequestLogs();
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update API key status';
+    return false;
   }
 }
 
@@ -4435,9 +4445,9 @@ export async function savePricingRows() {
     usagePricing.version = payload.version ?? 1;
     usagePricing.currency = payload.currency ?? 'USD';
     usagePricing.unit = payload.unit ?? '1M_tokens';
-    usagePricing.saved = true;
     await loadUsagePricing();
     await loadUsageSummary(usage.range, usage.groupBy);
+    usagePricing.saved = true;
     return true;
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return false;

@@ -71,6 +71,7 @@
   let modelTestRuns = $state({});
   let modelTestRunActive = $state(false);
   let recoveryTestAccountId = $state(0);
+  let providerMutationBusy = $state(false);
   let recoveryNotice = $state(/** @type {{ kind: 'success' | 'warning' | 'error', title: string, message: string } | null} */ (null));
 
   const providerStateLabel = $derived(getProviderStateLabel());
@@ -111,6 +112,20 @@
   const allFilteredModelTestsSelected = $derived(
     filteredModelTestModels.length > 0 && filteredSelectedModelTestCount === filteredModelTestModels.length
   );
+
+  $effect(() => {
+    if (!recoveryNotice) return;
+    const current = recoveryNotice;
+    const timer = setTimeout(() => {
+      if (recoveryNotice === current) recoveryNotice = null;
+    }, 6000);
+    return () => clearTimeout(timer);
+  });
+
+  /** @param {string} title @param {string} message */
+  function showProviderSuccess(title, message) {
+    recoveryNotice = { kind: 'success', title, message };
+  }
 
   $effect(() => {
     const defaultProfileID = Number(defaultCodexFingerprintProfile?.id ?? 0);
@@ -346,7 +361,7 @@
 
   function closeAccountEditor() {
     const modelState = editingProviderAccountId ? getAccountModelsState(editingProviderAccountId) : null;
-    if (providerAccounts.saving || modelState?.saving || modelState?.syncing) return;
+    if (providerMutationBusy || providerAccounts.saving || modelState?.saving || modelState?.syncing) return;
     editingProviderAccountId = 0;
     editingProviderAccountDraft = null;
     editingProviderAccountError = '';
@@ -448,11 +463,17 @@
   async function saveAddAccount(event) {
     event.preventDefault();
     if (addAccountModalTab === 'api_upstream') {
-      await createAPIUpstreamAccount();
+      const name = apiUpstreamForm.name.trim() || 'API upstream account';
+      if (await createAPIUpstreamAccount()) {
+        showProviderSuccess('Provider account created', `${name} is ready to configure.`);
+      }
       return;
     }
     if (providerOAuth.authorizationUrl) {
       await completeProviderCallback();
+      if (!provider.error && !providerAccounts.error) {
+        showProviderSuccess('Provider account connected', 'The Codex OAuth account is ready to use.');
+      }
       return;
     }
     await connectProvider();
@@ -473,7 +494,7 @@
   async function saveEditingProviderAccount() {
     const account = editingProviderAccount;
     const draft = editingProviderAccountDraft;
-    if (!account || !draft || providerAccounts.saving) return;
+    if (!account || !draft || providerMutationBusy) return;
 
     editingProviderAccountError = '';
     providerAccounts.error = '';
@@ -495,65 +516,91 @@
       return;
     }
 
-    await updateProviderAccount(account, {
-      name,
-      enabled: draft.enabled,
-      priority: Number(draft.priority),
-      loadFactor: Number(draft.loadFactor),
-      maxConcurrentRequests: Number(draft.maxConcurrentRequests),
-      fingerprintProfileId: resolveFingerprintProfileID(account, draft.fingerprintProfileId)
-    });
-    if (providerAccounts.error) {
-      editingProviderAccountError = providerAccounts.error;
-      refreshAccountDraft(account.id);
-      return;
-    }
-
-    /** @type {{ baseUrl?: string, apiKey?: string, proxyUrl?: string }} */
-    const credentialPatch = {};
-    if (draft.proxyUrl.trim() !== (account.proxyUrlSummary || '').trim()) {
-      credentialPatch.proxyUrl = draft.proxyUrl.trim();
-    }
-    if (account.accountType === 'api_upstream') {
-      if (draft.baseUrl.trim() !== (account.baseUrl || '').trim()) {
-        credentialPatch.baseUrl = draft.baseUrl.trim();
-      }
-      if (draft.apiKey.trim()) credentialPatch.apiKey = draft.apiKey.trim();
-    }
-    if (Object.keys(credentialPatch).length > 0) {
-      await updateProviderAccount(account, credentialPatch);
+    providerMutationBusy = true;
+    try {
+      await updateProviderAccount(account, {
+        name,
+        enabled: draft.enabled,
+        priority: Number(draft.priority),
+        loadFactor: Number(draft.loadFactor),
+        maxConcurrentRequests: Number(draft.maxConcurrentRequests),
+        fingerprintProfileId: resolveFingerprintProfileID(account, draft.fingerprintProfileId)
+      });
       if (providerAccounts.error) {
-        editingProviderAccountError = `Account settings were saved, but credentials failed: ${providerAccounts.error}`;
+        editingProviderAccountError = providerAccounts.error;
         refreshAccountDraft(account.id);
         return;
       }
-    }
 
-    const modelState = getAccountModelsState(account.id);
-    if (draft.syncModelsOnSave && account.accountType === 'api_upstream') {
-      await syncAccountModels(account.id);
-      if (modelState.syncError) {
-        editingProviderAccountError = `Account settings were saved, but model sync failed: ${modelState.syncError}`;
+      /** @type {{ baseUrl?: string, apiKey?: string, proxyUrl?: string }} */
+      const credentialPatch = {};
+      if (draft.proxyUrl.trim() !== (account.proxyUrlSummary || '').trim()) {
+        credentialPatch.proxyUrl = draft.proxyUrl.trim();
+      }
+      if (account.accountType === 'api_upstream') {
+        if (draft.baseUrl.trim() !== (account.baseUrl || '').trim()) {
+          credentialPatch.baseUrl = draft.baseUrl.trim();
+        }
+        if (draft.apiKey.trim()) credentialPatch.apiKey = draft.apiKey.trim();
+      }
+      if (Object.keys(credentialPatch).length > 0) {
+        await updateProviderAccount(account, credentialPatch);
+        if (providerAccounts.error) {
+          editingProviderAccountError = `Account settings were saved, but credentials failed: ${providerAccounts.error}`;
+          refreshAccountDraft(account.id);
+          return;
+        }
+      }
+
+      const modelState = getAccountModelsState(account.id);
+      if (draft.syncModelsOnSave && account.accountType === 'api_upstream') {
+        await syncAccountModels(account.id);
+        if (modelState.syncError) {
+          editingProviderAccountError = `Account settings were saved, but model sync failed: ${modelState.syncError}`;
+          refreshAccountDraft(account.id);
+          return;
+        }
+        draft.modelItems = [
+          ...modelState.items.filter((item) => item.source === 'upstream').map((item) => ({ ...item })),
+          ...draft.modelItems.filter((item) => item.source !== 'upstream').map((item) => ({ ...item }))
+        ];
+      }
+      const priorModelItems = modelState.items.map((item) => ({ ...item }));
+      const priorModelsText = modelState.text;
+      modelState.items = draft.modelItems.map((item) => ({ ...item }));
+      await saveAccountModels(account.id, draft.modelsText);
+      if (modelState.error) {
+        modelState.items = priorModelItems;
+        modelState.text = priorModelsText;
+        editingProviderAccountError = `Account settings were saved, but models failed: ${modelState.error}`;
         refreshAccountDraft(account.id);
         return;
       }
-      draft.modelItems = [
-        ...modelState.items.filter((item) => item.source === 'upstream').map((item) => ({ ...item })),
-        ...draft.modelItems.filter((item) => item.source !== 'upstream').map((item) => ({ ...item }))
-      ];
-    }
-    const priorModelItems = modelState.items.map((item) => ({ ...item }));
-    const priorModelsText = modelState.text;
-    modelState.items = draft.modelItems.map((item) => ({ ...item }));
-    await saveAccountModels(account.id, draft.modelsText);
-    if (modelState.error) {
-      modelState.items = priorModelItems;
-      modelState.text = priorModelsText;
-      editingProviderAccountError = `Account settings were saved, but models failed: ${modelState.error}`;
       refreshAccountDraft(account.id);
-      return;
+      showProviderSuccess('Provider account saved', `${name} settings and model access are current.`);
+    } finally {
+      providerMutationBusy = false;
     }
-    refreshAccountDraft(account.id);
+  }
+
+  /**
+   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {'pause' | 'refresh' | 'reset'} action
+   */
+  async function runProviderAccountAction(account, action) {
+    if (providerMutationBusy || providerAccounts.saving) return;
+    providerMutationBusy = true;
+    try {
+      if (action === 'pause') await pauseProviderAccount(account);
+      else if (action === 'refresh') await refreshProviderAccount(account);
+      else await resetProviderAccountStatus(account);
+
+      if (!session.authenticated || providerAccounts.error) return;
+      const actionLabel = action === 'pause' ? 'paused' : action === 'refresh' ? 'refreshed' : 'reset';
+      showProviderSuccess('Provider account updated', `${accountLabel(account)} was ${actionLabel}.`);
+    } finally {
+      providerMutationBusy = false;
+    }
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -721,7 +768,10 @@
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   async function confirmDisconnectProviderAccount(account) {
     await disconnectProviderAccount(account);
-    if (!providerAccounts.error) deletingProviderAccountId = 0;
+    if (session.authenticated && !providerAccounts.error) {
+      deletingProviderAccountId = 0;
+      showProviderSuccess('Provider account deleted', `${accountLabel(account)} was removed.`);
+    }
   }
 
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
@@ -812,7 +862,13 @@
     </button>
   </div>
 {/if}
-<section class="ui-page min-w-0">
+<section class="ui-page relative min-w-0">
+  {#if providerAccounts.saving && !addAccountModalOpen && !deletingProviderAccount && !editingProviderAccount}
+    <div class="ui-loading-overlay" aria-label="Provider account operation in progress" aria-live="polite">
+      <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+      <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+    </div>
+  {/if}
   <header class="ui-page-header">
     <div class="ui-page-heading">
       <h1 class="ui-page-title">Provider accounts</h1>
@@ -866,7 +922,13 @@ class={[
   {#if addAccountModalOpen}
     <!-- svelte-ignore a11y_click_events_have_key_events,a11y_no_static_element_interactions,a11y_interactive_supports_focus -->
     <div class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh] overflow-y-auto" role="dialog" aria-modal="true" aria-label="Add account">
-      <div class="ui-modal-panel ui-modal-panel--lg ui-modal-panel--flush w-full max-w-xl rounded-xl border border-[#ededed] bg-white shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+      <div class="ui-modal-panel ui-modal-panel--lg ui-modal-panel--flush relative w-full max-w-xl rounded-xl border border-[#ededed] bg-white shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+        {#if addAccountBusy()}
+          <div class="ui-loading-overlay" aria-label="Provider account operation in progress" aria-live="polite">
+            <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+            <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+          </div>
+        {/if}
         <!-- Header -->
         <div class="flex items-center justify-between border-b border-[#ededed] px-6 py-4">
           <h2 class="text-lg font-semibold text-[#0d0d0d]">Add account</h2>
@@ -1587,7 +1649,13 @@ Enabled
       aria-modal="true"
       aria-label={`Confirm deleting ${accountLabel(account)}`}
     >
-      <div class="ui-modal-panel ui-modal-panel--sm w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+      <div class="ui-modal-panel ui-modal-panel--sm relative w-full max-w-sm rounded-xl border border-[#ededed] bg-white p-6 shadow-[0_4px_16px_rgba(13,13,13,0.06)]">
+        {#if providerAccounts.saving}
+          <div class="ui-loading-overlay" aria-label="Deleting provider account" aria-live="polite">
+            <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+            <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+          </div>
+        {/if}
         <div class="flex items-start justify-between gap-3">
           <p class="text-sm font-medium text-[#0d0d0d]">Delete this account?</p>
           <button
@@ -1620,7 +1688,7 @@ Enabled
             disabled={providerAccounts.saving}
             onclick={() => confirmDisconnectProviderAccount(account)}
           >
-            Delete
+            {providerAccounts.saving ? 'Deleting' : 'Delete'}
           </button>
         </div>
       </div>
@@ -1638,7 +1706,13 @@ Enabled
     class="ui-modal-backdrop ui-modal-backdrop--top fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 px-4 py-[6vh]"
     role="presentation"
   >
-    <div class="ui-modal-panel ui-modal-panel--xl grid w-full max-w-5xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${accountLabel(account)}`}>
+    <div class="ui-modal-panel ui-modal-panel--xl relative grid w-full max-w-5xl gap-5 rounded-xl bg-white p-5 shadow-xl" role="dialog" aria-modal="true" aria-label={`Edit ${accountLabel(account)}`}>
+      {#if providerMutationBusy}
+        <div class="ui-loading-overlay" aria-label="Saving provider account" aria-live="polite">
+          <LoaderCircle class="size-7 animate-spin text-[#10a37f]" aria-hidden="true" />
+          <span class="text-sm font-medium text-[#6e6e6e]">thinking</span>
+        </div>
+      {/if}
       <div class="flex items-start justify-between gap-4 border-b border-[#ededed] pb-4">
         <div class="min-w-0">
           <h2 class="truncate text-lg font-semibold text-[#0d0d0d]">Edit account</h2>
@@ -1647,7 +1721,7 @@ Enabled
         <button
           class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
-          disabled={providerAccounts.saving || modelState.saving || modelState.syncing}
+          disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing}
           onclick={closeAccountEditor}
           aria-label="Close edit account modal"
           title="Close"
@@ -1744,9 +1818,9 @@ Enabled
             <a class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href={`/request-logs?providerAccountId=${account.id}`}>Request logs</a>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => isCodexOAuthAccount(account) ? testAccountRecovery(account) : testProviderAccount(account)}>{isCodexOAuthAccount(account) ? 'Test recovery' : 'Test'}</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => pauseProviderAccount(account)}>Pause</button>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => refreshProviderAccount(account)}>Refresh</button>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => resetProviderAccountStatus(account)}>Reset local status</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving} onclick={() => runProviderAccountAction(account, 'pause')}>Pause</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => runProviderAccountAction(account, 'refresh')}>Refresh</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => runProviderAccountAction(account, 'reset')}>Reset local status</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => connectProvider(account)}>Reauthorize</button>
           </div>
           <dl class="grid gap-2 text-xs text-[#6e6e6e]">
@@ -1853,7 +1927,6 @@ Enabled
           {#if !modelState.loading && enabledModels === 0}
             <p class="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">This account cannot receive model-routed POST traffic until at least one enabled model is saved.</p>
           {/if}
-          {#if modelState.saved}<p class="text-xs text-[#0a7a5e]">Saved.</p>{/if}
           {#if modelState.error}<p class="text-xs text-red-700">{modelState.error}</p>{/if}
           {#if modelState.syncMessage}<p class="text-xs text-[#0a7a5e]">{modelState.syncMessage}</p>{/if}
           {#if modelState.syncError}<p class="text-xs text-red-700">{modelState.syncError}</p>{/if}
@@ -1912,7 +1985,7 @@ Enabled
           <button
             class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
-            disabled={providerAccounts.saving || modelState.saving || modelState.syncing}
+            disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing}
             onclick={closeAccountEditor}
           >
             Cancel
@@ -1920,10 +1993,10 @@ Enabled
           <button
             class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
-            disabled={providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing}
+            disabled={providerMutationBusy || providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing}
             onclick={saveEditingProviderAccount}
           >
-            {providerAccounts.saving || modelState.saving ? 'Saving' : 'Save'}
+            {providerMutationBusy || providerAccounts.saving || modelState.saving ? 'Saving' : 'Save'}
           </button>
         </div>
       </div>

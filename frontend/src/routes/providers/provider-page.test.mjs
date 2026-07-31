@@ -1526,7 +1526,7 @@ test('api keys table keeps lifecycle actions in status and action cells', () => 
   assert.match(apiKeysSource, /physicalDeleteAt/);
   assert.match(apiKeysSource, /keyPhysicalDeleteTitle/);
   assert.match(apiKeysSource, /role="switch"/);
-  assert.match(apiKeysSource, /onchange=\{\(\) => setAPIKeyDisabled\(key\.id, !key\.disabledAt\)\}/);
+  assert.match(apiKeysSource, /onchange=\{\(event\) => toggleAPIKeyDisabled\(key, event\.currentTarget\.checked\)\}/);
   assert.match(apiKeysSource, /Delete/);
   assert.match(apiKeysSource, /deleteRevokedKey/);
   assert.match(apiKeysSource, /Permanently delete/);
