@@ -16,6 +16,7 @@ path; detailed usage and operations guidance belongs here.
 
 - [Local startup](manual.md#start-locally)
 - [Published images](manual.md#published-images)
+- [Release update notifications](manual.md#release-update-notifications)
 - [Release workflow](manual.md#preview-and-publish-a-release)
 - [Release checklist](release-checklist.md)
 - [Repository protections](repository-protections.md)

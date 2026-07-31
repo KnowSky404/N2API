@@ -369,6 +369,36 @@ N2API_VERSION=YYYYMMDDNN
 docker buildx imagetools inspect "ghcr.io/knowsky404/n2api:${N2API_VERSION}"
 ```
 
+## Release Update Notifications
+
+N2API checks the latest published release from the official
+`KnowSky404/N2API` GitHub repository and shows an authenticated administrator a
+quiet global notice when the running commit is behind that release. Open
+**Release updates** from the administrator menu at any time to inspect the
+current and latest build identities, sanitized release notes, GitHub Release
+link, and immutable image reference. Dismissing the global notice applies only
+to that exact release in the current browser; a later release is shown again.
+
+The backend performs the first check asynchronously at startup and refreshes
+its cache every six hours. The browser reads that cached status every five
+minutes while an administrator session is active. The modal's refresh control
+requests an immediate bounded check and has a one-minute cooldown. Failed
+GitHub requests never affect liveness, readiness, gateway traffic, or database
+health; after a successful check, the last result remains visible as cached.
+
+Update discovery is read-only. It sends no credentials, deployment
+configuration, provider data, or administrator identity to GitHub, and the
+browser never contacts GitHub directly. Set
+`N2API_UPDATE_CHECK_ENABLED=false` to disable all release-check traffic; the
+administrator surface will report that checks are disabled.
+
+The notification does not deploy, restart, back up, restore, or roll back the
+service. Review the release and immutable image, then use the guarded
+[upgrade plan](agent-operations.md#scenario-b-check-whether-an-upgrade-is-safe)
+and [reviewed apply](agent-operations.md#scenario-c-apply-a-reviewed-upgrade)
+workflow. Never grant the web service access to the Docker socket for this
+feature.
+
 ## Preview and Publish a Release
 
 Open **Actions > Release > Run workflow** on the `main` branch. Keep `mode` set
