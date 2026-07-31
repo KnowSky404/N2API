@@ -4192,6 +4192,107 @@ func TestSyncUpstreamAccountModelsNon2xxDoesNotUpdateRows(t *testing.T) {
 	}
 }
 
+func TestSyncOAuthAccountModelsFetchesCurrentCatalogAndEnablesNewModels(t *testing.T) {
+	var requestCount int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/backend-api/codex/models" {
+			t.Errorf("path = %s, want /backend-api/codex/models", r.URL.Path)
+		}
+		if r.URL.Query().Get("client_version") != DefaultCodexFingerprintVersion {
+			t.Errorf("client_version = %q, want %q", r.URL.Query().Get("client_version"), DefaultCodexFingerprintVersion)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer oauth-access" {
+			t.Errorf("Authorization = %q, want OAuth bearer token", auth)
+		}
+		if accountID := r.Header.Get("ChatGPT-Account-ID"); accountID != "chatgpt-account-7" {
+			t.Errorf("ChatGPT-Account-ID = %q, want chatgpt-account-7", accountID)
+		}
+		if originator := r.Header.Get("originator"); originator != DefaultCodexFingerprintOriginator {
+			t.Errorf("originator = %q, want %q", originator, DefaultCodexFingerprintOriginator)
+		}
+
+		models := `[
+			{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null},
+			{"slug":"gpt-5.6-terra","visibility":"list","supported_in_api":true,"upgrade":null},
+			{"slug":"gpt-5.2","visibility":"list","supported_in_api":true,"upgrade":null},
+			{"slug":"gpt-5.3-codex","visibility":"list","supported_in_api":true,"upgrade":null},
+			{"slug":"gpt-5.4","visibility":"hide","supported_in_api":true,"upgrade":{"model":"gpt-5.6-terra"}},
+			{"slug":"codex-auto-review","visibility":"hide","supported_in_api":true,"upgrade":null},
+			{"slug":"not-api-supported","visibility":"list","supported_in_api":false,"upgrade":null},
+			{"slug":"retired-model","visibility":"list","supported_in_api":true,"upgrade":{"model":"gpt-5.6-sol"}}
+		]`
+		if requestCount > 1 {
+			models = `[
+				{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null},
+				{"slug":"gpt-5.6-luna","visibility":"list","supported_in_api":true,"upgrade":null}
+			]`
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":` + models + `}`))
+	}))
+	defer ts.Close()
+
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 1, "oauth-access")
+	account.AccountType = AccountTypeCodexOAuth
+	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7"}
+	repo.accounts = []Account{account}
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:              "openai",
+		Secret:                "encryption-secret",
+		CodexResponsesBaseURL: ts.URL + "/backend-api/codex",
+	})
+
+	models, summary, err := service.SyncOAuthAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("SyncOAuthAccountModels returned error: %v", err)
+	}
+	if summary.Total != 2 || summary.New != 2 || summary.Preserved != 0 {
+		t.Fatalf("first summary = %+v, want two new current models", summary)
+	}
+	if got := accountModelNames(models); !reflect.DeepEqual(got, []string{"gpt-5.6-sol", "gpt-5.6-terra"}) {
+		t.Fatalf("models = %v, want only current visible models", got)
+	}
+	for _, model := range models {
+		if !model.Enabled || model.Source != AccountModelSourceOAuthCatalog {
+			t.Fatalf("model = %+v, want enabled OAuth catalog row", model)
+		}
+	}
+
+	repo.accountModels[account.ID][0].Enabled = false
+	models, summary, err = service.SyncOAuthAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("second SyncOAuthAccountModels returned error: %v", err)
+	}
+	if summary.Total != 2 || summary.New != 1 || summary.Preserved != 1 {
+		t.Fatalf("second summary = %+v, want one preserved and one new model", summary)
+	}
+	if got := accountModelNames(models); !reflect.DeepEqual(got, []string{"gpt-5.6-luna", "gpt-5.6-sol"}) {
+		t.Fatalf("models = %v, want stale catalog model removed", got)
+	}
+	for _, model := range models {
+		if model.Model == "gpt-5.6-sol" && model.Enabled {
+			t.Fatalf("preserved model = %+v, want existing disabled state", model)
+		}
+		if model.Model == "gpt-5.6-luna" && !model.Enabled {
+			t.Fatalf("new model = %+v, want enabled by default", model)
+		}
+	}
+}
+
+func accountModelNames(models []AccountModel) []string {
+	names := make([]string, 0, len(models))
+	for _, model := range models {
+		names = append(names, model.Model)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func TestSelectAccountForModelReturnsUnavailableWhenAllEnabledAccountsExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
@@ -5049,6 +5150,14 @@ func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName stri
 }
 
 func (r *memoryRepo) SyncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error) {
+	return r.syncAccountModels(ctx, providerName, accountID, inputs, seenAt, AccountModelSourceUpstream, false)
+}
+
+func (r *memoryRepo) SyncOAuthAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error) {
+	return r.syncAccountModels(ctx, providerName, accountID, inputs, seenAt, AccountModelSourceOAuthCatalog, true)
+}
+
+func (r *memoryRepo) syncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []AccountModelInput, seenAt time.Time, source string, enableNew bool) ([]AccountModel, AccountModelSyncSummary, error) {
 	r.captureIntent(ctx)
 	normalized, err := normalizeAccountModelInputs(inputs)
 	if err != nil {
@@ -5058,11 +5167,11 @@ func (r *memoryRepo) SyncAccountModels(ctx context.Context, providerName string,
 		return nil, AccountModelSyncSummary{}, err
 	}
 	existing := r.accountModels[accountID]
-	upstreamEnabled := map[string]bool{}
+	syncedEnabled := map[string]bool{}
 	manual := map[string]bool{}
 	for _, row := range existing {
-		if row.Source == AccountModelSourceUpstream {
-			upstreamEnabled[row.Model] = row.Enabled
+		if row.Source == source {
+			syncedEnabled[row.Model] = row.Enabled
 		}
 		if row.Source == AccountModelSourceManual || row.Source == "" {
 			manual[row.Model] = true
@@ -5089,11 +5198,11 @@ func (r *memoryRepo) SyncAccountModels(ctx context.Context, providerName string,
 			summary.SkippedManual++
 			continue
 		}
-		enabled, ok := upstreamEnabled[input.Model]
+		enabled, ok := syncedEnabled[input.Model]
 		if ok {
 			summary.Preserved++
 		} else {
-			enabled = false
+			enabled = enableNew
 			summary.New++
 		}
 		merged = append(merged, AccountModel{
@@ -5102,7 +5211,7 @@ func (r *memoryRepo) SyncAccountModels(ctx context.Context, providerName string,
 			Provider:   providerName,
 			Model:      input.Model,
 			Enabled:    enabled,
-			Source:     AccountModelSourceUpstream,
+			Source:     source,
 			LastSeenAt: &seenAtUTC,
 			Metadata:   map[string]string{},
 			CreatedAt:  now,

@@ -45,7 +45,8 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 			"DeleteAccounts":       "insertProviderIntent",
 			"RecordRefreshFailure": "insertProviderIntent", "RecordOAuthRefreshFailureEvent": "insertProviderIntent",
 			"RecordAccountStatus": "insertProviderIntent", "RecordAccountTestResult": "insertProviderIntent",
-			"RecordAccountModelTestResult": "insertProviderIntent", "SyncAccountModels": "insertProviderIntent",
+			"RecordAccountModelTestResult": "insertProviderIntent", "SyncAccountModels": "syncAccountModels",
+			"SyncOAuthAccountModels": "syncAccountModels", "syncAccountModels": "insertProviderIntent",
 			"ReplaceAccountModels": "insertProviderIntent", "CreateState": "insertProviderIntent",
 		},
 	}
@@ -70,8 +71,14 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 				if !ok {
 					return true
 				}
-				identifier, ok := call.Fun.(*ast.Ident)
-				if ok && identifier.Name == helper {
+				name := ""
+				switch function := call.Fun.(type) {
+				case *ast.Ident:
+					name = function.Name
+				case *ast.SelectorExpr:
+					name = function.Sel.Name
+				}
+				if name == helper {
 					found[function.Name.Name] = true
 				}
 				return true

@@ -213,13 +213,13 @@ test('mergeAccountModelChanges preserves disabled rows and adds textarea rows en
 test('accountModelsText lists configured model names for textarea editing', () => {
   assert.equal(
     accountModelsText([
-      { model: 'gpt-5', enabled: true },
+      { model: 'gpt-5', enabled: true, source: 'oauth_catalog' },
       { model: 'gpt-5-mini', enabled: false },
       { model: ' codex-mini ', enabled: true },
       { model: '', enabled: true },
-      { model: 'gpt-5', enabled: true }
+      { model: 'gpt-5', enabled: true, source: 'oauth_catalog' }
     ]),
-    'gpt-5\ngpt-5-mini\ncodex-mini'
+    'gpt-5-mini\ncodex-mini'
   );
 });
 
@@ -817,6 +817,8 @@ test('provider account state preinitializes test history state outside templates
 test('provider account state uses unified codex oauth callback endpoint', () => {
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/callback/);
   assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/callback/);
+  assert.match(adminStateSource, /oauth_model_sync_failed/);
+  assert.match(adminStateSource, /OAuth account connected, but automatic model sync failed/);
 });
 
 test('provider account table supports search, sorting, and a pinned actions column', () => {
@@ -1311,7 +1313,7 @@ test('routing pool state sends fallback configuration', () => {
 test('accountModelSummary counts synced, manual, and enabled rows', () => {
   const summary = accountModelSummary([
     { model: 'gpt-5', enabled: true, source: 'upstream' },
-    { model: 'gpt-5-mini', enabled: false, source: 'upstream' },
+    { model: 'gpt-5-mini', enabled: false, source: 'oauth_catalog' },
     { model: 'codex-mini', enabled: true, source: '' },
     { model: 'o1', enabled: true, source: null }
   ]);
@@ -1323,6 +1325,7 @@ test('accountModelSummary counts synced, manual, and enabled rows', () => {
 
 test('sourceBadgeLabel maps account model sources', () => {
   assert.equal(sourceBadgeLabel({ source: 'upstream' }), 'Synced');
+  assert.equal(sourceBadgeLabel({ source: 'oauth_catalog' }), 'OpenAI');
   assert.equal(sourceBadgeLabel({ source: '' }), 'Manual');
   assert.equal(sourceBadgeLabel({ source: null }), 'Manual');
   assert.equal(sourceBadgeLabel({ source: 'manual' }), 'Manual');
@@ -1334,6 +1337,7 @@ test('saveAccountModels excludes synced rows from manual save payload', async ()
   state.error = '';
   state.items = [
     { model: 'gpt-5', enabled: true, source: 'upstream' },
+    { model: 'gpt-5.6-sol', enabled: true, source: 'oauth_catalog' },
     { model: 'gpt-4.1', enabled: false, source: 'manual' }
   ];
   state.text = 'gpt-4.1\ncodex-mini';
@@ -1493,7 +1497,7 @@ test('provider account edit modal exposes account model sync controls', () => {
 });
 
 test('provider account model list only offers remove for manual models', () => {
-  assert.match(source, /configuredModel\.source !== 'upstream'/);
+  assert.match(source, /!isSyncedAccountModel\(configuredModel\)/);
   assert.match(source, /Manual models/);
 });
 
@@ -1501,7 +1505,7 @@ test('provider account model list disables synced row toggles', () => {
   const toggleLabelIndex = source.indexOf("aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}");
   assert.notEqual(toggleLabelIndex, -1);
   const checkboxSource = source.slice(Math.max(0, toggleLabelIndex - 500), toggleLabelIndex + 200);
-  assert.match(checkboxSource, /configuredModel\.source === 'upstream'/);
+  assert.match(checkboxSource, /isSyncedAccountModel\(configuredModel\)/);
 });
 
 test('api keys edit modal bundles per-key settings', () => {

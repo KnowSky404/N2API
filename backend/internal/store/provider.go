@@ -1390,6 +1390,14 @@ func (r *ProviderRepository) ListAccountTestResults(ctx context.Context, provide
 }
 
 func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput, seenAt time.Time) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	return r.syncAccountModels(ctx, providerName, accountID, inputs, seenAt, provider.AccountModelSourceUpstream, false)
+}
+
+func (r *ProviderRepository) SyncOAuthAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput, seenAt time.Time) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	return r.syncAccountModels(ctx, providerName, accountID, inputs, seenAt, provider.AccountModelSourceOAuthCatalog, true)
+}
+
+func (r *ProviderRepository) syncAccountModels(ctx context.Context, providerName string, accountID int64, inputs []provider.AccountModelInput, seenAt time.Time, source string, enableNew bool) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
 	started := time.Now()
 	models, err := normalizeAccountModelInputs(inputs)
 	if err != nil {
@@ -1420,9 +1428,9 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 		return nil, provider.AccountModelSyncSummary{}, err
 	}
 
-	// Collect existing upstream enabled and diagnostic state, plus manual model names.
-	upstreamEnabled := map[string]bool{}
-	upstreamTests := map[string]accountModelTestState{}
+	// Collect existing synced enabled and diagnostic state, plus manual model names.
+	syncedEnabled := map[string]bool{}
+	syncedTests := map[string]accountModelTestState{}
 	manualModels := map[string]bool{}
 	rows, err := tx.Query(ctx, `
 		SELECT model, enabled, source, last_error, last_test_at, last_test_status,
@@ -1437,12 +1445,12 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 	for rows.Next() {
 		var model string
 		var enabled bool
-		var source string
+		var rowSource string
 		var testState accountModelTestState
 		if err := rows.Scan(
 			&model,
 			&enabled,
-			&source,
+			&rowSource,
 			&testState.lastError,
 			&testState.lastTestAt,
 			&testState.lastTestStatus,
@@ -1452,11 +1460,11 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 			rows.Close()
 			return nil, provider.AccountModelSyncSummary{}, err
 		}
-		if source == provider.AccountModelSourceUpstream {
-			upstreamEnabled[model] = enabled
-			upstreamTests[model] = testState
+		if rowSource == source {
+			syncedEnabled[model] = enabled
+			syncedTests[model] = testState
 		}
-		if source == provider.AccountModelSourceManual || source == "" {
+		if rowSource == provider.AccountModelSourceManual || rowSource == "" {
 			manualModels[model] = true
 		}
 	}
@@ -1465,13 +1473,13 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 	}
 	rows.Close()
 
-	// Delete existing upstream rows; manual rows are preserved.
+	// Delete existing rows from this sync source; manual rows are preserved.
 	_, err = tx.Exec(ctx, `
 		DELETE FROM provider_account_models
 		WHERE provider = $1
 			AND account_id = $2
 			AND source = $3
-	`, providerName, accountID, provider.AccountModelSourceUpstream)
+	`, providerName, accountID, source)
 	if err != nil {
 		return nil, provider.AccountModelSyncSummary{}, err
 	}
@@ -1482,11 +1490,11 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 			summary.SkippedManual++
 			continue
 		}
-		enabled, ok := upstreamEnabled[model.Model]
+		enabled, ok := syncedEnabled[model.Model]
 		if ok {
 			summary.Preserved++
 		} else {
-			enabled = false
+			enabled = enableNew
 			summary.New++
 		}
 		_, err = tx.Exec(ctx, `
@@ -1496,12 +1504,12 @@ func (r *ProviderRepository) SyncAccountModels(ctx context.Context, providerName
 				metadata, updated_at
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '{}'::jsonb, now())
-		`, accountID, providerName, model.Model, enabled, provider.AccountModelSourceUpstream, seenAt,
-			upstreamTests[model.Model].lastError,
-			upstreamTests[model.Model].lastTestAt,
-			upstreamTests[model.Model].lastTestStatus,
-			upstreamTests[model.Model].lastTestHTTPStatus,
-			upstreamTests[model.Model].lastTestLatencyMS,
+		`, accountID, providerName, model.Model, enabled, source, seenAt,
+			syncedTests[model.Model].lastError,
+			syncedTests[model.Model].lastTestAt,
+			syncedTests[model.Model].lastTestStatus,
+			syncedTests[model.Model].lastTestHTTPStatus,
+			syncedTests[model.Model].lastTestLatencyMS,
 		)
 		if err != nil {
 			return nil, provider.AccountModelSyncSummary{}, err

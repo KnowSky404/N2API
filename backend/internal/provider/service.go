@@ -195,8 +195,9 @@ const (
 )
 
 const (
-	AccountModelSourceManual   = "manual"
-	AccountModelSourceUpstream = "upstream"
+	AccountModelSourceManual       = "manual"
+	AccountModelSourceUpstream     = "upstream"
+	AccountModelSourceOAuthCatalog = "oauth_catalog"
 
 	maxAccountModels        = 100
 	maxModelNameLen         = 128
@@ -595,6 +596,7 @@ type Repository interface {
 	RecordAccountModelTestResult(ctx context.Context, provider string, result AccountModelTestResult) error
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	SyncAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
+	SyncOAuthAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
 	ListExposedModelsForRoutingPools(ctx context.Context, provider string, poolIDs []int64) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error)
@@ -1879,6 +1881,149 @@ func (s *Service) SyncUpstreamAccountModels(ctx context.Context, accountID int64
 		Metadata: map[string]any{"upstream_model_count": len(normalized)},
 	})
 	return s.repo.SyncAccountModels(syncCtx, s.cfg.Provider, accountID, normalized, time.Now().UTC())
+}
+
+// The Codex catalog has not yet hidden every model that the official Codex
+// documentation has announced as deprecated for ChatGPT sign-in.
+var codexOAuthDeprecatedModels = map[string]struct{}{
+	"gpt-5.2":       {},
+	"gpt-5.3-codex": {},
+}
+
+// SyncOAuthAccountModels fetches the account-specific Codex model catalog and
+// persists only current picker-visible API models.
+func (s *Service) SyncOAuthAccountModels(ctx context.Context, accountID int64) ([]AccountModel, AccountModelSyncSummary, error) {
+	if accountID <= 0 {
+		return nil, AccountModelSyncSummary{}, ErrInvalidInput
+	}
+	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	accountType := strings.TrimSpace(account.AccountType)
+	if accountType == "" {
+		accountType = AccountTypeCodexOAuth
+	}
+	if accountType != AccountTypeCodexOAuth {
+		return nil, AccountModelSyncSummary{}, ErrInvalidInput
+	}
+	selected, err := s.selectedAccountForModelSync(ctx, account)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	targetURL, err := codexModelsURL(s.cfg.CodexResponsesBaseURL, codexCatalogClientVersion(selected))
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("ChatGPT-Account-ID", strings.TrimSpace(selected.ChatGPTAccountID))
+	req.Header.Set("originator", DefaultCodexFingerprintOriginator)
+	req.Header.Set("Version", DefaultCodexFingerprintVersion)
+	req.Header.Set("User-Agent", DefaultCodexFingerprintUserAgent)
+	for key, value := range selected.FingerprintHeaders {
+		req.Header.Set(key, value)
+	}
+	if strings.TrimSpace(selected.FingerprintUA) != "" {
+		req.Header.Set("User-Agent", strings.TrimSpace(selected.FingerprintUA))
+	}
+
+	client := s.httpClient.clientForProxy(selected.ProxyURL)
+	if strings.TrimSpace(selected.FingerprintTLS) != "" {
+		cloned := *client
+		transport := newModelProbeTLSFingerprintTransport(client.Transport, selected.ProxyURL).(*modelProbeTLSFingerprintTransport)
+		if s.httpClient.modelProbeTLSConfig != nil {
+			transport.tlsConfig = s.httpClient.modelProbeTLSConfig.Clone()
+		}
+		if s.httpClient.modelProbeProxyTLSConfig != nil {
+			transport.proxyTLSConfig = s.httpClient.modelProbeProxyTLSConfig.Clone()
+		}
+		cloned.Transport = transport
+		client = &cloned
+		req = req.WithContext(contextWithModelProbeTLSFingerprint(req.Context(), selected.FingerprintTLS))
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, AccountModelSyncSummary{}, fmt.Errorf("codex model catalog returned status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	var parsed struct {
+		Models []struct {
+			Slug           string          `json:"slug"`
+			Visibility     string          `json:"visibility"`
+			SupportedInAPI bool            `json:"supported_in_api"`
+			Upgrade        json.RawMessage `json:"upgrade"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, AccountModelSyncSummary{}, fmt.Errorf("decode codex model catalog: %w", err)
+	}
+	if parsed.Models == nil {
+		return nil, AccountModelSyncSummary{}, errors.New("codex model catalog missing models array")
+	}
+
+	models := make([]AccountModelInput, 0, len(parsed.Models))
+	for _, model := range parsed.Models {
+		slug := strings.TrimSpace(model.Slug)
+		_, deprecated := codexOAuthDeprecatedModels[slug]
+		hasUpgrade := len(model.Upgrade) > 0 && string(model.Upgrade) != "null"
+		if slug == "" || model.Visibility != "list" || !model.SupportedInAPI || hasUpgrade || deprecated {
+			continue
+		}
+		models = append(models, AccountModelInput{Model: slug, Enabled: true})
+	}
+	if len(models) == 0 {
+		return nil, AccountModelSyncSummary{}, errors.New("no current models found in codex model catalog")
+	}
+	normalized, err := normalizeAccountModelInputs(models)
+	if err != nil {
+		return nil, AccountModelSyncSummary{}, err
+	}
+	syncCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionProviderAccountModelsSynced,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   providerAccountTarget(accountID, accountDisplayName(account)),
+		Metadata: map[string]any{"oauth_catalog_model_count": len(normalized)},
+	})
+	return s.repo.SyncOAuthAccountModels(syncCtx, s.cfg.Provider, accountID, normalized, time.Now().UTC())
+}
+
+func codexCatalogClientVersion(selected SelectedAccount) string {
+	for key, value := range selected.FingerprintHeaders {
+		if strings.EqualFold(strings.TrimSpace(key), "Version") && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return DefaultCodexFingerprintVersion
+}
+
+func codexModelsURL(baseURL, clientVersion string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmed == "" {
+		trimmed = "https://chatgpt.com/backend-api/codex"
+	}
+	parsed, err := url.Parse(trimmed + "/models")
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	query.Set("client_version", strings.TrimSpace(clientVersion))
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func upstreamModelsURL(baseURL string) string {

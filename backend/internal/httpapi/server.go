@@ -121,6 +121,7 @@ type ProviderService interface {
 	ListAccountModelsForAccounts(ctx context.Context, accountIDs []int64) (map[int64][]provider.AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
+	SyncOAuthAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
 	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
@@ -2306,7 +2307,19 @@ func handleProviderCallback(w http.ResponseWriter, r *http.Request, providers Pr
 		writeError(w, http.StatusInternalServerError, "internal_error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
+	models, summary, err := providers.SyncOAuthAccountModels(r.Context(), account.ID)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":   "oauth_model_sync_failed",
+			"account": account,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"account": account,
+		"models":  models,
+		"synced":  summary,
+	})
 }
 
 func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {

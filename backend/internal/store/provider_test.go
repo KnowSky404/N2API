@@ -1472,6 +1472,43 @@ func TestSyncAccountModelsRejectsMissingAccount(t *testing.T) {
 	}
 }
 
+func TestSyncOAuthAccountModelsEnablesNewRowsAndPreservesManualRows(t *testing.T) {
+	repo, cleanup := newProviderRepositoryForTest(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	account := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, Subject: "oauth-catalog-sync",
+		DisplayName: "OAuth catalog sync", EncryptedAccessToken: "access", Enabled: true, Status: provider.AccountStatusActive,
+	})
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{{Model: "manual-only", Enabled: true}}); err != nil {
+		t.Fatalf("ReplaceAccountModels returned error: %v", err)
+	}
+
+	models, summary, err := repo.SyncOAuthAccountModels(ctx, "openai", account.ID, []provider.AccountModelInput{
+		{Model: "gpt-5.6-sol", Enabled: false},
+		{Model: "manual-only", Enabled: false},
+	}, time.Date(2026, 7, 31, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("SyncOAuthAccountModels returned error: %v", err)
+	}
+	if summary.Total != 2 || summary.New != 1 || summary.SkippedManual != 1 {
+		t.Fatalf("summary = %+v, want one new row and one manual conflict", summary)
+	}
+	assertAccountModelRows(t, models, []accountModelWant{
+		{Model: "gpt-5.6-sol", Enabled: true},
+		{Model: "manual-only", Enabled: true},
+	})
+	for _, model := range models {
+		if model.Model == "gpt-5.6-sol" && model.Source != provider.AccountModelSourceOAuthCatalog {
+			t.Fatalf("source = %q, want OAuth catalog", model.Source)
+		}
+		if model.Model == "manual-only" && model.Source != provider.AccountModelSourceManual {
+			t.Fatalf("manual source = %q, want manual", model.Source)
+		}
+	}
+}
+
 func TestListEligibleAccountsForModelFiltersAndOrders(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()

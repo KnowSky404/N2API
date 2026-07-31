@@ -276,9 +276,10 @@ type fakeProviderService struct {
 	disconnectedAccountID  int64
 	disconnectedAccountIDs []int64
 
-	syncModelsResult  []provider.AccountModel
-	syncModelsSummary provider.AccountModelSyncSummary
-	syncModelsErr     error
+	syncModelsResult   []provider.AccountModel
+	syncModelsSummary  provider.AccountModelSyncSummary
+	syncModelsErr      error
+	oauthSyncAccountID int64
 }
 type fakeGatewayHandler struct {
 	called             bool
@@ -1020,7 +1021,7 @@ func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state st
 	if s.callbackErr != nil {
 		return provider.Account{}, s.callbackErr
 	}
-	return provider.Account{Provider: "openai", DisplayName: "Codex Account"}, nil
+	return provider.Account{ID: 7, Provider: "openai", DisplayName: "Codex Account"}, nil
 }
 
 func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update provider.AccountUpdate) (provider.Account, error) {
@@ -1190,6 +1191,14 @@ func (s *fakeProviderService) Disconnect(_ context.Context) error {
 }
 
 func (s *fakeProviderService) SyncUpstreamAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	if s.syncModelsErr != nil {
+		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
+	}
+	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
+}
+
+func (s *fakeProviderService) SyncOAuthAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	s.oauthSyncAccountID = accountID
 	if s.syncModelsErr != nil {
 		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
 	}
@@ -5270,6 +5279,8 @@ func TestProviderManualCallbackCompletesFromCallbackURL(t *testing.T) {
 
 func TestUnifiedProviderAccountCodexOAuthCallbackCompletesFromCallbackURL(t *testing.T) {
 	providers := newFakeProviderService()
+	providers.syncModelsResult = []provider.AccountModel{{AccountID: 7, Model: "gpt-5.6-sol", Enabled: true, Source: provider.AccountModelSourceOAuthCatalog}}
+	providers.syncModelsSummary = provider.AccountModelSyncSummary{Total: 1, New: 1}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc&state=oauth_state"}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
@@ -5282,6 +5293,33 @@ func TestUnifiedProviderAccountCodexOAuthCallbackCompletesFromCallbackURL(t *tes
 	}
 	if providers.callbackCode != "abc" || providers.callbackState != "oauth_state" {
 		t.Fatalf("callback args = code %q state %q, want parsed callback URL values", providers.callbackCode, providers.callbackState)
+	}
+	if providers.oauthSyncAccountID != 7 {
+		t.Fatalf("OAuth model sync account ID = %d, want 7", providers.oauthSyncAccountID)
+	}
+	if !strings.Contains(recorder.Body.String(), `"source":"oauth_catalog"`) {
+		t.Fatalf("body = %s, want synced OAuth model", recorder.Body.String())
+	}
+}
+
+func TestUnifiedProviderAccountCodexOAuthCallbackReportsModelSyncFailure(t *testing.T) {
+	providers := newFakeProviderService()
+	providers.syncModelsErr = errors.New("catalog unavailable")
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc&state=oauth_state"}`))
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d body=%s, want 502", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"error":"oauth_model_sync_failed"`) {
+		t.Fatalf("body = %s, want explicit OAuth model sync error", recorder.Body.String())
+	}
+	if providers.oauthSyncAccountID != 7 {
+		t.Fatalf("OAuth model sync account ID = %d, want 7", providers.oauthSyncAccountID)
 	}
 }
 

@@ -837,7 +837,12 @@ export function setAccountModelEnabled(models, modelName, enabled) {
  * @param {string} modelName
  */
 export function removeAccountModel(models, modelName) {
-  return models.filter((item) => item.source === 'upstream' || item.model !== modelName);
+  return models.filter((item) => isSyncedAccountModel(item) || item.model !== modelName);
+}
+
+/** @param {{ source?: string | null }} model */
+export function isSyncedAccountModel(model) {
+  return model.source === 'upstream' || model.source === 'oauth_catalog';
 }
 
 /**
@@ -2283,7 +2288,7 @@ function ensureAccountTestResultsState(accountId) {
 
 /** @param {AccountModel[]} models */
 export function accountModelsText(models) {
-  return modelListText(models.filter((item) => item.source !== 'upstream').map((item) => item.model));
+  return modelListText(models.filter((item) => !isSyncedAccountModel(item)).map((item) => item.model));
 }
 
 /** @param {number} accountId */
@@ -2325,7 +2330,7 @@ export function accountModelSummary(models) {
   let enabled = 0;
   for (const m of models) {
     total++;
-    if (m.source === 'upstream') synced++;
+    if (isSyncedAccountModel(m)) synced++;
     else manual++;
     if (m.enabled) enabled++;
   }
@@ -2334,6 +2339,7 @@ export function accountModelSummary(models) {
 
 /** @param {{ source?: string | null }} model */
 export function sourceBadgeLabel(model) {
+  if (model.source === 'oauth_catalog') return 'OpenAI';
   return model.source === 'upstream' ? 'Synced' : 'Manual';
 }
 
@@ -2469,7 +2475,7 @@ export async function saveAccountModels(accountId, text) {
   state.error = '';
   state.saved = false;
   try {
-    const manualItems = state.items.filter((item) => item.source !== 'upstream');
+    const manualItems = state.items.filter((item) => !isSyncedAccountModel(item));
     const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models`, {
       method: 'PUT',
       body: JSON.stringify({ models: mergeAccountModelChanges(manualItems, text) })
@@ -2622,7 +2628,16 @@ export async function completeProviderCallback() {
     return isCurrentAuthenticated(version) && !provider.error && !providerAccounts.error;
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return false;
-    provider.error = error instanceof Error ? error.message : 'Failed to complete provider connection';
+    if (error instanceof Error && error.message === 'oauth_model_sync_failed') {
+      replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
+      await loadProvider();
+      if (!isCurrentAuthenticated(version)) return false;
+      await loadProviderAccounts();
+      if (!isCurrentAuthenticated(version)) return false;
+      provider.error = 'OAuth account connected, but automatic model sync failed. Reauthorize the account to retry.';
+    } else {
+      provider.error = error instanceof Error ? error.message : 'Failed to complete provider connection';
+    }
     return false;
   } finally {
     if (isCurrentAuthenticated(version)) providerOAuth.completing = false;

@@ -13,6 +13,7 @@
     getAccountModelsState,
     getAccountTestResultsState,
     getProviderStateLabel,
+    isSyncedAccountModel,
     loadAccountModels,
     loadProviderAccounts,
     apiUpstreamForm,
@@ -1899,7 +1900,7 @@ Enabled
                       class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
                       type="checkbox"
                       checked={configuredModel.enabled}
-                      disabled={modelState.loading || modelState.saving || modelState.syncing || configuredModel.source === 'upstream'}
+                      disabled={modelState.loading || modelState.saving || modelState.syncing || isSyncedAccountModel(configuredModel)}
                       aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
                       onchange={(event) => {
                         draft.modelItems = setAccountModelEnabled(draft.modelItems, configuredModel.model, event.currentTarget.checked);
@@ -1910,7 +1911,7 @@ Enabled
                   </label>
                   <span class="text-xs text-[#6e6e6e]">{configuredModel.enabled ? 'On' : 'Off'}</span>
                   <span class="inline-flex items-center rounded-full border border-[#e5e5e5] bg-white px-2 py-0.5 text-[11px] font-medium text-[#6e6e6e]">{sourceBadgeLabel(configuredModel)}</span>
-                  {#if configuredModel.source !== 'upstream'}
+                  {#if !isSyncedAccountModel(configuredModel)}
                     <button
                       class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                       type="button"
