@@ -2,22 +2,24 @@
 
 ## Goal
 
-Avoid one Codex model-catalog request for every OAuth account connection while
-preserving the account capability boundaries that affect the returned catalog.
+Avoid repeated Codex model-catalog requests for the same OAuth account while
+preserving the account-specific authentication boundary of the catalog endpoint.
 
 ## Design
 
 The provider service keeps a process-local catalog snapshot keyed by:
 
+- N2API provider account ID;
 - Codex base URL;
 - Codex client version;
 - normalized ChatGPT plan type.
 
-A successful fetch remains fresh for six hours. Calls for the same key reuse the
-fresh snapshot, and concurrent misses share one in-flight refresh. Different
-plans or client versions never share a snapshot. The cache is capped at 32
-snapshots and evicts the snapshot nearest expiry when full. It stores only
-normalized model names, never OAuth credentials or account identifiers.
+A successful fetch remains fresh for six hours. Repeated or concurrent calls for
+the same account and catalog configuration reuse one snapshot or in-flight
+refresh. Different accounts, plans, or client versions never share a snapshot.
+The cache is capped at 32 snapshots and evicts the snapshot nearest expiry when
+full. It stores only normalized model names and the internal N2API account ID;
+OAuth credentials and external ChatGPT account identifiers are never cached.
 
 Each account still persists its own `oauth_catalog` rows, so enabled state and
 manual model overrides remain account-scoped. A service restart simply starts
@@ -26,9 +28,10 @@ the snapshot.
 
 ## Acceptance Criteria
 
-- Two OAuth accounts with the same plan and client version cause one remote
-  catalog request while the snapshot is fresh.
-- Concurrent connections for the same cache key share one remote request.
+- Different OAuth accounts with the same plan and client version fetch and
+  persist their own authenticated catalogs.
+- Repeated and concurrent connections for the same cache key share one remote
+  request while the snapshot is fresh.
 - Expired snapshots refresh before being applied.
-- Different plans and client versions use separate snapshots.
+- Different accounts, plans, and client versions use separate snapshots.
 - Existing per-account enabled-state and manual-model behavior is unchanged.

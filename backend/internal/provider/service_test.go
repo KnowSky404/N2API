@@ -4294,11 +4294,15 @@ func TestSyncOAuthAccountModelsFetchesCurrentCatalogAndEnablesNewModels(t *testi
 	}
 }
 
-func TestSyncOAuthAccountModelsReusesFreshCatalogForSamePlan(t *testing.T) {
+func TestSyncOAuthAccountModelsDoesNotShareCatalogAcrossAccounts(t *testing.T) {
 	var requestCount atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount.Add(1)
-		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+		model := "gpt-5.6-sol"
+		if r.Header.Get("ChatGPT-Account-ID") == "chatgpt-account-8" {
+			model = "gpt-5.6-terra"
+		}
+		_, _ = fmt.Fprintf(w, `{"models":[{"slug":%q,"visibility":"list","supported_in_api":true,"upgrade":null}]}`, model)
 	}))
 	defer ts.Close()
 
@@ -4316,26 +4320,42 @@ func TestSyncOAuthAccountModelsReusesFreshCatalogForSamePlan(t *testing.T) {
 		CodexResponsesBaseURL: ts.URL + "/backend-api/codex",
 	})
 
-	for _, accountID := range []int64{first.ID, second.ID} {
+	for i, accountID := range []int64{first.ID, second.ID} {
 		models, _, err := service.SyncOAuthAccountModels(context.Background(), accountID)
 		if err != nil {
 			t.Fatalf("SyncOAuthAccountModels(%d): %v", accountID, err)
 		}
-		if got := accountModelNames(models); !reflect.DeepEqual(got, []string{"gpt-5.6-sol"}) {
-			t.Fatalf("account %d models = %v", accountID, got)
+		want := []string{"gpt-5.6-sol"}
+		if i == 1 {
+			want = []string{"gpt-5.6-terra"}
+		}
+		if got := accountModelNames(models); !reflect.DeepEqual(got, want) {
+			t.Fatalf("account %d models = %v, want %v", accountID, got, want)
 		}
 	}
-	if got := requestCount.Load(); got != 1 {
-		t.Fatalf("catalog requests = %d, want 1 for a fresh shared snapshot", got)
+	models, _, err := service.SyncOAuthAccountModels(context.Background(), first.ID)
+	if err != nil {
+		t.Fatalf("repeat SyncOAuthAccountModels(%d): %v", first.ID, err)
+	}
+	if got, want := accountModelNames(models), []string{"gpt-5.6-sol"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("repeated account %d models = %v, want %v", first.ID, got, want)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("catalog requests = %d, want 2 account-scoped requests with same-account reuse", got)
 	}
 }
 
-func TestOAuthModelCatalogCacheKeySeparatesPlanAndClientVersion(t *testing.T) {
+func TestOAuthModelCatalogCacheKeySeparatesAccountPlanAndClientVersion(t *testing.T) {
 	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{CodexResponsesBaseURL: "https://catalog.example.test/codex"})
-	account := Account{Metadata: map[string]string{"plan_type": "Plus"}}
+	account := Account{ID: 7, Metadata: map[string]string{"plan_type": "Plus"}}
 	selected := SelectedAccount{FingerprintHeaders: map[string]string{"Version": "1.2.3"}}
 	base := service.oauthModelCatalogCacheKey(account, selected)
 
+	account.ID = 8
+	if got := service.oauthModelCatalogCacheKey(account, selected); got == base {
+		t.Fatal("different accounts shared an OAuth model catalog cache key")
+	}
+	account.ID = 7
 	account.Metadata["plan_type"] = "Pro"
 	if got := service.oauthModelCatalogCacheKey(account, selected); got == base {
 		t.Fatal("different plan types shared an OAuth model catalog cache key")
@@ -4379,7 +4399,7 @@ func TestOAuthModelCatalogCoalescesConcurrentRefreshes(t *testing.T) {
 	defer ts.Close()
 
 	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{CodexResponsesBaseURL: ts.URL + "/backend-api/codex"})
-	account := Account{Metadata: map[string]string{"plan_type": "plus"}}
+	account := Account{ID: 7, Metadata: map[string]string{"plan_type": "plus"}}
 	selected := SelectedAccount{
 		AuthorizationToken: "oauth-access",
 		ChatGPTAccountID:   "chatgpt-account-7",

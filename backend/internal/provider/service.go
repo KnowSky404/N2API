@@ -683,6 +683,7 @@ type Service struct {
 }
 
 type oauthModelCatalogCacheKey struct {
+	accountID     int64
 	baseURL       string
 	clientVersion string
 	planType      string
@@ -2021,6 +2022,7 @@ func (s *Service) oauthModelCatalogCacheKey(account Account, selected SelectedAc
 	baseURL := strings.TrimRight(strings.TrimSpace(s.cfg.CodexResponsesBaseURL), "/")
 	planType := strings.ToLower(strings.TrimSpace(account.Metadata["plan_type"]))
 	return oauthModelCatalogCacheKey{
+		accountID:     account.ID,
 		baseURL:       baseURL,
 		clientVersion: codexCatalogClientVersion(selected),
 		planType:      planType,
