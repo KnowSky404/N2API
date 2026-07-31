@@ -29,11 +29,13 @@ import (
 )
 
 const (
-	defaultStateTTL      = 10 * time.Minute
-	defaultRefreshWindow = 2 * time.Minute
-	defaultCircuitOpen   = 5 * time.Minute
-	defaultManualPause   = 5 * time.Minute
-	maxManualPause       = 24 * time.Hour
+	defaultStateTTL                  = 10 * time.Minute
+	defaultRefreshWindow             = 2 * time.Minute
+	defaultCircuitOpen               = 5 * time.Minute
+	defaultManualPause               = 5 * time.Minute
+	maxManualPause                   = 24 * time.Hour
+	defaultOAuthModelCatalogCacheTTL = 6 * time.Hour
+	maxOAuthModelCatalogCacheEntries = 32
 
 	refreshFailureCircuitThreshold = 3
 
@@ -222,25 +224,26 @@ var (
 )
 
 type Config struct {
-	Provider              string
-	ClientID              string
-	ClientSecret          string
-	RedirectURL           string
-	AuthURL               string
-	TokenURL              string
-	APIBaseURL            string
-	CodexResponsesBaseURL string
-	ProxyURL              string
-	ProbeChatGPTAccountID string
-	Secret                string
-	EncryptionKeyring     *secret.Keyring
-	StateTTL              time.Duration
-	RefreshWindow         time.Duration
-	CodeVerifier          string
-	AllowHTTPAPIUpstreams bool
-	AccountTestLogger     AccountTestRequestLogger
-	RequestLogObserver    RequestLogWriteObserver
-	Metrics               MetricsObserver
+	Provider                  string
+	ClientID                  string
+	ClientSecret              string
+	RedirectURL               string
+	AuthURL                   string
+	TokenURL                  string
+	APIBaseURL                string
+	CodexResponsesBaseURL     string
+	ProxyURL                  string
+	ProbeChatGPTAccountID     string
+	Secret                    string
+	EncryptionKeyring         *secret.Keyring
+	StateTTL                  time.Duration
+	RefreshWindow             time.Duration
+	OAuthModelCatalogCacheTTL time.Duration
+	CodeVerifier              string
+	AllowHTTPAPIUpstreams     bool
+	AccountTestLogger         AccountTestRequestLogger
+	RequestLogObserver        RequestLogWriteObserver
+	Metrics                   MetricsObserver
 }
 
 type MetricsObserver interface {
@@ -670,9 +673,30 @@ type Service struct {
 	encryptionKeyring        *secret.Keyring
 	refreshMu                sync.Mutex
 	refreshLocks             map[int64]*sync.Mutex
+	oauthModelCatalogMu      sync.Mutex
+	oauthModelCatalogCache   map[oauthModelCatalogCacheKey]oauthModelCatalogCacheEntry
+	oauthModelCatalogFlights map[oauthModelCatalogCacheKey]*oauthModelCatalogFlight
+	oauthModelCatalogNow     func() time.Time
 	httpClient               *HTTPClient
 	transportInvalidatorMu   sync.RWMutex
 	transportInvalidator     AccountTransportInvalidator
+}
+
+type oauthModelCatalogCacheKey struct {
+	baseURL       string
+	clientVersion string
+	planType      string
+}
+
+type oauthModelCatalogCacheEntry struct {
+	models    []AccountModelInput
+	expiresAt time.Time
+}
+
+type oauthModelCatalogFlight struct {
+	done   chan struct{}
+	models []AccountModelInput
+	err    error
 }
 
 type RequestLogWriteObserver interface {
@@ -741,6 +765,9 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 	if cfg.RefreshWindow <= 0 {
 		cfg.RefreshWindow = defaultRefreshWindow
 	}
+	if cfg.OAuthModelCatalogCacheTTL <= 0 {
+		cfg.OAuthModelCatalogCacheTTL = defaultOAuthModelCatalogCacheTTL
+	}
 	prober, _ := client.(accountStatusProber)
 	httpClient := NewHTTPClient(nil)
 	return &Service{
@@ -755,6 +782,9 @@ func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
 		encryptionKeyring:        cfg.EncryptionKeyring,
 		httpClient:               httpClient,
 		refreshLocks:             make(map[int64]*sync.Mutex),
+		oauthModelCatalogCache:   make(map[oauthModelCatalogCacheKey]oauthModelCatalogCacheEntry),
+		oauthModelCatalogFlights: make(map[oauthModelCatalogCacheKey]*oauthModelCatalogFlight),
+		oauthModelCatalogNow:     time.Now,
 	}
 }
 
@@ -1911,13 +1941,107 @@ func (s *Service) SyncOAuthAccountModels(ctx context.Context, accountID int64) (
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
 	}
-	targetURL, err := codexModelsURL(s.cfg.CodexResponsesBaseURL, codexCatalogClientVersion(selected))
+	models, err := s.oauthModelCatalog(ctx, account, selected)
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
 	}
+	syncCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
+		Category: systemevent.CategoryAudit,
+		Severity: systemevent.SeverityInfo,
+		Action:   systemevent.ActionProviderAccountModelsSynced,
+		Outcome:  systemevent.OutcomeSuccess,
+		Target:   providerAccountTarget(accountID, accountDisplayName(account)),
+		Metadata: map[string]any{"oauth_catalog_model_count": len(models)},
+	})
+	return s.repo.SyncOAuthAccountModels(syncCtx, s.cfg.Provider, accountID, models, time.Now().UTC())
+}
+
+func (s *Service) oauthModelCatalog(ctx context.Context, account Account, selected SelectedAccount) ([]AccountModelInput, error) {
+	key := s.oauthModelCatalogCacheKey(account, selected)
+
+	for {
+		now := s.oauthModelCatalogNow()
+		s.oauthModelCatalogMu.Lock()
+		if cached, ok := s.oauthModelCatalogCache[key]; ok && now.Before(cached.expiresAt) {
+			models := cloneAccountModelInputs(cached.models)
+			s.oauthModelCatalogMu.Unlock()
+			return models, nil
+		}
+		if flight, ok := s.oauthModelCatalogFlights[key]; ok {
+			s.oauthModelCatalogMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-flight.done:
+				if (errors.Is(flight.err, context.Canceled) || errors.Is(flight.err, context.DeadlineExceeded)) && ctx.Err() == nil {
+					continue
+				}
+				return cloneAccountModelInputs(flight.models), flight.err
+			}
+		}
+
+		flight := &oauthModelCatalogFlight{done: make(chan struct{})}
+		s.oauthModelCatalogFlights[key] = flight
+		s.oauthModelCatalogMu.Unlock()
+
+		models, err := s.fetchOAuthModelCatalog(ctx, selected)
+
+		s.oauthModelCatalogMu.Lock()
+		if err == nil {
+			s.storeOAuthModelCatalogCacheLocked(key, oauthModelCatalogCacheEntry{
+				models:    cloneAccountModelInputs(models),
+				expiresAt: s.oauthModelCatalogNow().Add(s.cfg.OAuthModelCatalogCacheTTL),
+			})
+		}
+		flight.models = cloneAccountModelInputs(models)
+		flight.err = err
+		delete(s.oauthModelCatalogFlights, key)
+		close(flight.done)
+		s.oauthModelCatalogMu.Unlock()
+		return models, err
+	}
+}
+
+func (s *Service) storeOAuthModelCatalogCacheLocked(key oauthModelCatalogCacheKey, entry oauthModelCatalogCacheEntry) {
+	if _, exists := s.oauthModelCatalogCache[key]; !exists && len(s.oauthModelCatalogCache) >= maxOAuthModelCatalogCacheEntries {
+		var oldestKey oauthModelCatalogCacheKey
+		var oldestExpiry time.Time
+		for candidateKey, candidate := range s.oauthModelCatalogCache {
+			if oldestExpiry.IsZero() || candidate.expiresAt.Before(oldestExpiry) {
+				oldestKey = candidateKey
+				oldestExpiry = candidate.expiresAt
+			}
+		}
+		delete(s.oauthModelCatalogCache, oldestKey)
+	}
+	s.oauthModelCatalogCache[key] = entry
+}
+
+func (s *Service) oauthModelCatalogCacheKey(account Account, selected SelectedAccount) oauthModelCatalogCacheKey {
+	baseURL := strings.TrimRight(strings.TrimSpace(s.cfg.CodexResponsesBaseURL), "/")
+	planType := strings.ToLower(strings.TrimSpace(account.Metadata["plan_type"]))
+	return oauthModelCatalogCacheKey{
+		baseURL:       baseURL,
+		clientVersion: codexCatalogClientVersion(selected),
+		planType:      planType,
+	}
+}
+
+func cloneAccountModelInputs(models []AccountModelInput) []AccountModelInput {
+	if models == nil {
+		return nil
+	}
+	return append([]AccountModelInput(nil), models...)
+}
+
+func (s *Service) fetchOAuthModelCatalog(ctx context.Context, selected SelectedAccount) ([]AccountModelInput, error) {
+	targetURL, err := codexModelsURL(s.cfg.CodexResponsesBaseURL, codexCatalogClientVersion(selected))
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return nil, AccountModelSyncSummary{}, err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
 	req.Header.Set("Accept", "application/json")
@@ -1948,16 +2072,16 @@ func (s *Service) SyncOAuthAccountModels(ctx context.Context, accountID int64) (
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, AccountModelSyncSummary{}, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, AccountModelSyncSummary{}, fmt.Errorf("codex model catalog returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("codex model catalog returned status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
-		return nil, AccountModelSyncSummary{}, err
+		return nil, err
 	}
 	var parsed struct {
 		Models []struct {
@@ -1968,10 +2092,10 @@ func (s *Service) SyncOAuthAccountModels(ctx context.Context, accountID int64) (
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, AccountModelSyncSummary{}, fmt.Errorf("decode codex model catalog: %w", err)
+		return nil, fmt.Errorf("decode codex model catalog: %w", err)
 	}
 	if parsed.Models == nil {
-		return nil, AccountModelSyncSummary{}, errors.New("codex model catalog missing models array")
+		return nil, errors.New("codex model catalog missing models array")
 	}
 
 	models := make([]AccountModelInput, 0, len(parsed.Models))
@@ -1985,21 +2109,13 @@ func (s *Service) SyncOAuthAccountModels(ctx context.Context, accountID int64) (
 		models = append(models, AccountModelInput{Model: slug, Enabled: true})
 	}
 	if len(models) == 0 {
-		return nil, AccountModelSyncSummary{}, errors.New("no current models found in codex model catalog")
+		return nil, errors.New("no current models found in codex model catalog")
 	}
 	normalized, err := normalizeAccountModelInputs(models)
 	if err != nil {
-		return nil, AccountModelSyncSummary{}, err
+		return nil, err
 	}
-	syncCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
-		Category: systemevent.CategoryAudit,
-		Severity: systemevent.SeverityInfo,
-		Action:   systemevent.ActionProviderAccountModelsSynced,
-		Outcome:  systemevent.OutcomeSuccess,
-		Target:   providerAccountTarget(accountID, accountDisplayName(account)),
-		Metadata: map[string]any{"oauth_catalog_model_count": len(normalized)},
-	})
-	return s.repo.SyncOAuthAccountModels(syncCtx, s.cfg.Provider, accountID, normalized, time.Now().UTC())
+	return normalized, nil
 }
 
 func codexCatalogClientVersion(selected SelectedAccount) string {
