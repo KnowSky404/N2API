@@ -470,8 +470,7 @@
       return;
     }
     if (providerOAuth.authorizationUrl) {
-      await completeProviderCallback();
-      if (!provider.error && !providerAccounts.error) {
+      if (await completeProviderCallback()) {
         showProviderSuccess('Provider account connected', 'The Codex OAuth account is ready to use.');
       }
       return;
@@ -518,17 +517,18 @@
 
     providerMutationBusy = true;
     try {
-      await updateProviderAccount(account, {
+      if (!(await updateProviderAccount(account, {
         name,
         enabled: draft.enabled,
         priority: Number(draft.priority),
         loadFactor: Number(draft.loadFactor),
         maxConcurrentRequests: Number(draft.maxConcurrentRequests),
         fingerprintProfileId: resolveFingerprintProfileID(account, draft.fingerprintProfileId)
-      });
-      if (providerAccounts.error) {
-        editingProviderAccountError = providerAccounts.error;
-        refreshAccountDraft(account.id);
+      }))) {
+        if (session.authenticated) {
+          editingProviderAccountError = providerAccounts.error || 'Account update failed';
+          refreshAccountDraft(account.id);
+        }
         return;
       }
 
@@ -544,20 +544,22 @@
         if (draft.apiKey.trim()) credentialPatch.apiKey = draft.apiKey.trim();
       }
       if (Object.keys(credentialPatch).length > 0) {
-        await updateProviderAccount(account, credentialPatch);
-        if (providerAccounts.error) {
-          editingProviderAccountError = `Account settings were saved, but credentials failed: ${providerAccounts.error}`;
-          refreshAccountDraft(account.id);
+        if (!(await updateProviderAccount(account, credentialPatch))) {
+          if (session.authenticated) {
+            editingProviderAccountError = `Account settings were saved, but credentials failed: ${providerAccounts.error || 'Account update failed'}`;
+            refreshAccountDraft(account.id);
+          }
           return;
         }
       }
 
       const modelState = getAccountModelsState(account.id);
       if (draft.syncModelsOnSave && account.accountType === 'api_upstream') {
-        await syncAccountModels(account.id);
-        if (modelState.syncError) {
-          editingProviderAccountError = `Account settings were saved, but model sync failed: ${modelState.syncError}`;
-          refreshAccountDraft(account.id);
+        if (!(await syncAccountModels(account.id))) {
+          if (session.authenticated) {
+            editingProviderAccountError = `Account settings were saved, but model sync failed: ${modelState.syncError || 'Account model sync failed'}`;
+            refreshAccountDraft(account.id);
+          }
           return;
         }
         draft.modelItems = [
@@ -568,14 +570,16 @@
       const priorModelItems = modelState.items.map((item) => ({ ...item }));
       const priorModelsText = modelState.text;
       modelState.items = draft.modelItems.map((item) => ({ ...item }));
-      await saveAccountModels(account.id, draft.modelsText);
-      if (modelState.error) {
-        modelState.items = priorModelItems;
-        modelState.text = priorModelsText;
-        editingProviderAccountError = `Account settings were saved, but models failed: ${modelState.error}`;
-        refreshAccountDraft(account.id);
+      if (!(await saveAccountModels(account.id, draft.modelsText))) {
+        if (session.authenticated) {
+          modelState.items = priorModelItems;
+          modelState.text = priorModelsText;
+          editingProviderAccountError = `Account settings were saved, but models failed: ${modelState.error || 'Account model save failed'}`;
+          refreshAccountDraft(account.id);
+        }
         return;
       }
+      if (!session.authenticated) return;
       refreshAccountDraft(account.id);
       showProviderSuccess('Provider account saved', `${name} settings and model access are current.`);
     } finally {

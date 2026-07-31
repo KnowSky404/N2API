@@ -547,6 +547,10 @@ test('configuration mutations show blocking progress and transient success feedb
   assert.match(apiKeysPage, /setSelectedAPIKeysDisabled[\s\S]*?showAPIKeySuccess\('API keys saved'/);
   assert.match(apiKeysPage, /deleteConfirmBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</);
   assert.match(providersPage, /runProviderAccountAction[\s\S]*?showProviderSuccess\('Provider account updated'/);
+  assert.match(apiKeysPage, /if \(succeeded && session\.authenticated && !apiKeys\.error\)/);
+  assert.match(apiKeysPage, /if \(!\(await updateAPIKeyName[\s\S]*?if \(!session\.authenticated\) return;[\s\S]*?showAPIKeySuccess\('API key saved'/);
+  assert.match(providersPage, /if \(await completeProviderCallback\(\)\)[\s\S]*?showProviderSuccess\('Provider account connected'/);
+  assert.match(providersPage, /if \(!\(await updateProviderAccount[\s\S]*?if \(!session\.authenticated\) return;[\s\S]*?showProviderSuccess\('Provider account saved'/);
 });
 
 test('gateway page manages runtime limits and usage visibility', () => {

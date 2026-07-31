@@ -2460,7 +2460,7 @@ export async function refreshExpandedAccountTestResults() {
  */
 export async function saveAccountModels(accountId, text) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
   const state = ensureAccountModelsState(accountId);
   state.requestSeq += 1;
   const requestSeq = state.requestSeq;
@@ -2474,17 +2474,19 @@ export async function saveAccountModels(accountId, text) {
       method: 'PUT',
       body: JSON.stringify({ models: mergeAccountModelChanges(manualItems, text) })
     });
-    if (!isCurrentAuthenticated(version)) return;
-    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
+    if (!isCurrentAuthenticated(version)) return false;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return false;
     const models = payload.models ?? [];
     state.items = models;
     state.text = accountModelsText(models);
     state.saved = true;
     await loadModelRouting();
+    return isCurrentAuthenticated(version);
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
+    if (!isCurrentAuthenticated(version)) return false;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return false;
     state.error = error instanceof Error ? error.message : 'Account model save failed';
+    return false;
   } finally {
     if (isCurrentAuthenticated(version) && shouldApplyAccountModelsResponse(state, requestSeq)) {
       state.saving = false;
@@ -2495,7 +2497,7 @@ export async function saveAccountModels(accountId, text) {
 /** @param {number} accountId */
 export async function syncAccountModels(accountId) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
   const state = ensureAccountModelsState(accountId);
   state.requestSeq += 1;
   const requestSeq = state.requestSeq;
@@ -2509,8 +2511,8 @@ export async function syncAccountModels(accountId) {
     const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models/sync`, {
       method: 'POST'
     });
-    if (!isCurrentAuthenticated(version)) return;
-    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
+    if (!isCurrentAuthenticated(version)) return false;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return false;
     const models = payload.models ?? [];
     state.items = models;
     state.text = accountModelsText(models);
@@ -2523,10 +2525,12 @@ export async function syncAccountModels(accountId) {
       state.syncMessage = `Synced ${total} models.`;
     }
     await loadModelRouting();
+    return isCurrentAuthenticated(version);
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
+    if (!isCurrentAuthenticated(version)) return false;
+    if (!shouldApplyAccountModelsResponse(state, requestSeq)) return false;
     state.syncError = error instanceof Error ? error.message : 'Account model sync failed';
+    return false;
   } finally {
     if (isCurrentAuthenticated(version) && shouldApplyAccountModelsResponse(state, requestSeq)) {
       state.syncing = false;
@@ -2600,7 +2604,7 @@ export async function connectProvider(account = null) {
 
 export async function completeProviderCallback() {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   providerOAuth.completing = true;
   provider.error = '';
@@ -2610,16 +2614,18 @@ export async function completeProviderCallback() {
       method: 'POST',
       body: JSON.stringify({ callbackUrl: providerOAuth.callbackUrl })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
     await loadProvider();
+    if (!isCurrentAuthenticated(version)) return false;
     await loadProviderAccounts();
+    return isCurrentAuthenticated(version) && !provider.error && !providerAccounts.error;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     provider.error = error instanceof Error ? error.message : 'Failed to complete provider connection';
+    return false;
   } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    providerOAuth.completing = false;
+    if (isCurrentAuthenticated(version)) providerOAuth.completing = false;
   }
 }
 
@@ -2629,7 +2635,7 @@ export async function completeProviderCallback() {
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
   providerAccounts.saving = true;
   providerAccounts.error = '';
   try {
@@ -2637,17 +2643,21 @@ export async function updateProviderAccount(account, patch) {
       method: 'PATCH',
       body: JSON.stringify(patch)
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     await loadProviderAccounts();
+    if (!isCurrentAuthenticated(version) || providerAccounts.error) return false;
     await loadModelRouting();
+    if (!isCurrentAuthenticated(version)) return false;
     await refreshAccountTestResultsIfExpanded(account.id);
+    return isCurrentAuthenticated(version);
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     const message = error instanceof Error ? error.message : 'Account update failed';
     providerAccounts.error = message;
     await loadProviderAccounts();
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     providerAccounts.error = message;
+    return false;
   } finally {
     if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
   }
@@ -3836,7 +3846,7 @@ export async function cleanupRequestLogs() {
  */
 export async function updateAPIKeyModelPolicy(keyId, modelPolicy, modelsText) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   apiKeys.error = '';
   try {
@@ -3847,11 +3857,13 @@ export async function updateAPIKeyModelPolicy(keyId, modelPolicy, modelsText) {
         models: parseModelLines(modelsText)
       })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update model access';
+    return false;
   }
 }
 
@@ -3861,12 +3873,12 @@ export async function updateAPIKeyModelPolicy(keyId, modelPolicy, modelsText) {
  */
 export async function updateAPIKeyName(keyId, name) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   const nextName = String(name ?? '').trim();
   if (!nextName) {
     apiKeys.error = 'API key name cannot be empty';
-    return;
+    return false;
   }
 
   apiKeys.error = '';
@@ -3875,11 +3887,13 @@ export async function updateAPIKeyName(keyId, name) {
       method: 'PATCH',
       body: JSON.stringify({ name: nextName })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update API key name';
+    return false;
   }
 }
 
@@ -3897,10 +3911,10 @@ export async function setAPIKeyDisabled(keyId, disabled) {
       method: 'PUT',
       body: JSON.stringify({ disabled: Boolean(disabled) })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
     await loadRequestLogs();
-    return true;
+    return isCurrentAuthenticated(version);
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update API key status';
@@ -3915,13 +3929,13 @@ export async function setAPIKeyDisabled(keyId, disabled) {
  */
 export async function updateAPIKeyLimits(keyId, requestsPerMinute, tokensPerMinute) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   const requestLimit = Number(requestsPerMinute);
   const tokenLimit = Number(tokensPerMinute);
   if (!Number.isInteger(requestLimit) || requestLimit < 0 || !Number.isInteger(tokenLimit) || tokenLimit < 0) {
     apiKeys.error = 'API key limits must be non-negative whole numbers';
-    return;
+    return false;
   }
 
   apiKeys.error = '';
@@ -3933,11 +3947,13 @@ export async function updateAPIKeyLimits(keyId, requestsPerMinute, tokensPerMinu
         tokensPerMinute: tokenLimit
       })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? payload.key : key));
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update key limits';
+    return false;
   }
 }
 
@@ -3952,7 +3968,7 @@ export async function updateAPIKeyLimits(keyId, requestsPerMinute, tokensPerMinu
  */
 export async function updateAPIKeyBudgets(keyId, requestBudget24h, tokenBudget24h, costBudgetMicrousd24h, requestBudget30d, tokenBudget30d, costBudgetMicrousd30d) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   const payload = {
     requestBudget24h: Number(requestBudget24h),
@@ -3964,7 +3980,7 @@ export async function updateAPIKeyBudgets(keyId, requestBudget24h, tokenBudget24
   };
   if (Object.values(payload).some((value) => !Number.isInteger(value) || value < 0)) {
     apiKeys.error = 'API key budgets must be non-negative whole numbers';
-    return;
+    return false;
   }
 
   apiKeys.error = '';
@@ -3973,11 +3989,13 @@ export async function updateAPIKeyBudgets(keyId, requestBudget24h, tokenBudget24
       method: 'PUT',
       body: JSON.stringify(payload)
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? { ...key, ...response.key } : key));
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update key budgets';
+    return false;
   }
 }
 
@@ -3987,12 +4005,12 @@ export async function updateAPIKeyBudgets(keyId, requestBudget24h, tokenBudget24
  */
 export async function updateAPIKeyRoutingPool(keyId, routingPoolId) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   const poolId = Number(routingPoolId ?? 0);
   if (!Number.isInteger(poolId) || poolId < 0) {
     apiKeys.error = 'Routing pool selection is invalid';
-    return;
+    return false;
   }
 
   apiKeys.error = '';
@@ -4001,11 +4019,13 @@ export async function updateAPIKeyRoutingPool(keyId, routingPoolId) {
       method: 'PUT',
       body: JSON.stringify({ routingPoolId: poolId > 0 ? poolId : null })
     });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.map((key) => (key.id === keyId ? { ...key, ...response.key } : key));
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to update key routing pool';
+    return false;
   }
 }
 
@@ -4612,36 +4632,40 @@ export async function createKey(event) {
 /** @param {number} id */
 export async function revokeKey(id) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   apiKeys.error = '';
 
   try {
     const payload = await requestJSON(`/api/admin/keys/${id}/revoke`, { method: 'POST' });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.map((key) => (key.id === id ? payload.key : key));
     await loadRequestLogs();
+    return isCurrentAuthenticated(version);
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to revoke API key';
+    return false;
   }
 }
 
 /** @param {number} id */
 export async function deleteRevokedKey(id) {
   const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
+  if (!isCurrentAuthenticated(version)) return false;
 
   apiKeys.error = '';
 
   try {
     await requestJSON(`/api/admin/keys/${id}`, { method: 'DELETE' });
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.items = apiKeys.items.filter((key) => key.id !== id);
     delete selectedAPIKeyIds[String(id)];
+    return true;
   } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
+    if (!isCurrentAuthenticated(version)) return false;
     apiKeys.error = error instanceof Error ? error.message : 'Failed to permanently delete API key';
+    return false;
   }
 }
 

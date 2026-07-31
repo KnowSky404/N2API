@@ -423,15 +423,19 @@
     }
     apiKeyMutationBusy = true;
     try {
-      await bulkUpdateSelectedAPIKeys(patch);
+      const succeeded = await bulkUpdateSelectedAPIKeys(patch);
       const bulkError = apiKeys.error;
       for (const id of selectedIds) {
         if (apiKeys.items.some((key) => key.id === id && !key.revokedAt)) {
           selectedAPIKeyIds[String(id)] = true;
         }
       }
-      if (bulkError) apiKeys.error = `Bulk save may have partially applied: ${bulkError}`;
-      else showAPIKeySuccess('API keys saved', `${selectedIds.length} selected key${selectedIds.length === 1 ? '' : 's'} updated.`);
+      if (session.authenticated && bulkError) {
+        apiKeys.error = `Bulk save may have partially applied: ${bulkError}`;
+      }
+      if (succeeded && session.authenticated && !apiKeys.error) {
+        showAPIKeySuccess('API keys saved', `${selectedIds.length} selected key${selectedIds.length === 1 ? '' : 's'} updated.`);
+      }
     } finally {
       apiKeyMutationBusy = false;
     }
@@ -512,16 +516,17 @@
     deleteConfirmBusy = true;
     apiKeys.error = '';
     try {
+      let succeeded = false;
       if (target.bulkAction === 'revoke') {
-        await bulkRevokeSelectedAPIKeys();
+        succeeded = await bulkRevokeSelectedAPIKeys();
       } else if (target.bulkAction === 'purge') {
-        await bulkDeleteSelectedRevokedAPIKeys();
+        succeeded = await bulkDeleteSelectedRevokedAPIKeys();
       } else if (target.key?.revokedAt) {
-        await deleteRevokedKey(target.key.id);
+        succeeded = await deleteRevokedKey(target.key.id);
       } else if (target.key) {
-        await revokeKey(target.key.id);
+        succeeded = await revokeKey(target.key.id);
       }
-      if (!apiKeys.error) {
+      if (succeeded && session.authenticated && !apiKeys.error) {
         deleteConfirmKeyPopover = null;
         showAPIKeySuccess(
           permanently ? 'API key permanently deleted' : 'API key deleted',
@@ -575,24 +580,26 @@
     editKeySaving = true;
     apiKeyMutationBusy = true;
     try {
-      await updateAPIKeyName(snap.id, snap.name);
-      if (apiKeys.error) return;
-      await updateAPIKeyModelPolicy(snap.id, snap.modelPolicy, snap.allowedModelsText);
-      if (apiKeys.error) {
-        apiKeys.error = `Name was saved, but model access failed: ${apiKeys.error}`;
+      if (!(await updateAPIKeyName(snap.id, snap.name))) return;
+      if (!(await updateAPIKeyModelPolicy(snap.id, snap.modelPolicy, snap.allowedModelsText))) {
+        if (session.authenticated && apiKeys.error) {
+          apiKeys.error = `Name was saved, but model access failed: ${apiKeys.error}`;
+        }
         return;
       }
-      await updateAPIKeyRoutingPool(snap.id, snap.routingPoolId);
-      if (apiKeys.error) {
-        apiKeys.error = `Earlier sections were saved, but routing pool failed: ${apiKeys.error}`;
+      if (!(await updateAPIKeyRoutingPool(snap.id, snap.routingPoolId))) {
+        if (session.authenticated && apiKeys.error) {
+          apiKeys.error = `Earlier sections were saved, but routing pool failed: ${apiKeys.error}`;
+        }
         return;
       }
-      await updateAPIKeyLimits(snap.id, snap.requestsPerMinute, snap.tokensPerMinute);
-      if (apiKeys.error) {
-        apiKeys.error = `Earlier sections were saved, but limits failed: ${apiKeys.error}`;
+      if (!(await updateAPIKeyLimits(snap.id, snap.requestsPerMinute, snap.tokensPerMinute))) {
+        if (session.authenticated && apiKeys.error) {
+          apiKeys.error = `Earlier sections were saved, but limits failed: ${apiKeys.error}`;
+        }
         return;
       }
-      await updateAPIKeyBudgets(
+      if (!(await updateAPIKeyBudgets(
         snap.id,
         snap.requestBudget24h,
         snap.tokenBudget24h,
@@ -600,11 +607,13 @@
         snap.requestBudget30d,
         snap.tokenBudget30d,
         snap.costBudgetMicrousd30d
-      );
-      if (apiKeys.error) {
-        apiKeys.error = `Earlier sections were saved, but budgets failed: ${apiKeys.error}`;
+      ))) {
+        if (session.authenticated && apiKeys.error) {
+          apiKeys.error = `Earlier sections were saved, but budgets failed: ${apiKeys.error}`;
+        }
         return;
       }
+      if (!session.authenticated) return;
       openEditModal(snap.id);
       showAPIKeySuccess('API key saved', `${snap.name} access, routing, limits, and budgets are current.`);
     } finally {
