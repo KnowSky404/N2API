@@ -25,6 +25,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/provider"
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
+	"github.com/KnowSky404/N2API/backend/internal/updatecheck"
 )
 
 const adminSessionCookieName = "n2api_admin_session"
@@ -41,6 +42,11 @@ const (
 
 type HealthChecker interface {
 	Ping(ctx context.Context) error
+}
+
+type UpdateStatusService interface {
+	Snapshot() updatecheck.Snapshot
+	Refresh(context.Context) (updatecheck.Snapshot, error)
 }
 
 type AdminService interface {
@@ -262,6 +268,7 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	readinessMetrics := readinessMetricsObserverFromOptions(options...)
 	runtimeReadiness := runtimeReadinessSourceFromOptions(options...)
 	gatewaySettingsRuntime := gatewaySettingsRuntimeStatusSourceFromOptions(options...)
+	updateStatusService := updateStatusServiceFromOptions(options...)
 	accountConcurrencySource, _ := gateway.(AccountConcurrencySnapshotProvider)
 	apiKeyConcurrencySource, _ := gateway.(APIKeyConcurrencySnapshotProvider)
 	apiKeyRateSource, _ := gateway.(APIKeyRateSnapshotProvider)
@@ -502,6 +509,31 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		}
 	}
 	registerAlertingAdminRoutes(mux, requireAdmin, alertingAdminService, alertActionTester)
+	mux.HandleFunc("GET /api/admin/update-status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if updateStatusService == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, updateStatusService.Snapshot())
+	}))
+	mux.HandleFunc("POST /api/admin/update-status/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		if updateStatusService == nil {
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+			return
+		}
+		snapshot, err := updateStatusService.Refresh(r.Context())
+		if err != nil {
+			var cooldown *updatecheck.RefreshCooldownError
+			if errors.As(err, &cooldown) {
+				setRetryAfter(w, cooldown.RetryAfter)
+				writeError(w, http.StatusTooManyRequests, "update_check_rate_limited")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal_error")
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot)
+	}))
 
 	mux.HandleFunc("GET /api/admin/me", requireAdmin(func(w http.ResponseWriter, r *http.Request, currentAdmin admin.Admin) {
 		writeJSON(w, http.StatusOK, map[string]string{"username": currentAdmin.Username})
@@ -3261,6 +3293,15 @@ func gatewaySettingsRuntimeStatusSourceFromOptions(options ...any) GatewaySettin
 	for _, option := range options {
 		if source, ok := option.(GatewaySettingsRuntimeStatusSource); ok {
 			return source
+		}
+	}
+	return nil
+}
+
+func updateStatusServiceFromOptions(options ...any) UpdateStatusService {
+	for _, option := range options {
+		if service, ok := option.(UpdateStatusService); ok {
+			return service
 		}
 	}
 	return nil

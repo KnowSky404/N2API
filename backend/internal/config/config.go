@@ -66,6 +66,7 @@ type Config struct {
 	RequestLogExportTimeout                time.Duration
 	SystemEventRetentionDays               int
 	AlertDeliveryEnabled                   bool
+	UpdateCheckEnabled                     bool
 	TrustedProxyCIDRs                      []netip.Prefix
 	AdminLoginThrottleEnabled              bool
 	AdminLoginThrottleFailures             int
@@ -226,6 +227,11 @@ func Load(lookup func(string) string) (Config, error) {
 		return Config{}, err
 	}
 	cfg.AlertDeliveryEnabled = alertDeliveryEnabled
+	updateCheckEnabled, err := parseBool(valueOrDefault(lookup("N2API_UPDATE_CHECK_ENABLED"), "true"), "N2API_UPDATE_CHECK_ENABLED")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.UpdateCheckEnabled = updateCheckEnabled
 	requestLogRetentionRunnerEnabled, err := parseBool(lookup("N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED"), "N2API_REQUEST_LOG_RETENTION_RUNNER_ENABLED")
 	if err != nil {
 		return Config{}, err

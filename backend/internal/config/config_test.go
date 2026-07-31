@@ -176,11 +176,29 @@ func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	if cfg.AdminSessionTTL != 168*time.Hour {
 		t.Fatalf("AdminSessionTTL = %s, want 168h", cfg.AdminSessionTTL)
 	}
+	if !cfg.UpdateCheckEnabled {
+		t.Fatal("UpdateCheckEnabled = false, want default true")
+	}
 	if cfg.EncryptionKeyID != secret.DefaultEncryptionKeyID {
 		t.Fatalf("EncryptionKeyID = %q, want %q", cfg.EncryptionKeyID, secret.DefaultEncryptionKeyID)
 	}
 	if cfg.EncryptionKeyring == nil || cfg.EncryptionKeyring.PreviousKeyCount() != 0 {
 		t.Fatal("default encryption keyring was not initialized without previous keys")
+	}
+}
+
+func TestLoadParsesUpdateCheckEnabled(t *testing.T) {
+	cfg, err := Load(strictConfigLookup(map[string]string{"N2API_UPDATE_CHECK_ENABLED": "false"}))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.UpdateCheckEnabled {
+		t.Fatal("UpdateCheckEnabled = true, want false")
+	}
+
+	_, err = Load(strictConfigLookup(map[string]string{"N2API_UPDATE_CHECK_ENABLED": "sometimes"}))
+	if err == nil || !strings.Contains(err.Error(), "N2API_UPDATE_CHECK_ENABLED must be a boolean") {
+		t.Fatalf("Load error = %v, want update check boolean validation error", err)
 	}
 }
 

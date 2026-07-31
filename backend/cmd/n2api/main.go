@@ -23,6 +23,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/store"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
+	"github.com/KnowSky404/N2API/backend/internal/updatecheck"
 )
 
 type gatewayAccountProvider struct {
@@ -207,6 +208,9 @@ func runServer() int {
 		slog.Error("invalid configuration", "error", err)
 		return 1
 	}
+	updateChecker := updatecheck.NewService(updatecheck.Config{
+		Enabled: cfg.UpdateCheckEnabled, Build: build, Logger: slog.Default(),
+	})
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -544,7 +548,7 @@ func runServer() int {
 
 	server := newHTTPServer(
 		cfg,
-		requestTracker.Wrap(httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, apiKeyBudgetMaintenance, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry, runtimeReadiness, gatewaySettingsRuntime)),
+		requestTracker.Wrap(httpapi.NewServer(cfg, pool, adminService, providerService, gatewayProxy, autoTestRunner, requestLogRetentionRunner, responseAffinityRetentionRunner, requestLogWriteMonitor, apiKeyBudgetMaintenance, updateChecker, os.DirFS("frontend/build"), systemEventRepo, build, alertDispatcher, alertingService, alertActionTester, metricsRegistry, runtimeReadiness, gatewaySettingsRuntime)),
 		requestRootCtx,
 	)
 	var metricsServer *http.Server
@@ -645,6 +649,9 @@ func runServer() int {
 	}
 	if backgroundStartErr == nil {
 		backgroundStartErr = startBackground("routing_exhaustion_projector", routingExhaustionProjector.Run)
+	}
+	if backgroundStartErr == nil && cfg.UpdateCheckEnabled {
+		backgroundStartErr = startBackground("update_check", updateChecker.Run)
 	}
 	if backgroundStartErr == nil && metricsRegistry != nil {
 		backgroundStartErr = startBackground("provider_account_metrics", func(ctx context.Context) {
