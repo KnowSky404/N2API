@@ -4,6 +4,7 @@ import { preloadFileExistence, preloadTextFiles } from '../test/files.js';
 
 const expectedFiles = [
   'src/lib/AuthGate.svelte',
+  'src/lib/ReleaseUpdate.svelte',
   'src/lib/admin-state.svelte.js',
   'src/routes/+layout.svelte',
   'src/routes/+page.svelte',
@@ -22,6 +23,7 @@ const expectedFiles = [
 
 const readText = await preloadTextFiles([
   ...expectedFiles,
+  'src/lib/release-notes.js',
   'src/app.css',
   'src/app.html',
   'svelte.config.js',
@@ -49,6 +51,8 @@ const dashboardPage = readText('src/routes/+page.svelte');
 const opsPage = readText('src/routes/ops/+page.svelte');
 const adminState = readText('src/lib/admin-state.svelte.js');
 const authGate = readText('src/lib/AuthGate.svelte');
+const releaseUpdate = readText('src/lib/ReleaseUpdate.svelte');
+const releaseNotes = readText('src/lib/release-notes.js');
 const uiStyles = readText('src/app.css');
 const appHtml = readText('src/app.html');
 const svelteConfig = readText('svelte.config.js');
@@ -131,6 +135,22 @@ test('account menu exposes responsive active session controls with explicit dest
   assert.match(adminState, /\/api\/admin\/sessions\/revoke-others/);
   assert.match(adminState, /adminSessions\.items = adminSessions\.items\.filter\(\(item\) => item\.current\)/);
   assert.match(adminState, /response\.status === 401 && path !== '\/api\/admin\/login'/);
+});
+
+test('release updates are reachable, dismissible per version, and render sanitized notes', () => {
+  assert.equal((layoutPage.match(/onclick=\{openUpdateModal\}/g) ?? []).length, 4, 'desktop and mobile surfaces should open the same release dialog');
+  assert.equal((layoutPage.match(/Release updates/g) ?? []).length, 2, 'both account menus should expose release status');
+  assert.match(layoutPage, /<ReleaseUpdate modalOpen=\{updateModalOpen\}/);
+  assert.match(releaseUpdate, /updateStatus\.status === 'update_available'/);
+  assert.match(releaseUpdate, /isReleaseDismissed/);
+  assert.match(releaseUpdate, /dismissRelease/);
+  assert.match(releaseUpdate, /\{@html renderedNotes\}/);
+  assert.match(releaseUpdate, /rel="noopener noreferrer"/);
+  assert.match(releaseNotes, /renderer:\s*\{[\s\S]*?html\(\)\s*\{[\s\S]*?return '';/);
+  assert.match(releaseNotes, /DOMPurify\.sanitize/);
+  assert.match(releaseNotes, /ALLOWED_TAGS:\s*allowedTags/);
+  assert.match(releaseNotes, /ALLOWED_ATTR:\s*\['href', 'title'\]/);
+  assert.match(releaseNotes, /target\.protocol !== 'https:'/);
 });
 
 test('shared page content expands on wide and HiDPI displays without changing the 1080p cap', () => {

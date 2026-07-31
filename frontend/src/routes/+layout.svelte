@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import '../app.css';
+  import ReleaseUpdate from '$lib/ReleaseUpdate.svelte';
   import {
     adminSessions,
     health,
@@ -15,7 +16,8 @@
     logout,
     revokeAdminSession,
     revokeOtherAdminSessions,
-    session
+    session,
+    updateStatus
   } from '$lib/admin-state.svelte.js';
   import {
     LayoutDashboard,
@@ -38,6 +40,7 @@
     LoaderCircle,
     Menu,
     MonitorSmartphone,
+    CircleArrowUp,
     X
   } from 'lucide-svelte';
 
@@ -74,6 +77,7 @@
   let revokeSessionConfirm = $state(/** @type {{ session: import('$lib/admin-state.svelte.js').AdminSession, top: number, left: number, width: number } | null} */ (null));
   let sessionNotice = $state(/** @type {string | null} */ (null));
   let mobileSidebarOpen = $state(false);
+  let updateModalOpen = $state(false);
   let passwordInputEl = $state(/** @type {HTMLInputElement | null} */ (null));
   let sessionsCloseButtonEl = $state(/** @type {HTMLButtonElement | null} */ (null));
   let sessionsTriggerEl = $state(/** @type {HTMLButtonElement | null} */ (null));
@@ -93,6 +97,16 @@
 
   function closeUserDropdown() {
     userDropdownOpen = false;
+  }
+
+  function openUpdateModal() {
+    userDropdownOpen = false;
+    mobileSidebarOpen = false;
+    updateModalOpen = true;
+  }
+
+  function closeUpdateModal() {
+    updateModalOpen = false;
   }
 
   /** @param {MouseEvent} event */
@@ -201,6 +215,10 @@
   /** @param {KeyboardEvent} e */
   function handleGlobalKeydown(e) {
     if (e.key !== 'Escape') return;
+    if (updateModalOpen) {
+      closeUpdateModal();
+      return;
+    }
     if (revokeSessionConfirm && !sessionsMutationBusy) {
       revokeSessionConfirm = null;
       return;
@@ -248,6 +266,7 @@
     revokeOthersConfirm = false;
     revokeSessionConfirm = null;
     mobileSidebarOpen = false;
+    updateModalOpen = false;
   });
 
   onMount(() => {
@@ -339,36 +358,56 @@
       </div>
 
       <!-- User area -->
-      <div class="mt-auto border-t border-[#ededed] p-2" class:px-1.5={sidebarCollapsed}>
-        {#if session.authenticated}
-          <button
-            class={[
-              'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-[#f0f0f0]',
-              sidebarCollapsed ? 'justify-center px-0' : ''
-            ]}
-            onclick={toggleUserDropdown}
-            aria-haspopup="menu"
-            aria-expanded={userDropdownOpen}
-          >
-            <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#e8e8e8]">
-              <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
-            </div>
-            {#if !sidebarCollapsed}
-              <span class="truncate text-sm font-medium text-[#3c3c3c]">{session.username || 'admin'}</span>
-              <span class="ml-auto transition-transform" class:rotate-180={userDropdownOpen}>
-                <ChevronDown class="h-3.5 w-3.5 text-[#8e8e8e]" />
-              </span>
-            {/if}
-          </button>
-        {:else}
-          <div class={sidebarCollapsed ? 'flex justify-center' : 'px-2'}>
-            {#if sidebarCollapsed}
-              <CircleUser class="h-4 w-4 text-[#8e8e8e]" />
-            {:else}
-              <p class="text-sm text-[#8e8e8e]">Sign in required</p>
-            {/if}
+      <div class="mt-auto">
+        {#if session.authenticated && updateStatus.status === 'update_available' && updateStatus.latest}
+          <div class="px-2 pb-1" class:px-1.5={sidebarCollapsed}>
+            <button
+              class={[
+                'ui-button ui-button--md flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm text-[#0a7a5e] hover:bg-[#e8f5f0]',
+                sidebarCollapsed ? 'justify-center px-0' : ''
+              ]}
+              type="button"
+              onclick={openUpdateModal}
+              title={sidebarCollapsed ? `Update ${updateStatus.latest.version}` : undefined}
+              aria-label={`Open release update ${updateStatus.latest.version}`}
+            >
+              <CircleArrowUp class="size-4 shrink-0" aria-hidden="true" />
+              {#if !sidebarCollapsed}<span class="truncate">Update {updateStatus.latest.version}</span>{/if}
+            </button>
           </div>
         {/if}
+
+        <div class="border-t border-[#ededed] p-2" class:px-1.5={sidebarCollapsed}>
+          {#if session.authenticated}
+            <button
+              class={[
+                'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-[#f0f0f0]',
+                sidebarCollapsed ? 'justify-center px-0' : ''
+              ]}
+              onclick={toggleUserDropdown}
+              aria-haspopup="menu"
+              aria-expanded={userDropdownOpen}
+            >
+              <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#e8e8e8]">
+                <CircleUser class="h-4 w-4 text-[#6e6e6e]" />
+              </div>
+              {#if !sidebarCollapsed}
+                <span class="truncate text-sm font-medium text-[#3c3c3c]">{session.username || 'admin'}</span>
+                <span class="ml-auto transition-transform" class:rotate-180={userDropdownOpen}>
+                  <ChevronDown class="h-3.5 w-3.5 text-[#8e8e8e]" />
+                </span>
+              {/if}
+            </button>
+          {:else}
+            <div class={sidebarCollapsed ? 'flex justify-center' : 'px-2'}>
+              {#if sidebarCollapsed}
+                <CircleUser class="h-4 w-4 text-[#8e8e8e]" />
+              {:else}
+                <p class="text-sm text-[#8e8e8e]">Sign in required</p>
+              {/if}
+            </div>
+          {/if}
+        </div>
       </div>
     </aside>
 
@@ -396,6 +435,11 @@
         </div>
         <div class="flex shrink-0 items-center gap-2">
           {#if session.authenticated}
+            {#if updateStatus.status === 'update_available' && updateStatus.latest}
+              <button class="ui-button ui-button--icon text-[#0a7a5e]" type="button" onclick={openUpdateModal} title={`Update ${updateStatus.latest.version}`} aria-label={`Open release update ${updateStatus.latest.version}`}>
+                <CircleArrowUp class="size-4" aria-hidden="true" />
+              </button>
+            {/if}
             <button
               class="ui-button ui-button--md flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-[#3c3c3c] hover:bg-[#f5f5f5]"
               onclick={toggleUserDropdown}
@@ -472,6 +516,13 @@
               </div>
               <button
                 class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
+                onclick={openUpdateModal}
+              >
+                <CircleArrowUp class="h-4 w-4 text-[#8e8e8e]" />
+                Release updates
+              </button>
+              <button
+                class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[#3c3c3c] hover:bg-[#f0f0f0]"
                 onclick={openSessionsModal}
               >
                 <MonitorSmartphone class="h-4 w-4 text-[#8e8e8e]" />
@@ -500,6 +551,7 @@
 
       <!-- Page content container -->
       <div class="ui-content-shell mx-auto flex w-full flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
+        <ReleaseUpdate modalOpen={updateModalOpen} onopen={openUpdateModal} onclose={closeUpdateModal} />
         {@render children()}
       </div>
     </section>
@@ -530,6 +582,14 @@
       <p class="text-sm font-medium text-[#0d0d0d]">{session.username || 'admin'}</p>
       <p class="text-xs text-[#8e8e8e]">Signed in</p>
     </div>
+    <button
+      class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
+      onclick={openUpdateModal}
+      role="menuitem"
+    >
+      <CircleArrowUp class="h-4 w-4 text-[#6e6e6e]" />
+      Release updates
+    </button>
     <button
       class="ui-button ui-button--md ui-button--start flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[#3c3c3c] hover:bg-[#f5f5f5]"
       onclick={openSessionsModal}

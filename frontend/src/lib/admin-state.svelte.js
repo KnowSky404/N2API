@@ -512,6 +512,31 @@ export const health = $state({
   tasks: /** @type {{ alertDelivery?: AlertDeliveryStatus } | null} */ (null)
 });
 
+/**
+ * @typedef {Object} ReleaseUpdate
+ * @property {string} version
+ * @property {string} name
+ * @property {string} publishedAt
+ * @property {string} url
+ * @property {string} targetCommit
+ * @property {string} notes
+ * @property {string} image
+ */
+
+/** @type {{ loading: boolean, refreshing: boolean, error: string, status: string, current: {version: string, commit: string, builtAt: string} | null, latest: ReleaseUpdate | null, checkedAt: string, refreshAllowedAt: string, stale: boolean, errorCode: string }} */
+export const updateStatus = $state({
+  loading: false,
+  refreshing: false,
+  error: '',
+  status: 'unavailable',
+  current: null,
+  latest: null,
+  checkedAt: '',
+  refreshAllowedAt: '',
+  stale: false,
+  errorCode: ''
+});
+
 export const session = $state({ loading: true, authenticated: false, username: '', error: '' });
 let sessionVersion = $state(0);
 let healthRequestVersion = 0;
@@ -1432,6 +1457,7 @@ function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
   replaceState(session, { loading: false, authenticated: false, username: '', error });
   health.build = null;
   health.tasks = null;
+  clearUpdateStatus();
   clearAdminSessions();
   clearProvider();
   clearAPIKeys();
@@ -1459,6 +1485,21 @@ function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
   replaceState(fingerprintProfiles, { loading: false, error: '', items: [], saving: false });
   replaceState(errorPassthroughRules, { loading: false, error: '', items: [], saving: false });
   loginForm.password = '';
+}
+
+function clearUpdateStatus() {
+  replaceState(updateStatus, {
+    loading: false,
+    refreshing: false,
+    error: '',
+    status: 'unavailable',
+    current: null,
+    latest: null,
+    checkedAt: '',
+    refreshAllowedAt: '',
+    stale: false,
+    errorCode: ''
+  });
 }
 
 function clearModelSettings() {
@@ -1573,6 +1614,63 @@ export async function loadHealth() {
   }
 }
 
+/** @param {any} payload */
+function applyUpdateStatus(payload) {
+  replaceState(updateStatus, {
+    loading: false,
+    refreshing: false,
+    error: '',
+    status: String(payload?.status ?? 'unavailable'),
+    current: payload?.current ?? null,
+    latest: payload?.latest ?? null,
+    checkedAt: String(payload?.checkedAt ?? ''),
+    refreshAllowedAt: String(payload?.refreshAllowedAt ?? ''),
+    stale: Boolean(payload?.stale),
+    errorCode: String(payload?.errorCode ?? '')
+  });
+}
+
+export async function loadUpdateStatus() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) {
+    clearUpdateStatus();
+    return false;
+  }
+  updateStatus.loading = true;
+  updateStatus.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/update-status');
+    if (!isCurrentAuthenticated(version)) return false;
+    applyUpdateStatus(payload);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    updateStatus.loading = false;
+    updateStatus.error = error instanceof Error ? error.message : 'Failed to load release updates';
+    return false;
+  }
+}
+
+export async function refreshUpdateStatus() {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version) || updateStatus.refreshing) return false;
+  updateStatus.refreshing = true;
+  updateStatus.error = '';
+  try {
+    const payload = await requestJSON('/api/admin/update-status/refresh', { method: 'POST' });
+    if (!isCurrentAuthenticated(version)) return false;
+    applyUpdateStatus(payload);
+    return true;
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    updateStatus.refreshing = false;
+    updateStatus.error = error && typeof error === 'object' && 'status' in error && error.status === 429
+      ? 'A release check just ran. Try again shortly.'
+      : error instanceof Error ? error.message : 'Failed to refresh release updates';
+    return false;
+  }
+}
+
 export async function loadSession() {
   const version = sessionVersion;
   session.loading = true;
@@ -1602,6 +1700,7 @@ export async function loadSession() {
       error: ''
     });
     await loadHealth();
+    await loadUpdateStatus();
     await loadProvider();
     await loadProviderAccounts();
     await loadModelSettings();
