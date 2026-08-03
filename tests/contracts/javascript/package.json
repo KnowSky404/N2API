@@ -8,6 +8,6 @@
     "test": "bun test openai.test.ts"
   },
   "dependencies": {
-    "openai": "6.48.0"
+    "openai": "7.2.0"
   }
 }
