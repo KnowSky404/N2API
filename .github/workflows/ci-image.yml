@@ -760,7 +760,7 @@ jobs:
           echo "LOCAL_CONFIG_DIGEST=$actual_config_digest" >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -840,7 +840,7 @@ jobs:
           echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -943,7 +943,7 @@ jobs:
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
       - name: Attest pushed image
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-name: ${{ steps.publish.outputs.image }}
           subject-digest: ${{ steps.publish.outputs.digest }}
@@ -991,7 +991,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -1022,7 +1022,7 @@ jobs:
           ' "$SBOM_FILE" >/dev/null
 
       - name: Attest platform SPDX SBOM
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-name: ${{ needs.manifest.outputs.image }}
           subject-digest: ${{ needs.manifest.outputs.digest }}
