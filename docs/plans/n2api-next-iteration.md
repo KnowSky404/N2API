@@ -61,9 +61,9 @@ Confirmed capabilities and issues:
 | B | OAuth Responses non-stream aggregation and SSE terminal handling | complete | baseline |
 | C | Model-catalog cache lifecycle, forced refresh, freshness, and invalidation | complete | baseline |
 | D | Bounded request-attempt and stream diagnostics | complete | A, B |
-| E | Same-package gateway/provider/frontend responsibility splits | pending | A-D behavior tests |
-| F | Dependency inventory, SDK contract matrix, consistency checks, and docs | pending | baseline, A-D |
-| G | Full regression, browser verification, migrations, and local Compose refresh | pending | A-F |
+| E | Same-package gateway/provider/frontend responsibility splits | complete | A-D behavior tests |
+| F | Dependency inventory, SDK contract matrix, consistency checks, and docs | complete | baseline, A-D |
+| G | Full regression, browser verification, migrations, and local Compose refresh | complete | A-F |
 
 ## Acceptance criteria
 
@@ -173,9 +173,21 @@ Confirmed capabilities and issues:
 | 2026-09-14 | B complete | `4c907c4` (`feat: support OAuth Responses non-streaming clients`); bounded SSE parser, terminal-event validation, complete Response aggregation, raw streaming terminal tracking, and cancellation/truncation/error coverage passed targeted and race tests. |
 | 2026-09-14 | C complete | `71f754d` (`feat: add forced OAuth catalog refresh`); forced refresh endpoint/UI, account-generation invalidation, bounded/coalesced catalog fetches, freshness status, stale-response protection, failure retention, and duplicate/cancellation coverage passed targeted backend/frontend checks. |
 | 2026-09-14 | D complete | `529355a` (`feat: add bounded request diagnostics`); bounded/redacted attempt timelines, fallback/auth/transport classifications, request-relative response phases, HTTP-200 model/missing-generation diagnostics, PostgreSQL migration/round-trip/export coverage, and request-log detail UI. `make test`, `make test-go-quality`, and `make test-critical-race` passed; `51742ab` extends the existing process-lifecycle race-test context budget exposed by the full race run. |
+| 2026-09-14 | E complete | `2bc7fa6` and `9f60ac4` split gateway/provider/frontend responsibilities into focused same-package/domain files after behavior coverage; managed unit tests and static checks passed with no schema or default changes. |
+| 2026-09-14 | F complete | `d64fabe` adds the dependency/toolchain contract matrix and pinned consistency checks; `1cc6abd` expands the local mock contract fixtures. `bash -n dev/ci/verify-pinned-dependencies.sh && bash dev/ci/verify-pinned-dependencies.sh` passed, and `DOCKER_CONFIG=/tmp/n2api-docker-config make test-contracts` passed official OpenAI JavaScript 1/1 and Python 1/1 fixtures. |
+| 2026-09-14 | G complete | `make test`, `make test-go-quality`, `make test-critical-race`, `DOCKER_CONFIG=/tmp/n2api-docker-config make test-e2e`, `make test-request-log-profile`, `make test-control-connections`, and `make test-postgres-faults` passed. Bunx Playwright `1.61.1` fallback passed the mobile unauthenticated-shell check. Local Compose was rebuilt with no cache, force recreated, `/livez` and `/readyz` returned 200, all services were healthy, and `deploy_n2api-postgres` was preserved. |
 
 ## Blockers, skips, and follow-ups
 
-- None confirmed yet. Any unavailable external service, missing browser, skipped
-  integration database, or failed candidate upgrade will be recorded here with
-  the exact command and a local/mock fallback.
+- Browser tooling was unavailable in this session; the required Bunx Playwright
+  fallback passed with `PLAYWRIGHT_BROWSERS_PATH=/tmp/n2api-playwright-browsers`.
+  The first default Bun temp path returned `EROFS`; task-scoped Bun install/cache
+  paths under `/tmp` were used for the successful rerun. Browser evidence is
+  local and unauthenticated.
+- The host has no Docker Buildx plugin and its default Docker config is
+  read-only. Compose verification used the writable task-scoped
+  `DOCKER_CONFIG=/tmp/n2api-docker-config`; this is an environment workaround,
+  not a repository change.
+- Restore-fixture tests remain intentionally skipped unless their explicit
+  isolated-database environment variables are enabled. No production, real
+  provider, OAuth, email, push, or GitHub evidence was claimed.
