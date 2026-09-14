@@ -277,10 +277,13 @@ type fakeProviderService struct {
 	disconnectedAccountID  int64
 	disconnectedAccountIDs []int64
 
-	syncModelsResult   []provider.AccountModel
-	syncModelsSummary  provider.AccountModelSyncSummary
-	syncModelsErr      error
-	oauthSyncAccountID int64
+	syncModelsResult      []provider.AccountModel
+	syncModelsSummary     provider.AccountModelSyncSummary
+	syncModelsErr         error
+	oauthSyncAccountID    int64
+	oauthRefreshAccountID int64
+	catalogStatus         provider.OAuthModelCatalogStatus
+	catalogStatusErr      error
 }
 type fakeGatewayHandler struct {
 	called             bool
@@ -1214,6 +1217,21 @@ func (s *fakeProviderService) SyncOAuthAccountModels(_ context.Context, accountI
 		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
 	}
 	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
+}
+
+func (s *fakeProviderService) RefreshOAuthAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
+	s.oauthRefreshAccountID = accountID
+	if s.syncModelsErr != nil {
+		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
+	}
+	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
+}
+
+func (s *fakeProviderService) OAuthModelCatalogStatus(_ context.Context, _ int64) (provider.OAuthModelCatalogStatus, error) {
+	if s.catalogStatusErr != nil {
+		return provider.OAuthModelCatalogStatus{}, s.catalogStatusErr
+	}
+	return s.catalogStatus, nil
 }
 
 func TestLivezReturnsOK(t *testing.T) {
@@ -4995,6 +5013,86 @@ func TestSyncProviderAccountModelsReturnsModelsAndSummary(t *testing.T) {
 	}
 	if body.Synced.New != 1 {
 		t.Fatalf("synced.new = %d, want 1", body.Synced.New)
+	}
+}
+
+func TestRefreshOAuthProviderAccountModelsReturnsCatalogStatus(t *testing.T) {
+	providers := newFakeProviderService()
+	now := time.Now().UTC()
+	cacheHit := false
+	providers.syncModelsResult = []provider.AccountModel{
+		{ID: 1, AccountID: 7, Provider: "openai", Model: "gpt-5.6-sol", Enabled: true, Source: provider.AccountModelSourceOAuthCatalog},
+	}
+	providers.syncModelsSummary = provider.AccountModelSyncSummary{Total: 1, New: 1}
+	providers.catalogStatus = provider.OAuthModelCatalogStatus{
+		LastAttemptAt: &now,
+		LastSuccessAt: &now,
+		Source:        "upstream",
+		CacheHit:      &cacheHit,
+	}
+
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/models/refresh", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.oauthRefreshAccountID != 7 {
+		t.Fatalf("refresh account ID = %d, want 7", providers.oauthRefreshAccountID)
+	}
+	var body struct {
+		Models  []provider.AccountModel          `json:"models"`
+		Synced  provider.AccountModelSyncSummary `json:"synced"`
+		Catalog provider.OAuthModelCatalogStatus `json:"catalog"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Models) != 1 || body.Models[0].Model != "gpt-5.6-sol" || body.Synced.New != 1 {
+		t.Fatalf("body = %+v, want refreshed model and summary", body)
+	}
+	if body.Catalog.Source != "upstream" || body.Catalog.CacheHit == nil || *body.Catalog.CacheHit {
+		t.Fatalf("catalog = %+v, want upstream cache miss status", body.Catalog)
+	}
+}
+
+func TestRefreshOAuthProviderAccountModelsMapsErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+		code string
+	}{
+		{name: "invalid input", err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
+		{name: "not found", err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
+		{name: "busy", err: provider.ErrOAuthModelCatalogBusy, want: http.StatusTooManyRequests, code: "catalog_refresh_busy"},
+		{name: "superseded", err: provider.ErrOAuthModelCatalogStale, want: http.StatusConflict, code: "catalog_refresh_superseded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providers := newFakeProviderService()
+			providers.syncModelsErr = tc.err
+			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/models/refresh", nil)
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+
+			server.ServeHTTP(recorder, req)
+
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tc.want)
+			}
+			var body map[string]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if body["error"] != tc.code {
+				t.Fatalf("error = %q, want %q", body["error"], tc.code)
+			}
+		})
 	}
 }
 

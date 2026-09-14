@@ -122,6 +122,8 @@ type ProviderService interface {
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
 	SyncOAuthAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
+	RefreshOAuthAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
+	OAuthModelCatalogStatus(ctx context.Context, accountID int64) (provider.OAuthModelCatalogStatus, error)
 	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
@@ -1741,6 +1743,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleSyncProviderAccountModels(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/models/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleRefreshProviderAccountModels(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/model-tests", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleTestProviderAccountModel(w, r, providers)
 	}))
@@ -1928,6 +1934,12 @@ func providerAccountErrorResponse(err error) (int, string) {
 	}
 	if errors.Is(err, provider.ErrNotConnected) || errors.Is(err, admin.ErrNotFound) {
 		return http.StatusNotFound, "not_found"
+	}
+	if errors.Is(err, provider.ErrOAuthModelCatalogBusy) {
+		return http.StatusTooManyRequests, "catalog_refresh_busy"
+	}
+	if errors.Is(err, provider.ErrOAuthModelCatalogStale) {
+		return http.StatusConflict, "catalog_refresh_superseded"
 	}
 	return http.StatusInternalServerError, "internal_error"
 }
@@ -2732,7 +2744,11 @@ func handleListProviderAccountModels(w http.ResponseWriter, r *http.Request, pro
 		writeProviderAccountError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]provider.AccountModel{"models": models})
+	response := map[string]any{"models": models}
+	if status, statusErr := providers.OAuthModelCatalogStatus(r.Context(), id); statusErr == nil {
+		response["catalog"] = status
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func handleReplaceProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
@@ -2779,6 +2795,29 @@ func handleSyncProviderAccountModels(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": models, "synced": summary})
+}
+
+func handleRefreshProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	models, summary, err := providers.RefreshOAuthAccountModels(r.Context(), id)
+	if err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	response := map[string]any{"models": models, "synced": summary}
+	if status, statusErr := providers.OAuthModelCatalogStatus(r.Context(), id); statusErr == nil {
+		response["catalog"] = status
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func handleTestProviderAccountModel(w http.ResponseWriter, r *http.Request, providers ProviderService) {
