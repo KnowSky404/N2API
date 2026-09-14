@@ -125,6 +125,8 @@ type ProviderService interface {
 	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
+	PreviewAccountSelectionForEndpoint(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
+	PreviewAccountSelectionInRoutingPoolForEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccounts(ctx context.Context) ([]provider.Account, error)
@@ -2055,11 +2057,16 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, admins Ad
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
+	endpoint, err := provider.NormalizeEndpoint(r.URL.Query().Get("endpoint"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
 	var preview provider.SelectionPreview
 	if routingPoolID > 0 {
-		preview, err = providers.PreviewAccountSelectionInRoutingPool(r.Context(), routingPoolID, model, r.URL.Query().Get("sessionId"), excludedIDs...)
+		preview, err = providers.PreviewAccountSelectionInRoutingPoolForEndpoint(r.Context(), routingPoolID, model, endpoint, r.URL.Query().Get("sessionId"), excludedIDs...)
 	} else {
-		preview, err = providers.PreviewAccountSelection(r.Context(), model, r.URL.Query().Get("sessionId"), excludedIDs...)
+		preview, err = providers.PreviewAccountSelectionForEndpoint(r.Context(), model, endpoint, r.URL.Query().Get("sessionId"), excludedIDs...)
 	}
 	if err != nil {
 		if errors.Is(err, provider.ErrInvalidInput) {
@@ -2070,7 +2077,7 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, admins Ad
 			writeError(w, http.StatusConflict, "provider_not_configured")
 			return
 		}
-		if errors.Is(err, provider.ErrModelUnavailable) || errors.Is(err, provider.ErrAccountsUnavailable) || errors.Is(err, provider.ErrAccountsDisabled) || errors.Is(err, provider.ErrNotConnected) {
+		if errors.Is(err, provider.ErrModelUnavailable) || errors.Is(err, provider.ErrEndpointUnavailable) || errors.Is(err, provider.ErrAccountsUnavailable) || errors.Is(err, provider.ErrAccountsDisabled) || errors.Is(err, provider.ErrNotConnected) {
 			writeError(w, http.StatusNotFound, "not_found")
 			return
 		}

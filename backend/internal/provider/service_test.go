@@ -5289,7 +5289,7 @@ func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName stri
 			Model:     input.Model,
 			Enabled:   input.Enabled,
 			Source:    AccountModelSourceManual,
-			Metadata:  map[string]string{},
+			Metadata:  cloneStringMap(input.Metadata),
 			CreatedAt: now,
 			UpdatedAt: now,
 		})
@@ -5362,7 +5362,7 @@ func (r *memoryRepo) syncAccountModels(ctx context.Context, providerName string,
 			Enabled:    enabled,
 			Source:     source,
 			LastSeenAt: &seenAtUTC,
-			Metadata:   map[string]string{},
+			Metadata:   cloneStringMap(input.Metadata),
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		})

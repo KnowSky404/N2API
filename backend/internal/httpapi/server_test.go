@@ -242,6 +242,7 @@ type fakeProviderService struct {
 	testedModel            string
 	selectionPreview       provider.SelectionPreview
 	previewModel           string
+	previewEndpoint        string
 	previewSessionID       string
 	previewExcludedIDs     []int64
 	previewRoutingPoolID   int64
@@ -995,7 +996,12 @@ func (s *fakeProviderService) ReplaceAccountModels(_ context.Context, accountID 
 }
 
 func (s *fakeProviderService) PreviewAccountSelection(_ context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
+	return s.PreviewAccountSelectionForEndpoint(context.Background(), model, "", sessionID, excludedAccountIDs...)
+}
+
+func (s *fakeProviderService) PreviewAccountSelectionForEndpoint(_ context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
 	s.previewModel = model
+	s.previewEndpoint = endpoint
 	s.previewSessionID = sessionID
 	s.previewExcludedIDs = append([]int64(nil), excludedAccountIDs...)
 	if s.selectionPreview.Model == "" {
@@ -1005,8 +1011,13 @@ func (s *fakeProviderService) PreviewAccountSelection(_ context.Context, model, 
 }
 
 func (s *fakeProviderService) PreviewAccountSelectionInRoutingPool(_ context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
+	return s.PreviewAccountSelectionInRoutingPoolForEndpoint(context.Background(), routingPoolID, model, "", sessionID, excludedAccountIDs...)
+}
+
+func (s *fakeProviderService) PreviewAccountSelectionInRoutingPoolForEndpoint(_ context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error) {
 	s.previewRoutingPoolID = routingPoolID
 	s.previewModel = model
+	s.previewEndpoint = endpoint
 	s.previewSessionID = sessionID
 	s.previewExcludedIDs = append([]int64(nil), excludedAccountIDs...)
 	if s.selectionPreview.Model == "" {
@@ -6794,6 +6805,53 @@ func TestModelRoutingPreviewSupportsRoutingPoolScope(t *testing.T) {
 	}
 	if body.RoutingPoolID != 2 || body.RoutingPoolName != "secondary" || body.RoutingPoolFallbackDepth != 1 || body.RoutingPoolFallbackChain != "primary -> secondary" {
 		t.Fatalf("routing pool metadata = %+v, want fallback pool metadata", body)
+	}
+}
+
+func TestModelRoutingPreviewPassesEndpointCapabilityScope(t *testing.T) {
+	admins := newFakeAdminService()
+	providers := newFakeProviderService()
+	providers.selectionPreview = provider.SelectionPreview{
+		Model:                    "gpt-5",
+		Endpoint:                 provider.EndpointResponses,
+		SelectedAccountID:        8,
+		RoutingPoolFallbackChain: "primary -> secondary",
+		Candidates: []provider.SelectionCandidate{
+			{ID: 8, DisplayName: "Responses account", EndpointCapability: provider.EndpointCapabilitySupported, Selected: true, Schedulable: true},
+		},
+	}
+	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?model=gpt-5&endpoint=%2Fv1%2Fresponses", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+	}
+	if providers.previewEndpoint != provider.EndpointResponses {
+		t.Fatalf("preview endpoint = %q, want %q", providers.previewEndpoint, provider.EndpointResponses)
+	}
+	var body provider.SelectionPreview
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Endpoint != provider.EndpointResponses || body.Candidates[0].EndpointCapability != provider.EndpointCapabilitySupported {
+		t.Fatalf("preview endpoint metadata = %+v, want responses/supported", body)
+	}
+}
+
+func TestModelRoutingPreviewRejectsUnknownEndpoint(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/model-routing/preview?model=gpt-5&endpoint=audio", nil)
+	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+	recorder := httptest.NewRecorder()
+
+	server.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "invalid_input") {
+		t.Fatalf("status = %d body=%q, want 400 invalid_input", recorder.Code, recorder.Body.String())
 	}
 }
 

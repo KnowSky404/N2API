@@ -221,6 +221,7 @@ var (
 	ErrRoutingPoolEmpty       = errors.New("routing pool empty")
 	ErrRoutingPoolCycle       = errors.New("routing pool fallback cycle")
 	ErrRoutingPoolExhausted   = errors.New("routing pool fallback chain exhausted")
+	ErrEndpointUnavailable    = errors.New("provider endpoint unavailable")
 )
 
 type Config struct {
@@ -429,8 +430,9 @@ type AccountModel struct {
 }
 
 type AccountModelInput struct {
-	Model   string `json:"model"`
-	Enabled bool   `json:"enabled"`
+	Model    string            `json:"model"`
+	Enabled  bool              `json:"enabled"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type AccountModelTestResult struct {
@@ -507,6 +509,7 @@ type SelectedAccount struct {
 
 type SelectionPreview struct {
 	Model                    string `json:"model"`
+	Endpoint                 string `json:"endpoint,omitempty"`
 	SessionID                string `json:"sessionId"`
 	SelectedAccountID        int64  `json:"selectedAccountId"`
 	StickyBoundAccountID     int64  `json:"stickyBoundAccountId,omitempty"`
@@ -538,6 +541,7 @@ type SelectionCandidate struct {
 	StickyBound         bool       `json:"stickyBound"`
 	Schedulable         bool       `json:"schedulable"`
 	UnschedulableReason string     `json:"unschedulableReason"`
+	EndpointCapability  string     `json:"endpointCapability,omitempty"`
 }
 
 type TokenResponse struct {
@@ -612,6 +616,15 @@ type Repository interface {
 	UpsertSessionBindingInRoutingPool(ctx context.Context, provider string, routingPoolID int64, model string, sessionID string, accountID int64) error
 	CreateState(ctx context.Context, state OAuthState) error
 	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
+}
+
+// EndpointAwareRepository is optional so older repository fakes and external
+// integrations retain the legacy model-only contract. Implementations that
+// provide it can exclude explicitly unsupported endpoint/model combinations;
+// missing capability metadata must remain eligible.
+type EndpointAwareRepository interface {
+	ListEligibleAccountsForModelAndEndpoint(ctx context.Context, provider, model, endpoint string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
+	ListAccountsForRoutingPoolAndEndpoint(ctx context.Context, provider string, poolID int64, model, endpoint string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 }
 
 type oauthRefreshFailureEventRecorder interface {
@@ -1707,9 +1720,14 @@ func normalizeAccountModelInputs(inputs []AccountModelInput) ([]AccountModelInpu
 			continue
 		}
 		seen[model] = true
+		metadata, err := normalizeAccountModelMetadata(input.Metadata)
+		if err != nil {
+			return nil, err
+		}
 		models = append(models, AccountModelInput{
-			Model:   model,
-			Enabled: input.Enabled,
+			Model:    model,
+			Enabled:  input.Enabled,
+			Metadata: metadata,
 		})
 		if len(models) > maxAccountModels {
 			return nil, ErrInvalidInput
@@ -2718,11 +2736,19 @@ func (s *Service) refreshAccessTokenLocked(ctx context.Context, account Account,
 }
 
 func (s *Service) SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	return s.SelectAccountForModelAndEndpoint(ctx, model, "", excludedAccountIDs...)
+}
+
+func (s *Service) SelectAccountForModelAndEndpoint(ctx context.Context, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
 	if !s.Configured() {
 		return SelectedAccount{}, ErrNotConfigured
 	}
 
-	accounts, hasEnabled, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForEndpoint(ctx, model, endpoint, excludedAccountIDs)
 	if err != nil {
 		return SelectedAccount{}, err
 	}
@@ -2730,16 +2756,24 @@ func (s *Service) SelectAccountForModel(ctx context.Context, model string, exclu
 }
 
 func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	return s.SelectAccountForModelAndSessionAndEndpoint(ctx, model, "", sessionID, excludedAccountIDs...)
+}
+
+func (s *Service) SelectAccountForModelAndSessionAndEndpoint(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
 	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+		return s.SelectAccountForModelAndEndpoint(ctx, model, endpoint, excludedAccountIDs...)
 	}
 	if !s.Configured() {
 		return SelectedAccount{}, ErrNotConfigured
 	}
 
-	accounts, hasEnabled, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForEndpoint(ctx, model, endpoint, excludedAccountIDs)
 	if err != nil {
 		return SelectedAccount{}, err
 	}
@@ -2758,13 +2792,21 @@ func (s *Service) SelectAccountForModelAndSession(ctx context.Context, model, se
 }
 
 func (s *Service) SelectAccountForModelInRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	return s.SelectAccountForModelInRoutingPoolAndEndpoint(ctx, routingPoolID, model, "", excludedAccountIDs...)
+}
+
+func (s *Service) SelectAccountForModelInRoutingPoolAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
 	if routingPoolID <= 0 {
-		return s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+		return s.SelectAccountForModelAndEndpoint(ctx, model, endpoint, excludedAccountIDs...)
 	}
 	if !s.Configured() {
 		return SelectedAccount{}, ErrNotConfigured
 	}
-	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, routingPoolID, model, excludedAccountIDs)
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPoolForEndpoint(ctx, routingPoolID, model, endpoint, excludedAccountIDs)
 	if err != nil {
 		return SelectedAccount{}, err
 	}
@@ -2772,28 +2814,44 @@ func (s *Service) SelectAccountForModelInRoutingPool(ctx context.Context, routin
 }
 
 func (s *Service) SelectAccountForModelInRoutingPoolChain(ctx context.Context, primaryPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	return s.SelectAccountForModelInRoutingPoolChainAndEndpoint(ctx, primaryPoolID, model, "", excludedAccountIDs...)
+}
+
+func (s *Service) SelectAccountForModelInRoutingPoolChainAndEndpoint(ctx context.Context, primaryPoolID int64, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
 	if primaryPoolID <= 0 {
-		return s.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+		return s.SelectAccountForModelAndEndpoint(ctx, model, endpoint, excludedAccountIDs...)
 	}
 	if !s.Configured() {
 		return SelectedAccount{}, ErrNotConfigured
 	}
-	return s.selectAccountForRoutingPoolChain(ctx, primaryPoolID, model, "", excludedAccountIDs...)
+	return s.selectAccountForRoutingPoolChain(ctx, primaryPoolID, model, "", endpoint, excludedAccountIDs...)
 }
 
 func (s *Service) SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	return s.SelectAccountForModelAndSessionInRoutingPoolAndEndpoint(ctx, routingPoolID, model, "", sessionID, excludedAccountIDs...)
+}
+
+func (s *Service) SelectAccountForModelAndSessionInRoutingPoolAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
 	if routingPoolID <= 0 {
-		return s.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
+		return s.SelectAccountForModelAndSessionAndEndpoint(ctx, model, endpoint, sessionID, excludedAccountIDs...)
 	}
 	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return s.SelectAccountForModelInRoutingPool(ctx, routingPoolID, model, excludedAccountIDs...)
+		return s.SelectAccountForModelInRoutingPoolAndEndpoint(ctx, routingPoolID, model, endpoint, excludedAccountIDs...)
 	}
 	if !s.Configured() {
 		return SelectedAccount{}, ErrNotConfigured
 	}
-	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, routingPoolID, model, excludedAccountIDs)
+	accounts, hasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPoolForEndpoint(ctx, routingPoolID, model, endpoint, excludedAccountIDs)
 	if err != nil {
 		return SelectedAccount{}, err
 	}
@@ -2812,25 +2870,41 @@ func (s *Service) SelectAccountForModelAndSessionInRoutingPool(ctx context.Conte
 }
 
 func (s *Service) SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, primaryPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	return s.SelectAccountForModelAndSessionInRoutingPoolChainAndEndpoint(ctx, primaryPoolID, model, "", sessionID, excludedAccountIDs...)
+}
+
+func (s *Service) SelectAccountForModelAndSessionInRoutingPoolChainAndEndpoint(ctx context.Context, primaryPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
 	if primaryPoolID <= 0 {
-		return s.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
+		return s.SelectAccountForModelAndSessionAndEndpoint(ctx, model, endpoint, sessionID, excludedAccountIDs...)
 	}
 	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return s.SelectAccountForModelInRoutingPoolChain(ctx, primaryPoolID, model, excludedAccountIDs...)
+		return s.SelectAccountForModelInRoutingPoolChainAndEndpoint(ctx, primaryPoolID, model, endpoint, excludedAccountIDs...)
 	}
 	if !s.Configured() {
 		return SelectedAccount{}, ErrNotConfigured
 	}
-	return s.selectAccountForRoutingPoolChain(ctx, primaryPoolID, model, sessionID, excludedAccountIDs...)
+	return s.selectAccountForRoutingPoolChain(ctx, primaryPoolID, model, sessionID, endpoint, excludedAccountIDs...)
 }
 
 func (s *Service) SelectAccountByIDInRoutingPoolChain(ctx context.Context, primaryPoolID, accountID int64, model string) (SelectedAccount, error) {
+	return s.SelectAccountByIDInRoutingPoolChainAndEndpoint(ctx, primaryPoolID, accountID, model, "")
+}
+
+func (s *Service) SelectAccountByIDInRoutingPoolChainAndEndpoint(ctx context.Context, primaryPoolID, accountID int64, model, endpoint string) (SelectedAccount, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, err
+	}
 	if primaryPoolID <= 0 || accountID <= 0 {
 		return SelectedAccount{}, ErrInvalidInput
 	}
-	candidates, chainLabel, err := s.responseAffinityCandidates(ctx, primaryPoolID, model)
+	candidates, chainLabel, err := s.responseAffinityCandidatesForEndpoint(ctx, primaryPoolID, model, endpoint)
 	if err != nil {
 		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, err
 	}
@@ -2844,9 +2918,59 @@ func (s *Service) SelectAccountByIDInRoutingPoolChain(ctx context.Context, prima
 }
 
 func (s *Service) SelectSingleAccountInRoutingPoolChain(ctx context.Context, primaryPoolID int64, model string) (SelectedAccount, bool, error) {
+	return s.SelectSingleAccountInRoutingPoolChainAndEndpoint(ctx, primaryPoolID, model, "")
+}
+
+func (s *Service) SelectSingleAccountInRoutingPoolChainAndEndpoint(ctx context.Context, primaryPoolID int64, model, endpoint string) (SelectedAccount, bool, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectedAccount{}, false, err
+	}
 	if primaryPoolID <= 0 {
 		return SelectedAccount{}, false, ErrInvalidInput
 	}
+	if endpoint == "" {
+		return s.selectSingleAccountInRoutingPoolChainLegacy(ctx, primaryPoolID, model)
+	}
+	topology, chainLabel, err := s.responseAffinityTopology(ctx, primaryPoolID)
+	if err != nil {
+		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, false, err
+	}
+	accounts := make([]Account, 0, len(topology))
+	for _, candidate := range topology {
+		accounts = append(accounts, candidate.account)
+	}
+	var modelsByAccount map[int64][]AccountModel
+	modelsAvailable := true
+	if endpoint != "" {
+		modelsByAccount, modelsAvailable = s.accountModelsForCandidates(ctx, model, accounts)
+	}
+	legal := make([]responseAffinityCandidate, 0, len(topology))
+	now := time.Now()
+	for _, candidate := range topology {
+		if !candidate.pool.Enabled || selectionUnschedulableReasonForEndpoint(candidate.account, model, endpoint, nil, now, modelsByAccount[candidate.account.ID], modelsAvailable) != "" {
+			continue
+		}
+		legal = append(legal, candidate)
+	}
+	unique := make(map[int64]struct{}, len(legal))
+	for _, candidate := range legal {
+		unique[candidate.account.ID] = struct{}{}
+	}
+	if len(unique) == 0 {
+		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, false, ErrAccountsUnavailable
+	}
+	if len(unique) > 1 {
+		return SelectedAccount{RoutingPoolFallbackChain: chainLabel}, false, nil
+	}
+	for _, candidate := range legal {
+		selected, err := s.selectedResponseAffinityAccount(ctx, candidate, chainLabel)
+		return selected, err == nil, err
+	}
+	return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: RoutingPoolErrorExhausted}, false, ErrAccountsUnavailable
+}
+
+func (s *Service) selectSingleAccountInRoutingPoolChainLegacy(ctx context.Context, primaryPoolID int64, model string) (SelectedAccount, bool, error) {
 	topology, chainLabel, err := s.responseAffinityTopology(ctx, primaryPoolID)
 	if err != nil {
 		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, false, err
@@ -2864,7 +2988,7 @@ func (s *Service) SelectSingleAccountInRoutingPoolChain(ctx context.Context, pri
 	now := time.Now()
 	modelsByAccount, modelsAvailable := s.accountModelsForCandidates(ctx, model, []Account{topology[0].account})
 	for _, candidate := range topology {
-		if !candidate.pool.Enabled || selectionUnschedulableReason(candidate.account, model, nil, now, modelsByAccount[candidate.account.ID], modelsAvailable) != "" {
+		if !candidate.pool.Enabled || selectionUnschedulableReasonForEndpoint(candidate.account, model, "", nil, now, modelsByAccount[candidate.account.ID], modelsAvailable) != "" {
 			continue
 		}
 		selected, err := s.selectedResponseAffinityAccount(ctx, candidate, chainLabel)
@@ -2903,7 +3027,7 @@ func (s *Service) responseAffinityTopology(ctx context.Context, primaryPoolID in
 	return topology, chainLabel, nil
 }
 
-func (s *Service) responseAffinityCandidates(ctx context.Context, primaryPoolID int64, model string) ([]responseAffinityCandidate, string, error) {
+func (s *Service) responseAffinityCandidatesForEndpoint(ctx context.Context, primaryPoolID int64, model, endpoint string) ([]responseAffinityCandidate, string, error) {
 	if !s.Configured() {
 		return nil, "", ErrNotConfigured
 	}
@@ -2919,7 +3043,7 @@ func (s *Service) responseAffinityCandidates(ctx context.Context, primaryPoolID 
 			}
 			continue
 		}
-		accounts, _, _, err := s.selectionCandidatesForRoutingPool(ctx, pool.ID, model, nil)
+		accounts, _, _, err := s.selectionCandidatesForRoutingPoolForEndpoint(ctx, pool.ID, model, endpoint, nil)
 		if err != nil {
 			return nil, chainLabel, err
 		}
@@ -2943,13 +3067,21 @@ func (s *Service) selectedResponseAffinityAccount(ctx context.Context, candidate
 }
 
 func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
+	return s.PreviewAccountSelectionForEndpoint(ctx, model, "", sessionID, excludedAccountIDs...)
+}
+
+func (s *Service) PreviewAccountSelectionForEndpoint(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectionPreview{}, err
+	}
 	if !s.Configured() {
 		return SelectionPreview{}, ErrNotConfigured
 	}
 	model = strings.TrimSpace(model)
 	sessionID = strings.TrimSpace(sessionID)
 	now := time.Now()
-	accounts, _, notFoundErr, err := s.selectionCandidates(ctx, model, excludedAccountIDs)
+	accounts, _, notFoundErr, err := s.selectionCandidatesForEndpoint(ctx, model, endpoint, excludedAccountIDs)
 	if err != nil {
 		return SelectionPreview{}, err
 	}
@@ -2961,37 +3093,56 @@ func (s *Service) PreviewAccountSelection(ctx context.Context, model, sessionID 
 		}
 	}
 	if len(accounts) == 0 {
-		blocked := s.unschedulableSelectionCandidates(ctx, model, nil, excludedAccountIDs, now)
+		blocked := s.unschedulableSelectionCandidatesForEndpoint(ctx, model, endpoint, nil, excludedAccountIDs, now)
 		if len(blocked) > 0 {
 			return SelectionPreview{
 				Model:      model,
+				Endpoint:   endpoint,
 				SessionID:  sessionID,
 				Candidates: blocked,
 			}, nil
 		}
 		return SelectionPreview{}, notFoundErr
 	}
+	var modelsByAccount map[int64][]AccountModel
+	modelsAvailable := true
+	if endpoint != "" {
+		modelsByAccount, modelsAvailable = s.accountModelsForCandidates(ctx, model, accounts)
+	}
 
 	preview := SelectionPreview{
 		Model:                model,
+		Endpoint:             endpoint,
 		SessionID:            sessionID,
 		SelectedAccountID:    accounts[0].ID,
 		StickyBoundAccountID: stickyBoundAccountID,
 		Candidates:           make([]SelectionCandidate, 0, len(accounts)),
 	}
 	for index, account := range accounts {
-		candidate := selectionCandidate(account, index+1, index == 0, true, "")
+		var models []AccountModel
+		if modelsAvailable {
+			models = modelsByAccount[account.ID]
+		}
+		candidate := selectionCandidateForEndpoint(account, model, endpoint, models, index+1, index == 0, true, "")
 		candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
 		candidate.ScheduleReason = scheduleReason(account, candidate.Selected, candidate.StickyBound, sessionID != "")
 		preview.Candidates = append(preview.Candidates, candidate)
 	}
-	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidates(ctx, model, accounts, excludedAccountIDs, now)...)
+	preview.Candidates = append(preview.Candidates, s.unschedulableSelectionCandidatesForEndpoint(ctx, model, endpoint, accounts, excludedAccountIDs, now)...)
 	return preview, nil
 }
 
 func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
+	return s.PreviewAccountSelectionInRoutingPoolForEndpoint(ctx, routingPoolID, model, "", sessionID, excludedAccountIDs...)
+}
+
+func (s *Service) PreviewAccountSelectionInRoutingPoolForEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectionPreview, error) {
+	endpoint, err := NormalizeEndpoint(endpoint)
+	if err != nil {
+		return SelectionPreview{}, err
+	}
 	if routingPoolID <= 0 {
-		return s.PreviewAccountSelection(ctx, model, sessionID, excludedAccountIDs...)
+		return s.PreviewAccountSelectionForEndpoint(ctx, model, endpoint, sessionID, excludedAccountIDs...)
 	}
 	if !s.Configured() {
 		return SelectionPreview{}, ErrNotConfigured
@@ -3011,6 +3162,7 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 			if depth == 0 {
 				return SelectionPreview{
 					Model:                    model,
+					Endpoint:                 endpoint,
 					SessionID:                sessionID,
 					RoutingPoolID:            pool.ID,
 					RoutingPoolName:          pool.Name,
@@ -3022,10 +3174,11 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 			continue
 		}
 		hasEnabled = true
-		accounts, poolHasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, pool.ID, model, excludedAccountIDs)
+		accounts, poolHasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPoolForEndpoint(ctx, pool.ID, model, endpoint, excludedAccountIDs)
 		if err != nil {
 			return SelectionPreview{
 				Model:                    model,
+				Endpoint:                 endpoint,
 				SessionID:                sessionID,
 				RoutingPoolID:            pool.ID,
 				RoutingPoolName:          pool.Name,
@@ -3038,12 +3191,13 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 			hasEnabled = true
 		}
 		finalErr = moreSpecificSelectionError(finalErr, notFoundErr)
-		blocked := s.unschedulableSelectionCandidatesInRoutingPool(ctx, pool.ID, model, accounts, excludedAccountIDs, now)
+		blocked := s.unschedulableSelectionCandidatesInRoutingPoolForEndpoint(ctx, pool.ID, model, endpoint, accounts, excludedAccountIDs, now)
 		if len(accounts) == 0 {
 			blockedChainCandidates = append(blockedChainCandidates, blocked...)
 			if errors.Is(notFoundErr, ErrRoutingPoolEmpty) && depth == 0 {
 				return SelectionPreview{
 					Model:                    model,
+					Endpoint:                 endpoint,
 					SessionID:                sessionID,
 					RoutingPoolID:            pool.ID,
 					RoutingPoolName:          pool.Name,
@@ -3065,6 +3219,7 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 		}
 		preview := SelectionPreview{
 			Model:                    model,
+			Endpoint:                 endpoint,
 			SessionID:                sessionID,
 			SelectedAccountID:        accounts[0].ID,
 			StickyBoundAccountID:     stickyBoundAccountID,
@@ -3074,8 +3229,17 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 			RoutingPoolFallbackChain: chainLabel,
 			Candidates:               make([]SelectionCandidate, 0, len(accounts)+len(blocked)+len(blockedChainCandidates)),
 		}
+		var modelsByAccount map[int64][]AccountModel
+		modelsAvailable := true
+		if endpoint != "" {
+			modelsByAccount, modelsAvailable = s.accountModelsForCandidates(ctx, model, accounts)
+		}
 		for index, account := range accounts {
-			candidate := selectionCandidate(account, index+1, index == 0, true, "")
+			var models []AccountModel
+			if modelsAvailable {
+				models = modelsByAccount[account.ID]
+			}
+			candidate := selectionCandidateForEndpoint(account, model, endpoint, models, index+1, index == 0, true, "")
 			candidate.StickyBound = stickyBoundAccountID > 0 && account.ID == stickyBoundAccountID
 			candidate.ScheduleReason = scheduleReason(account, candidate.Selected, candidate.StickyBound, sessionID != "")
 			preview.Candidates = append(preview.Candidates, candidate)
@@ -3089,6 +3253,7 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 	}
 	return SelectionPreview{
 		Model:                    model,
+		Endpoint:                 endpoint,
 		SessionID:                sessionID,
 		RoutingPoolFallbackChain: chainLabel,
 		RoutingPoolError:         RoutingPoolErrorExhausted,
@@ -3096,7 +3261,7 @@ func (s *Service) PreviewAccountSelectionInRoutingPool(ctx context.Context, rout
 	}, finalErr
 }
 
-func (s *Service) unschedulableSelectionCandidates(ctx context.Context, model string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {
+func (s *Service) unschedulableSelectionCandidatesForEndpoint(ctx context.Context, model, endpoint string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {
 	accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
 	if err != nil {
 		return nil
@@ -3118,16 +3283,16 @@ func (s *Service) unschedulableSelectionCandidates(ctx context.Context, model st
 		if _, ok := selectedIDs[account.ID]; ok {
 			continue
 		}
-		reason := selectionUnschedulableReason(account, model, excluded, now, modelsByAccount[account.ID], modelsAvailable)
+		reason := selectionUnschedulableReasonForEndpoint(account, model, endpoint, excluded, now, modelsByAccount[account.ID], modelsAvailable)
 		if reason == "" {
 			continue
 		}
-		candidates = append(candidates, selectionCandidate(account, 0, false, false, reason))
+		candidates = append(candidates, selectionCandidateForEndpoint(account, model, endpoint, modelsByAccount[account.ID], 0, false, false, reason))
 	}
 	return candidates
 }
 
-func (s *Service) unschedulableSelectionCandidatesInRoutingPool(ctx context.Context, routingPoolID int64, model string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {
+func (s *Service) unschedulableSelectionCandidatesInRoutingPoolForEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, selected []Account, excludedAccountIDs []int64, now time.Time) []SelectionCandidate {
 	accounts, err := s.repo.ListRoutingPoolAccounts(ctx, s.cfg.Provider, routingPoolID)
 	if err != nil {
 		return nil
@@ -3149,11 +3314,11 @@ func (s *Service) unschedulableSelectionCandidatesInRoutingPool(ctx context.Cont
 		if _, ok := selectedIDs[account.ID]; ok {
 			continue
 		}
-		reason := selectionUnschedulableReason(account, model, excluded, now, modelsByAccount[account.ID], modelsAvailable)
+		reason := selectionUnschedulableReasonForEndpoint(account, model, endpoint, excluded, now, modelsByAccount[account.ID], modelsAvailable)
 		if reason == "" {
 			continue
 		}
-		candidates = append(candidates, selectionCandidate(account, 0, false, false, reason))
+		candidates = append(candidates, selectionCandidateForEndpoint(account, model, endpoint, modelsByAccount[account.ID], 0, false, false, reason))
 	}
 	return candidates
 }
@@ -3170,7 +3335,7 @@ func (s *Service) accountModelsForCandidates(ctx context.Context, model string, 
 	return modelsByAccount, err == nil
 }
 
-func selectionUnschedulableReason(account Account, model string, excluded map[int64]struct{}, now time.Time, models []AccountModel, modelsAvailable bool) string {
+func selectionUnschedulableReasonForEndpoint(account Account, model, endpoint string, excluded map[int64]struct{}, now time.Time, models []AccountModel, modelsAvailable bool) string {
 	if _, ok := excluded[account.ID]; ok {
 		return "account excluded"
 	}
@@ -3192,6 +3357,9 @@ func selectionUnschedulableReason(account Account, model string, excluded map[in
 			continue
 		}
 		hasModel = true
+		if endpointCapabilityUnsupported(item.Metadata, endpoint) {
+			return "endpoint unsupported"
+		}
 		if item.Enabled {
 			return ""
 		}
@@ -3202,8 +3370,15 @@ func selectionUnschedulableReason(account Account, model string, excluded map[in
 	return "model not configured"
 }
 
-func selectionCandidate(account Account, scheduleRank int, selected bool, schedulable bool, reason string) SelectionCandidate {
+func selectionCandidateForEndpoint(account Account, model, endpoint string, models []AccountModel, scheduleRank int, selected bool, schedulable bool, reason string) SelectionCandidate {
 	account = normalizeAccountCredentialFields(account)
+	endpointCapability := ""
+	if strings.TrimSpace(endpoint) != "" {
+		endpointCapability = endpointCapabilityForModel(models, model, endpoint)
+		if reason == "endpoint unsupported" {
+			endpointCapability = EndpointCapabilityUnsupported
+		}
+	}
 	return SelectionCandidate{
 		ID:                  account.ID,
 		DisplayName:         accountDisplayName(account),
@@ -3219,7 +3394,25 @@ func selectionCandidate(account Account, scheduleRank int, selected bool, schedu
 		Selected:            selected,
 		Schedulable:         schedulable,
 		UnschedulableReason: reason,
+		EndpointCapability:  endpointCapability,
 	}
+}
+
+func endpointCapabilityForModel(models []AccountModel, model, endpoint string) string {
+	if strings.TrimSpace(model) == "" || strings.TrimSpace(endpoint) == "" {
+		return EndpointCapabilityUnknown
+	}
+	for _, item := range models {
+		if item.Model != model {
+			continue
+		}
+		if capability := EndpointCapability(item.Metadata, endpoint); capability == EndpointCapabilityUnsupported {
+			return capability
+		} else if capability == EndpointCapabilitySupported {
+			return capability
+		}
+	}
+	return EndpointCapabilityUnknown
 }
 
 func scheduleReason(account Account, selected, stickyBound, stickySession bool) string {
@@ -3308,7 +3501,7 @@ func (s *Service) stickySessionCandidatesInRoutingPool(ctx context.Context, rout
 	return stickySessionHashCandidates(accounts, sessionID), 0, nil
 }
 
-func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryPoolID int64, model, sessionID, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	pools, chainLabel, err := s.routingPoolChain(ctx, primaryPoolID)
 	if err != nil {
 		return SelectedAccount{RoutingPoolFallbackChain: chainLabel, RoutingPoolError: routingPoolDiagnosticError(err)}, err
@@ -3333,7 +3526,7 @@ func (s *Service) selectAccountForRoutingPoolChain(ctx context.Context, primaryP
 		}
 		hasEnabled = true
 
-		accounts, poolHasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPool(ctx, pool.ID, model, excludedAccountIDs)
+		accounts, poolHasEnabled, notFoundErr, err := s.selectionCandidatesForRoutingPoolForEndpoint(ctx, pool.ID, model, endpoint, excludedAccountIDs)
 		if err != nil {
 			return SelectedAccount{
 				RoutingPoolID:            pool.ID,
@@ -3433,6 +3626,9 @@ func moreSpecificSelectionError(current, next error) error {
 		return next
 	}
 	if errors.Is(next, ErrModelUnavailable) {
+		return next
+	}
+	if errors.Is(next, ErrEndpointUnavailable) {
 		return next
 	}
 	return current
@@ -3778,12 +3974,12 @@ func accountDisplayName(account Account) string {
 	return ""
 }
 
-func (s *Service) selectionCandidates(ctx context.Context, model string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
+func (s *Service) selectionCandidatesForEndpoint(ctx context.Context, model, endpoint string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
 	model = strings.TrimSpace(model)
 	if model != "" {
 		now := time.Now()
 		excluded := normalizedExcludedAccountIDs(excludedAccountIDs)
-		accounts, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, excluded, now)
+		accounts, err := s.listEligibleAccountsForModelAndEndpoint(ctx, model, endpoint, excluded, now)
 		if err != nil {
 			return nil, false, ErrModelUnavailable, err
 		}
@@ -3797,7 +3993,7 @@ func (s *Service) selectionCandidates(ctx context.Context, model string, exclude
 				return accounts, false, ErrAccountsDisabled, nil
 			}
 			if len(excluded) > 0 {
-				availableWithoutExclusions, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, nil, now)
+				availableWithoutExclusions, err := s.listEligibleAccountsForModelAndEndpoint(ctx, model, endpoint, nil, now)
 				if err != nil {
 					return nil, false, ErrModelUnavailable, err
 				}
@@ -3805,7 +4001,15 @@ func (s *Service) selectionCandidates(ctx context.Context, model string, exclude
 					return accounts, true, ErrAccountsUnavailable, nil
 				}
 			}
-			notFoundErr = ErrModelUnavailable
+			baseAccounts, err := s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, nil, now)
+			if err != nil {
+				return nil, false, ErrModelUnavailable, err
+			}
+			if endpoint != "" && len(baseAccounts) > 0 {
+				notFoundErr = ErrEndpointUnavailable
+			} else {
+				notFoundErr = ErrModelUnavailable
+			}
 		}
 		return accounts, true, notFoundErr, nil
 	}
@@ -3844,7 +4048,7 @@ func (s *Service) selectionCandidates(ctx context.Context, model string, exclude
 	return candidates, hasEnabled, ErrAccountsUnavailable, nil
 }
 
-func (s *Service) selectionCandidatesForRoutingPool(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
+func (s *Service) selectionCandidatesForRoutingPoolForEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, excludedAccountIDs []int64) ([]Account, bool, error, error) {
 	pool, err := s.repo.FindRoutingPool(ctx, routingPoolID)
 	if err != nil {
 		if errors.Is(err, ErrRoutingPoolNotFound) {
@@ -3859,7 +4063,7 @@ func (s *Service) selectionCandidatesForRoutingPool(ctx context.Context, routing
 	model = strings.TrimSpace(model)
 	now := time.Now()
 	excluded := normalizedExcludedAccountIDs(excludedAccountIDs)
-	accounts, err := s.repo.ListAccountsForRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, excluded, now)
+	accounts, err := s.listAccountsForRoutingPoolAndEndpoint(ctx, routingPoolID, model, endpoint, excluded, now)
 	if err != nil {
 		return nil, false, ErrAccountsUnavailable, err
 	}
@@ -3867,7 +4071,7 @@ func (s *Service) selectionCandidatesForRoutingPool(ctx context.Context, routing
 		return accounts, true, ErrAccountsUnavailable, nil
 	}
 
-	availableWithoutExclusions, err := s.repo.ListAccountsForRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, nil, now)
+	availableWithoutExclusions, err := s.listAccountsForRoutingPoolAndEndpoint(ctx, routingPoolID, model, endpoint, nil, now)
 	if err != nil {
 		return nil, false, ErrAccountsUnavailable, err
 	}
@@ -3882,9 +4086,84 @@ func (s *Service) selectionCandidatesForRoutingPool(ctx context.Context, routing
 		return accounts, true, ErrRoutingPoolEmpty, nil
 	}
 	if model != "" {
+		baseAccounts, err := s.repo.ListAccountsForRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, nil, now)
+		if err != nil {
+			return nil, false, ErrAccountsUnavailable, err
+		}
+		if endpoint != "" && len(baseAccounts) > 0 {
+			return accounts, true, ErrEndpointUnavailable, nil
+		}
 		return accounts, true, ErrModelUnavailable, nil
 	}
 	return accounts, true, ErrRoutingPoolEmpty, nil
+}
+
+func (s *Service) listEligibleAccountsForModelAndEndpoint(ctx context.Context, model, endpoint string, excluded []int64, now time.Time) ([]Account, error) {
+	var (
+		accounts []Account
+		err      error
+	)
+	if endpoint != "" {
+		if repo, ok := s.repo.(EndpointAwareRepository); ok {
+			accounts, err = repo.ListEligibleAccountsForModelAndEndpoint(ctx, s.cfg.Provider, model, endpoint, excluded, now)
+		} else {
+			accounts, err = s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, excluded, now)
+		}
+	} else {
+		accounts, err = s.repo.ListEligibleAccountsForModel(ctx, s.cfg.Provider, model, excluded, now)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.filterAccountsByEndpoint(ctx, model, endpoint, accounts)
+}
+
+func (s *Service) listAccountsForRoutingPoolAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, excluded []int64, now time.Time) ([]Account, error) {
+	var (
+		accounts []Account
+		err      error
+	)
+	if endpoint != "" {
+		if repo, ok := s.repo.(EndpointAwareRepository); ok {
+			accounts, err = repo.ListAccountsForRoutingPoolAndEndpoint(ctx, s.cfg.Provider, routingPoolID, model, endpoint, excluded, now)
+		} else {
+			accounts, err = s.repo.ListAccountsForRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, excluded, now)
+		}
+	} else {
+		accounts, err = s.repo.ListAccountsForRoutingPool(ctx, s.cfg.Provider, routingPoolID, model, excluded, now)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.filterAccountsByEndpoint(ctx, model, endpoint, accounts)
+}
+
+func (s *Service) filterAccountsByEndpoint(ctx context.Context, model, endpoint string, accounts []Account) ([]Account, error) {
+	if strings.TrimSpace(model) == "" || strings.TrimSpace(endpoint) == "" || len(accounts) == 0 {
+		return accounts, nil
+	}
+	accountIDs := make([]int64, 0, len(accounts))
+	for _, account := range accounts {
+		accountIDs = append(accountIDs, account.ID)
+	}
+	modelsByAccount, err := s.repo.ListAccountModelsForAccounts(ctx, s.cfg.Provider, accountIDs)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		unsupported := false
+		for _, modelItem := range modelsByAccount[account.ID] {
+			if modelItem.Model == model && modelItem.Enabled && endpointCapabilityUnsupported(modelItem.Metadata, endpoint) {
+				unsupported = true
+				break
+			}
+		}
+		if !unsupported {
+			filtered = append(filtered, account)
+		}
+	}
+	return filtered, nil
 }
 
 func normalizedExcludedAccountIDs(ids []int64) []int64 {

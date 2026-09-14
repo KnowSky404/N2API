@@ -72,8 +72,16 @@ type AccountProvider interface {
 	SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
+type EndpointAwareAccountProvider interface {
+	SelectAccountForModelAndEndpoint(ctx context.Context, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
 type StickyAccountProvider interface {
 	SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
+type EndpointAwareStickyAccountProvider interface {
+	SelectAccountForModelAndSessionAndEndpoint(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
 type RoutingPoolAccountProvider interface {
@@ -81,9 +89,19 @@ type RoutingPoolAccountProvider interface {
 	SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
+type EndpointAwareRoutingPoolAccountProvider interface {
+	SelectAccountForModelInRoutingPoolAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error)
+	SelectAccountForModelAndSessionInRoutingPoolAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
 type RoutingPoolChainAccountProvider interface {
 	SelectAccountForModelInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
 	SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
+type EndpointAwareRoutingPoolChainAccountProvider interface {
+	SelectAccountForModelInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error)
+	SelectAccountForModelAndSessionInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
 type AccountFailureReporter interface {
@@ -110,6 +128,11 @@ type ResponseAffinityStore interface {
 type ResponseAffinityAccountProvider interface {
 	SelectAccountByIDInRoutingPoolChain(ctx context.Context, routingPoolID, accountID int64, model string) (SelectedAccount, error)
 	SelectSingleAccountInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string) (SelectedAccount, bool, error)
+}
+
+type EndpointAwareResponseAffinityAccountProvider interface {
+	SelectAccountByIDInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID, accountID int64, model, endpoint string) (SelectedAccount, error)
+	SelectSingleAccountInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string) (SelectedAccount, bool, error)
 }
 
 type AccountRecoveryRecorder interface {
@@ -455,6 +478,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	loggedRoutingPoolError := ""
 	requestModel := ""
 	requestSessionID := ""
+	requestEndpoint := endpointForRequest(r)
 	observedUsage := Usage{Source: "missing"}
 	budgetAdmission := admin.APIKeyBudgetAdmission{}
 	upstreamRequestID := ""
@@ -627,7 +651,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	accountConcurrencyLimited := false
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		selected, err := p.selectAccountForRequest(r.Context(), key, model, sessionID, affinitySelection, failedAccountIDs...)
+		selected, err := p.selectAccountForRequest(r.Context(), key, model, requestEndpoint, sessionID, affinitySelection, failedAccountIDs...)
 		if selected.AccountType != "" {
 			metricsAccountType = selected.AccountType
 		}
@@ -1048,9 +1072,9 @@ func (p *Proxy) responseAffinitySelection(ctx context.Context, r *http.Request, 
 	return responseAffinityRoute{requireSingle: true}, nil
 }
 
-func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, model, sessionID string, affinity responseAffinityRoute, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, model, endpoint, sessionID string, affinity responseAffinityRoute, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if !affinity.enabled() {
-		return p.selectAccountForKey(ctx, key, model, sessionID, excludedAccountIDs...)
+		return p.selectAccountForKey(ctx, key, model, endpoint, sessionID, excludedAccountIDs...)
 	}
 	provider, ok := p.accounts.(ResponseAffinityAccountProvider)
 	if !ok {
@@ -1058,9 +1082,26 @@ func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, m
 	}
 	routingPoolID, _ := apiKeyRoutingPool(key)
 	if affinity.accountID > 0 {
+		if endpointProvider, ok := p.accounts.(EndpointAwareResponseAffinityAccountProvider); ok {
+			selected, err := endpointProvider.SelectAccountByIDInRoutingPoolChainAndEndpoint(ctx, routingPoolID, affinity.accountID, model, endpoint)
+			if err != nil {
+				return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+			}
+			return selected, nil
+		}
 		selected, err := provider.SelectAccountByIDInRoutingPoolChain(ctx, routingPoolID, affinity.accountID, model)
 		if err != nil {
 			return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+		}
+		return selected, nil
+	}
+	if endpointProvider, ok := p.accounts.(EndpointAwareResponseAffinityAccountProvider); ok {
+		selected, unique, err := endpointProvider.SelectSingleAccountInRoutingPoolChainAndEndpoint(ctx, routingPoolID, model, endpoint)
+		if err != nil {
+			return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+		}
+		if !unique {
+			return SelectedAccount{}, errResponseAffinityUnknown
 		}
 		return selected, nil
 	}
@@ -1074,13 +1115,25 @@ func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, m
 	return selected, nil
 }
 
-func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if key.RoutingPoolID != nil && *key.RoutingPoolID > 0 {
+		if chainProvider, ok := p.accounts.(EndpointAwareRoutingPoolChainAccountProvider); ok {
+			if strings.TrimSpace(sessionID) != "" {
+				return chainProvider.SelectAccountForModelAndSessionInRoutingPoolChainAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, sessionID, excludedAccountIDs...)
+			}
+			return chainProvider.SelectAccountForModelInRoutingPoolChainAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, excludedAccountIDs...)
+		}
 		if chainProvider, ok := p.accounts.(RoutingPoolChainAccountProvider); ok {
 			if strings.TrimSpace(sessionID) != "" {
 				return chainProvider.SelectAccountForModelAndSessionInRoutingPoolChain(ctx, *key.RoutingPoolID, model, sessionID, excludedAccountIDs...)
 			}
 			return chainProvider.SelectAccountForModelInRoutingPoolChain(ctx, *key.RoutingPoolID, model, excludedAccountIDs...)
+		}
+		if poolProvider, ok := p.accounts.(EndpointAwareRoutingPoolAccountProvider); ok {
+			if strings.TrimSpace(sessionID) != "" {
+				return poolProvider.SelectAccountForModelAndSessionInRoutingPoolAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, sessionID, excludedAccountIDs...)
+			}
+			return poolProvider.SelectAccountForModelInRoutingPoolAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, excludedAccountIDs...)
 		}
 		poolProvider, ok := p.accounts.(RoutingPoolAccountProvider)
 		if !ok {
@@ -1091,16 +1144,39 @@ func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model
 		}
 		return poolProvider.SelectAccountForModelInRoutingPool(ctx, *key.RoutingPoolID, model, excludedAccountIDs...)
 	}
-	return p.selectGlobalAccount(ctx, model, sessionID, excludedAccountIDs...)
+	return p.selectGlobalAccount(ctx, model, endpoint, sessionID, excludedAccountIDs...)
 }
 
-func (p *Proxy) selectGlobalAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (p *Proxy) selectGlobalAccount(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if sessionID != "" {
+		if sticky, ok := p.accounts.(EndpointAwareStickyAccountProvider); ok {
+			return sticky.SelectAccountForModelAndSessionAndEndpoint(ctx, model, endpoint, sessionID, excludedAccountIDs...)
+		}
 		if sticky, ok := p.accounts.(StickyAccountProvider); ok {
 			return sticky.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
 		}
 	}
+	if endpointProvider, ok := p.accounts.(EndpointAwareAccountProvider); ok {
+		return endpointProvider.SelectAccountForModelAndEndpoint(ctx, model, endpoint, excludedAccountIDs...)
+	}
 	return p.accounts.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+func endpointForRequest(r *http.Request) string {
+	if r == nil || r.Method != http.MethodPost {
+		if r != nil && r.Method == http.MethodGet && isResponsesSubroute(r.URL.Path) {
+			return provider.EndpointResponses
+		}
+		return ""
+	}
+	switch r.URL.Path {
+	case "/v1/chat/completions":
+		return provider.EndpointChatCompletions
+	case "/v1/responses":
+		return provider.EndpointResponses
+	default:
+		return ""
+	}
 }
 
 func apiKeyRoutingPool(key admin.APIKey) (int64, string) {
@@ -2278,6 +2354,8 @@ func providerErrorCode(err error) string {
 		return "provider_accounts_unavailable"
 	case errors.Is(err, provider.ErrModelUnavailable):
 		return "model_unavailable"
+	case errors.Is(err, provider.ErrEndpointUnavailable):
+		return "endpoint_unavailable"
 	default:
 		return "upstream_token_error"
 	}
@@ -2315,6 +2393,8 @@ func providerErrorMessage(code string) string {
 		return "provider accounts are unavailable"
 	case "model_unavailable":
 		return "requested model is not available"
+	case "endpoint_unavailable":
+		return "requested model is not supported by any eligible account for this endpoint"
 	default:
 		return "provider token lookup failed"
 	}
