@@ -608,7 +608,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer close(bodyReadInterruptDone)
 		_ = p.setReadDeadline(recorder, time.Now())
 	})
-	bodyFactory, maxAttempts, model, sessionID, previousResponseID, err := p.requestBodyFactory(r)
+	bodyFactory, maxAttempts, model, sessionID, previousResponseID, clientStream, err := p.requestBodyFactoryWithOptions(r)
 	if !stopBodyReadInterrupt() {
 		<-bodyReadInterruptDone
 	}
@@ -825,9 +825,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer releaseAccount()
 				defer upstreamResp.Body.Close()
 
-				streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
+				streamResponse := shouldStreamUpstreamResponseForClient(r, selected, upstreamResp, clientStream)
+				aggregateResponse := shouldAggregateOAuthResponses(r, selected, upstreamResp, clientStream)
 				metricsStream = streamResponse
-				observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+				observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
 				observedUsage, err = observation.Usage, writeErr
 				if streamResponse {
 					p.observeStream(r.URL.Path, observation.StreamOutcome)
@@ -862,9 +863,10 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer releaseAccount()
 		defer upstreamResp.Body.Close()
 
-		streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
+		streamResponse := shouldStreamUpstreamResponseForClient(r, selected, upstreamResp, clientStream)
+		aggregateResponse := shouldAggregateOAuthResponses(r, selected, upstreamResp, clientStream)
 		metricsStream = streamResponse
-		observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+		observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
 		observedUsage, err = observation.Usage, writeErr
 		if streamResponse {
 			p.observeStream(r.URL.Path, observation.StreamOutcome)
@@ -1511,13 +1513,35 @@ type upstreamResponseObservation struct {
 }
 
 func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (upstreamResponseObservation, error) {
+	return p.writeUpstreamResponseWithOptions(ctx, w, resp, route, stream, false, false)
+}
+
+func (p *Proxy) writeUpstreamResponseWithOptions(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream, aggregateOAuth, validateSSETerminal bool) (upstreamResponseObservation, error) {
 	if resp == nil || resp.Body == nil {
 		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseRead
+	}
+	if aggregateOAuth {
+		observation, body, err := p.aggregateOAuthResponses(ctx, resp.Body, route)
+		if err != nil && len(body) == 0 {
+			return observation, err
+		}
+		copyResponseHeaders(w.Header(), resp.Header)
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Del("Content-Length")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(resp.StatusCode)
+		if _, writeErr := w.Write(body); writeErr != nil {
+			return observation, writeErr
+		}
+		return observation, err
 	}
 	if stream {
 		copyResponseHeaders(w.Header(), resp.Header)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(resp.StatusCode)
+		if validateSSETerminal {
+			return copyOAuthStreamingResponse(ctx, w, resp.Body, route, p.sseIdleTimeout, p.maxResponseBody)
+		}
 		return copyStreamingResponse(ctx, w, resp.Body, route, p.sseIdleTimeout)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(p.maxResponseBody)+1))
@@ -1542,6 +1566,22 @@ func upstreamResponseErrorCode(err error) string {
 		return "upstream_response_too_large"
 	case errors.Is(err, errUpstreamSSEIdleTimeout):
 		return "upstream_sse_idle_timeout"
+	case errors.Is(err, errUpstreamSSETerminalMissing):
+		return "upstream_sse_terminal_missing"
+	case errors.Is(err, errUpstreamSSETruncated):
+		return "upstream_sse_truncated"
+	case errors.Is(err, errUpstreamSSEMalformed):
+		return "upstream_sse_malformed"
+	case errors.Is(err, errUpstreamSSEError):
+		return "upstream_sse_error"
+	case errors.Is(err, errUpstreamResponseFailed):
+		return "upstream_response_failed"
+	case errors.Is(err, errUpstreamResponseIncomplete):
+		return "upstream_response_incomplete"
+	case errors.Is(err, errUpstreamResponseCanceled):
+		return "upstream_response_canceled"
+	case errors.Is(err, errUpstreamResponseDeadline):
+		return "upstream_response_timeout"
 	}
 	return "upstream_response_error"
 }
@@ -1552,6 +1592,22 @@ func upstreamResponseErrorMessage(err error) string {
 		return "upstream response is too large"
 	case errors.Is(err, errUpstreamSSEIdleTimeout):
 		return "upstream stream timed out"
+	case errors.Is(err, errUpstreamSSETerminalMissing):
+		return "upstream SSE stream ended without a terminal response"
+	case errors.Is(err, errUpstreamSSETruncated):
+		return "upstream SSE stream ended before an event was complete"
+	case errors.Is(err, errUpstreamSSEMalformed):
+		return "upstream SSE stream contained malformed data"
+	case errors.Is(err, errUpstreamSSEError):
+		return "upstream SSE stream reported an error"
+	case errors.Is(err, errUpstreamResponseFailed):
+		return "upstream response failed"
+	case errors.Is(err, errUpstreamResponseIncomplete):
+		return "upstream response was incomplete"
+	case errors.Is(err, errUpstreamResponseCanceled):
+		return "upstream response was canceled"
+	case errors.Is(err, errUpstreamResponseDeadline):
+		return "upstream response timed out"
 	}
 	return "could not read upstream response"
 }
@@ -1974,6 +2030,20 @@ func shouldStreamUpstreamResponse(r *http.Request, selected SelectedAccount, res
 		usesCodexResponsesEndpoint(r, selected)
 }
 
+func shouldStreamUpstreamResponseForClient(r *http.Request, selected SelectedAccount, resp *http.Response, clientStream bool) bool {
+	if usesCodexResponsesEndpoint(r, selected) && !clientStream {
+		return false
+	}
+	return shouldStreamUpstreamResponse(r, selected, resp)
+}
+
+func shouldAggregateOAuthResponses(r *http.Request, selected SelectedAccount, resp *http.Response, clientStream bool) bool {
+	if clientStream || !usesCodexResponsesEndpoint(r, selected) || resp == nil {
+		return false
+	}
+	return resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+}
+
 func upstreamURLBaseAndPath(baseURL, routePath string) (string, string) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	routePath = "/" + strings.TrimLeft(strings.TrimSpace(routePath), "/")
@@ -2030,8 +2100,13 @@ var (
 )
 
 func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, string, error) {
+	bodyFactory, maxAttempts, model, sessionID, previousResponseID, _, err := p.requestBodyFactoryWithOptions(r)
+	return bodyFactory, maxAttempts, model, sessionID, previousResponseID, err
+}
+
+func (p *Proxy) requestBodyFactoryWithOptions(r *http.Request) (func() io.ReadCloser, int, string, string, string, bool, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), "", nil
+		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), "", false, nil
 	}
 	defer r.Body.Close()
 	stopContextClose := context.AfterFunc(r.Context(), func() {
@@ -2039,21 +2114,21 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	})
 	defer stopContextClose()
 	if r.ContentLength > int64(p.maxAcceptedBody) {
-		return nil, 0, "", "", "", errRequestBodyTooLarge
+		return nil, 0, "", "", "", false, errRequestBodyTooLarge
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, int64(p.maxAcceptedBody)+1))
 	if err != nil {
 		if isTimeoutError(err) {
-			return nil, 0, "", "", "", err
+			return nil, 0, "", "", "", false, err
 		}
 		if contextErr := r.Context().Err(); contextErr != nil {
-			return nil, 0, "", "", "", contextErr
+			return nil, 0, "", "", "", false, contextErr
 		}
-		return nil, 0, "", "", "", err
+		return nil, 0, "", "", "", false, err
 	}
 	if len(limitedBody) > p.maxAcceptedBody {
-		return nil, 0, "", "", "", errRequestBodyTooLarge
+		return nil, 0, "", "", "", false, errRequestBodyTooLarge
 	}
 	maxAttempts := maxReplayableAttempts
 	if len(limitedBody) > p.maxReplayBody {
@@ -2062,11 +2137,12 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	model := ""
 	sessionID := ""
 	previousResponseID := ""
+	clientStream := false
 	if routeRequiresModel(r) {
 		var body []byte
-		body, model, sessionID, previousResponseID, err = p.normalizeModelRequestBody(r.Context(), limitedBody)
+		body, model, sessionID, previousResponseID, clientStream, err = p.normalizeModelRequestBodyWithStream(r.Context(), limitedBody)
 		if err != nil {
-			return nil, 0, "", "", "", err
+			return nil, 0, "", "", "", false, err
 		}
 		limitedBody = body
 	}
@@ -2075,7 +2151,7 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
-	}, maxAttempts, model, sessionID, previousResponseID, nil
+	}, maxAttempts, model, sessionID, previousResponseID, clientStream, nil
 }
 
 func stickySessionIDFromHeader(header http.Header) string {
@@ -2090,10 +2166,15 @@ func routeRequiresModel(r *http.Request) bool {
 }
 
 func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, string, string, error) {
+	normalized, model, sessionID, previousResponseID, _, err := p.normalizeModelRequestBodyWithStream(ctx, raw)
+	return normalized, model, sessionID, previousResponseID, err
+}
+
+func (p *Proxy) normalizeModelRequestBodyWithStream(ctx context.Context, raw []byte) ([]byte, string, string, string, bool, error) {
 	payload := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 	}
 
@@ -2102,7 +2183,7 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if hasModel {
 		modelValue, ok := rawModel.(string)
 		if !ok {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 		model = strings.TrimSpace(modelValue)
 	}
@@ -2110,7 +2191,7 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if rawSessionID, ok := payload["session_id"]; ok {
 		sessionValue, ok := rawSessionID.(string)
 		if !ok {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 		sessionID = strings.TrimSpace(sessionValue)
 	}
@@ -2118,31 +2199,39 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if rawPreviousResponseID, ok := payload["previous_response_id"]; ok {
 		previousResponseValue, ok := rawPreviousResponseID.(string)
 		if !ok {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 		previousResponseID = strings.TrimSpace(previousResponseValue)
+	}
+	clientStream := false
+	if rawStream, ok := payload["stream"]; ok {
+		streamValue, ok := rawStream.(bool)
+		if !ok {
+			return nil, "", "", "", false, errInvalidJSONBody
+		}
+		clientStream = streamValue
 	}
 	if model == "" {
 		defaultModel, err := p.defaultModel(ctx)
 		if err != nil {
-			return nil, "", "", "", err
+			return nil, "", "", "", false, err
 		}
 		model = defaultModel
 		payload["model"] = model
 		raw, err = json.Marshal(payload)
 		if err != nil {
-			return nil, "", "", "", err
+			return nil, "", "", "", false, err
 		}
 	} else if rawModel != model {
 		payload["model"] = model
 		normalized, err := json.Marshal(payload)
 		if err != nil {
-			return nil, "", "", "", err
+			return nil, "", "", "", false, err
 		}
 		raw = normalized
 	}
 
-	return raw, model, sessionID, previousResponseID, nil
+	return raw, model, sessionID, previousResponseID, clientStream, nil
 }
 
 func (p *Proxy) defaultModel(ctx context.Context) (string, error) {
