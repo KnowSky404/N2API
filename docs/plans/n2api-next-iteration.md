@@ -58,8 +58,8 @@ Confirmed capabilities and issues:
 | ID | Work item | Status | Dependencies |
 | --- | --- | --- | --- |
 | A | Endpoint-aware scheduling and stable endpoint diagnostics | complete | baseline |
-| B | OAuth Responses non-stream aggregation and SSE terminal handling | pending | baseline |
-| C | Model-catalog cache lifecycle, forced refresh, freshness, and invalidation | pending | baseline |
+| B | OAuth Responses non-stream aggregation and SSE terminal handling | complete | baseline |
+| C | Model-catalog cache lifecycle, forced refresh, freshness, and invalidation | complete | baseline |
 | D | Bounded request-attempt and stream diagnostics | pending | A, B |
 | E | Same-package gateway/provider/frontend responsibility splits | pending | A-D behavior tests |
 | F | Dependency inventory, SDK contract matrix, consistency checks, and docs | pending | baseline, A-D |
@@ -170,6 +170,8 @@ Confirmed capabilities and issues:
 | 2026-09-14 | Baseline | `make test` passed at HEAD `33b8d686`; no worktree changes before this plan. |
 | 2026-09-14 | Context7 contract lookup | Official OpenAI API Responses streaming events and `openai-python` response stream union consulted; implementation must preserve terminal response objects and typed event categories. |
 | 2026-09-14 | A complete | `aa47f96` (`feat: route accounts by endpoint capability`); endpoint-aware global/pool/fallback/affinity selection, stable endpoint diagnostics, metadata persistence, and HTTP preview coverage. `make test`, `make test-go-quality`, and focused endpoint tests passed. |
+| 2026-09-14 | B complete | `4c907c4` (`feat: support OAuth Responses non-streaming clients`); bounded SSE parser, terminal-event validation, complete Response aggregation, raw streaming terminal tracking, and cancellation/truncation/error coverage passed targeted and race tests. |
+| 2026-09-14 | C complete | `71f754d` (`feat: add forced OAuth catalog refresh`); forced refresh endpoint/UI, account-generation invalidation, bounded/coalesced catalog fetches, freshness status, stale-response protection, failure retention, and duplicate/cancellation coverage passed targeted backend/frontend checks. |
 
 ## Blockers, skips, and follow-ups
 
