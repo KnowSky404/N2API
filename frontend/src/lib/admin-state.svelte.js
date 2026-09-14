@@ -1,4 +1,29 @@
 import { copyText } from '$lib/clipboard.js';
+import {
+  accountModelSummary,
+  accountModelsText,
+  isSyncedAccountModel,
+  mergeAccountModelChanges,
+  modelListText,
+  parseAccountModelsText,
+  parseModelLines,
+  removeAccountModel,
+  setAccountModelEnabled,
+  sourceBadgeLabel
+} from '$lib/provider-models.js';
+
+export {
+  accountModelSummary,
+  accountModelsText,
+  isSyncedAccountModel,
+  mergeAccountModelChanges,
+  modelListText,
+  parseAccountModelsText,
+  parseModelLines,
+  removeAccountModel,
+  setAccountModelEnabled,
+  sourceBadgeLabel
+};
 
 /**
  * @typedef {object} APIKey
@@ -816,81 +841,6 @@ export const modelRoutingPreview = $state({
   excludedAccountIds: '',
   result: null
 });
-
-/** @param {string | null | undefined} value */
-export function parseAccountModelsText(value) {
-  const seen = new Set();
-  return String(value ?? '')
-    .split('\n')
-    .map((model) => model.trim())
-    .filter((model) => {
-      if (!model || seen.has(model)) return false;
-      seen.add(model);
-      return true;
-    })
-    .map((model) => ({ model, enabled: true }));
-}
-
-/** @param {string | null | undefined} text */
-export function parseModelLines(text) {
-  const seen = new Set();
-  return String(text ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((model) => {
-      if (!model || seen.has(model)) return false;
-      seen.add(model);
-      return true;
-    });
-}
-
-/** @param {Array<string | null | undefined>} models */
-export function modelListText(models) {
-  return parseModelLines((models ?? []).join('\n')).join('\n');
-}
-
-/**
- * @param {Array<Partial<AccountModel> & { model: string, enabled?: boolean }>} models
- * @param {string | null | undefined} text
- */
-export function mergeAccountModelChanges(models, text) {
-  const seen = new Set();
-  const merged = [];
-  for (const item of models) {
-    const model = String(item.model ?? '').trim();
-    if (!model || seen.has(model)) continue;
-    seen.add(model);
-    merged.push({ model, enabled: item.enabled !== false });
-  }
-  for (const item of parseAccountModelsText(text)) {
-    if (seen.has(item.model)) continue;
-    seen.add(item.model);
-    merged.push(item);
-  }
-  return merged;
-}
-
-/**
- * @param {AccountModel[]} models
- * @param {string} modelName
- * @param {boolean} enabled
- */
-export function setAccountModelEnabled(models, modelName, enabled) {
-  return models.map((item) => (item.model === modelName ? { ...item, enabled } : item));
-}
-
-/**
- * @param {AccountModel[]} models
- * @param {string} modelName
- */
-export function removeAccountModel(models, modelName) {
-  return models.filter((item) => isSyncedAccountModel(item) || item.model !== modelName);
-}
-
-/** @param {{ source?: string | null }} model */
-export function isSyncedAccountModel(model) {
-  return model.source === 'upstream' || model.source === 'oauth_catalog';
-}
 
 /**
  * @param {{ requestSeq: number }} state
@@ -2343,11 +2293,6 @@ function ensureAccountTestResultsState(accountId) {
   return accountTestResults[key];
 }
 
-/** @param {AccountModel[]} models */
-export function accountModelsText(models) {
-  return modelListText(models.filter((item) => !isSyncedAccountModel(item)).map((item) => item.model));
-}
-
 /** @param {number} accountId */
 export function getAccountModelsState(accountId) {
   return ensureAccountModelsState(accountId);
@@ -2375,29 +2320,6 @@ export function applyAccountModelTestResult(models, result) {
 /** @param {number} accountId */
 export function getAccountTestResultsState(accountId) {
   return ensureAccountTestResultsState(accountId);
-}
-
-/**
- * @param {{ model: string; enabled: boolean; source?: string | null }[]} models
- */
-export function accountModelSummary(models) {
-  let total = 0;
-  let synced = 0;
-  let manual = 0;
-  let enabled = 0;
-  for (const m of models) {
-    total++;
-    if (isSyncedAccountModel(m)) synced++;
-    else manual++;
-    if (m.enabled) enabled++;
-  }
-  return { total, synced, manual, enabled };
-}
-
-/** @param {{ source?: string | null }} model */
-export function sourceBadgeLabel(model) {
-  if (model.source === 'oauth_catalog') return 'OpenAI';
-  return model.source === 'upstream' ? 'Synced' : 'Manual';
 }
 
 /** @param {number} accountId */
