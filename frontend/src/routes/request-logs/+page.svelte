@@ -264,6 +264,38 @@
       .join(' ');
   }
 
+  /** @param {number | null | undefined} value */
+  function diagnosticDurationLabel(value) {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? `${value}ms` : '未记录';
+  }
+
+  /** @param {string | null | undefined} value */
+  function attemptTypeLabel(value) {
+    /** @type {Record<string, string>} */
+    const labels = {
+      selection: 'Account selection',
+      concurrency_rejection: 'Concurrency rejection',
+      gateway_rejection: 'Gateway rejection',
+      upstream_http: 'Upstream HTTP',
+      upstream_transport: 'Upstream transport',
+      auth_refresh_retry: 'Auth refresh retry'
+    };
+    return value ? labels[value] ?? errorLabel(value) : '未记录';
+  }
+
+  /** @param {string | null | undefined} value */
+  function attemptTimestampLabel(value) {
+    return value ? formatDate(value) : '未记录';
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').RequestLogAttempt} attempt */
+  function attemptAccountLabel(attempt) {
+    if (attempt.accountName && attempt.accountId) return `${attempt.accountName} (#${attempt.accountId})`;
+    if (attempt.accountName) return attempt.accountName;
+    if (attempt.accountId) return `Account ${attempt.accountId}`;
+    return '未记录';
+  }
+
   function requestLogDrilldownParams() {
     const params = new URLSearchParams();
     if (/^\d+$/.test(requestLogs.since)) params.set('since', requestLogs.since);
@@ -897,6 +929,48 @@
           </div>
           <div class="sm:col-span-3"><dt class="text-xs font-medium text-[#6e6e6e]">Routing error</dt><dd class="mt-1 break-all font-mono text-[13px] text-[#0d0d0d]">{selectedRequestLog.routingPoolError ? errorLabel(selectedRequestLog.routingPoolError) : '-'}</dd></div>
         </dl>
+      </section>
+
+      <section class="mt-6 border-t border-[#ededed] pt-5" aria-labelledby="request-log-timing-title">
+        <h3 id="request-log-timing-title" class="text-sm font-semibold text-[#0d0d0d]">Response phases</h3>
+        <dl class="mt-3 grid gap-x-6 gap-y-4 sm:grid-cols-3">
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Header wait</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{diagnosticDurationLabel(selectedRequestLog.responseTiming?.headerWaitMs)}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">First useful output</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{diagnosticDurationLabel(selectedRequestLog.responseTiming?.firstUsefulOutputMs)}</dd></div>
+          <div><dt class="text-xs font-medium text-[#6e6e6e]">Stream finish</dt><dd class="mt-1 font-mono text-[13px] tabular-nums text-[#0d0d0d]">{diagnosticDurationLabel(selectedRequestLog.responseTiming?.streamFinishMs)}</dd></div>
+        </dl>
+      </section>
+
+      <section class="mt-6 border-t border-[#ededed] pt-5" aria-labelledby="request-log-attempts-title">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h3 id="request-log-attempts-title" class="text-sm font-semibold text-[#0d0d0d]">Attempt timeline</h3>
+          {#if selectedRequestLog.attemptTimelineTruncated}<span class="text-xs text-amber-700">Timeline is bounded</span>{/if}
+        </div>
+        {#if selectedRequestLog.attempts?.length}
+          <ol class="mt-3 space-y-3" aria-label="Gateway attempt timeline">
+            {#each selectedRequestLog.attempts as attempt, attemptIndex}
+              <li class="rounded-lg border border-[#ededed] bg-[#fafafa] p-3">
+                <div class="flex flex-wrap items-baseline justify-between gap-2">
+                  <p class="text-sm font-medium text-[#0d0d0d]">
+                    #{attempt.order ?? attemptIndex} · {attemptTypeLabel(attempt.type)}
+                  </p>
+                  <span class="font-mono text-xs tabular-nums text-[#6e6e6e]">{diagnosticDurationLabel(attempt.durationMs)}</span>
+                </div>
+                <dl class="mt-2 grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
+                  <div><dt class="text-[#6e6e6e]">Account</dt><dd class="mt-0.5 break-words font-mono text-[#0d0d0d]">{attemptAccountLabel(attempt)}</dd></div>
+                  <div><dt class="text-[#6e6e6e]">Pool</dt><dd class="mt-0.5 break-words font-mono text-[#0d0d0d]">{attempt.poolName || (attempt.poolId ? `Pool ${attempt.poolId}` : '未记录')}</dd></div>
+                  <div><dt class="text-[#6e6e6e]">Started</dt><dd class="mt-0.5 break-words text-[#0d0d0d]">{attemptTimestampLabel(attempt.startedAt)}</dd></div>
+                  <div><dt class="text-[#6e6e6e]">Finished</dt><dd class="mt-0.5 break-words text-[#0d0d0d]">{attemptTimestampLabel(attempt.endedAt)}</dd></div>
+                  <div><dt class="text-[#6e6e6e]">HTTP status</dt><dd class="mt-0.5 font-mono tabular-nums text-[#0d0d0d]">{attempt.httpStatus || '未记录'}</dd></div>
+                  <div><dt class="text-[#6e6e6e]">Upstream request ID</dt><dd class="mt-0.5 break-all font-mono text-[#0d0d0d]">{attempt.upstreamRequestId || '未记录'}</dd></div>
+                  <div><dt class="text-[#6e6e6e]">Error</dt><dd class="mt-0.5 break-words font-mono text-[#0d0d0d]">{attempt.error ? errorLabel(attempt.error) : '未记录'}</dd></div>
+                  <div><dt class="text-[#6e6e6e]">Fallback reason</dt><dd class="mt-0.5 break-words font-mono text-[#0d0d0d]">{attempt.fallbackReason ? errorLabel(attempt.fallbackReason) : '未记录'}</dd></div>
+                </dl>
+              </li>
+            {/each}
+          </ol>
+        {:else}
+          <p class="mt-3 text-sm text-[#6e6e6e]">未记录</p>
+        {/if}
       </section>
 
       {#if selectedRequestLog.error}

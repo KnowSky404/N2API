@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1599,6 +1600,11 @@ const requestLogSelectSQL = `SELECT
 	COALESCE((l.pricing_snapshot->>'matched')::boolean, false),
 	COALESCE(l.gateway_attempt_count, 0),
 	COALESCE(l.gateway_fallback_count, 0),
+	l.attempts,
+	COALESCE(l.attempt_timeline_truncated, false),
+	l.header_wait_ms,
+	l.first_useful_output_ms,
+	l.stream_finish_ms,
 	l.created_at
 FROM request_logs l
 LEFT JOIN client_api_keys k ON k.id = l.client_key_id
@@ -1708,6 +1714,7 @@ func (r *AdminRepository) StreamRequestLogs(ctx context.Context, filter admin.Re
 
 func scanRequestLog(row rowScanner) (admin.RequestLog, error) {
 	var log admin.RequestLog
+	var attemptsRaw []byte
 	err := row.Scan(
 		&log.ID,
 		&log.RequestID,
@@ -1739,10 +1746,23 @@ func scanRequestLog(row rowScanner) (admin.RequestLog, error) {
 		&log.PricingMatched,
 		&log.GatewayAttemptCount,
 		&log.GatewayFallbackCount,
+		&attemptsRaw,
+		&log.AttemptTimelineTruncated,
+		&log.ResponseTiming.HeaderWaitMS,
+		&log.ResponseTiming.FirstUsefulOutputMS,
+		&log.ResponseTiming.StreamFinishMS,
 		&log.CreatedAt,
 	)
 	if err != nil {
 		return admin.RequestLog{}, err
+	}
+	if len(attemptsRaw) == 0 {
+		log.Attempts = []requestlog.RequestAttempt{}
+	} else if err := json.Unmarshal(attemptsRaw, &log.Attempts); err != nil {
+		return admin.RequestLog{}, err
+	}
+	if log.Attempts == nil {
+		log.Attempts = []requestlog.RequestAttempt{}
 	}
 	log.CreatedAt = log.CreatedAt.UTC()
 	return log, nil

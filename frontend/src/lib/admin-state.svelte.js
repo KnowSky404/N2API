@@ -128,6 +128,31 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} RequestLogAttempt
+ * @property {number} order
+ * @property {string} type
+ * @property {number} accountId
+ * @property {string} accountType
+ * @property {string} accountName
+ * @property {number} poolId
+ * @property {string} poolName
+ * @property {string} startedAt
+ * @property {string | null | undefined} endedAt
+ * @property {number | null | undefined} durationMs
+ * @property {number} httpStatus
+ * @property {string} error
+ * @property {string} fallbackReason
+ * @property {string} upstreamRequestId
+ */
+
+/**
+ * @typedef {object} RequestLogResponseTiming
+ * @property {number | null | undefined} headerWaitMs
+ * @property {number | null | undefined} firstUsefulOutputMs
+ * @property {number | null | undefined} streamFinishMs
+ */
+
+/**
  * @typedef {object} RequestLog
  * @property {number} id
  * @property {string} requestId
@@ -160,6 +185,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} pricingMatched
  * @property {number} gatewayAttemptCount
  * @property {number} gatewayFallbackCount
+ * @property {RequestLogAttempt[]} attempts
+ * @property {boolean} attemptTimelineTruncated
+ * @property {RequestLogResponseTiming | null | undefined} responseTiming
  * @property {string} createdAt
  */
 

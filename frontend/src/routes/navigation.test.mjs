@@ -912,6 +912,9 @@ test('request logs table keeps scan fields visible and moves diagnostics into de
   assert.match(requestLogsPage, /aria-labelledby="request-log-detail-title"/);
   assert.match(requestLogsPage, /Request details/);
   assert.match(requestLogsPage, /Gateway diagnostics/);
+  assert.match(requestLogsPage, /Response phases/);
+  assert.match(requestLogsPage, /Attempt timeline/);
+  assert.match(requestLogsPage, /未记录/);
   assert.match(requestLogsPage, /Attribution/);
   assert.match(requestLogsPage, /onclick=\{\(event\) => event\.target === event\.currentTarget && closeRequestLogDetails\(\)\}/);
   assert.doesNotMatch(requestLogsPage, /<th[^>]*>Attribution<\/th>/);

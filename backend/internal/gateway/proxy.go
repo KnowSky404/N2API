@@ -236,6 +236,9 @@ type RequestLog struct {
 	PricingSnapshot          map[string]any
 	GatewayAttemptCount      int
 	GatewayFallbackCount     int
+	Attempts                 []requestlog.RequestAttempt
+	AttemptTimelineTruncated bool
+	ResponseTiming           requestlog.ResponseTiming
 	BudgetBackfillEligible   bool
 	CreatedAt                time.Time
 }
@@ -432,6 +435,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	recorder := &statusRecorder{ResponseWriter: w}
 	startedAt := time.Now()
+	diagnostics := newRequestDiagnostics()
 	metricsFinished := false
 	metricsStream := false
 	metricsAccountType := "none"
@@ -510,6 +514,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				p.processLogger.Warn("API key budget settlement failed", "error_code", "api_key_budget_settlement_failed")
 			}
 		}
+		attempts, attemptsTruncated, responseTiming := diagnostics.snapshot()
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:                requestID,
 			UpstreamRequestID:        upstreamRequestID,
@@ -540,6 +545,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			PricingSnapshot:          costEstimate.Snapshot,
 			GatewayAttemptCount:      gatewayAttemptCount,
 			GatewayFallbackCount:     gatewayFallbackCount,
+			Attempts:                 attempts,
+			AttemptTimelineTruncated: attemptsTruncated,
+			ResponseTiming:           responseTiming,
 			BudgetBackfillEligible:   false,
 			CreatedAt:                startedAt,
 		})
@@ -649,9 +657,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	failedAccountIDs := []int64{}
 	accountConcurrencyLimited := false
+	nextFallbackReason := ""
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		diagnostics.resetResponseTiming()
+		selectionSpan := diagnostics.beginAttempt(attemptTypeSelection, SelectedAccount{}, nextFallbackReason)
 		selected, err := p.selectAccountForRequest(r.Context(), key, model, requestEndpoint, sessionID, affinitySelection, failedAccountIDs...)
+		selectionSpan.setSelected(selected)
 		if selected.AccountType != "" {
 			metricsAccountType = selected.AccountType
 		}
@@ -667,42 +679,54 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if accountConcurrencyLimited && errors.Is(err, provider.ErrAccountsUnavailable) {
 				errorCode = "provider_account_concurrency_limited"
+				selectionSpan.finish(0, errorCode)
 				p.observeLimitRejection("provider_account", "concurrency")
 				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 				return
 			}
 			if errors.Is(err, errResponseAffinityUnknown) {
 				errorCode = "response_affinity_unknown"
+				selectionSpan.finish(0, errorCode)
 				writeOpenAIError(recorder, http.StatusConflict, errorCode, "response account affinity is unknown in this routing scope")
 				return
 			}
 			if errors.Is(err, errResponseAffinityAccountUnavailable) {
 				errorCode = "response_affinity_account_unavailable"
+				selectionSpan.finish(0, errorCode)
 				writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "response account is unavailable")
 				return
 			}
 			errorCode = providerErrorCodeForSelection(err, selected)
+			selectionSpan.finish(0, errorCode)
 			p.observeRoutingFailure(errorCode)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
 			return
 		}
+		selectionSpan.finish(0, "")
 		gatewayAttemptCount++
+		attemptFallbackReason := nextFallbackReason
+		nextFallbackReason = ""
 		if lastRetryableResp != nil {
 			_ = lastRetryableResp.Body.Close()
 			lastRetryableResp = nil
 		}
 		if selected.AccountID != 0 && containsInt64(failedAccountIDs, selected.AccountID) {
 			errorCode = "upstream_unavailable"
+			rejectionSpan := diagnostics.beginAttempt(attemptTypeGatewayRejection, selected, attemptFallbackReason)
+			rejectionSpan.finish(http.StatusBadGateway, errorCode)
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 			return
 		}
 		accountLimit := effectiveAccountConcurrencyLimit(selected.MaxConcurrentRequests, settings.MaxConcurrentRequestsPerAccount)
 		releaseAccount, ok := p.tryAcquireAccountSlot(selected.AccountID, accountLimit)
 		if !ok {
+			rejectionSpan := diagnostics.beginAttempt(attemptTypeConcurrencyRejection, selected, attemptFallbackReason)
+			rejectionSpan.finish(http.StatusTooManyRequests, "provider_account_concurrency_limited")
 			accountConcurrencyLimited = true
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				gatewayFallbackCount++
+				nextFallbackReason = "account_concurrency"
 				p.observeFallback("account_concurrency")
 				continue
 			}
@@ -715,6 +739,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			budgetAdmission, err = p.budgets.AdmitAPIKeyBudget(r.Context(), key.ID, time.Now().UTC())
 			if err != nil {
 				releaseAccount()
+				rejectionSpan := diagnostics.beginAttempt(attemptTypeGatewayRejection, selected, attemptFallbackReason)
 				switch {
 				case errors.Is(err, admin.ErrAPIKeyRequestBudgetExceeded):
 					errorCode = "api_key_request_budget_exceeded"
@@ -724,13 +749,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					errorCode = "api_key_cost_budget_exceeded"
 				case errors.Is(err, admin.ErrBudgetInitializing):
 					errorCode = "budget_initializing"
+					rejectionSpan.finish(http.StatusServiceUnavailable, errorCode)
 					writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "api key budget is initializing")
 					return
 				default:
 					errorCode = "internal_error"
+					rejectionSpan.finish(http.StatusInternalServerError, errorCode)
 					writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not admit api key budget")
 					return
 				}
+				rejectionSpan.finish(http.StatusTooManyRequests, errorCode)
 				p.observeLimitRejection("api_key", budgetMetricReason(errorCode))
 				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
 				return
@@ -739,6 +767,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := p.recordAccountUsed(r.Context(), selected.AccountID); err != nil {
 			releaseAccount()
 			errorCode = "internal_error"
+			rejectionSpan := diagnostics.beginAttempt(attemptTypeGatewayRejection, selected, attemptFallbackReason)
+			rejectionSpan.finish(http.StatusInternalServerError, errorCode)
 			writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not record provider account use")
 			return
 		}
@@ -751,12 +781,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		var upstreamResp *http.Response
 		var upstreamErr error
+		var lastUpstreamSpan *requestAttemptSpan
 		upstreamRequestID = ""
 		authorizationRetried := false
 		authorizationRefreshFailureRecorded := false
+		upstreamFallbackReason := attemptFallbackReason
 		for {
+			upstreamStartedAt := time.Now()
+			upstreamSpan := diagnostics.beginAttempt(attemptTypeUpstreamHTTP, selected, upstreamFallbackReason)
+			upstreamFallbackReason = ""
 			upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 			if err != nil {
+				upstreamSpan.setType(attemptTypeUpstreamTransport)
+				upstreamSpan.finish(http.StatusBadGateway, "upstream_request_error")
 				releaseAccount()
 				errorCode = "upstream_request_error"
 				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
@@ -765,36 +802,62 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			client, clientErr := p.clientForSelectedAccount(selected)
 			if clientErr != nil {
 				upstreamErr = clientErr
+				upstreamSpan.setType(attemptTypeUpstreamTransport)
+				upstreamSpan.finish(http.StatusBadGateway, upstreamRequestErrorCode(clientErr))
+				lastUpstreamSpan = upstreamSpan
 				break
 			}
 			upstreamResp, upstreamErr = client.Do(upstreamReq)
 			if upstreamErr != nil {
+				upstreamSpan.setType(attemptTypeUpstreamTransport)
+				upstreamErrorCode := upstreamRequestErrorCode(upstreamErr)
+				if r.Context().Err() != nil {
+					upstreamErrorCode = "request_canceled"
+				}
+				upstreamSpan.finish(http.StatusBadGateway, upstreamErrorCode)
+				lastUpstreamSpan = upstreamSpan
 				p.observeUpstreamAttempt(selected.AccountType, upstreamTransportOutcome(r.Context(), upstreamErr))
 				break
 			}
 			upstreamRequestID = responseUpstreamRequestID(upstreamResp)
+			upstreamSpan.setUpstreamRequestID(upstreamRequestID)
+			diagnostics.setHeaderWait(upstreamStartedAt, time.Now())
+			lastUpstreamSpan = upstreamSpan
 			if authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
+				attemptErrorCode := ""
+				if upstreamResp.StatusCode >= http.StatusBadRequest {
+					attemptErrorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
+				}
+				upstreamSpan.finish(upstreamResp.StatusCode, attemptErrorCode)
 				p.observeUpstreamAttempt(selected.AccountType, upstreamHTTPOutcome(upstreamResp.StatusCode))
 				break
 			}
 
 			message, failureBody := captureFailure(upstreamResp)
 			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
+				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
 				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			refreshedToken, retry, failureRecorded, refreshErr := p.refreshAccountAuthorization(r.Context(), selected, upstreamResp.StatusCode, message)
 			if !retry {
+				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
 				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			authorizationRetried = true
+			authRefreshSpan := diagnostics.beginAttempt(attemptTypeAuthRefreshRetry, selected, "")
+			authRefreshSpan.setUpstreamRequestID(upstreamRequestID)
 			if refreshErr != nil || strings.TrimSpace(refreshedToken) == "" {
 				authorizationRefreshFailureRecorded = failureRecorded
+				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
+				authRefreshSpan.finish(upstreamResp.StatusCode, "auth_refresh_failed")
 				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			p.observeUpstreamAttempt(selected.AccountType, "refresh_retry")
+			upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
+			authRefreshSpan.finish(upstreamResp.StatusCode, "")
 			_ = upstreamResp.Body.Close()
 			selected.AuthorizationToken = refreshedToken
 			gatewayAttemptCount++
@@ -803,6 +866,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			releaseAccount()
 			if r.Context().Err() != nil {
 				errorCode = "request_canceled"
+				lastUpstreamSpan.setError(errorCode)
 				return
 			}
 			upstreamErrCode := upstreamRequestErrorCode(upstreamErr)
@@ -810,6 +874,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				gatewayFallbackCount++
+				nextFallbackReason = "transport_error"
 				p.observeFallback("transport_error")
 				continue
 			}
@@ -822,6 +887,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			message, failureBody := captureFailure(upstreamResp)
 			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
 				errorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
+				lastUpstreamSpan.setError(errorCode)
 				defer releaseAccount()
 				defer upstreamResp.Body.Close()
 
@@ -830,12 +896,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				metricsStream = streamResponse
 				observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
 				observedUsage, err = observation.Usage, writeErr
+				diagnostics.setResponseTiming(observation.ResponseTiming)
 				if streamResponse {
 					p.observeStream(r.URL.Path, observation.StreamOutcome)
 				}
-				if err != nil {
-					errorCode = upstreamResponseErrorCode(err)
-					if !recorder.committed() {
+				if responseErrorCode := responseObservationErrorCode(observation, err); responseErrorCode != "" {
+					errorCode = responseErrorCode
+					lastUpstreamSpan.setError(errorCode)
+					if err != nil && !recorder.committed() {
 						writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 					}
 				}
@@ -851,6 +919,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if attempt+1 < maxAttempts {
 				releaseAccount()
 				gatewayFallbackCount++
+				nextFallbackReason = "retryable_status"
 				p.observeFallback("retryable_status")
 				lastRetryableResp = upstreamResp
 				continue
@@ -868,12 +937,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metricsStream = streamResponse
 		observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
 		observedUsage, err = observation.Usage, writeErr
+		diagnostics.setResponseTiming(observation.ResponseTiming)
 		if streamResponse {
 			p.observeStream(r.URL.Path, observation.StreamOutcome)
 		}
-		if err != nil {
-			errorCode = upstreamResponseErrorCode(err)
-			if !recorder.committed() {
+		if responseErrorCode := responseObservationErrorCode(observation, err); responseErrorCode != "" {
+			errorCode = responseErrorCode
+			lastUpstreamSpan.setError(errorCode)
+			if err != nil && !recorder.committed() {
 				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 			}
 		}
@@ -1501,19 +1572,19 @@ func secondsUntilNextMinute(now time.Time) int {
 }
 
 var (
-	errUpstreamResponseTooLarge = errors.New("upstream response exceeds configured limit")
-	errUpstreamResponseRead     = errors.New("upstream response read failed")
-	errUpstreamSSEIdleTimeout   = errors.New("upstream SSE stream idle timeout")
+	errUpstreamResponseTooLarge  = errors.New("upstream response exceeds configured limit")
+	errUpstreamResponseRead      = errors.New("upstream response read failed")
+	errUpstreamSSEIdleTimeout    = errors.New("upstream SSE stream idle timeout")
+	errUpstreamModelError        = errors.New("upstream response reported a model error")
+	errUpstreamGenerationMissing = errors.New("upstream response contained no generated output")
 )
 
 type upstreamResponseObservation struct {
-	Usage         Usage
-	ResponseID    string
-	StreamOutcome string
-}
-
-func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (upstreamResponseObservation, error) {
-	return p.writeUpstreamResponseWithOptions(ctx, w, resp, route, stream, false, false)
+	Usage           Usage
+	ResponseID      string
+	StreamOutcome   string
+	DiagnosticError string
+	ResponseTiming  requestlog.ResponseTiming
 }
 
 func (p *Proxy) writeUpstreamResponseWithOptions(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream, aggregateOAuth, validateSSETerminal bool) (upstreamResponseObservation, error) {
@@ -1544,26 +1615,47 @@ func (p *Proxy) writeUpstreamResponseWithOptions(ctx context.Context, w http.Res
 		}
 		return copyStreamingResponse(ctx, w, resp.Body, route, p.sseIdleTimeout)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(p.maxResponseBody)+1))
+	return writeBufferedUpstreamResponse(w, resp, route, p.maxResponseBody)
+}
+
+func writeBufferedUpstreamResponse(w http.ResponseWriter, resp *http.Response, route string, maxResponseBody int) (observation upstreamResponseObservation, err error) {
+	tracker := newResponsePhaseTracker(route)
+	defer func() {
+		observation.ResponseTiming = tracker.snapshot()
+	}()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxResponseBody)+1))
 	if err != nil {
 		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseRead
 	}
-	if len(body) > p.maxResponseBody {
+	if len(body) > maxResponseBody {
 		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseTooLarge
+	}
+	if responseBodyHasUsefulJSON(route, resp.StatusCode, body) {
+		tracker.markUseful()
 	}
 	copyResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(body)
-	return upstreamResponseObservation{
+	if _, writeErr := w.Write(body); writeErr != nil {
+		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, writeErr
+	}
+	observation = upstreamResponseObservation{
 		Usage:      ParseUsageFromJSON(route, body),
 		ResponseID: responseIDFromJSON(route, body),
-	}, nil
+	}
+	if diagnosticErr := responseBodyDiagnosticError(route, resp.StatusCode, body); diagnosticErr != nil {
+		return observation, diagnosticErr
+	}
+	return observation, nil
 }
 
 func upstreamResponseErrorCode(err error) string {
 	switch {
 	case errors.Is(err, errUpstreamResponseTooLarge):
 		return "upstream_response_too_large"
+	case errors.Is(err, errUpstreamModelError):
+		return "upstream_model_error"
+	case errors.Is(err, errUpstreamGenerationMissing):
+		return "upstream_generation_missing"
 	case errors.Is(err, errUpstreamSSEIdleTimeout):
 		return "upstream_sse_idle_timeout"
 	case errors.Is(err, errUpstreamSSETerminalMissing):
@@ -1590,6 +1682,10 @@ func upstreamResponseErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, errUpstreamResponseTooLarge):
 		return "upstream response is too large"
+	case errors.Is(err, errUpstreamModelError):
+		return "upstream response reported a model error"
+	case errors.Is(err, errUpstreamGenerationMissing):
+		return "upstream response contained no generated output"
 	case errors.Is(err, errUpstreamSSEIdleTimeout):
 		return "upstream stream timed out"
 	case errors.Is(err, errUpstreamSSETerminalMissing):
@@ -1612,8 +1708,12 @@ func upstreamResponseErrorMessage(err error) string {
 	return "could not read upstream response"
 }
 
-func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration) (upstreamResponseObservation, error) {
+func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration) (observation upstreamResponseObservation, err error) {
 	observer := NewSSEUsageObserver(route)
+	phaseTracker := newResponsePhaseTracker(route)
+	defer func() {
+		observation.ResponseTiming = phaseTracker.snapshot()
+	}()
 	buffer := make([]byte, 32*1024)
 	writer := flushWriter{ResponseWriter: w}
 	stopContextClose := context.AfterFunc(ctx, func() {
@@ -1633,8 +1733,9 @@ func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.R
 		if n > 0 {
 			chunk := buffer[:n]
 			observer.Observe(chunk)
+			phaseTracker.observeSSE(chunk)
 			if _, writeErr := writer.Write(chunk); writeErr != nil {
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "client_canceled"}, nil
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "client_canceled", DiagnosticError: "client_canceled"}, nil
 			}
 		}
 		select {
@@ -1645,17 +1746,29 @@ func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.R
 		if readErr != nil {
 			if ctx.Err() != nil {
 				outcome := "client_canceled"
+				diagnosticError := "client_canceled"
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 					outcome = "server_error"
+					diagnosticError = "upstream_response_timeout"
 				}
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: outcome}, nil
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: outcome, DiagnosticError: diagnosticError}, nil
 			}
 			if errors.Is(readErr, io.EOF) {
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "completed"}, nil
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "completed", DiagnosticError: phaseTracker.diagnosticErrorFor(route)}, nil
 			}
 			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "upstream_error"}, errUpstreamResponseRead
 		}
 	}
+}
+
+func responseObservationErrorCode(observation upstreamResponseObservation, err error) string {
+	if errors.Is(err, errUpstreamResponseCanceled) {
+		return "client_canceled"
+	}
+	if err != nil {
+		return upstreamResponseErrorCode(err)
+	}
+	return observation.DiagnosticError
 }
 
 func upstreamRequestErrorCode(err error) string {
@@ -2099,11 +2212,6 @@ var (
 	errRequestBodyDeadline = errors.New("request body deadline failed")
 )
 
-func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, string, error) {
-	bodyFactory, maxAttempts, model, sessionID, previousResponseID, _, err := p.requestBodyFactoryWithOptions(r)
-	return bodyFactory, maxAttempts, model, sessionID, previousResponseID, err
-}
-
 func (p *Proxy) requestBodyFactoryWithOptions(r *http.Request) (func() io.ReadCloser, int, string, string, string, bool, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
 		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), "", false, nil
@@ -2163,11 +2271,6 @@ func stickySessionIDFromHeader(header http.Header) string {
 
 func routeRequiresModel(r *http.Request) bool {
 	return r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/responses")
-}
-
-func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, string, string, error) {
-	normalized, model, sessionID, previousResponseID, _, err := p.normalizeModelRequestBodyWithStream(ctx, raw)
-	return normalized, model, sessionID, previousResponseID, err
 }
 
 func (p *Proxy) normalizeModelRequestBodyWithStream(ctx context.Context, raw []byte) ([]byte, string, string, string, bool, error) {

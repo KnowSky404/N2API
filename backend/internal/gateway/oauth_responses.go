@@ -35,7 +35,11 @@ type oauthSSEEventResult struct {
 	err      error
 }
 
-func (p *Proxy) aggregateOAuthResponses(ctx context.Context, body io.ReadCloser, route string) (upstreamResponseObservation, []byte, error) {
+func (p *Proxy) aggregateOAuthResponses(ctx context.Context, body io.ReadCloser, route string) (observation upstreamResponseObservation, responseBody []byte, err error) {
+	phaseTracker := newResponsePhaseTracker(route)
+	defer func() {
+		observation.ResponseTiming = phaseTracker.snapshot()
+	}()
 	if body == nil {
 		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, nil, errUpstreamResponseRead
 	}
@@ -67,6 +71,7 @@ func (p *Proxy) aggregateOAuthResponses(ctx context.Context, body io.ReadCloser,
 		if err != nil {
 			return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, nil, classifyOAuthSSEReadError(ctx, err)
 		}
+		phaseTracker.observeSSEEvent(event.Event, event.Data)
 		result := parseOAuthSSEEvent(event)
 		if result.err != nil && !result.terminal {
 			return upstreamResponseObservation{Usage: Usage{Source: "missing"}, StreamOutcome: result.outcome}, nil, result.err
@@ -241,8 +246,12 @@ func (r *oauthSSEBoundedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func copyOAuthStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration, maxBytes int) (upstreamResponseObservation, error) {
+func copyOAuthStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration, maxBytes int) (observation upstreamResponseObservation, err error) {
 	observer := NewSSEUsageObserver(route)
+	phaseTracker := newResponsePhaseTracker(route)
+	defer func() {
+		observation.ResponseTiming = phaseTracker.snapshot()
+	}()
 	tracker := newOAuthSSEStreamTracker(maxBytes)
 	defer tracker.close()
 	buffer := make([]byte, 32*1024)
@@ -272,9 +281,10 @@ func copyOAuthStreamingResponse(ctx context.Context, w http.ResponseWriter, body
 			readBytes += n
 			chunk := buffer[:n]
 			observer.Observe(chunk)
+			phaseTracker.observeSSE(chunk)
 			tracker.write(chunk)
 			if _, writeErr := writer.Write(chunk); writeErr != nil {
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "client_canceled"}, nil
+				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "client_canceled", DiagnosticError: "client_canceled"}, nil
 			}
 		}
 		select {

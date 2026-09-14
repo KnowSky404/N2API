@@ -83,6 +83,13 @@ func TestProxyAggregatesOAuthResponsesForNonStreamingClients(t *testing.T) {
 				t.Fatalf("normalized upstream body = %+v, want stream=true/store=false", upstreamBody)
 			}
 			assertLastLoggedError(t, logger, "")
+			if len(logger.entries) != 1 {
+				t.Fatalf("logged entries = %d, want one diagnostic entry", len(logger.entries))
+			}
+			timing := logger.entries[0].ResponseTiming
+			if timing.HeaderWaitMS == nil || timing.FirstUsefulOutputMS == nil || timing.StreamFinishMS == nil {
+				t.Fatalf("response timing = %+v, want header wait, first useful output, and finish", timing)
+			}
 		})
 	}
 }

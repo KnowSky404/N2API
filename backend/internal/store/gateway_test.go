@@ -16,7 +16,7 @@ func TestGatewayRepositoryImplementsRequestLogger(t *testing.T) {
 
 func TestCreateRequestLogSQLIncludesProviderAccountAttribution(t *testing.T) {
 	sql := createRequestLogSQL()
-	for _, want := range []string{"upstream_request_id", "provider_account_id", "provider_account_type", "provider_account_name", "routing_pool_fallback_depth", "routing_pool_fallback_chain", "routing_pool_error", "model", "session_id", "input_tokens", "total_tokens", "usage_source", "estimated_cost_microusd", "pricing_snapshot", "gateway_attempt_count", "gateway_fallback_count", "budget_backfill_eligible", "VALUES ($1, $2, $3", "$30, $31)"} {
+	for _, want := range []string{"upstream_request_id", "provider_account_id", "provider_account_type", "provider_account_name", "routing_pool_fallback_depth", "routing_pool_fallback_chain", "routing_pool_error", "model", "session_id", "input_tokens", "total_tokens", "usage_source", "estimated_cost_microusd", "pricing_snapshot", "gateway_attempt_count", "gateway_fallback_count", "attempts", "attempt_timeline_truncated", "header_wait_ms", "first_useful_output_ms", "stream_finish_ms", "budget_backfill_eligible", "VALUES ($1, $2, $3", "$35, $36)"} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("CreateRequestLog SQL missing %q: %s", want, sql)
 		}
@@ -26,7 +26,7 @@ func TestCreateRequestLogSQLIncludesProviderAccountAttribution(t *testing.T) {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
 	source := string(sourceBytes)
-	for _, want := range []string{"entry.UpstreamRequestID", "entry.RoutingPoolFallbackDepth", "entry.RoutingPoolFallbackChain", "entry.RoutingPoolError", "entry.GatewayAttemptCount", "entry.GatewayFallbackCount", "entry.BudgetBackfillEligible"} {
+	for _, want := range []string{"entry.UpstreamRequestID", "entry.RoutingPoolFallbackDepth", "entry.RoutingPoolFallbackChain", "entry.RoutingPoolError", "entry.GatewayAttemptCount", "entry.GatewayFallbackCount", "entry.Attempts", "entry.AttemptTimelineTruncated", "entry.ResponseTiming.HeaderWaitMS", "entry.ResponseTiming.FirstUsefulOutputMS", "entry.ResponseTiming.StreamFinishMS", "entry.BudgetBackfillEligible"} {
 		if !strings.Contains(source, want) {
 			t.Fatalf("CreateRequestLog source missing %q", want)
 		}

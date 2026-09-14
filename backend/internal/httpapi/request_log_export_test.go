@@ -15,6 +15,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
 	"github.com/KnowSky404/N2API/backend/internal/config"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
@@ -36,6 +37,8 @@ type discardExportResponseWriter struct {
 	bytes    int
 	maxWrite int
 }
+
+func intPointerForExport(value int) *int { return &value }
 
 type generatedRequestLogAdminService struct {
 	*fakeAdminService
@@ -198,7 +201,7 @@ func TestRequestLogExportRowHasExplicitSafeFieldSet(t *testing.T) {
 		"routingPoolId", "routingPoolName", "routingPoolFallbackDepth", "routingPoolFallbackChain", "routingPoolError",
 		"model", "sessionId", "route", "method", "statusCode", "latencyMs", "error", "inputTokens", "outputTokens",
 		"totalTokens", "cachedInputTokens", "reasoningTokens", "usageSource", "estimatedCostMicrousd", "pricingMatched",
-		"gatewayAttemptCount", "gatewayFallbackCount", "createdAt",
+		"gatewayAttemptCount", "gatewayFallbackCount", "attempts", "attemptTimelineTruncated", "responseTiming", "createdAt",
 	}
 	if got := reflect.ValueOf(fields).Len(); got != len(want) {
 		t.Fatalf("field count = %d, want %d: %s", got, len(want), encoded)
@@ -219,7 +222,8 @@ func TestRequestLogExportStreamsGzipCSVWithSafeCellsTrailersAndEvents(t *testing
 	admins := newFakeAdminService()
 	admins.logs = []admin.RequestLog{{
 		ID: 9, RequestID: "=HYPERLINK(\"bad\")", UpstreamRequestID: "upstream_9", ClientKey: " +key", Provider: "openai", SessionID: "@workspace",
-		Model: "gpt-5", StatusCode: 200, CreatedAt: time.Unix(150, 0).UTC(),
+		Model: "gpt-5", StatusCode: 200, Attempts: []requestlog.RequestAttempt{{Order: 0, Type: "selection"}}, AttemptTimelineTruncated: true,
+		ResponseTiming: requestlog.ResponseTiming{HeaderWaitMS: intPointerForExport(3), FirstUsefulOutputMS: intPointerForExport(9), StreamFinishMS: intPointerForExport(20)}, CreatedAt: time.Unix(150, 0).UTC(),
 	}}
 	recorder := &memorySystemEventRecorder{}
 	server := NewServer(config.Config{RequestLogExportMaxRows: 1000, RequestLogExportTimeout: time.Second}, staticHealth{}, admins, newFakeProviderService(), recorder)
@@ -242,7 +246,7 @@ func TestRequestLogExportStreamsGzipCSVWithSafeCellsTrailersAndEvents(t *testing
 	if err != nil {
 		t.Fatalf("ReadAll returned error: %v", err)
 	}
-	if len(rows) != 2 || len(rows[1]) != len(requestLogExportCSVHeader) || rows[1][1] != "'=HYPERLINK(\"bad\")" || rows[1][2] != "upstream_9" || rows[1][3] != " '+key" || rows[1][14] != "'@workspace" {
+	if len(rows) != 2 || len(rows[1]) != len(requestLogExportCSVHeader) || rows[1][1] != "'=HYPERLINK(\"bad\")" || rows[1][2] != "upstream_9" || rows[1][3] != " '+key" || rows[1][14] != "'@workspace" || !strings.Contains(rows[1][31], "selection") || rows[1][32] != "true" || rows[1][33] != "3" || rows[1][34] != "9" || rows[1][35] != "20" {
 		t.Fatalf("CSV rows = %#v", rows)
 	}
 	trailers := response.Result().Trailer
