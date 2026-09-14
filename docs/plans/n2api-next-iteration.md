@@ -57,7 +57,7 @@ Confirmed capabilities and issues:
 
 | ID | Work item | Status | Dependencies |
 | --- | --- | --- | --- |
-| A | Endpoint-aware scheduling and stable endpoint diagnostics | pending | baseline |
+| A | Endpoint-aware scheduling and stable endpoint diagnostics | complete | baseline |
 | B | OAuth Responses non-stream aggregation and SSE terminal handling | pending | baseline |
 | C | Model-catalog cache lifecycle, forced refresh, freshness, and invalidation | pending | baseline |
 | D | Bounded request-attempt and stream diagnostics | pending | A, B |
@@ -169,6 +169,7 @@ Confirmed capabilities and issues:
 | --- | --- | --- |
 | 2026-09-14 | Baseline | `make test` passed at HEAD `33b8d686`; no worktree changes before this plan. |
 | 2026-09-14 | Context7 contract lookup | Official OpenAI API Responses streaming events and `openai-python` response stream union consulted; implementation must preserve terminal response objects and typed event categories. |
+| 2026-09-14 | A complete | `aa47f96` (`feat: route accounts by endpoint capability`); endpoint-aware global/pool/fallback/affinity selection, stable endpoint diagnostics, metadata persistence, and HTTP preview coverage. `make test`, `make test-go-quality`, and focused endpoint tests passed. |
 
 ## Blockers, skips, and follow-ups
 
