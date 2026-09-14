@@ -60,7 +60,7 @@ Confirmed capabilities and issues:
 | A | Endpoint-aware scheduling and stable endpoint diagnostics | complete | baseline |
 | B | OAuth Responses non-stream aggregation and SSE terminal handling | complete | baseline |
 | C | Model-catalog cache lifecycle, forced refresh, freshness, and invalidation | complete | baseline |
-| D | Bounded request-attempt and stream diagnostics | pending | A, B |
+| D | Bounded request-attempt and stream diagnostics | complete | A, B |
 | E | Same-package gateway/provider/frontend responsibility splits | pending | A-D behavior tests |
 | F | Dependency inventory, SDK contract matrix, consistency checks, and docs | pending | baseline, A-D |
 | G | Full regression, browser verification, migrations, and local Compose refresh | pending | A-F |
@@ -172,6 +172,7 @@ Confirmed capabilities and issues:
 | 2026-09-14 | A complete | `aa47f96` (`feat: route accounts by endpoint capability`); endpoint-aware global/pool/fallback/affinity selection, stable endpoint diagnostics, metadata persistence, and HTTP preview coverage. `make test`, `make test-go-quality`, and focused endpoint tests passed. |
 | 2026-09-14 | B complete | `4c907c4` (`feat: support OAuth Responses non-streaming clients`); bounded SSE parser, terminal-event validation, complete Response aggregation, raw streaming terminal tracking, and cancellation/truncation/error coverage passed targeted and race tests. |
 | 2026-09-14 | C complete | `71f754d` (`feat: add forced OAuth catalog refresh`); forced refresh endpoint/UI, account-generation invalidation, bounded/coalesced catalog fetches, freshness status, stale-response protection, failure retention, and duplicate/cancellation coverage passed targeted backend/frontend checks. |
+| 2026-09-14 | D complete | `529355a` (`feat: add bounded request diagnostics`); bounded/redacted attempt timelines, fallback/auth/transport classifications, request-relative response phases, HTTP-200 model/missing-generation diagnostics, PostgreSQL migration/round-trip/export coverage, and request-log detail UI. `make test`, `make test-go-quality`, and `make test-critical-race` passed; `51742ab` extends the existing process-lifecycle race-test context budget exposed by the full race run. |
 
 ## Blockers, skips, and follow-ups
 
