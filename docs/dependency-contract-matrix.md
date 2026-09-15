@@ -10,15 +10,15 @@ this document is an audit index, not a second lockfile.
 
 | Area | Version or range | Source of truth | Cross-check / evidence |
 | --- | --- | --- | --- |
-| Backend Go toolchain | `1.26.5` | `backend/go.mod` | `deploy/Dockerfile`, `deploy/Dockerfile.e2e`, and CI `setup-go` read or match `backend/go.mod` |
-| Backend direct Go dependencies | `pgx/v5 5.10.0`, `goose/v3 3.27.3`, Prometheus `1.24.1/0.6.2/0.70.1`, `utls 1.8.2`, YAML `3.0.5`, `x/crypto 0.54.0` | `backend/go.mod`, `backend/go.sum` | `go test ./...`, `go vet ./...`, Staticcheck `2026.1` |
+| Backend Go toolchain | `1.26.6` | `backend/go.mod` | `deploy/Dockerfile`, `deploy/Dockerfile.e2e`, and CI `setup-go` read or match `backend/go.mod` |
+| Backend direct Go dependencies | `pgx/v5 5.10.0`, `goose/v3 3.27.3`, Prometheus `1.24.1/0.6.2/0.70.1`, `utls 1.8.2`, YAML `3.0.5`, `x/crypto 0.55.0` | `backend/go.mod`, `backend/go.sum` | `go test ./...`, `go vet ./...`, Staticcheck `2026.1` |
 | Frontend package manager | Bun `1.3.14` | `frontend/package.json` | `frontend/bun.lock`, CI `setup-bun`, and application Docker images |
 | Frontend framework | SvelteKit `2.70.1`, Svelte `5.56.8`, Vite `8.1.5` | `frontend/package.json`, `frontend/bun.lock` | `make test` runs check, all Bun tests, and production build |
 | Frontend styling and adapter | Tailwind `4.3.3`, `@tailwindcss/vite 4.3.3`, adapter-static declared `^3.0.9` and locked `3.0.10` | `frontend/package.json`, `frontend/bun.lock` | Frozen Bun install in CI and Docker |
 | JavaScript SDK fixture | `openai 6.48.0`, Bun `1.3.14` | `tests/contracts/javascript/package.json`, `tests/contracts/javascript/bun.lock` | `deploy/Dockerfile.e2e` contracts-javascript stage; `make test-contracts` |
 | Python SDK fixture | `openai 2.48.0`, Python `3.12.13`, requires Python `3.12.*` | `tests/contracts/python/pyproject.toml`, `uv.lock`, `.python-version` | `deploy/Dockerfile.e2e` contracts-python stage; `make test-contracts` |
 | Python package manager | uv `0.11.30` | `deploy/Dockerfile.e2e` `uv-bin` stage | `uv sync --locked --no-dev --no-install-project` in the image build |
-| Application base images | Bun `1.3.14`, Go `1.26.5-alpine3.23`, Alpine `3.23.5` | `deploy/Dockerfile` and `deploy/Dockerfile.e2e` | Every external image is retained with a readable tag and immutable digest |
+| Application base images | Bun `1.3.14`, Go `1.26.6-alpine3.23`, Alpine `3.23.5` with pinned runtime package upgrades | `deploy/Dockerfile` and `deploy/Dockerfile.e2e` | Every external image is retained with a readable tag and immutable digest; runtime OpenSSL packages are upgraded from the pinned Alpine repository |
 | Local and E2E database | PostgreSQL `18.4-alpine3.23` | `deploy/compose.yaml`, `deploy/compose.e2e.yaml`, release/restore Compose files | Digest check plus PostgreSQL-backed managed tests |
 | GitHub Actions pins | Checkout v7, setup-go v6, setup-bun v2, upload-artifact v7, CodeQL v4.37.3 | `.github/workflows/*.yml` | Full commit-SHA validation in `dev/ci/verify-pinned-dependencies.sh` |
 
