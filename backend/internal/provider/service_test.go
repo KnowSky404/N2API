@@ -4433,7 +4433,268 @@ func TestOAuthModelCatalogCoalescesConcurrentRefreshes(t *testing.T) {
 	}
 }
 
+func TestRefreshOAuthAccountModelsBypassesCompletedCache(t *testing.T) {
+	var requestCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requestCount.Add(1) == 1 {
+			_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-luna","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+	}))
+	defer ts.Close()
+
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 1, "oauth-access")
+	account.AccountType = AccountTypeCodexOAuth
+	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "plus"}
+	repo.accounts = []Account{account}
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:                  "openai",
+		Secret:                    "encryption-secret",
+		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
+		OAuthModelCatalogCacheTTL: time.Hour,
+	})
+
+	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
+		t.Fatalf("ordinary catalog sync returned error: %v", err)
+	}
+	models, _, err := service.RefreshOAuthAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("forced catalog refresh returned error: %v", err)
+	}
+	if got, want := accountModelNames(models), []string{"gpt-5.6-luna"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("refreshed models = %v, want %v", got, want)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("catalog requests = %d, want 2 after forced refresh", got)
+	}
+	status, err := service.OAuthModelCatalogStatus(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("OAuthModelCatalogStatus returned error: %v", err)
+	}
+	if status.Source != "upstream" || status.CacheHit == nil || *status.CacheHit {
+		t.Fatalf("status = %+v, want latest forced upstream fetch", status)
+	}
+	if status.LastAttemptAt == nil || status.LastSuccessAt == nil || status.UpstreamFetchMS == nil || status.LocalApplyMS == nil {
+		t.Fatalf("status = %+v, want attempt, success, and timing observations", status)
+	}
+}
+
+func TestSyncOAuthAccountModelsRecordsCacheHitFreshness(t *testing.T) {
+	var requestCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+	}))
+	defer ts.Close()
+
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 1, "oauth-access")
+	account.AccountType = AccountTypeCodexOAuth
+	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "plus"}
+	repo.accounts = []Account{account}
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:                  "openai",
+		Secret:                    "encryption-secret",
+		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
+		OAuthModelCatalogCacheTTL: time.Hour,
+	})
+
+	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
+		t.Fatalf("initial catalog sync returned error: %v", err)
+	}
+	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
+		t.Fatalf("cache-hit catalog sync returned error: %v", err)
+	}
+	status, err := service.OAuthModelCatalogStatus(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("OAuthModelCatalogStatus returned error: %v", err)
+	}
+	if got := requestCount.Load(); got != 1 {
+		t.Fatalf("catalog requests = %d, want one upstream request", got)
+	}
+	if status.Source != "cache" || status.CacheHit == nil || !*status.CacheHit {
+		t.Fatalf("status = %+v, want cache hit", status)
+	}
+	if status.UpstreamFetchMS != nil || status.LocalApplyMS == nil || status.LastAttemptAt == nil || status.LastSuccessAt == nil {
+		t.Fatalf("status = %+v, want cache and local-apply observations", status)
+	}
+}
+
+func TestOAuthModelCatalogFailureRetainsPriorModelsAndFreshness(t *testing.T) {
+	var requestCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requestCount.Add(1) == 1 {
+			_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`upstream unavailable`))
+	}))
+	defer ts.Close()
+
+	repo := newMemoryRepo()
+	account := testAccount(t, 7, true, 1, "oauth-access")
+	account.AccountType = AccountTypeCodexOAuth
+	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "plus"}
+	repo.accounts = []Account{account}
+	service := NewService(repo, fakeOAuthClient{}, Config{
+		Provider:                  "openai",
+		Secret:                    "encryption-secret",
+		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
+		OAuthModelCatalogCacheTTL: time.Hour,
+	})
+
+	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
+		t.Fatalf("initial catalog sync returned error: %v", err)
+	}
+	if _, _, err := service.RefreshOAuthAccountModels(context.Background(), account.ID); err == nil {
+		t.Fatal("forced catalog refresh succeeded for a failed upstream")
+	}
+	models, err := service.ListAccountModels(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("ListAccountModels returned error: %v", err)
+	}
+	if got, want := accountModelNames(models), []string{"gpt-5.6-sol"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("models after failed refresh = %v, want retained %v", got, want)
+	}
+	status, err := service.OAuthModelCatalogStatus(context.Background(), account.ID)
+	if err != nil {
+		t.Fatalf("OAuthModelCatalogStatus returned error: %v", err)
+	}
+	if status.LastSuccessAt == nil || status.LastFailureAt == nil || status.LastError == "" {
+		t.Fatalf("status = %+v, want retained success and recorded failure", status)
+	}
+	if status.Source != "upstream" || status.CacheHit == nil || *status.CacheHit {
+		t.Fatalf("status = %+v, want failed upstream attempt", status)
+	}
+	if status.LocalApplyMS != nil {
+		t.Fatalf("status.localApplyMs = %v, want unknown after fetch failure", *status.LocalApplyMS)
+	}
+}
+
+func TestOAuthModelCatalogForcedRefreshCoalescesWithBoundedAdmission(t *testing.T) {
+	var requestCount atomic.Int32
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		request := requestCount.Add(1)
+		if request > 1 {
+			started <- struct{}{}
+			<-release
+		}
+		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+	}))
+	defer ts.Close()
+
+	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{
+		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
+		OAuthModelCatalogCacheTTL: time.Hour,
+	})
+	account := Account{ID: 7, AccountType: AccountTypeCodexOAuth, Metadata: map[string]string{"plan_type": "plus"}}
+	selected := SelectedAccount{AuthorizationToken: "oauth-access", ChatGPTAccountID: "chatgpt-account-7"}
+	if _, err := service.oauthModelCatalogWithOptions(context.Background(), account, selected, false); err != nil {
+		t.Fatalf("initial catalog fetch returned error: %v", err)
+	}
+
+	const callers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := service.oauthModelCatalogWithOptions(context.Background(), account, selected, true)
+			errs <- err
+		}()
+	}
+	<-started
+	close(release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("catalog requests = %d, want one initial and one coalesced forced fetch", got)
+	}
+}
+
+func TestOAuthModelCatalogGenerationRejectsLateCacheWrites(t *testing.T) {
+	var requestCount atomic.Int32
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		request := requestCount.Add(1)
+		if request == 1 {
+			started <- struct{}{}
+			<-release
+			_, _ = w.Write([]byte(`{"models":[{"slug":"old-model","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"models":[{"slug":"new-model","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
+	}))
+	defer ts.Close()
+
+	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{
+		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
+		OAuthModelCatalogCacheTTL: time.Hour,
+	})
+	account := Account{ID: 7, AccountType: AccountTypeCodexOAuth, Metadata: map[string]string{"plan_type": "plus"}}
+	selected := SelectedAccount{AuthorizationToken: "old-access", ChatGPTAccountID: "old-chatgpt-account"}
+	oldResult := make(chan error, 1)
+	go func() {
+		_, err := service.oauthModelCatalog(context.Background(), account, selected)
+		oldResult <- err
+	}()
+	<-started
+	service.invalidateOAuthModelCatalog(account.ID)
+	close(release)
+	if err := <-oldResult; err != nil {
+		t.Fatalf("late old catalog request returned error: %v", err)
+	}
+
+	models, err := service.oauthModelCatalog(context.Background(), account, selected)
+	if err != nil {
+		t.Fatalf("new-generation catalog request returned error: %v", err)
+	}
+	if got, want := accountModelInputNames(models), []string{"new-model"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("new-generation models = %v, want %v", got, want)
+	}
+	if got := requestCount.Load(); got != 2 {
+		t.Fatalf("catalog requests = %d, want late old response excluded from cache", got)
+	}
+}
+
+func TestOAuthModelCatalogAdmissionIsBounded(t *testing.T) {
+	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{CodexResponsesBaseURL: "https://catalog.example.test/codex"})
+	service.oauthModelCatalogMu.Lock()
+	for i := 0; i < maxOAuthModelCatalogFlights; i++ {
+		service.oauthModelCatalogFlights[oauthModelCatalogCacheKey{accountID: int64(i + 1)}] = &oauthModelCatalogFlight{done: make(chan struct{})}
+	}
+	service.oauthModelCatalogMu.Unlock()
+
+	account := Account{ID: maxOAuthModelCatalogFlights + 1, AccountType: AccountTypeCodexOAuth}
+	selected := SelectedAccount{AuthorizationToken: "oauth-access"}
+	_, err := service.oauthModelCatalogWithOptions(context.Background(), account, selected, true)
+	if !errors.Is(err, ErrOAuthModelCatalogBusy) {
+		t.Fatalf("oauthModelCatalogWithOptions error = %v, want bounded admission error", err)
+	}
+}
+
 func accountModelNames(models []AccountModel) []string {
+	names := make([]string, 0, len(models))
+	for _, model := range models {
+		names = append(names, model.Model)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func accountModelInputNames(models []AccountModelInput) []string {
 	names := make([]string, 0, len(models))
 	for _, model := range models {
 		names = append(names, model.Model)
@@ -5289,7 +5550,7 @@ func (r *memoryRepo) ReplaceAccountModels(ctx context.Context, providerName stri
 			Model:     input.Model,
 			Enabled:   input.Enabled,
 			Source:    AccountModelSourceManual,
-			Metadata:  map[string]string{},
+			Metadata:  cloneStringMap(input.Metadata),
 			CreatedAt: now,
 			UpdatedAt: now,
 		})
@@ -5362,7 +5623,7 @@ func (r *memoryRepo) syncAccountModels(ctx context.Context, providerName string,
 			Enabled:    enabled,
 			Source:     source,
 			LastSeenAt: &seenAtUTC,
-			Metadata:   map[string]string{},
+			Metadata:   cloneStringMap(input.Metadata),
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		})

@@ -38,6 +38,7 @@ const {
   selectedProviderAccountIds,
   deleteRoutingPool,
   removeAccountModel,
+  refreshAccountModelCatalog,
   saveAccountModels,
   session,
   setAccountModelEnabled,
@@ -45,6 +46,7 @@ const {
   shouldApplyAccountTestResultsResponse,
   sourceBadgeLabel,
   syncAccountModels,
+  cancelAccountModelCatalogRefresh,
   testProviderAccountModel,
   toggleProviderAccountSelection,
   updateAPIKeyRoutingPool,
@@ -916,7 +918,7 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /Request logs/);
   assert.match(source, /pauseProviderAccount/);
   assert.match(source, />Pause</);
-  assert.match(source, />Refresh</);
+  assert.match(source, />Refresh credentials</);
   assert.match(source, /disconnectProviderAccount/);
   assert.match(source, /Delete account/);
   assert.match(source, /title=\{accountHoverDetail\(account\)\}/);
@@ -1482,6 +1484,89 @@ test('syncAccountModels stale response does not overwrite newer result', async (
   assert.equal(state.syncing, false);
   assert.equal(state.syncError, '');
 });
+
+test('refreshAccountModelCatalog uses a separate forced-refresh endpoint and status', async () => {
+  session.authenticated = true;
+  const state = getAccountModelsState(73);
+  state.items = [];
+  state.text = 'manual-model';
+  state.catalogRefreshError = 'old error';
+  state.catalogRefreshMessage = '';
+  state.catalogStatus = null;
+  const requests = [];
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({ path, options });
+    if (path === '/api/admin/provider-accounts/73/models/refresh') {
+      return new Response(JSON.stringify({
+        models: [{ model: 'gpt-5.6-sol', enabled: true, source: 'oauth_catalog' }],
+        synced: { total: 1, new: 1, preserved: 0, skippedManual: 0 },
+        catalog: {
+          lastAttemptAt: '2026-09-14T10:00:00Z',
+          lastSuccessAt: '2026-09-14T10:00:01Z',
+          source: 'upstream',
+          cacheHit: false,
+          upstreamFetchMs: 42,
+          localApplyMs: 3
+        }
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (path === '/api/admin/model-routing') {
+      return new Response(JSON.stringify({ defaultModel: '', models: [], warnings: [] }), {
+        status: 200, headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    throw new Error(`unexpected request ${path}`);
+  };
+
+  const result = await refreshAccountModelCatalog(73);
+
+  assert.equal(result, true);
+  const refreshRequest = requests.find((request) => request.path.endsWith('/models/refresh'));
+  assert.ok(refreshRequest);
+  assert.equal(refreshRequest.options.method, 'POST');
+  assert.ok(refreshRequest.options.signal);
+  assert.equal(state.refreshingCatalog, false);
+  assert.equal(state.catalogRefreshError, '');
+  assert.equal(state.catalogRefreshMessage, 'Catalog refreshed: 1 models, 1 new model.');
+  assert.equal(state.items[0].source, 'oauth_catalog');
+  assert.deepEqual(state.catalogStatus, {
+    lastAttemptAt: '2026-09-14T10:00:00Z',
+    lastSuccessAt: '2026-09-14T10:00:01Z',
+    source: 'upstream',
+    cacheHit: false,
+    upstreamFetchMs: 42,
+    localApplyMs: 3
+  });
+});
+
+test('refreshAccountModelCatalog rejects duplicate requests and supports cancellation', async () => {
+  session.authenticated = true;
+  const state = getAccountModelsState(74);
+  let rejectRefresh;
+  globalThis.fetch = (path, options = {}) => {
+    if (path !== '/api/admin/provider-accounts/74/models/refresh') {
+      return Promise.reject(new Error(`unexpected request ${path}`));
+    }
+    return new Promise((_, reject) => {
+      rejectRefresh = reject;
+      options.signal?.addEventListener('abort', () => {
+        const error = new Error('aborted');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    });
+  };
+
+  const first = refreshAccountModelCatalog(74);
+  assert.equal(await refreshAccountModelCatalog(74), false);
+  assert.equal(cancelAccountModelCatalogRefresh(74), true);
+  assert.equal(await first, false);
+  assert.equal(state.refreshingCatalog, false);
+  assert.equal(state.catalogRefreshError, 'Catalog refresh canceled.');
+  assert.equal(typeof rejectRefresh, 'function');
+  assert.equal(cancelAccountModelCatalogRefresh(74), false);
+});
+
 test('provider account edit modal exposes account model sync controls', () => {
   assert.match(source, /Sync from upstream/);
   assert.doesNotMatch(source, /Save manual/);
@@ -1494,6 +1579,10 @@ test('provider account edit modal exposes account model sync controls', () => {
   assert.match(source, /const priorModelItems = modelState\.items\.map/);
   assert.match(source, /modelState\.items = priorModelItems/);
   assert.match(source, /Account settings were saved, but models failed/);
+  assert.match(source, /Refresh credentials/);
+  assert.match(source, /Refresh catalog/);
+  assert.match(source, /cancelAccountModelCatalogRefresh\(account\.id\)/);
+  assert.match(source, /catalogStatusLabel\(modelState\.catalogStatus\)/);
 });
 
 test('provider account model list only offers remove for manual models', () => {

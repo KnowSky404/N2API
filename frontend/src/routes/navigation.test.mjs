@@ -24,6 +24,7 @@ const expectedFiles = [
 const readText = await preloadTextFiles([
   ...expectedFiles,
   'src/lib/release-notes.js',
+  'src/lib/request-log-format.js',
   'src/app.css',
   'src/app.html',
   'svelte.config.js',
@@ -38,6 +39,7 @@ const fileExists = await preloadFileExistence([
 ]);
 
 const requestLogsPage = readText('src/routes/request-logs/+page.svelte');
+const requestLogFormat = readText('src/lib/request-log-format.js');
 const systemLogsPage = readText('src/routes/system-logs/+page.svelte');
 const alertingPage = readText('src/routes/alerting/+page.svelte');
 const pricingPage = readText('src/routes/pricing/+page.svelte');
@@ -801,9 +803,9 @@ test('request logs export menu uses bounded native attachment downloads from app
 });
 
 test('request logs page formats gateway error codes for scanning', () => {
-  assert.match(requestLogsPage, /function errorLabel/);
+  assert.match(requestLogFormat, /function requestLogErrorLabel/);
   assert.match(requestLogsPage, /function errorHref/);
-  assert.match(requestLogsPage, /errorLabel\(selectedRequestLog\.error\)/);
+  assert.match(requestLogsPage, /requestLogErrorLabel\(selectedRequestLog\.error\)/);
   assert.match(requestLogsPage, /href=\{errorHref\(selectedRequestLog\)\}/);
   assert.match(requestLogsPage, /function requestLogDrilldownParams/);
   assert.match(requestLogsPage, /params\.set\('since', requestLogs\.since\)/);
@@ -912,6 +914,9 @@ test('request logs table keeps scan fields visible and moves diagnostics into de
   assert.match(requestLogsPage, /aria-labelledby="request-log-detail-title"/);
   assert.match(requestLogsPage, /Request details/);
   assert.match(requestLogsPage, /Gateway diagnostics/);
+  assert.match(requestLogsPage, /Response phases/);
+  assert.match(requestLogsPage, /Attempt timeline/);
+  assert.match(requestLogsPage, /未记录/);
   assert.match(requestLogsPage, /Attribution/);
   assert.match(requestLogsPage, /onclick=\{\(event\) => event\.target === event\.currentTarget && closeRequestLogDetails\(\)\}/);
   assert.doesNotMatch(requestLogsPage, /<th[^>]*>Attribution<\/th>/);

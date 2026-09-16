@@ -64,7 +64,10 @@ func TestInstanceLockProcessLifecycle(t *testing.T) {
 		t.Skip("N2API_STORE_TEST_ALLOW_DESTRUCTIVE is not enabled")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// The process lifecycle suite builds and starts many real binaries; race
+	// instrumentation can legitimately take longer than the normal unit-test
+	// budget before the later database-isolation cases begin.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	pool, databaseURL := newIsolatedProcessTestPool(t, ctx, databaseURL)
 

@@ -5,7 +5,7 @@ RUN bun install --frozen-lockfile
 COPY frontend/ ./
 RUN bun run build
 
-FROM golang:1.26.5-alpine3.23@sha256:622e56dbc11a8cfe87cafa2331e9a201877271cbff918af53d3be315f3da88cc AS backend
+FROM golang:1.26.6-alpine3.23@sha256:e57c41c1d5864341031181b0db34b9a537bb5773eb6428e4e5bdaea0f9135406 AS backend
 ARG N2API_VERSION=dev
 ARG N2API_COMMIT=unknown
 ARG N2API_BUILD_TIME=1970-01-01T00:00:00Z
@@ -28,6 +28,7 @@ LABEL org.opencontainers.image.source="${N2API_SOURCE}" \
       org.opencontainers.image.version="${N2API_VERSION}" \
       org.opencontainers.image.created="${N2API_BUILD_TIME}"
 RUN addgroup -S -g 10001 n2api \
+    && apk add --no-cache --upgrade libcrypto3 libssl3 \
     && adduser -S -D -H -h /nonexistent -u 10001 -G n2api -s /sbin/nologin n2api
 WORKDIR /app
 COPY --from=backend --chown=0:10001 /out/n2api /app/n2api

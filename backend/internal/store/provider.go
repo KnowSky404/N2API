@@ -454,6 +454,10 @@ func (r *ProviderRepository) RoutingPoolHasAccounts(ctx context.Context, poolID 
 }
 
 func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, providerName string, poolID int64, model string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
+	return r.ListAccountsForRoutingPoolAndEndpoint(ctx, providerName, poolID, model, "", excludedAccountIDs, now)
+}
+
+func (r *ProviderRepository) ListAccountsForRoutingPoolAndEndpoint(ctx context.Context, providerName string, poolID int64, model, endpoint string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
 	model = strings.TrimSpace(model)
 	excluded := normalizedExcludedAccountIDs(excludedAccountIDs)
 	rows, err := r.pool.Query(ctx, `
@@ -481,8 +485,9 @@ func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, pro
 						AND m.provider = a.provider
 						AND m.model = $3
 						AND m.enabled = true
+						AND ($6 = '' OR COALESCE(m.metadata->>('endpoint.' || $6), 'unknown') <> 'unsupported')
+					)
 				)
-			)
 		ORDER BY
 			rpa.priority ASC,
 			a.priority ASC,
@@ -490,7 +495,7 @@ func (r *ProviderRepository) ListAccountsForRoutingPool(ctx context.Context, pro
 			(a.last_error_at IS NOT NULL) ASC,
 			a.last_used_at ASC NULLS FIRST,
 			a.id ASC
-	`, providerName, poolID, model, now, excluded)
+	`, providerName, poolID, model, now, excluded, endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -1503,13 +1508,14 @@ func (r *ProviderRepository) syncAccountModels(ctx context.Context, providerName
 				last_test_at, last_test_status, last_test_http_status, last_test_latency_ms,
 				metadata, updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, '{}'::jsonb, now())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, now())
 		`, accountID, providerName, model.Model, enabled, source, seenAt,
 			syncedTests[model.Model].lastError,
 			syncedTests[model.Model].lastTestAt,
 			syncedTests[model.Model].lastTestStatus,
 			syncedTests[model.Model].lastTestHTTPStatus,
 			syncedTests[model.Model].lastTestLatencyMS,
+			metadataJSON(model.Metadata),
 		)
 		if err != nil {
 			return nil, provider.AccountModelSyncSummary{}, err
@@ -1712,13 +1718,14 @@ func (r *ProviderRepository) ReplaceAccountModels(ctx context.Context, providerN
 				last_test_at, last_test_status, last_test_http_status, last_test_latency_ms,
 				metadata, updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '{}'::jsonb, now())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, now())
 		`, accountID, providerName, model.Model, model.Enabled, provider.AccountModelSourceManual,
 			testState.lastError,
 			testState.lastTestAt,
 			testState.lastTestStatus,
 			testState.lastTestHTTPStatus,
 			testState.lastTestLatencyMS,
+			metadataJSON(model.Metadata),
 		)
 		if err != nil {
 			return nil, err
@@ -1807,6 +1814,10 @@ func (r *ProviderRepository) ListExposedModelsForRoutingPools(ctx context.Contex
 }
 
 func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, providerName string, model string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
+	return r.ListEligibleAccountsForModelAndEndpoint(ctx, providerName, model, "", excludedAccountIDs, now)
+}
+
+func (r *ProviderRepository) ListEligibleAccountsForModelAndEndpoint(ctx context.Context, providerName string, model, endpoint string, excludedAccountIDs []int64, now time.Time) ([]provider.Account, error) {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return []provider.Account{}, nil
@@ -1830,13 +1841,14 @@ func (r *ProviderRepository) ListEligibleAccountsForModel(ctx context.Context, p
 			AND (a.rate_limited_until IS NULL OR a.rate_limited_until <= $3)
 			AND (a.circuit_open_until IS NULL OR a.circuit_open_until <= $3)
 			AND ($4::bigint[] IS NULL OR cardinality($4::bigint[]) = 0 OR NOT (a.id = ANY($4::bigint[])))
+			AND ($5 = '' OR COALESCE(m.metadata->>('endpoint.' || $5), 'unknown') <> 'unsupported')
 		ORDER BY
 			a.priority ASC,
 			a.load_factor DESC,
 			(a.last_error_at IS NOT NULL) ASC,
 			a.last_used_at ASC NULLS FIRST,
 			a.id ASC
-	`, providerName, model, now, excludedAccountIDs)
+	`, providerName, model, now, excludedAccountIDs, endpoint)
 	if err != nil {
 		return nil, err
 	}

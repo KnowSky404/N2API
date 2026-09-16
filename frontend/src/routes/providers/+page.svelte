@@ -29,9 +29,11 @@
     saveAccountModels,
     accountModelSummary,
     accountModelsText,
+    cancelAccountModelCatalogRefresh,
     session,
     sourceBadgeLabel,
     syncAccountModels,
+    refreshAccountModelCatalog,
     setAccountModelEnabled,
     statusLabel,
     testAllProviderAccounts,
@@ -336,6 +338,24 @@
     return account.accountType === 'codex_oauth' || !account.accountType;
   }
 
+  /** @param {import('$lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
+  function catalogStatusLabel(status) {
+    if (!status?.lastAttemptAt) return 'Not refreshed';
+    if (status.lastError) return `Failed at ${formatDate(status.lastFailureAt)}`;
+    if (status.source === 'cache') return `Cache hit at ${formatDate(status.lastSuccessAt)}`;
+    if (status.source === 'upstream') return `Upstream fetched at ${formatDate(status.lastSuccessAt)}`;
+    return 'Recorded';
+  }
+
+  /** @param {import('$lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
+  function catalogStatusDetail(status) {
+    if (!status?.lastAttemptAt) return 'No catalog refresh has been recorded for this account.';
+    const timings = [];
+    if (status.upstreamFetchMs != null) timings.push(`upstream ${status.upstreamFetchMs} ms`);
+    if (status.localApplyMs != null) timings.push(`apply ${status.localApplyMs} ms`);
+    return timings.length > 0 ? timings.join(' · ') : 'Timing not recorded';
+  }
+
   /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
   function accountEmailLabel(account) {
     if (!isCodexOAuthAccount(account)) return '';
@@ -362,7 +382,7 @@
 
   function closeAccountEditor() {
     const modelState = editingProviderAccountId ? getAccountModelsState(editingProviderAccountId) : null;
-    if (providerMutationBusy || providerAccounts.saving || modelState?.saving || modelState?.syncing) return;
+    if (providerMutationBusy || providerAccounts.saving || modelState?.saving || modelState?.syncing || modelState?.refreshingCatalog) return;
     editingProviderAccountId = 0;
     editingProviderAccountDraft = null;
     editingProviderAccountError = '';
@@ -1726,7 +1746,7 @@ Enabled
         <button
           class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
-          disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing}
+          disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
           onclick={closeAccountEditor}
           aria-label="Close edit account modal"
           title="Close"
@@ -1824,7 +1844,7 @@ Enabled
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => isCodexOAuthAccount(account) ? testAccountRecovery(account) : testProviderAccount(account)}>{isCodexOAuthAccount(account) ? 'Test recovery' : 'Test'}</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving} onclick={() => runProviderAccountAction(account, 'pause')}>Pause</button>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => runProviderAccountAction(account, 'refresh')}>Refresh</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving || modelState.refreshingCatalog || !isCodexOAuthAccount(account)} onclick={() => runProviderAccountAction(account, 'refresh')}>Refresh credentials</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => runProviderAccountAction(account, 'reset')}>Reset local status</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => connectProvider(account)}>Reauthorize</button>
           </div>
@@ -1867,13 +1887,28 @@ Enabled
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="text-sm font-semibold text-[#0d0d0d]">Models</h3>
             <div class="flex flex-wrap items-center gap-2">
+              {#if isCodexOAuthAccount(account)}
+                <button
+                  class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
+                  type="button"
+                  disabled={providerMutationBusy || providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
+                  onclick={() => void refreshAccountModelCatalog(account.id)}
+                >{modelState.refreshingCatalog ? 'Refreshing catalog' : 'Refresh catalog'}</button>
+                {#if modelState.refreshingCatalog}
+                  <button
+                    class="ui-button ui-button--sm ui-button--secondary rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                    type="button"
+                    onclick={() => cancelAccountModelCatalogRefresh(account.id)}
+                  >Cancel</button>
+                {/if}
+              {/if}
               {#if account.accountType === 'api_upstream'}
                 <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
                   <input
                     class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
                     type="checkbox"
                     bind:checked={draft.syncModelsOnSave}
-                    disabled={modelState.loading || modelState.saving || modelState.syncing}
+                    disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
                   />
                   Sync from upstream on Save
                 </label>
@@ -1888,7 +1923,7 @@ Enabled
               class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
               placeholder={'gpt-4.1\ngpt-4.1-mini'}
               bind:value={draft.modelsText}
-              disabled={modelState.loading || modelState.saving || modelState.syncing}
+              disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
             ></textarea>
           </label>
           {#if draft.modelItems.length > 0}
@@ -1900,7 +1935,7 @@ Enabled
                       class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
                       type="checkbox"
                       checked={configuredModel.enabled}
-                      disabled={modelState.loading || modelState.saving || modelState.syncing || isSyncedAccountModel(configuredModel)}
+                      disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog || isSyncedAccountModel(configuredModel)}
                       aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
                       onchange={(event) => {
                         draft.modelItems = setAccountModelEnabled(draft.modelItems, configuredModel.model, event.currentTarget.checked);
@@ -1915,7 +1950,7 @@ Enabled
                     <button
                       class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                       type="button"
-                      disabled={modelState.loading || modelState.saving || modelState.syncing}
+                      disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
                       onclick={() => {
                         draft.modelItems = removeAccountModel(draft.modelItems, configuredModel.model);
                         draft.modelsText = accountModelsText(draft.modelItems);
@@ -1935,6 +1970,11 @@ Enabled
           {#if modelState.error}<p class="text-xs text-red-700">{modelState.error}</p>{/if}
           {#if modelState.syncMessage}<p class="text-xs text-[#0a7a5e]">{modelState.syncMessage}</p>{/if}
           {#if modelState.syncError}<p class="text-xs text-red-700">{modelState.syncError}</p>{/if}
+          {#if isCodexOAuthAccount(account)}
+            <p class="text-xs text-[#6e6e6e]" title={catalogStatusDetail(modelState.catalogStatus)}>Catalog: {catalogStatusLabel(modelState.catalogStatus)}</p>
+            {#if modelState.catalogRefreshMessage}<p class="text-xs text-[#0a7a5e]">{modelState.catalogRefreshMessage}</p>{/if}
+            {#if modelState.catalogRefreshError}<p class="text-xs text-red-700">{modelState.catalogRefreshError}</p>{/if}
+          {/if}
         </div>
       </div>
 
@@ -1990,7 +2030,7 @@ Enabled
           <button
             class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
-            disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing}
+            disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
             onclick={closeAccountEditor}
           >
             Cancel
@@ -1998,7 +2038,7 @@ Enabled
           <button
             class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
-            disabled={providerMutationBusy || providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing}
+            disabled={providerMutationBusy || providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
             onclick={saveEditingProviderAccount}
           >
             {providerMutationBusy || providerAccounts.saving || modelState.saving ? 'Saving' : 'Save'}

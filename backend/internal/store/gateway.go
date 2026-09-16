@@ -6,6 +6,7 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/gateway"
 	"github.com/KnowSky404/N2API/backend/internal/provider"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -25,14 +26,23 @@ func createRequestLogSQL() string {
 			provider, model, session_id, route, method, status_code, latency_ms, error,
 			input_tokens, output_tokens, total_tokens, cached_input_tokens, reasoning_tokens, usage_source,
 			estimated_cost_microusd, pricing_snapshot, gateway_attempt_count, gateway_fallback_count,
+			attempts, attempt_timeline_truncated, header_wait_ms, first_useful_output_ms, stream_finish_ms,
 			budget_backfill_eligible, created_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
 	`
 }
 
 func (r *GatewayRepository) CreateRequestLog(ctx context.Context, entry gateway.RequestLog) error {
 	pricingSnapshot, err := json.Marshal(entry.PricingSnapshot)
+	if err != nil {
+		return err
+	}
+	attempts := entry.Attempts
+	if attempts == nil {
+		attempts = []requestlog.RequestAttempt{}
+	}
+	attemptsJSON, err := json.Marshal(attempts)
 	if err != nil {
 		return err
 	}
@@ -66,6 +76,11 @@ func (r *GatewayRepository) CreateRequestLog(ctx context.Context, entry gateway.
 		pricingSnapshot,
 		entry.GatewayAttemptCount,
 		entry.GatewayFallbackCount,
+		attemptsJSON,
+		entry.AttemptTimelineTruncated,
+		entry.ResponseTiming.HeaderWaitMS,
+		entry.ResponseTiming.FirstUsefulOutputMS,
+		entry.ResponseTiming.StreamFinishMS,
 		entry.BudgetBackfillEligible,
 		entry.CreatedAt,
 	)
