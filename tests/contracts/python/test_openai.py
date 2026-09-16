@@ -17,6 +17,18 @@ from openai import OpenAI
 
 MODEL = "gpt-5"
 REQUEST_TIMEOUT_SECONDS = 5.0
+WEATHER_TOOL = {
+    "type": "function",
+    "name": "get_weather",
+    "description": "Get the weather for a city",
+    "parameters": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
 T = TypeVar("T")
 
 
@@ -291,6 +303,58 @@ class OpenAIContractTest(unittest.TestCase):
                 chat.usage.total_tokens, 25, "stage=chat_json field=usage"
             )
 
+            response = sdk_stage(
+                "responses_json",
+                lambda: client.responses.create(
+                    model=MODEL,
+                    input="Python SDK non-streaming contract request",
+                    stream=False,
+                ),
+            )
+            self.assertEqual(
+                response.id, "resp_mock", "stage=responses_json field=id"
+            )
+            self.assertEqual(
+                response.status, "completed", "stage=responses_json field=status"
+            )
+            self.assertTrue(
+                any(item.type == "message" for item in response.output),
+                "stage=responses_json field=output",
+            )
+            self.assertIsNotNone(response.usage, "stage=responses_json field=usage")
+            if response.usage is None:
+                raise ContractFailure("responses_json", "field=usage")
+            self.assertEqual(
+                response.usage.total_tokens, 13, "stage=responses_json field=usage"
+            )
+
+            tool_response = sdk_stage(
+                "responses_tools",
+                lambda: client.responses.create(
+                    model=MODEL,
+                    input="Use the weather tool",
+                    tools=[WEATHER_TOOL],
+                ),
+            )
+            tool_calls = [
+                item
+                for item in tool_response.output
+                if item.type == "function_call"
+            ]
+            self.assertEqual(
+                len(tool_calls), 1, "stage=responses_tools field=function_call"
+            )
+            self.assertEqual(
+                tool_calls[0].name,
+                "get_weather",
+                "stage=responses_tools field=function_name",
+            )
+            self.assertIn(
+                "Berlin",
+                tool_calls[0].arguments,
+                "stage=responses_tools field=function_arguments",
+            )
+
             stream = sdk_stage(
                 "responses_stream",
                 lambda: client.responses.create(
@@ -311,6 +375,35 @@ class OpenAIContractTest(unittest.TestCase):
                 sdk_stage("responses_stream", consume_stream),
                 "stage=responses_stream field=completed",
             )
+
+            early_stream = sdk_stage(
+                "responses_early_termination",
+                lambda: client.responses.create(
+                    model=MODEL,
+                    input="Python SDK early termination contract request",
+                    stream=True,
+                ),
+            )
+            try:
+                early_event = next(iter(early_stream), None)
+            finally:
+                early_stream.close()
+            self.assertTrue(
+                early_event is not None
+                and early_event.type
+                in {"response.created", "response.output_text.delta"},
+                "stage=responses_early_termination field=initial_event",
+            )
+
+            cancellation_stream = sdk_stage(
+                "responses_cancellation",
+                lambda: client.responses.create(
+                    model=MODEL,
+                    input="Python SDK cancellation contract request",
+                    stream=True,
+                ),
+            )
+            cancellation_stream.close()
 
             invalid_client = OpenAI(
                 base_url=fixture.sdk_base_url,

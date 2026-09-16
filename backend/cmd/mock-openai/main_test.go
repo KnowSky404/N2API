@@ -80,6 +80,27 @@ func TestHappyJSONProtocols(t *testing.T) {
 	}
 }
 
+func TestResponsesToolDefinitionProducesFunctionCall(t *testing.T) {
+	handler := newMockHandler()
+	response := performRequest(t, handler, http.MethodPost, "/v1/responses", `{"model":"gpt-5","input":"Use the weather tool","tools":[{"type":"function","name":"get_weather"}]}`, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("response = %d body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Output []struct {
+			Type      string `json:"type"`
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Output) != 1 || payload.Output[0].Type != "function_call" || payload.Output[0].Name != "get_weather" || payload.Output[0].Arguments == "" {
+		t.Fatalf("tool response = %+v", payload.Output)
+	}
+}
+
 func TestHappySSEProtocolsFlush(t *testing.T) {
 	handler := newMockHandler()
 	for _, tt := range []struct {

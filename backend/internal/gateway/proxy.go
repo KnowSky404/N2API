@@ -72,8 +72,16 @@ type AccountProvider interface {
 	SelectAccountForModel(ctx context.Context, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
+type EndpointAwareAccountProvider interface {
+	SelectAccountForModelAndEndpoint(ctx context.Context, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
 type StickyAccountProvider interface {
 	SelectAccountForModelAndSession(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
+type EndpointAwareStickyAccountProvider interface {
+	SelectAccountForModelAndSessionAndEndpoint(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
 type RoutingPoolAccountProvider interface {
@@ -81,9 +89,19 @@ type RoutingPoolAccountProvider interface {
 	SelectAccountForModelAndSessionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
+type EndpointAwareRoutingPoolAccountProvider interface {
+	SelectAccountForModelInRoutingPoolAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error)
+	SelectAccountForModelAndSessionInRoutingPoolAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
 type RoutingPoolChainAccountProvider interface {
 	SelectAccountForModelInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string, excludedAccountIDs ...int64) (SelectedAccount, error)
 	SelectAccountForModelAndSessionInRoutingPoolChain(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
+}
+
+type EndpointAwareRoutingPoolChainAccountProvider interface {
+	SelectAccountForModelInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string, excludedAccountIDs ...int64) (SelectedAccount, error)
+	SelectAccountForModelAndSessionInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error)
 }
 
 type AccountFailureReporter interface {
@@ -110,6 +128,11 @@ type ResponseAffinityStore interface {
 type ResponseAffinityAccountProvider interface {
 	SelectAccountByIDInRoutingPoolChain(ctx context.Context, routingPoolID, accountID int64, model string) (SelectedAccount, error)
 	SelectSingleAccountInRoutingPoolChain(ctx context.Context, routingPoolID int64, model string) (SelectedAccount, bool, error)
+}
+
+type EndpointAwareResponseAffinityAccountProvider interface {
+	SelectAccountByIDInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID, accountID int64, model, endpoint string) (SelectedAccount, error)
+	SelectSingleAccountInRoutingPoolChainAndEndpoint(ctx context.Context, routingPoolID int64, model, endpoint string) (SelectedAccount, bool, error)
 }
 
 type AccountRecoveryRecorder interface {
@@ -213,6 +236,9 @@ type RequestLog struct {
 	PricingSnapshot          map[string]any
 	GatewayAttemptCount      int
 	GatewayFallbackCount     int
+	Attempts                 []requestlog.RequestAttempt
+	AttemptTimelineTruncated bool
+	ResponseTiming           requestlog.ResponseTiming
 	BudgetBackfillEligible   bool
 	CreatedAt                time.Time
 }
@@ -409,6 +435,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	recorder := &statusRecorder{ResponseWriter: w}
 	startedAt := time.Now()
+	diagnostics := newRequestDiagnostics()
 	metricsFinished := false
 	metricsStream := false
 	metricsAccountType := "none"
@@ -455,6 +482,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	loggedRoutingPoolError := ""
 	requestModel := ""
 	requestSessionID := ""
+	requestEndpoint := endpointForRequest(r)
 	observedUsage := Usage{Source: "missing"}
 	budgetAdmission := admin.APIKeyBudgetAdmission{}
 	upstreamRequestID := ""
@@ -486,6 +514,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				p.processLogger.Warn("API key budget settlement failed", "error_code", "api_key_budget_settlement_failed")
 			}
 		}
+		attempts, attemptsTruncated, responseTiming := diagnostics.snapshot()
 		p.logRequest(r.Context(), RequestLog{
 			RequestID:                requestID,
 			UpstreamRequestID:        upstreamRequestID,
@@ -516,6 +545,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			PricingSnapshot:          costEstimate.Snapshot,
 			GatewayAttemptCount:      gatewayAttemptCount,
 			GatewayFallbackCount:     gatewayFallbackCount,
+			Attempts:                 attempts,
+			AttemptTimelineTruncated: attemptsTruncated,
+			ResponseTiming:           responseTiming,
 			BudgetBackfillEligible:   false,
 			CreatedAt:                startedAt,
 		})
@@ -584,7 +616,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer close(bodyReadInterruptDone)
 		_ = p.setReadDeadline(recorder, time.Now())
 	})
-	bodyFactory, maxAttempts, model, sessionID, previousResponseID, err := p.requestBodyFactory(r)
+	bodyFactory, maxAttempts, model, sessionID, previousResponseID, clientStream, err := p.requestBodyFactoryWithOptions(r)
 	if !stopBodyReadInterrupt() {
 		<-bodyReadInterruptDone
 	}
@@ -625,9 +657,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	failedAccountIDs := []int64{}
 	accountConcurrencyLimited := false
+	nextFallbackReason := ""
 	var lastRetryableResp *http.Response
 	for attempt := 0; attempt < maxAttempts; attempt++ {
-		selected, err := p.selectAccountForRequest(r.Context(), key, model, sessionID, affinitySelection, failedAccountIDs...)
+		diagnostics.resetResponseTiming()
+		selectionSpan := diagnostics.beginAttempt(attemptTypeSelection, SelectedAccount{}, nextFallbackReason)
+		selected, err := p.selectAccountForRequest(r.Context(), key, model, requestEndpoint, sessionID, affinitySelection, failedAccountIDs...)
+		selectionSpan.setSelected(selected)
 		if selected.AccountType != "" {
 			metricsAccountType = selected.AccountType
 		}
@@ -643,42 +679,54 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if accountConcurrencyLimited && errors.Is(err, provider.ErrAccountsUnavailable) {
 				errorCode = "provider_account_concurrency_limited"
+				selectionSpan.finish(0, errorCode)
 				p.observeLimitRejection("provider_account", "concurrency")
 				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "provider account concurrency limit exceeded")
 				return
 			}
 			if errors.Is(err, errResponseAffinityUnknown) {
 				errorCode = "response_affinity_unknown"
+				selectionSpan.finish(0, errorCode)
 				writeOpenAIError(recorder, http.StatusConflict, errorCode, "response account affinity is unknown in this routing scope")
 				return
 			}
 			if errors.Is(err, errResponseAffinityAccountUnavailable) {
 				errorCode = "response_affinity_account_unavailable"
+				selectionSpan.finish(0, errorCode)
 				writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "response account is unavailable")
 				return
 			}
 			errorCode = providerErrorCodeForSelection(err, selected)
+			selectionSpan.finish(0, errorCode)
 			p.observeRoutingFailure(errorCode)
 			writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, providerErrorMessage(errorCode))
 			return
 		}
+		selectionSpan.finish(0, "")
 		gatewayAttemptCount++
+		attemptFallbackReason := nextFallbackReason
+		nextFallbackReason = ""
 		if lastRetryableResp != nil {
 			_ = lastRetryableResp.Body.Close()
 			lastRetryableResp = nil
 		}
 		if selected.AccountID != 0 && containsInt64(failedAccountIDs, selected.AccountID) {
 			errorCode = "upstream_unavailable"
+			rejectionSpan := diagnostics.beginAttempt(attemptTypeGatewayRejection, selected, attemptFallbackReason)
+			rejectionSpan.finish(http.StatusBadGateway, errorCode)
 			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "upstream request failed")
 			return
 		}
 		accountLimit := effectiveAccountConcurrencyLimit(selected.MaxConcurrentRequests, settings.MaxConcurrentRequestsPerAccount)
 		releaseAccount, ok := p.tryAcquireAccountSlot(selected.AccountID, accountLimit)
 		if !ok {
+			rejectionSpan := diagnostics.beginAttempt(attemptTypeConcurrencyRejection, selected, attemptFallbackReason)
+			rejectionSpan.finish(http.StatusTooManyRequests, "provider_account_concurrency_limited")
 			accountConcurrencyLimited = true
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				gatewayFallbackCount++
+				nextFallbackReason = "account_concurrency"
 				p.observeFallback("account_concurrency")
 				continue
 			}
@@ -691,6 +739,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			budgetAdmission, err = p.budgets.AdmitAPIKeyBudget(r.Context(), key.ID, time.Now().UTC())
 			if err != nil {
 				releaseAccount()
+				rejectionSpan := diagnostics.beginAttempt(attemptTypeGatewayRejection, selected, attemptFallbackReason)
 				switch {
 				case errors.Is(err, admin.ErrAPIKeyRequestBudgetExceeded):
 					errorCode = "api_key_request_budget_exceeded"
@@ -700,13 +749,16 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					errorCode = "api_key_cost_budget_exceeded"
 				case errors.Is(err, admin.ErrBudgetInitializing):
 					errorCode = "budget_initializing"
+					rejectionSpan.finish(http.StatusServiceUnavailable, errorCode)
 					writeOpenAIError(recorder, http.StatusServiceUnavailable, errorCode, "api key budget is initializing")
 					return
 				default:
 					errorCode = "internal_error"
+					rejectionSpan.finish(http.StatusInternalServerError, errorCode)
 					writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not admit api key budget")
 					return
 				}
+				rejectionSpan.finish(http.StatusTooManyRequests, errorCode)
 				p.observeLimitRejection("api_key", budgetMetricReason(errorCode))
 				writeOpenAIError(recorder, http.StatusTooManyRequests, "rate_limit_exceeded", "api key budget exceeded")
 				return
@@ -715,6 +767,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := p.recordAccountUsed(r.Context(), selected.AccountID); err != nil {
 			releaseAccount()
 			errorCode = "internal_error"
+			rejectionSpan := diagnostics.beginAttempt(attemptTypeGatewayRejection, selected, attemptFallbackReason)
+			rejectionSpan.finish(http.StatusInternalServerError, errorCode)
 			writeOpenAIError(recorder, http.StatusInternalServerError, errorCode, "could not record provider account use")
 			return
 		}
@@ -727,12 +781,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		var upstreamResp *http.Response
 		var upstreamErr error
+		var lastUpstreamSpan *requestAttemptSpan
 		upstreamRequestID = ""
 		authorizationRetried := false
 		authorizationRefreshFailureRecorded := false
+		upstreamFallbackReason := attemptFallbackReason
 		for {
+			upstreamStartedAt := time.Now()
+			upstreamSpan := diagnostics.beginAttempt(attemptTypeUpstreamHTTP, selected, upstreamFallbackReason)
+			upstreamFallbackReason = ""
 			upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
 			if err != nil {
+				upstreamSpan.setType(attemptTypeUpstreamTransport)
+				upstreamSpan.finish(http.StatusBadGateway, "upstream_request_error")
 				releaseAccount()
 				errorCode = "upstream_request_error"
 				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
@@ -741,36 +802,62 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			client, clientErr := p.clientForSelectedAccount(selected)
 			if clientErr != nil {
 				upstreamErr = clientErr
+				upstreamSpan.setType(attemptTypeUpstreamTransport)
+				upstreamSpan.finish(http.StatusBadGateway, upstreamRequestErrorCode(clientErr))
+				lastUpstreamSpan = upstreamSpan
 				break
 			}
 			upstreamResp, upstreamErr = client.Do(upstreamReq)
 			if upstreamErr != nil {
+				upstreamSpan.setType(attemptTypeUpstreamTransport)
+				upstreamErrorCode := upstreamRequestErrorCode(upstreamErr)
+				if r.Context().Err() != nil {
+					upstreamErrorCode = "request_canceled"
+				}
+				upstreamSpan.finish(http.StatusBadGateway, upstreamErrorCode)
+				lastUpstreamSpan = upstreamSpan
 				p.observeUpstreamAttempt(selected.AccountType, upstreamTransportOutcome(r.Context(), upstreamErr))
 				break
 			}
 			upstreamRequestID = responseUpstreamRequestID(upstreamResp)
+			upstreamSpan.setUpstreamRequestID(upstreamRequestID)
+			diagnostics.setHeaderWait(upstreamStartedAt, time.Now())
+			lastUpstreamSpan = upstreamSpan
 			if authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
+				attemptErrorCode := ""
+				if upstreamResp.StatusCode >= http.StatusBadRequest {
+					attemptErrorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
+				}
+				upstreamSpan.finish(upstreamResp.StatusCode, attemptErrorCode)
 				p.observeUpstreamAttempt(selected.AccountType, upstreamHTTPOutcome(upstreamResp.StatusCode))
 				break
 			}
 
 			message, failureBody := captureFailure(upstreamResp)
 			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
+				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
 				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			refreshedToken, retry, failureRecorded, refreshErr := p.refreshAccountAuthorization(r.Context(), selected, upstreamResp.StatusCode, message)
 			if !retry {
+				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
 				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			authorizationRetried = true
+			authRefreshSpan := diagnostics.beginAttempt(attemptTypeAuthRefreshRetry, selected, "")
+			authRefreshSpan.setUpstreamRequestID(upstreamRequestID)
 			if refreshErr != nil || strings.TrimSpace(refreshedToken) == "" {
 				authorizationRefreshFailureRecorded = failureRecorded
+				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
+				authRefreshSpan.finish(upstreamResp.StatusCode, "auth_refresh_failed")
 				p.observeUpstreamAttempt(selected.AccountType, "http_error")
 				break
 			}
 			p.observeUpstreamAttempt(selected.AccountType, "refresh_retry")
+			upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
+			authRefreshSpan.finish(upstreamResp.StatusCode, "")
 			_ = upstreamResp.Body.Close()
 			selected.AuthorizationToken = refreshedToken
 			gatewayAttemptCount++
@@ -779,6 +866,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			releaseAccount()
 			if r.Context().Err() != nil {
 				errorCode = "request_canceled"
+				lastUpstreamSpan.setError(errorCode)
 				return
 			}
 			upstreamErrCode := upstreamRequestErrorCode(upstreamErr)
@@ -786,6 +874,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				gatewayFallbackCount++
+				nextFallbackReason = "transport_error"
 				p.observeFallback("transport_error")
 				continue
 			}
@@ -798,19 +887,23 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			message, failureBody := captureFailure(upstreamResp)
 			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
 				errorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
+				lastUpstreamSpan.setError(errorCode)
 				defer releaseAccount()
 				defer upstreamResp.Body.Close()
 
-				streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
+				streamResponse := shouldStreamUpstreamResponseForClient(r, selected, upstreamResp, clientStream)
+				aggregateResponse := shouldAggregateOAuthResponses(r, selected, upstreamResp, clientStream)
 				metricsStream = streamResponse
-				observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+				observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
 				observedUsage, err = observation.Usage, writeErr
+				diagnostics.setResponseTiming(observation.ResponseTiming)
 				if streamResponse {
 					p.observeStream(r.URL.Path, observation.StreamOutcome)
 				}
-				if err != nil {
-					errorCode = upstreamResponseErrorCode(err)
-					if !recorder.committed() {
+				if responseErrorCode := responseObservationErrorCode(observation, err); responseErrorCode != "" {
+					errorCode = responseErrorCode
+					lastUpstreamSpan.setError(errorCode)
+					if err != nil && !recorder.committed() {
 						writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 					}
 				}
@@ -826,6 +919,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if attempt+1 < maxAttempts {
 				releaseAccount()
 				gatewayFallbackCount++
+				nextFallbackReason = "retryable_status"
 				p.observeFallback("retryable_status")
 				lastRetryableResp = upstreamResp
 				continue
@@ -838,16 +932,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer releaseAccount()
 		defer upstreamResp.Body.Close()
 
-		streamResponse := shouldStreamUpstreamResponse(r, selected, upstreamResp)
+		streamResponse := shouldStreamUpstreamResponseForClient(r, selected, upstreamResp, clientStream)
+		aggregateResponse := shouldAggregateOAuthResponses(r, selected, upstreamResp, clientStream)
 		metricsStream = streamResponse
-		observation, writeErr := p.writeUpstreamResponse(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
+		observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
 		observedUsage, err = observation.Usage, writeErr
+		diagnostics.setResponseTiming(observation.ResponseTiming)
 		if streamResponse {
 			p.observeStream(r.URL.Path, observation.StreamOutcome)
 		}
-		if err != nil {
-			errorCode = upstreamResponseErrorCode(err)
-			if !recorder.committed() {
+		if responseErrorCode := responseObservationErrorCode(observation, err); responseErrorCode != "" {
+			errorCode = responseErrorCode
+			lastUpstreamSpan.setError(errorCode)
+			if err != nil && !recorder.committed() {
 				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, upstreamResponseErrorMessage(err))
 			}
 		}
@@ -1048,9 +1145,9 @@ func (p *Proxy) responseAffinitySelection(ctx context.Context, r *http.Request, 
 	return responseAffinityRoute{requireSingle: true}, nil
 }
 
-func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, model, sessionID string, affinity responseAffinityRoute, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, model, endpoint, sessionID string, affinity responseAffinityRoute, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if !affinity.enabled() {
-		return p.selectAccountForKey(ctx, key, model, sessionID, excludedAccountIDs...)
+		return p.selectAccountForKey(ctx, key, model, endpoint, sessionID, excludedAccountIDs...)
 	}
 	provider, ok := p.accounts.(ResponseAffinityAccountProvider)
 	if !ok {
@@ -1058,9 +1155,26 @@ func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, m
 	}
 	routingPoolID, _ := apiKeyRoutingPool(key)
 	if affinity.accountID > 0 {
+		if endpointProvider, ok := p.accounts.(EndpointAwareResponseAffinityAccountProvider); ok {
+			selected, err := endpointProvider.SelectAccountByIDInRoutingPoolChainAndEndpoint(ctx, routingPoolID, affinity.accountID, model, endpoint)
+			if err != nil {
+				return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+			}
+			return selected, nil
+		}
 		selected, err := provider.SelectAccountByIDInRoutingPoolChain(ctx, routingPoolID, affinity.accountID, model)
 		if err != nil {
 			return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+		}
+		return selected, nil
+	}
+	if endpointProvider, ok := p.accounts.(EndpointAwareResponseAffinityAccountProvider); ok {
+		selected, unique, err := endpointProvider.SelectSingleAccountInRoutingPoolChainAndEndpoint(ctx, routingPoolID, model, endpoint)
+		if err != nil {
+			return selected, fmt.Errorf("%w: %v", errResponseAffinityAccountUnavailable, err)
+		}
+		if !unique {
+			return SelectedAccount{}, errResponseAffinityUnknown
 		}
 		return selected, nil
 	}
@@ -1074,13 +1188,25 @@ func (p *Proxy) selectAccountForRequest(ctx context.Context, key admin.APIKey, m
 	return selected, nil
 }
 
-func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if key.RoutingPoolID != nil && *key.RoutingPoolID > 0 {
+		if chainProvider, ok := p.accounts.(EndpointAwareRoutingPoolChainAccountProvider); ok {
+			if strings.TrimSpace(sessionID) != "" {
+				return chainProvider.SelectAccountForModelAndSessionInRoutingPoolChainAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, sessionID, excludedAccountIDs...)
+			}
+			return chainProvider.SelectAccountForModelInRoutingPoolChainAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, excludedAccountIDs...)
+		}
 		if chainProvider, ok := p.accounts.(RoutingPoolChainAccountProvider); ok {
 			if strings.TrimSpace(sessionID) != "" {
 				return chainProvider.SelectAccountForModelAndSessionInRoutingPoolChain(ctx, *key.RoutingPoolID, model, sessionID, excludedAccountIDs...)
 			}
 			return chainProvider.SelectAccountForModelInRoutingPoolChain(ctx, *key.RoutingPoolID, model, excludedAccountIDs...)
+		}
+		if poolProvider, ok := p.accounts.(EndpointAwareRoutingPoolAccountProvider); ok {
+			if strings.TrimSpace(sessionID) != "" {
+				return poolProvider.SelectAccountForModelAndSessionInRoutingPoolAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, sessionID, excludedAccountIDs...)
+			}
+			return poolProvider.SelectAccountForModelInRoutingPoolAndEndpoint(ctx, *key.RoutingPoolID, model, endpoint, excludedAccountIDs...)
 		}
 		poolProvider, ok := p.accounts.(RoutingPoolAccountProvider)
 		if !ok {
@@ -1091,16 +1217,39 @@ func (p *Proxy) selectAccountForKey(ctx context.Context, key admin.APIKey, model
 		}
 		return poolProvider.SelectAccountForModelInRoutingPool(ctx, *key.RoutingPoolID, model, excludedAccountIDs...)
 	}
-	return p.selectGlobalAccount(ctx, model, sessionID, excludedAccountIDs...)
+	return p.selectGlobalAccount(ctx, model, endpoint, sessionID, excludedAccountIDs...)
 }
 
-func (p *Proxy) selectGlobalAccount(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
+func (p *Proxy) selectGlobalAccount(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (SelectedAccount, error) {
 	if sessionID != "" {
+		if sticky, ok := p.accounts.(EndpointAwareStickyAccountProvider); ok {
+			return sticky.SelectAccountForModelAndSessionAndEndpoint(ctx, model, endpoint, sessionID, excludedAccountIDs...)
+		}
 		if sticky, ok := p.accounts.(StickyAccountProvider); ok {
 			return sticky.SelectAccountForModelAndSession(ctx, model, sessionID, excludedAccountIDs...)
 		}
 	}
+	if endpointProvider, ok := p.accounts.(EndpointAwareAccountProvider); ok {
+		return endpointProvider.SelectAccountForModelAndEndpoint(ctx, model, endpoint, excludedAccountIDs...)
+	}
 	return p.accounts.SelectAccountForModel(ctx, model, excludedAccountIDs...)
+}
+
+func endpointForRequest(r *http.Request) string {
+	if r == nil || r.Method != http.MethodPost {
+		if r != nil && r.Method == http.MethodGet && isResponsesSubroute(r.URL.Path) {
+			return provider.EndpointResponses
+		}
+		return ""
+	}
+	switch r.URL.Path {
+	case "/v1/chat/completions":
+		return provider.EndpointChatCompletions
+	case "/v1/responses":
+		return provider.EndpointResponses
+	default:
+		return ""
+	}
 }
 
 func apiKeyRoutingPool(key admin.APIKey) (int64, string) {
@@ -1420,110 +1569,6 @@ func secondsUntilNextMinute(now time.Time) int {
 		return 1
 	}
 	return seconds
-}
-
-var (
-	errUpstreamResponseTooLarge = errors.New("upstream response exceeds configured limit")
-	errUpstreamResponseRead     = errors.New("upstream response read failed")
-	errUpstreamSSEIdleTimeout   = errors.New("upstream SSE stream idle timeout")
-)
-
-type upstreamResponseObservation struct {
-	Usage         Usage
-	ResponseID    string
-	StreamOutcome string
-}
-
-func (p *Proxy) writeUpstreamResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (upstreamResponseObservation, error) {
-	if resp == nil || resp.Body == nil {
-		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseRead
-	}
-	if stream {
-		copyResponseHeaders(w.Header(), resp.Header)
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(resp.StatusCode)
-		return copyStreamingResponse(ctx, w, resp.Body, route, p.sseIdleTimeout)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(p.maxResponseBody)+1))
-	if err != nil {
-		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseRead
-	}
-	if len(body) > p.maxResponseBody {
-		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseTooLarge
-	}
-	copyResponseHeaders(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(body)
-	return upstreamResponseObservation{
-		Usage:      ParseUsageFromJSON(route, body),
-		ResponseID: responseIDFromJSON(route, body),
-	}, nil
-}
-
-func upstreamResponseErrorCode(err error) string {
-	switch {
-	case errors.Is(err, errUpstreamResponseTooLarge):
-		return "upstream_response_too_large"
-	case errors.Is(err, errUpstreamSSEIdleTimeout):
-		return "upstream_sse_idle_timeout"
-	}
-	return "upstream_response_error"
-}
-
-func upstreamResponseErrorMessage(err error) string {
-	switch {
-	case errors.Is(err, errUpstreamResponseTooLarge):
-		return "upstream response is too large"
-	case errors.Is(err, errUpstreamSSEIdleTimeout):
-		return "upstream stream timed out"
-	}
-	return "could not read upstream response"
-}
-
-func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.ReadCloser, route string, idleTimeout time.Duration) (upstreamResponseObservation, error) {
-	observer := NewSSEUsageObserver(route)
-	buffer := make([]byte, 32*1024)
-	writer := flushWriter{ResponseWriter: w}
-	stopContextClose := context.AfterFunc(ctx, func() {
-		_ = body.Close()
-	})
-	defer stopContextClose()
-	for {
-		idleExpired := make(chan struct{})
-		idleTimer := time.AfterFunc(idleTimeout, func() {
-			close(idleExpired)
-			_ = body.Close()
-		})
-		n, readErr := body.Read(buffer)
-		if !idleTimer.Stop() {
-			<-idleExpired
-		}
-		if n > 0 {
-			chunk := buffer[:n]
-			observer.Observe(chunk)
-			if _, writeErr := writer.Write(chunk); writeErr != nil {
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "client_canceled"}, nil
-			}
-		}
-		select {
-		case <-idleExpired:
-			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "upstream_error"}, errUpstreamSSEIdleTimeout
-		default:
-		}
-		if readErr != nil {
-			if ctx.Err() != nil {
-				outcome := "client_canceled"
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					outcome = "server_error"
-				}
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: outcome}, nil
-			}
-			if errors.Is(readErr, io.EOF) {
-				return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "completed"}, nil
-			}
-			return upstreamResponseObservation{Usage: observer.Usage(), ResponseID: observer.ResponseID(), StreamOutcome: "upstream_error"}, errUpstreamResponseRead
-		}
-	}
 }
 
 func upstreamRequestErrorCode(err error) string {
@@ -1898,6 +1943,20 @@ func shouldStreamUpstreamResponse(r *http.Request, selected SelectedAccount, res
 		usesCodexResponsesEndpoint(r, selected)
 }
 
+func shouldStreamUpstreamResponseForClient(r *http.Request, selected SelectedAccount, resp *http.Response, clientStream bool) bool {
+	if usesCodexResponsesEndpoint(r, selected) && !clientStream {
+		return false
+	}
+	return shouldStreamUpstreamResponse(r, selected, resp)
+}
+
+func shouldAggregateOAuthResponses(r *http.Request, selected SelectedAccount, resp *http.Response, clientStream bool) bool {
+	if clientStream || !usesCodexResponsesEndpoint(r, selected) || resp == nil {
+		return false
+	}
+	return resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+}
+
 func upstreamURLBaseAndPath(baseURL, routePath string) (string, string) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	routePath = "/" + strings.TrimLeft(strings.TrimSpace(routePath), "/")
@@ -1953,9 +2012,9 @@ var (
 	errRequestBodyDeadline = errors.New("request body deadline failed")
 )
 
-func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, string, string, string, error) {
+func (p *Proxy) requestBodyFactoryWithOptions(r *http.Request) (func() io.ReadCloser, int, string, string, string, bool, error) {
 	if r.Method != http.MethodPost || r.Body == nil {
-		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), "", nil
+		return func() io.ReadCloser { return nil }, maxReplayableAttempts, "", stickySessionIDFromHeader(r.Header), "", false, nil
 	}
 	defer r.Body.Close()
 	stopContextClose := context.AfterFunc(r.Context(), func() {
@@ -1963,21 +2022,21 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	})
 	defer stopContextClose()
 	if r.ContentLength > int64(p.maxAcceptedBody) {
-		return nil, 0, "", "", "", errRequestBodyTooLarge
+		return nil, 0, "", "", "", false, errRequestBodyTooLarge
 	}
 
 	limitedBody, err := io.ReadAll(io.LimitReader(r.Body, int64(p.maxAcceptedBody)+1))
 	if err != nil {
 		if isTimeoutError(err) {
-			return nil, 0, "", "", "", err
+			return nil, 0, "", "", "", false, err
 		}
 		if contextErr := r.Context().Err(); contextErr != nil {
-			return nil, 0, "", "", "", contextErr
+			return nil, 0, "", "", "", false, contextErr
 		}
-		return nil, 0, "", "", "", err
+		return nil, 0, "", "", "", false, err
 	}
 	if len(limitedBody) > p.maxAcceptedBody {
-		return nil, 0, "", "", "", errRequestBodyTooLarge
+		return nil, 0, "", "", "", false, errRequestBodyTooLarge
 	}
 	maxAttempts := maxReplayableAttempts
 	if len(limitedBody) > p.maxReplayBody {
@@ -1986,11 +2045,12 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	model := ""
 	sessionID := ""
 	previousResponseID := ""
+	clientStream := false
 	if routeRequiresModel(r) {
 		var body []byte
-		body, model, sessionID, previousResponseID, err = p.normalizeModelRequestBody(r.Context(), limitedBody)
+		body, model, sessionID, previousResponseID, clientStream, err = p.normalizeModelRequestBodyWithStream(r.Context(), limitedBody)
 		if err != nil {
-			return nil, 0, "", "", "", err
+			return nil, 0, "", "", "", false, err
 		}
 		limitedBody = body
 	}
@@ -1999,7 +2059,7 @@ func (p *Proxy) requestBodyFactory(r *http.Request) (func() io.ReadCloser, int, 
 	}
 	return func() io.ReadCloser {
 		return io.NopCloser(bytes.NewReader(limitedBody))
-	}, maxAttempts, model, sessionID, previousResponseID, nil
+	}, maxAttempts, model, sessionID, previousResponseID, clientStream, nil
 }
 
 func stickySessionIDFromHeader(header http.Header) string {
@@ -2013,11 +2073,11 @@ func routeRequiresModel(r *http.Request) bool {
 	return r.Method == http.MethodPost && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/responses")
 }
 
-func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]byte, string, string, string, error) {
+func (p *Proxy) normalizeModelRequestBodyWithStream(ctx context.Context, raw []byte) ([]byte, string, string, string, bool, error) {
 	payload := map[string]any{}
 	if len(bytes.TrimSpace(raw)) > 0 {
 		if err := json.Unmarshal(raw, &payload); err != nil {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 	}
 
@@ -2026,7 +2086,7 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if hasModel {
 		modelValue, ok := rawModel.(string)
 		if !ok {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 		model = strings.TrimSpace(modelValue)
 	}
@@ -2034,7 +2094,7 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if rawSessionID, ok := payload["session_id"]; ok {
 		sessionValue, ok := rawSessionID.(string)
 		if !ok {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 		sessionID = strings.TrimSpace(sessionValue)
 	}
@@ -2042,31 +2102,39 @@ func (p *Proxy) normalizeModelRequestBody(ctx context.Context, raw []byte) ([]by
 	if rawPreviousResponseID, ok := payload["previous_response_id"]; ok {
 		previousResponseValue, ok := rawPreviousResponseID.(string)
 		if !ok {
-			return nil, "", "", "", errInvalidJSONBody
+			return nil, "", "", "", false, errInvalidJSONBody
 		}
 		previousResponseID = strings.TrimSpace(previousResponseValue)
+	}
+	clientStream := false
+	if rawStream, ok := payload["stream"]; ok {
+		streamValue, ok := rawStream.(bool)
+		if !ok {
+			return nil, "", "", "", false, errInvalidJSONBody
+		}
+		clientStream = streamValue
 	}
 	if model == "" {
 		defaultModel, err := p.defaultModel(ctx)
 		if err != nil {
-			return nil, "", "", "", err
+			return nil, "", "", "", false, err
 		}
 		model = defaultModel
 		payload["model"] = model
 		raw, err = json.Marshal(payload)
 		if err != nil {
-			return nil, "", "", "", err
+			return nil, "", "", "", false, err
 		}
 	} else if rawModel != model {
 		payload["model"] = model
 		normalized, err := json.Marshal(payload)
 		if err != nil {
-			return nil, "", "", "", err
+			return nil, "", "", "", false, err
 		}
 		raw = normalized
 	}
 
-	return raw, model, sessionID, previousResponseID, nil
+	return raw, model, sessionID, previousResponseID, clientStream, nil
 }
 
 func (p *Proxy) defaultModel(ctx context.Context) (string, error) {
@@ -2278,6 +2346,8 @@ func providerErrorCode(err error) string {
 		return "provider_accounts_unavailable"
 	case errors.Is(err, provider.ErrModelUnavailable):
 		return "model_unavailable"
+	case errors.Is(err, provider.ErrEndpointUnavailable):
+		return "endpoint_unavailable"
 	default:
 		return "upstream_token_error"
 	}
@@ -2315,6 +2385,8 @@ func providerErrorMessage(code string) string {
 		return "provider accounts are unavailable"
 	case "model_unavailable":
 		return "requested model is not available"
+	case "endpoint_unavailable":
+		return "requested model is not supported by any eligible account for this endpoint"
 	default:
 		return "provider token lookup failed"
 	}

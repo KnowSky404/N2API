@@ -163,4 +163,24 @@ if ! awk -v version="$go_version" '
   exit 1
 fi
 
+contract_js_bun_version="$(sed -n 's/.*"packageManager": "bun@\([^"]*\)".*/\1/p' tests/contracts/javascript/package.json)"
+contract_js_openai_version="$(sed -n 's/.*"openai": "\([^"]*\)".*/\1/p' tests/contracts/javascript/package.json)"
+contract_js_lock_openai_version="$(sed -n 's/.*"openai": \["openai@\([^"]*\)".*/\1/p' tests/contracts/javascript/bun.lock)"
+if [[ "$contract_js_bun_version" != "$bun_version" || -z "$contract_js_openai_version" || "$contract_js_openai_version" != "$contract_js_lock_openai_version" ]]; then
+  echo "JavaScript SDK contract package and lockfile versions must be consistent with Bun" >&2
+  exit 1
+fi
+
+contract_python_openai_version="$(sed -n 's/.*"openai==\([^"]*\)".*/\1/p' tests/contracts/python/pyproject.toml)"
+contract_python_lock_openai_version="$(awk '
+  $1 == "name" && $3 == "\"openai\"" { if (getline > 0 && $1 == "version") { gsub(/\"/, "", $3); print $3; exit } }
+' tests/contracts/python/uv.lock)"
+contract_python_version="$(tr -d '[:space:]' < tests/contracts/python/.python-version)"
+contract_python_requires="$(sed -n 's/^requires-python = "==\([^"]*\)\.\*"/\1/p' tests/contracts/python/uv.lock)"
+contract_python_image_version="$(awk '$1 == "FROM" && $2 ~ /^python:/ { reference=$2; sub(/^python:/, "", reference); sub(/@sha256:.*/, "", reference); print reference; exit }' deploy/Dockerfile.e2e)"
+if [[ -z "$contract_python_openai_version" || "$contract_python_openai_version" != "$contract_python_lock_openai_version" || "$contract_python_version" != "$contract_python_requires".* || "$contract_python_image_version" != "$contract_python_version"-* ]]; then
+  echo "Python SDK contract package, lockfile, interpreter, and image versions must be consistent" >&2
+  exit 1
+fi
+
 echo "Pinned dependency references are consistent."

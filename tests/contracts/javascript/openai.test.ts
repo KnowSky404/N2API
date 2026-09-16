@@ -3,6 +3,18 @@ import OpenAI from "openai";
 
 const MODEL = "gpt-5";
 const REQUEST_TIMEOUT_MS = 5_000;
+const WEATHER_TOOL = {
+  type: "function" as const,
+  name: "get_weather",
+  description: "Get the weather for a city",
+  parameters: {
+    type: "object" as const,
+    properties: { city: { type: "string" as const } },
+    required: ["city"],
+    additionalProperties: false,
+  },
+  strict: true,
+};
 
 type JSONValue = Record<string, unknown>;
 
@@ -289,6 +301,32 @@ test("official OpenAI JavaScript SDK matches the N2API contract", async () => {
     requireContract(chat.object === "chat.completion", "chat_json", "object");
     requireContract(chat.usage?.total_tokens === 25, "chat_json", "usage");
 
+    const response = await sdkStage("responses_json", () =>
+      client.responses.create({
+        model: MODEL,
+        input: "JavaScript SDK non-streaming contract request",
+        stream: false,
+      }),
+    );
+    requireContract(response.id === "resp_mock", "responses_json", "id");
+    requireContract(response.status === "completed", "responses_json", "status");
+    requireContract(response.output.some((item) => item.type === "message"), "responses_json", "output");
+    requireContract(response.usage?.total_tokens === 13, "responses_json", "usage");
+
+    const toolResponse = await sdkStage("responses_tools", () =>
+      client.responses.create({
+        model: MODEL,
+        input: "Use the weather tool",
+        tools: [WEATHER_TOOL],
+      }),
+    );
+    const toolCall = toolResponse.output.find((item) => item.type === "function_call");
+    requireContract(
+      toolCall?.type === "function_call" && toolCall.name === "get_weather" && toolCall.arguments.includes("Berlin"),
+      "responses_tools",
+      "function_call",
+    );
+
     const stream = await sdkStage("responses_stream", () =>
       client.responses.create({
         model: MODEL,
@@ -303,6 +341,39 @@ test("official OpenAI JavaScript SDK matches the N2API contract", async () => {
       }
     });
     requireContract(completed, "responses_stream", "completed");
+
+    const earlyStream = await sdkStage("responses_early_termination", () =>
+      client.responses.create({
+        model: MODEL,
+        input: "JavaScript SDK early termination contract request",
+        stream: true,
+      }),
+    );
+    let observedEarlyEvent = false;
+    await sdkStage("responses_early_termination", async () => {
+      for await (const event of earlyStream) {
+        observedEarlyEvent = event.type === "response.created" || event.type === "response.output_text.delta";
+        break;
+      }
+    });
+    requireContract(observedEarlyEvent, "responses_early_termination", "initial_event");
+
+    const controller = new AbortController();
+    controller.abort();
+    let cancellationObserved = false;
+    try {
+      await client.responses.create(
+        {
+          model: MODEL,
+          input: "JavaScript SDK cancellation contract request",
+          stream: true,
+        },
+        { signal: controller.signal },
+      );
+    } catch (error) {
+      cancellationObserved = error instanceof Error && error.constructor.name === "APIUserAbortError";
+    }
+    requireContract(cancellationObserved, "responses_cancellation", "abort_error");
 
     const invalidClient = new OpenAI({
       baseURL: fixture.sdkBaseURL,

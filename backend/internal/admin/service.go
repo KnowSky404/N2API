@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/secret"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
@@ -196,37 +197,40 @@ type APIKeyBudgetUsage struct {
 }
 
 type RequestLog struct {
-	ID                       int64     `json:"id"`
-	RequestID                string    `json:"requestId"`
-	UpstreamRequestID        string    `json:"upstreamRequestId"`
-	ClientKey                string    `json:"clientKey"`
-	Provider                 string    `json:"provider"`
-	ProviderAccountID        int64     `json:"providerAccountId"`
-	ProviderAccountType      string    `json:"providerAccountType"`
-	ProviderAccountName      string    `json:"providerAccountName"`
-	RoutingPoolID            int64     `json:"routingPoolId"`
-	RoutingPoolName          string    `json:"routingPoolName"`
-	RoutingPoolFallbackDepth int       `json:"routingPoolFallbackDepth"`
-	RoutingPoolFallbackChain string    `json:"routingPoolFallbackChain"`
-	RoutingPoolError         string    `json:"routingPoolError"`
-	Model                    string    `json:"model"`
-	SessionID                string    `json:"sessionId"`
-	Route                    string    `json:"route"`
-	Method                   string    `json:"method"`
-	StatusCode               int       `json:"statusCode"`
-	LatencyMS                int       `json:"latencyMs"`
-	Error                    string    `json:"error"`
-	InputTokens              int       `json:"inputTokens"`
-	OutputTokens             int       `json:"outputTokens"`
-	TotalTokens              int       `json:"totalTokens"`
-	CachedInputTokens        int       `json:"cachedInputTokens"`
-	ReasoningTokens          int       `json:"reasoningTokens"`
-	UsageSource              string    `json:"usageSource"`
-	EstimatedCostMicrousd    int64     `json:"estimatedCostMicrousd"`
-	PricingMatched           bool      `json:"pricingMatched"`
-	GatewayAttemptCount      int       `json:"gatewayAttemptCount"`
-	GatewayFallbackCount     int       `json:"gatewayFallbackCount"`
-	CreatedAt                time.Time `json:"createdAt"`
+	ID                       int64                       `json:"id"`
+	RequestID                string                      `json:"requestId"`
+	UpstreamRequestID        string                      `json:"upstreamRequestId"`
+	ClientKey                string                      `json:"clientKey"`
+	Provider                 string                      `json:"provider"`
+	ProviderAccountID        int64                       `json:"providerAccountId"`
+	ProviderAccountType      string                      `json:"providerAccountType"`
+	ProviderAccountName      string                      `json:"providerAccountName"`
+	RoutingPoolID            int64                       `json:"routingPoolId"`
+	RoutingPoolName          string                      `json:"routingPoolName"`
+	RoutingPoolFallbackDepth int                         `json:"routingPoolFallbackDepth"`
+	RoutingPoolFallbackChain string                      `json:"routingPoolFallbackChain"`
+	RoutingPoolError         string                      `json:"routingPoolError"`
+	Model                    string                      `json:"model"`
+	SessionID                string                      `json:"sessionId"`
+	Route                    string                      `json:"route"`
+	Method                   string                      `json:"method"`
+	StatusCode               int                         `json:"statusCode"`
+	LatencyMS                int                         `json:"latencyMs"`
+	Error                    string                      `json:"error"`
+	InputTokens              int                         `json:"inputTokens"`
+	OutputTokens             int                         `json:"outputTokens"`
+	TotalTokens              int                         `json:"totalTokens"`
+	CachedInputTokens        int                         `json:"cachedInputTokens"`
+	ReasoningTokens          int                         `json:"reasoningTokens"`
+	UsageSource              string                      `json:"usageSource"`
+	EstimatedCostMicrousd    int64                       `json:"estimatedCostMicrousd"`
+	PricingMatched           bool                        `json:"pricingMatched"`
+	GatewayAttemptCount      int                         `json:"gatewayAttemptCount"`
+	GatewayFallbackCount     int                         `json:"gatewayFallbackCount"`
+	Attempts                 []requestlog.RequestAttempt `json:"attempts"`
+	AttemptTimelineTruncated bool                        `json:"attemptTimelineTruncated"`
+	ResponseTiming           requestlog.ResponseTiming   `json:"responseTiming"`
+	CreatedAt                time.Time                   `json:"createdAt"`
 }
 
 type RequestLogPage struct {
