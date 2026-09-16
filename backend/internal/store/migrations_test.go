@@ -711,10 +711,10 @@ func TestMigrationProviderSeesEmbeddedMigrations(t *testing.T) {
 		t.Fatalf("NewProvider returned error: %v", err)
 	}
 	sources := provider.ListSources()
-	if len(sources) != 50 {
-		t.Fatalf("migration sources = %d, want 50", len(sources))
+	if len(sources) != 51 {
+		t.Fatalf("migration sources = %d, want 51", len(sources))
 	}
-	if sources[0].Path != "00001_init.sql" || sources[49].Path != "00050_management_list_indexes.sql" {
+	if sources[0].Path != "00001_init.sql" || sources[49].Path != "00050_management_list_indexes.sql" || sources[50].Path != "00051_request_log_diagnostics.sql" {
 		t.Fatalf("migration source paths = %+v", sources)
 	}
 }
@@ -725,7 +725,7 @@ func TestAllMigrationsRoundTrip(t *testing.T) {
 	repo := newTestAlertingRepository(t, ctx)
 	provider := newStoreMigrationTestProvider(t, repo)
 
-	for wantVersion := int64(50); wantVersion >= 1; wantVersion-- {
+	for wantVersion := int64(51); wantVersion >= 1; wantVersion-- {
 		result, err := provider.Down(ctx)
 		if err != nil {
 			t.Fatalf("roll back migration %d: %v", wantVersion, err)
@@ -743,10 +743,10 @@ func TestAllMigrationsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reapply all migrations: %v", err)
 	}
-	if len(results) != 50 || results[0].Source.Version != 1 || results[len(results)-1].Source.Version != 50 {
-		t.Fatalf("migration up results = %d versions %v..%v, want 50 versions 1..50", len(results), results[0].Source.Version, results[len(results)-1].Source.Version)
+	if len(results) != 51 || results[0].Source.Version != 1 || results[len(results)-1].Source.Version != 51 {
+		t.Fatalf("migration up results = %d versions %v..%v, want 51 versions 1..51", len(results), results[0].Source.Version, results[len(results)-1].Source.Version)
 	}
-	assertStoreMigrationVersion(t, ctx, provider, 50)
+	assertStoreMigrationVersion(t, ctx, provider, 51)
 	for _, relation := range []string{"admins", "client_api_keys", "provider_accounts", "request_logs", "settings", "api_key_budget_states", "client_api_keys_management_page_idx"} {
 		assertStoreRelationExists(t, ctx, repo, relation, true)
 	}
@@ -764,6 +764,28 @@ func TestManagementListIndexesMigrationIsEmbedded(t *testing.T) {
 		"ON routing_pools (created_at DESC, id DESC)",
 		"DROP INDEX IF EXISTS routing_pools_management_page_idx",
 		"DROP INDEX IF EXISTS client_api_keys_management_page_idx",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
+func TestRequestLogDiagnosticsMigrationIsEmbedded(t *testing.T) {
+	sql, err := MigrationSQL("00051_request_log_diagnostics.sql")
+	if err != nil {
+		t.Fatalf("MigrationSQL returned error: %v", err)
+	}
+	for _, want := range []string{
+		"ADD COLUMN IF NOT EXISTS attempts JSONB NOT NULL DEFAULT '[]'::jsonb",
+		"ADD COLUMN IF NOT EXISTS attempt_timeline_truncated BOOLEAN NOT NULL DEFAULT false",
+		"ADD COLUMN IF NOT EXISTS header_wait_ms INTEGER",
+		"ADD COLUMN IF NOT EXISTS first_useful_output_ms INTEGER",
+		"ADD COLUMN IF NOT EXISTS stream_finish_ms INTEGER",
+		"request_logs_attempts_shape_check",
+		"octet_length(attempts::text) <= 65536",
+		"request_logs_diagnostic_timing_check",
+		"DROP COLUMN IF EXISTS stream_finish_ms",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("migration missing %q", want)
@@ -1179,6 +1201,13 @@ func rollBackManagementListMigration(t *testing.T, ctx context.Context, provider
 	t.Helper()
 	result, err := provider.Down(ctx)
 	if err != nil {
+		t.Fatalf("roll back request log diagnostics migration: %v", err)
+	}
+	if result == nil || result.Source.Version != 51 {
+		t.Fatalf("request log diagnostics migration down result = %+v, want version 51", result)
+	}
+	result, err = provider.Down(ctx)
+	if err != nil {
 		t.Fatalf("roll back management list migration: %v", err)
 	}
 	if result == nil || result.Source.Version != 50 {
@@ -1347,7 +1376,7 @@ func TestAlertRuleTemplateKeyMigrationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create migration provider: %v", err)
 	}
-	for _, wantVersion := range []int64{50, 49, 48, 47, 46, 45, 44, 43} {
+	for _, wantVersion := range []int64{51, 50, 49, 48, 47, 46, 45, 44, 43} {
 		result, err := provider.Down(ctx)
 		if err != nil {
 			t.Fatalf("roll back migration %d: %v", wantVersion, err)

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -305,6 +306,54 @@ func TestAdminRepositoryStreamsRequestLogsInRangeOrderAndReportsLimit(t *testing
 	}
 }
 
+func TestAdminRepositoryRoundTripsRequestDiagnostics(t *testing.T) {
+	repo := newTestAdminRepository(t)
+	ctx := context.Background()
+	startedAt := time.Date(2026, time.July, 21, 12, 0, 0, 0, time.UTC)
+	durationMS := 12
+	attempts := []requestlog.RequestAttempt{{
+		Order:          0,
+		Type:           "upstream_http",
+		AccountID:      7,
+		AccountType:    "api_upstream",
+		AccountName:    "primary",
+		PoolID:         3,
+		PoolName:       "default",
+		StartedAt:      startedAt,
+		DurationMS:     &durationMS,
+		HTTPStatus:     200,
+		FallbackReason: "retryable_status",
+	}}
+	attemptsJSON, err := json.Marshal(attempts)
+	if err != nil {
+		t.Fatalf("Marshal request attempts: %v", err)
+	}
+	if _, err := repo.pool.Exec(ctx, `
+		INSERT INTO request_logs (
+			request_id, provider, model, route, method, status_code, latency_ms,
+			attempts, attempt_timeline_truncated, header_wait_ms, first_useful_output_ms, stream_finish_ms, created_at
+		) VALUES ('diagnostics-round-trip', 'openai', 'gpt-5', '/v1/responses', 'POST', 200, 30,
+			$1, true, 4, 8, 20, $2)
+	`, attemptsJSON, startedAt); err != nil {
+		t.Fatalf("insert diagnostic request log: %v", err)
+	}
+
+	page, err := repo.ListRequestLogs(ctx, admin.RequestLogFilter{Limit: 10, RequestID: "diagnostics-round-trip"})
+	if err != nil {
+		t.Fatalf("ListRequestLogs returned error: %v", err)
+	}
+	if len(page.Logs) != 1 || !page.Logs[0].AttemptTimelineTruncated {
+		t.Fatalf("request logs = %+v, want one truncated diagnostic row", page.Logs)
+	}
+	log := page.Logs[0]
+	if len(log.Attempts) != 1 || log.Attempts[0].Type != "upstream_http" || log.Attempts[0].FallbackReason != "retryable_status" {
+		t.Fatalf("round-tripped attempts = %+v", log.Attempts)
+	}
+	if log.ResponseTiming.HeaderWaitMS == nil || *log.ResponseTiming.HeaderWaitMS != 4 || log.ResponseTiming.FirstUsefulOutputMS == nil || *log.ResponseTiming.FirstUsefulOutputMS != 8 || log.ResponseTiming.StreamFinishMS == nil || *log.ResponseTiming.StreamFinishMS != 20 {
+		t.Fatalf("round-tripped response timing = %+v", log.ResponseTiming)
+	}
+}
+
 func TestAdminRepositoryStreamRequestLogsStopsOnVisitorErrorAndCanceledContext(t *testing.T) {
 	repo := newTestAdminRepository(t)
 	ctx := context.Background()
@@ -467,8 +516,18 @@ func TestListRequestLogsSelectsGatewayFallbackDiagnostics(t *testing.T) {
 	for _, want := range []string{
 		"COALESCE(l.gateway_attempt_count, 0)",
 		"COALESCE(l.gateway_fallback_count, 0)",
+		"l.attempts",
+		"COALESCE(l.attempt_timeline_truncated, false)",
+		"l.header_wait_ms",
+		"l.first_useful_output_ms",
+		"l.stream_finish_ms",
 		"&log.GatewayAttemptCount",
 		"&log.GatewayFallbackCount",
+		"&attemptsRaw",
+		"&log.AttemptTimelineTruncated",
+		"&log.ResponseTiming.HeaderWaitMS",
+		"&log.ResponseTiming.FirstUsefulOutputMS",
+		"&log.ResponseTiming.StreamFinishMS",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("ListRequestLogs source missing %q", want)

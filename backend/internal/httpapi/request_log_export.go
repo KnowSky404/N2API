@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/KnowSky404/N2API/backend/internal/admin"
+	"github.com/KnowSky404/N2API/backend/internal/requestlog"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
@@ -42,37 +43,40 @@ type requestLogExportOptions struct {
 }
 
 type requestLogExportRow struct {
-	ID                       int64     `json:"id"`
-	RequestID                string    `json:"requestId"`
-	UpstreamRequestID        string    `json:"upstreamRequestId"`
-	ClientKey                string    `json:"clientKey"`
-	Provider                 string    `json:"provider"`
-	ProviderAccountID        int64     `json:"providerAccountId"`
-	ProviderAccountType      string    `json:"providerAccountType"`
-	ProviderAccountName      string    `json:"providerAccountName"`
-	RoutingPoolID            int64     `json:"routingPoolId"`
-	RoutingPoolName          string    `json:"routingPoolName"`
-	RoutingPoolFallbackDepth int       `json:"routingPoolFallbackDepth"`
-	RoutingPoolFallbackChain string    `json:"routingPoolFallbackChain"`
-	RoutingPoolError         string    `json:"routingPoolError"`
-	Model                    string    `json:"model"`
-	SessionID                string    `json:"sessionId"`
-	Route                    string    `json:"route"`
-	Method                   string    `json:"method"`
-	StatusCode               int       `json:"statusCode"`
-	LatencyMS                int       `json:"latencyMs"`
-	Error                    string    `json:"error"`
-	InputTokens              int       `json:"inputTokens"`
-	OutputTokens             int       `json:"outputTokens"`
-	TotalTokens              int       `json:"totalTokens"`
-	CachedInputTokens        int       `json:"cachedInputTokens"`
-	ReasoningTokens          int       `json:"reasoningTokens"`
-	UsageSource              string    `json:"usageSource"`
-	EstimatedCostMicrousd    int64     `json:"estimatedCostMicrousd"`
-	PricingMatched           bool      `json:"pricingMatched"`
-	GatewayAttemptCount      int       `json:"gatewayAttemptCount"`
-	GatewayFallbackCount     int       `json:"gatewayFallbackCount"`
-	CreatedAt                time.Time `json:"createdAt"`
+	ID                       int64                       `json:"id"`
+	RequestID                string                      `json:"requestId"`
+	UpstreamRequestID        string                      `json:"upstreamRequestId"`
+	ClientKey                string                      `json:"clientKey"`
+	Provider                 string                      `json:"provider"`
+	ProviderAccountID        int64                       `json:"providerAccountId"`
+	ProviderAccountType      string                      `json:"providerAccountType"`
+	ProviderAccountName      string                      `json:"providerAccountName"`
+	RoutingPoolID            int64                       `json:"routingPoolId"`
+	RoutingPoolName          string                      `json:"routingPoolName"`
+	RoutingPoolFallbackDepth int                         `json:"routingPoolFallbackDepth"`
+	RoutingPoolFallbackChain string                      `json:"routingPoolFallbackChain"`
+	RoutingPoolError         string                      `json:"routingPoolError"`
+	Model                    string                      `json:"model"`
+	SessionID                string                      `json:"sessionId"`
+	Route                    string                      `json:"route"`
+	Method                   string                      `json:"method"`
+	StatusCode               int                         `json:"statusCode"`
+	LatencyMS                int                         `json:"latencyMs"`
+	Error                    string                      `json:"error"`
+	InputTokens              int                         `json:"inputTokens"`
+	OutputTokens             int                         `json:"outputTokens"`
+	TotalTokens              int                         `json:"totalTokens"`
+	CachedInputTokens        int                         `json:"cachedInputTokens"`
+	ReasoningTokens          int                         `json:"reasoningTokens"`
+	UsageSource              string                      `json:"usageSource"`
+	EstimatedCostMicrousd    int64                       `json:"estimatedCostMicrousd"`
+	PricingMatched           bool                        `json:"pricingMatched"`
+	GatewayAttemptCount      int                         `json:"gatewayAttemptCount"`
+	GatewayFallbackCount     int                         `json:"gatewayFallbackCount"`
+	Attempts                 []requestlog.RequestAttempt `json:"attempts"`
+	AttemptTimelineTruncated bool                        `json:"attemptTimelineTruncated"`
+	ResponseTiming           requestlog.ResponseTiming   `json:"responseTiming"`
+	CreatedAt                time.Time                   `json:"createdAt"`
 }
 
 func newRequestLogExportRow(log admin.RequestLog) requestLogExportRow {
@@ -85,7 +89,8 @@ func newRequestLogExportRow(log admin.RequestLog) requestLogExportRow {
 		LatencyMS: log.LatencyMS, Error: log.Error, InputTokens: log.InputTokens, OutputTokens: log.OutputTokens,
 		TotalTokens: log.TotalTokens, CachedInputTokens: log.CachedInputTokens, ReasoningTokens: log.ReasoningTokens,
 		UsageSource: log.UsageSource, EstimatedCostMicrousd: log.EstimatedCostMicrousd, PricingMatched: log.PricingMatched,
-		GatewayAttemptCount: log.GatewayAttemptCount, GatewayFallbackCount: log.GatewayFallbackCount, CreatedAt: log.CreatedAt.UTC(),
+		GatewayAttemptCount: log.GatewayAttemptCount, GatewayFallbackCount: log.GatewayFallbackCount, Attempts: log.Attempts,
+		AttemptTimelineTruncated: log.AttemptTimelineTruncated, ResponseTiming: log.ResponseTiming, CreatedAt: log.CreatedAt.UTC(),
 	}
 }
 
@@ -259,12 +264,23 @@ var requestLogExportCSVHeader = []string{
 	"routing_pool_id", "routing_pool_name", "routing_pool_fallback_depth", "routing_pool_fallback_chain", "routing_pool_error",
 	"model", "session_id", "route", "method", "status_code", "latency_ms", "error", "input_tokens", "output_tokens",
 	"total_tokens", "cached_input_tokens", "reasoning_tokens", "usage_source", "estimated_cost_microusd", "pricing_matched",
-	"gateway_attempt_count", "gateway_fallback_count", "created_at",
+	"gateway_attempt_count", "gateway_fallback_count", "created_at", "attempts_json", "attempt_timeline_truncated",
+	"header_wait_ms", "first_useful_output_ms", "stream_finish_ms",
 }
 
 func requestLogExportCSVRecord(log admin.RequestLog) []string {
 	row := newRequestLogExportRow(log)
 	safe := spreadsheetSafeCSVCell
+	attemptsJSON, _ := json.Marshal(row.Attempts)
+	if row.Attempts == nil {
+		attemptsJSON = []byte("[]")
+	}
+	optionalDuration := func(value *int) string {
+		if value == nil {
+			return ""
+		}
+		return strconv.Itoa(*value)
+	}
 	return []string{
 		strconv.FormatInt(row.ID, 10), safe(row.RequestID), safe(row.UpstreamRequestID), safe(row.ClientKey), safe(row.Provider), strconv.FormatInt(row.ProviderAccountID, 10),
 		safe(row.ProviderAccountType), safe(row.ProviderAccountName), strconv.FormatInt(row.RoutingPoolID, 10), safe(row.RoutingPoolName),
@@ -273,6 +289,8 @@ func requestLogExportCSVRecord(log admin.RequestLog) []string {
 		strconv.Itoa(row.InputTokens), strconv.Itoa(row.OutputTokens), strconv.Itoa(row.TotalTokens), strconv.Itoa(row.CachedInputTokens),
 		strconv.Itoa(row.ReasoningTokens), safe(row.UsageSource), strconv.FormatInt(row.EstimatedCostMicrousd, 10), strconv.FormatBool(row.PricingMatched),
 		strconv.Itoa(row.GatewayAttemptCount), strconv.Itoa(row.GatewayFallbackCount), row.CreatedAt.Format(time.RFC3339Nano),
+		safe(string(attemptsJSON)), strconv.FormatBool(row.AttemptTimelineTruncated),
+		optionalDuration(row.ResponseTiming.HeaderWaitMS), optionalDuration(row.ResponseTiming.FirstUsefulOutputMS), optionalDuration(row.ResponseTiming.StreamFinishMS),
 	}
 }
 

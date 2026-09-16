@@ -1,4 +1,29 @@
 import { copyText } from '$lib/clipboard.js';
+import {
+  accountModelSummary,
+  accountModelsText,
+  isSyncedAccountModel,
+  mergeAccountModelChanges,
+  modelListText,
+  parseAccountModelsText,
+  parseModelLines,
+  removeAccountModel,
+  setAccountModelEnabled,
+  sourceBadgeLabel
+} from '$lib/provider-models.js';
+
+export {
+  accountModelSummary,
+  accountModelsText,
+  isSyncedAccountModel,
+  mergeAccountModelChanges,
+  modelListText,
+  parseAccountModelsText,
+  parseModelLines,
+  removeAccountModel,
+  setAccountModelEnabled,
+  sourceBadgeLabel
+};
 
 /**
  * @typedef {object} APIKey
@@ -128,6 +153,31 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} RequestLogAttempt
+ * @property {number} order
+ * @property {string} type
+ * @property {number} accountId
+ * @property {string} accountType
+ * @property {string} accountName
+ * @property {number} poolId
+ * @property {string} poolName
+ * @property {string} startedAt
+ * @property {string | null | undefined} endedAt
+ * @property {number | null | undefined} durationMs
+ * @property {number} httpStatus
+ * @property {string} error
+ * @property {string} fallbackReason
+ * @property {string} upstreamRequestId
+ */
+
+/**
+ * @typedef {object} RequestLogResponseTiming
+ * @property {number | null | undefined} headerWaitMs
+ * @property {number | null | undefined} firstUsefulOutputMs
+ * @property {number | null | undefined} streamFinishMs
+ */
+
+/**
  * @typedef {object} RequestLog
  * @property {number} id
  * @property {string} requestId
@@ -160,6 +210,9 @@ import { copyText } from '$lib/clipboard.js';
  * @property {boolean} pricingMatched
  * @property {number} gatewayAttemptCount
  * @property {number} gatewayFallbackCount
+ * @property {RequestLogAttempt[]} attempts
+ * @property {boolean} attemptTimelineTruncated
+ * @property {RequestLogResponseTiming | null | undefined} responseTiming
  * @property {string} createdAt
  */
 
@@ -342,6 +395,18 @@ import { copyText } from '$lib/clipboard.js';
  */
 
 /**
+ * @typedef {object} OAuthModelCatalogStatus
+ * @property {string | undefined} lastAttemptAt
+ * @property {string | undefined} lastSuccessAt
+ * @property {string | undefined} lastFailureAt
+ * @property {string | undefined} lastError
+ * @property {string | undefined} source
+ * @property {boolean | undefined} cacheHit
+ * @property {number | undefined} upstreamFetchMs
+ * @property {number | undefined} localApplyMs
+ */
+
+/**
  * @typedef {object} AccountModelsState
  * @property {boolean} loading
  * @property {boolean} saving
@@ -350,6 +415,13 @@ import { copyText } from '$lib/clipboard.js';
  * @property {string} syncError
  * @property {string} syncMessage
  * @property {AccountModelSyncSummary | null} syncSummary
+ * @property {boolean} refreshingCatalog
+ * @property {string} catalogRefreshError
+ * @property {string} catalogRefreshMessage
+ * @property {AccountModelSyncSummary | null} catalogRefreshSummary
+ * @property {OAuthModelCatalogStatus | null} catalogStatus
+ * @property {number} catalogRefreshSeq
+ * @property {AbortController | null} catalogAbortController
  * @property {boolean} saved
  * @property {string} text
  * @property {AccountModel[]} items
@@ -769,81 +841,6 @@ export const modelRoutingPreview = $state({
   excludedAccountIds: '',
   result: null
 });
-
-/** @param {string | null | undefined} value */
-export function parseAccountModelsText(value) {
-  const seen = new Set();
-  return String(value ?? '')
-    .split('\n')
-    .map((model) => model.trim())
-    .filter((model) => {
-      if (!model || seen.has(model)) return false;
-      seen.add(model);
-      return true;
-    })
-    .map((model) => ({ model, enabled: true }));
-}
-
-/** @param {string | null | undefined} text */
-export function parseModelLines(text) {
-  const seen = new Set();
-  return String(text ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((model) => {
-      if (!model || seen.has(model)) return false;
-      seen.add(model);
-      return true;
-    });
-}
-
-/** @param {Array<string | null | undefined>} models */
-export function modelListText(models) {
-  return parseModelLines((models ?? []).join('\n')).join('\n');
-}
-
-/**
- * @param {Array<Partial<AccountModel> & { model: string, enabled?: boolean }>} models
- * @param {string | null | undefined} text
- */
-export function mergeAccountModelChanges(models, text) {
-  const seen = new Set();
-  const merged = [];
-  for (const item of models) {
-    const model = String(item.model ?? '').trim();
-    if (!model || seen.has(model)) continue;
-    seen.add(model);
-    merged.push({ model, enabled: item.enabled !== false });
-  }
-  for (const item of parseAccountModelsText(text)) {
-    if (seen.has(item.model)) continue;
-    seen.add(item.model);
-    merged.push(item);
-  }
-  return merged;
-}
-
-/**
- * @param {AccountModel[]} models
- * @param {string} modelName
- * @param {boolean} enabled
- */
-export function setAccountModelEnabled(models, modelName, enabled) {
-  return models.map((item) => (item.model === modelName ? { ...item, enabled } : item));
-}
-
-/**
- * @param {AccountModel[]} models
- * @param {string} modelName
- */
-export function removeAccountModel(models, modelName) {
-  return models.filter((item) => isSyncedAccountModel(item) || item.model !== modelName);
-}
-
-/** @param {{ source?: string | null }} model */
-export function isSyncedAccountModel(model) {
-  return model.source === 'upstream' || model.source === 'oauth_catalog';
-}
 
 /**
  * @param {{ requestSeq: number }} state
@@ -1555,6 +1552,9 @@ function clearProvider() {
     newPoolDescription: '',
     newPoolFallbackPoolId: '0'
   });
+  for (const state of Object.values(accountModels)) {
+    state.catalogAbortController?.abort();
+  }
   replaceState(accountModels, {});
   replaceState(accountTestResults, {});
   replaceState(selectedProviderAccountIds, {});
@@ -2262,6 +2262,13 @@ function ensureAccountModelsState(accountId) {
       syncError: '',
       syncMessage: '',
       syncSummary: null,
+      refreshingCatalog: false,
+      catalogRefreshError: '',
+      catalogRefreshMessage: '',
+      catalogRefreshSummary: null,
+      catalogStatus: null,
+      catalogRefreshSeq: 0,
+      catalogAbortController: null,
       saved: false,
       text: '',
       items: [],
@@ -2284,11 +2291,6 @@ function ensureAccountTestResultsState(accountId) {
     };
   }
   return accountTestResults[key];
-}
-
-/** @param {AccountModel[]} models */
-export function accountModelsText(models) {
-  return modelListText(models.filter((item) => !isSyncedAccountModel(item)).map((item) => item.model));
 }
 
 /** @param {number} accountId */
@@ -2320,29 +2322,6 @@ export function getAccountTestResultsState(accountId) {
   return ensureAccountTestResultsState(accountId);
 }
 
-/**
- * @param {{ model: string; enabled: boolean; source?: string | null }[]} models
- */
-export function accountModelSummary(models) {
-  let total = 0;
-  let synced = 0;
-  let manual = 0;
-  let enabled = 0;
-  for (const m of models) {
-    total++;
-    if (isSyncedAccountModel(m)) synced++;
-    else manual++;
-    if (m.enabled) enabled++;
-  }
-  return { total, synced, manual, enabled };
-}
-
-/** @param {{ source?: string | null }} model */
-export function sourceBadgeLabel(model) {
-  if (model.source === 'oauth_catalog') return 'OpenAI';
-  return model.source === 'upstream' ? 'Synced' : 'Manual';
-}
-
 /** @param {number} accountId */
 export async function loadAccountModels(accountId) {
   const version = sessionVersion;
@@ -2361,6 +2340,7 @@ export async function loadAccountModels(accountId) {
     const models = payload.models ?? [];
     state.items = models;
     state.text = accountModelsText(models);
+    state.catalogStatus = payload.catalog ?? null;
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
@@ -2530,6 +2510,7 @@ export async function syncAccountModels(accountId) {
     } else {
       state.syncMessage = `Synced ${total} models.`;
     }
+    if (payload.catalog) state.catalogStatus = payload.catalog;
     await loadModelRouting();
     return isCurrentAuthenticated(version);
   } catch (error) {
@@ -2540,6 +2521,73 @@ export async function syncAccountModels(accountId) {
   } finally {
     if (isCurrentAuthenticated(version) && shouldApplyAccountModelsResponse(state, requestSeq)) {
       state.syncing = false;
+    }
+  }
+}
+
+/** @param {number} accountId */
+export function cancelAccountModelCatalogRefresh(accountId) {
+  const state = ensureAccountModelsState(accountId);
+  if (!state.refreshingCatalog || !state.catalogAbortController) return false;
+  state.catalogAbortController.abort();
+  return true;
+}
+
+/** @param {unknown} error */
+function isCanceledRequestError(error) {
+  return Boolean(error && typeof error === 'object' && 'name' in error && error.name === 'AbortError');
+}
+
+/** @param {number} accountId */
+export async function refreshAccountModelCatalog(accountId) {
+  const version = sessionVersion;
+  if (!isCurrentAuthenticated(version)) return false;
+  const state = ensureAccountModelsState(accountId);
+  if (state.refreshingCatalog) return false;
+
+  state.requestSeq += 1;
+  const modelRequestSeq = state.requestSeq;
+  state.catalogRefreshSeq += 1;
+  const refreshSeq = state.catalogRefreshSeq;
+  const controller = new AbortController();
+  state.catalogAbortController = controller;
+  state.refreshingCatalog = true;
+  state.catalogRefreshError = '';
+  state.catalogRefreshMessage = '';
+  state.catalogRefreshSummary = null;
+  state.saved = false;
+  try {
+    const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models/refresh`, {
+      method: 'POST',
+      signal: controller.signal
+    });
+    if (!isCurrentAuthenticated(version)) return false;
+    if (state.catalogRefreshSeq !== refreshSeq || state.requestSeq !== modelRequestSeq) return false;
+    const models = payload.models ?? [];
+    state.items = models;
+    state.text = accountModelsText(models);
+    state.catalogStatus = payload.catalog ?? state.catalogStatus;
+    state.catalogRefreshSummary = payload.synced ?? null;
+    const total = Number(payload.synced?.total ?? models.length);
+    const added = Number(payload.synced?.new ?? 0);
+    state.catalogRefreshMessage = added > 0
+      ? `Catalog refreshed: ${total} models, ${added} new model${added === 1 ? '' : 's'}.`
+      : `Catalog refreshed: ${total} models.`;
+    await loadModelRouting();
+    return isCurrentAuthenticated(version);
+  } catch (error) {
+    if (!isCurrentAuthenticated(version)) return false;
+    if (state.catalogRefreshSeq !== refreshSeq || state.requestSeq !== modelRequestSeq) return false;
+    state.catalogRefreshError = isCanceledRequestError(error)
+      ? 'Catalog refresh canceled.'
+      : error instanceof Error
+        ? error.message
+        : 'Catalog refresh failed';
+    return false;
+  } finally {
+    if (isCurrentAuthenticated(version) && state.catalogRefreshSeq === refreshSeq) {
+      state.refreshingCatalog = false;
+      state.catalogAbortController = null;
     }
   }
 }
