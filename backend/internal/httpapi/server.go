@@ -122,9 +122,13 @@ type ProviderService interface {
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
 	SyncOAuthAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
+	RefreshOAuthAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
+	OAuthModelCatalogStatus(ctx context.Context, accountID int64) (provider.OAuthModelCatalogStatus, error)
 	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
+	PreviewAccountSelectionForEndpoint(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
+	PreviewAccountSelectionInRoutingPoolForEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccounts(ctx context.Context) ([]provider.Account, error)
@@ -1739,6 +1743,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleSyncProviderAccountModels(w, r, providers)
 	}))
 
+	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/models/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
+		handleRefreshProviderAccountModels(w, r, providers)
+	}))
+
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/model-tests", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleTestProviderAccountModel(w, r, providers)
 	}))
@@ -1927,6 +1935,12 @@ func providerAccountErrorResponse(err error) (int, string) {
 	if errors.Is(err, provider.ErrNotConnected) || errors.Is(err, admin.ErrNotFound) {
 		return http.StatusNotFound, "not_found"
 	}
+	if errors.Is(err, provider.ErrOAuthModelCatalogBusy) {
+		return http.StatusTooManyRequests, "catalog_refresh_busy"
+	}
+	if errors.Is(err, provider.ErrOAuthModelCatalogStale) {
+		return http.StatusConflict, "catalog_refresh_superseded"
+	}
 	return http.StatusInternalServerError, "internal_error"
 }
 
@@ -2055,11 +2069,16 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, admins Ad
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
+	endpoint, err := provider.NormalizeEndpoint(r.URL.Query().Get("endpoint"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
 	var preview provider.SelectionPreview
 	if routingPoolID > 0 {
-		preview, err = providers.PreviewAccountSelectionInRoutingPool(r.Context(), routingPoolID, model, r.URL.Query().Get("sessionId"), excludedIDs...)
+		preview, err = providers.PreviewAccountSelectionInRoutingPoolForEndpoint(r.Context(), routingPoolID, model, endpoint, r.URL.Query().Get("sessionId"), excludedIDs...)
 	} else {
-		preview, err = providers.PreviewAccountSelection(r.Context(), model, r.URL.Query().Get("sessionId"), excludedIDs...)
+		preview, err = providers.PreviewAccountSelectionForEndpoint(r.Context(), model, endpoint, r.URL.Query().Get("sessionId"), excludedIDs...)
 	}
 	if err != nil {
 		if errors.Is(err, provider.ErrInvalidInput) {
@@ -2070,7 +2089,7 @@ func handleModelRoutingPreview(w http.ResponseWriter, r *http.Request, admins Ad
 			writeError(w, http.StatusConflict, "provider_not_configured")
 			return
 		}
-		if errors.Is(err, provider.ErrModelUnavailable) || errors.Is(err, provider.ErrAccountsUnavailable) || errors.Is(err, provider.ErrAccountsDisabled) || errors.Is(err, provider.ErrNotConnected) {
+		if errors.Is(err, provider.ErrModelUnavailable) || errors.Is(err, provider.ErrEndpointUnavailable) || errors.Is(err, provider.ErrAccountsUnavailable) || errors.Is(err, provider.ErrAccountsDisabled) || errors.Is(err, provider.ErrNotConnected) {
 			writeError(w, http.StatusNotFound, "not_found")
 			return
 		}
@@ -2725,7 +2744,11 @@ func handleListProviderAccountModels(w http.ResponseWriter, r *http.Request, pro
 		writeProviderAccountError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string][]provider.AccountModel{"models": models})
+	response := map[string]any{"models": models}
+	if status, statusErr := providers.OAuthModelCatalogStatus(r.Context(), id); statusErr == nil {
+		response["catalog"] = status
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func handleReplaceProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
@@ -2772,6 +2795,29 @@ func handleSyncProviderAccountModels(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"models": models, "synced": summary})
+}
+
+func handleRefreshProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
+	if providers == nil {
+		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
+		return
+	}
+	id, err := parsePositivePathID(r, "id")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+
+	models, summary, err := providers.RefreshOAuthAccountModels(r.Context(), id)
+	if err != nil {
+		writeProviderAccountError(w, err)
+		return
+	}
+	response := map[string]any{"models": models, "synced": summary}
+	if status, statusErr := providers.OAuthModelCatalogStatus(r.Context(), id); statusErr == nil {
+		response["catalog"] = status
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func handleTestProviderAccountModel(w http.ResponseWriter, r *http.Request, providers ProviderService) {

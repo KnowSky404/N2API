@@ -59,8 +59,9 @@ type mockHandler struct {
 }
 
 type mockRequest struct {
-	Model  string `json:"model"`
-	Stream bool   `json:"stream"`
+	Model  string            `json:"model"`
+	Stream bool              `json:"stream"`
+	Tools  []json.RawMessage `json:"tools"`
 }
 
 type diagnosticState struct {
@@ -280,7 +281,7 @@ func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if request.Stream {
 			writeResponsesStream(w, scenario)
 		} else {
-			writeResponsesJSON(w, scenario)
+			writeResponsesJSON(w, scenario, request)
 		}
 	}
 }
@@ -460,21 +461,32 @@ func writeChatCompletionJSON(w http.ResponseWriter, scenario string) {
 	writeJSONBody(w, payload)
 }
 
-func writeResponsesJSON(w http.ResponseWriter, scenario string) {
+func writeResponsesJSON(w http.ResponseWriter, scenario string, request mockRequest) {
+	output := []map[string]any{{
+		"id":   "msg_mock",
+		"type": "message",
+		"role": "assistant",
+		"content": []map[string]any{{
+			"type": "output_text",
+			"text": "mock response",
+		}},
+	}}
+	if len(request.Tools) > 0 {
+		output = []map[string]any{{
+			"id":        "fc_mock",
+			"type":      "function_call",
+			"status":    "completed",
+			"call_id":   "call_mock",
+			"name":      "get_weather",
+			"arguments": `{"city":"Berlin"}`,
+		}}
+	}
 	payload := map[string]any{
 		"id":     "resp_mock",
 		"object": "response",
 		"status": "completed",
 		"model":  mockModelID,
-		"output": []map[string]any{{
-			"id":   "msg_mock",
-			"type": "message",
-			"role": "assistant",
-			"content": []map[string]any{{
-				"type": "output_text",
-				"text": "mock response",
-			}},
-		}},
+		"output": output,
 	}
 	setResponsesUsage(payload, scenario)
 	writeJSONBody(w, payload)

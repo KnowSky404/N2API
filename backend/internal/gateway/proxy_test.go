@@ -2818,6 +2818,8 @@ func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\"}\n\n"))
+		_, _ = w.Write([]byte("event: response.completed\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_oauth\",\"status\":\"completed\",\"output\":[]}}\n\n"))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
@@ -4390,7 +4392,7 @@ func TestProxyLogsGatewayFallbackCountsForRetryableUpstreamFailure(t *testing.T)
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"id":"resp_ok","object":"response"}`)),
 			Request:    r,
 		}, nil
 	})}
@@ -4410,6 +4412,25 @@ func TestProxyLogsGatewayFallbackCountsForRetryableUpstreamFailure(t *testing.T)
 	entry := logger.entries[0]
 	if entry.GatewayAttemptCount != 2 || entry.GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", entry.GatewayAttemptCount, entry.GatewayFallbackCount)
+	}
+	if len(entry.Attempts) != 4 {
+		t.Fatalf("attempt timeline length = %d, want selection/upstream pairs for both accounts: %+v", len(entry.Attempts), entry.Attempts)
+	}
+	if entry.Attempts[0].Type != attemptTypeSelection || entry.Attempts[0].AccountID != 1 ||
+		entry.Attempts[1].Type != attemptTypeUpstreamHTTP || entry.Attempts[1].HTTPStatus != http.StatusTooManyRequests || entry.Attempts[1].Error != "upstream_rate_limited" ||
+		entry.Attempts[2].Type != attemptTypeSelection || entry.Attempts[2].AccountID != 2 || entry.Attempts[2].FallbackReason != "retryable_status" ||
+		entry.Attempts[3].Type != attemptTypeUpstreamHTTP || entry.Attempts[3].AccountID != 2 || entry.Attempts[3].FallbackReason != "retryable_status" || entry.Attempts[3].HTTPStatus != http.StatusOK {
+		t.Fatalf("attempt timeline = %+v, want bounded redacted fallback diagnostics", entry.Attempts)
+	}
+	if entry.ResponseTiming.HeaderWaitMS == nil || entry.ResponseTiming.FirstUsefulOutputMS == nil || entry.ResponseTiming.StreamFinishMS == nil {
+		t.Fatalf("response timing = %+v, want header wait, first useful output, and finish", entry.ResponseTiming)
+	}
+	encoded, err := json.Marshal(entry.Attempts)
+	if err != nil {
+		t.Fatalf("Marshal attempt timeline: %v", err)
+	}
+	if strings.Contains(string(encoded), "rate limited") || strings.Contains(string(encoded), "first-token") {
+		t.Fatalf("attempt timeline leaked upstream detail: %s", encoded)
 	}
 }
 
@@ -4491,6 +4512,10 @@ func TestProxyLogsGatewayFallbackCountsForBusyAccountFallback(t *testing.T) {
 	if entry.GatewayAttemptCount != 2 || entry.GatewayFallbackCount != 1 {
 		t.Fatalf("gateway diagnostics = attempts:%d fallbacks:%d, want 2/1", entry.GatewayAttemptCount, entry.GatewayFallbackCount)
 	}
+	if len(entry.Attempts) != 4 || entry.Attempts[1].Type != attemptTypeConcurrencyRejection || entry.Attempts[1].Error != "provider_account_concurrency_limited" ||
+		entry.Attempts[2].FallbackReason != "account_concurrency" || entry.Attempts[3].Type != attemptTypeUpstreamHTTP || entry.Attempts[3].FallbackReason != "account_concurrency" {
+		t.Fatalf("busy-account attempt timeline = %+v, want concurrency rejection and fallback diagnostics", entry.Attempts)
+	}
 	if budgets.admitCalls != 1 || budgets.settleCalls != 1 {
 		t.Fatalf("budget admit/settle calls = %d/%d, want 1/1 after busy-account fallback", budgets.admitCalls, budgets.settleCalls)
 	}
@@ -4498,6 +4523,7 @@ func TestProxyLogsGatewayFallbackCountsForBusyAccountFallback(t *testing.T) {
 
 func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	transportCalls := 0
+	logger := &fakeRequestLogger{}
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "first-token"}, {AccountID: 2, AuthorizationToken: "second-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		transportCalls++
@@ -4514,7 +4540,7 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 			Request:    r,
 		}, nil
 	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger}, client)
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
@@ -4535,6 +4561,13 @@ func TestProxyRetriesAnotherAccountBeforeStreaming(t *testing.T) {
 	}
 	if !slices.Equal(tokens.used, []int64{1, 2}) || !slices.Equal(tokens.recovered, []int64{2}) {
 		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1 2]/[2]", tokens.used, tokens.recovered)
+	}
+	if len(logger.entries) != 1 || len(logger.entries[0].Attempts) != 4 {
+		t.Fatalf("request diagnostics = %+v, want two selections and two upstream attempts", logger.entries)
+	}
+	attempts := logger.entries[0].Attempts
+	if attempts[1].Type != attemptTypeUpstreamTransport || attempts[1].Error != "upstream_unavailable" || attempts[2].FallbackReason != "transport_error" || attempts[3].FallbackReason != "transport_error" {
+		t.Fatalf("transport fallback timeline = %+v", attempts)
 	}
 }
 
@@ -4840,6 +4873,7 @@ func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *tes
 func TestProxyRefreshesRejectedOAuthTokenAndRetriesSameAccountOnce(t *testing.T) {
 	transportCalls := 0
 	authorizations := []string{}
+	logger := &fakeRequestLogger{}
 	tokens := &fakeSelectedAccountProvider{
 		accounts:                    []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"}},
 		refreshedAuthorizationToken: "new-token",
@@ -4863,7 +4897,7 @@ func TestProxyRefreshesRejectedOAuthTokenAndRetriesSameAccountOnce(t *testing.T)
 			Request:    r,
 		}, nil
 	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
+	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger}, client)
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
 	recorder := httptest.NewRecorder()
@@ -4885,6 +4919,13 @@ func TestProxyRefreshesRejectedOAuthTokenAndRetriesSameAccountOnce(t *testing.T)
 	}
 	if !slices.Equal(tokens.used, []int64{1}) || !slices.Equal(tokens.recovered, []int64{1}) {
 		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1]/[1]", tokens.used, tokens.recovered)
+	}
+	if len(logger.entries) != 1 || len(logger.entries[0].Attempts) != 4 {
+		t.Fatalf("request diagnostics = %+v, want selection, unauthorized, refresh, success", logger.entries)
+	}
+	attempts := logger.entries[0].Attempts
+	if attempts[0].Type != attemptTypeSelection || attempts[1].Type != attemptTypeUpstreamHTTP || attempts[1].HTTPStatus != http.StatusUnauthorized || attempts[1].Error != "upstream_unauthorized" || attempts[2].Type != attemptTypeAuthRefreshRetry || attempts[2].Error != "" || attempts[3].Type != attemptTypeUpstreamHTTP || attempts[3].HTTPStatus != http.StatusOK {
+		t.Fatalf("OAuth retry timeline = %+v", attempts)
 	}
 }
 
