@@ -173,7 +173,7 @@ jobs:
       - name: Upload sanitized mock diagnostics
         if: always() && steps.mock_diagnostics.outputs.safe == 'true'
         timeout-minutes: 3
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-diagnostics-mock-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/n2api-diagnostics/mock-smoke/safe
@@ -304,7 +304,7 @@ jobs:
       - name: Upload sanitized gateway E2E diagnostics
         if: always() && steps.gateway_diagnostics.outputs.safe == 'true'
         timeout-minutes: 3
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-diagnostics-gateway-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/n2api-diagnostics/gateway/safe
@@ -400,7 +400,7 @@ jobs:
       - name: Upload sanitized SDK contract diagnostics
         if: always() && steps.sdk_diagnostics.outputs.safe == 'true'
         timeout-minutes: 3
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-diagnostics-sdk-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/n2api-diagnostics/sdk-contracts/safe
@@ -477,10 +477,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Set image coordinates
         shell: bash
@@ -512,7 +512,7 @@ jobs:
         run: make disk-check-heavy
 
       - name: Build platform image once
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: deploy/Dockerfile
@@ -685,7 +685,7 @@ jobs:
 
       - name: Upload tested platform image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-image-${{ matrix.suffix }}
           path: ${{ runner.temp }}/n2api-tested-image-${{ matrix.suffix }}
@@ -721,7 +721,7 @@ jobs:
       packages: write
     steps:
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Set image coordinates
         shell: bash
@@ -760,7 +760,7 @@ jobs:
           echo "LOCAL_CONFIG_DIGEST=$actual_config_digest" >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -805,7 +805,7 @@ jobs:
           printf '%s\n' "$platform_digest" > "$RUNNER_TEMP/n2api-digests/${{ matrix.suffix }}"
 
       - name: Upload platform digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-digest-${{ matrix.suffix }}
           path: ${{ runner.temp }}/n2api-digests/${{ matrix.suffix }}
@@ -830,7 +830,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Set image coordinates
         shell: bash
@@ -840,7 +840,7 @@ jobs:
           echo "SHORT_SHA=${GITHUB_SHA:0:12}" >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -991,14 +991,14 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate platform SPDX SBOM
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         env:
           SYFT_PLATFORM: ${{ matrix.platform }}
         with:
@@ -1102,7 +1102,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload platform image evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: image-evidence-${{ matrix.suffix }}
           path: |
