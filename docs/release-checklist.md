@@ -18,6 +18,7 @@ record.
 
 ## Supply Chain Evidence
 
+- [ ] The original `CI Image` build provenance was verified for the exact candidate digest and source commit:
 - [ ] `linux/amd64` and `linux/arm64` image evidence matrix jobs passed:
 - [ ] Both platform SBOMs were generated from the tested parent manifest digest without rebuilding:
 - [ ] The release prepare job verified an SPDX attestation for the exact tested digest, repository workflow, and source commit:

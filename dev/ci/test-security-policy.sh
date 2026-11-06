@@ -122,12 +122,15 @@ grep -Fq '      - name: Validate and load tested platform image' <<< "$publish_j
 grep -Fq '    needs: publish-platform' <<< "$manifest_job"
 
 release_workflow="$repo_root/.github/workflows/release.yml"
-awk '
-  $0 == "      - name: Resolve release inputs" { active = 1; next }
-  active && /^      - name:/ { exit }
-  active && /^        run: \|/ { script = 1; next }
-  script { sub(/^          /, ""); print }
-' "$release_workflow" > "$work_dir/resolve-release.sh"
+extract_run() {
+  awk -v target="      - name: $2" '
+    $0 == target { active = 1; next }
+    active && /^      - name:/ { exit }
+    active && /^        run: \|/ { script = 1; next }
+    script { sub(/^          /, ""); print }
+  ' "$1"
+}
+extract_run "$release_workflow" 'Resolve release inputs' > "$work_dir/resolve-release.sh"
 mkdir "$work_dir/release-bin"
 cat <<'DOCKER' > "$work_dir/release-bin/docker"
 #!/usr/bin/env bash
@@ -152,7 +155,12 @@ case "$1" in
   *) exit 1 ;;
 esac
 DOCKER
-printf '#!/usr/bin/env bash\nexit 1\n' > "$work_dir/release-bin/gh"
+cat <<'GH' > "$work_dir/release-bin/gh"
+#!/usr/bin/env bash
+[[ "${1:-}" == attestation && "${2:-}" == verify &&
+   "${N2API_RELEASE_PROVENANCE_AVAILABLE:-0}" == 1 &&
+   " $* " == *" --predicate-type ${N2API_RELEASE_EXPECTED_PREDICATE:-https://slsa.dev/provenance/v1} "* ]]
+GH
 chmod +x "$work_dir/release-bin/"*
 resolve_release() (
   cd "$repo_root"
@@ -177,6 +185,25 @@ fi
 test -f "$work_dir/docker-called"
 N2API_RELEASE_IMAGE_AVAILABLE=1 resolve_release publish >/dev/null
 grep -Eq '^source_digest=sha256:[0-9a-f]{64}$' "$work_dir/release-outputs"
+
+extract_run "$repo_root/.github/workflows/image-evidence.yml" 'Verify source image provenance' \
+  > "$work_dir/verify-provenance.sh"
+verify_attestation() {
+  env PATH="$work_dir/release-bin:$PATH" \
+    EVIDENCE_IMAGE=ghcr.io/knowsky404/n2api PARENT_DIGEST="sha256:$(printf '%064d' 0)" \
+    IMAGE=ghcr.io/knowsky404/n2api SOURCE_DIGEST="sha256:$(printf '%064d' 0)" \
+    SOURCE_SHA="$(git -C "$repo_root" rev-parse HEAD)" \
+    GITHUB_REPOSITORY=KnowSky404/N2API GITHUB_SHA="$(git -C "$repo_root" rev-parse HEAD)" \
+    bash "$1"
+}
+if verify_attestation "$work_dir/verify-provenance.sh" >/dev/null 2>&1; then
+  echo "image evidence unexpectedly accepted missing source provenance" >&2
+  exit 1
+fi
+N2API_RELEASE_PROVENANCE_AVAILABLE=1 verify_attestation "$work_dir/verify-provenance.sh" >/dev/null
+extract_run "$release_workflow" 'Verify tested image SPDX attestation' > "$work_dir/verify-sbom.sh"
+N2API_RELEASE_PROVENANCE_AVAILABLE=1 N2API_RELEASE_EXPECTED_PREDICATE=https://spdx.dev/Document/v2.3 \
+  verify_attestation "$work_dir/verify-sbom.sh" >/dev/null
 
 security_workflow="$repo_root/.github/workflows/security.yml"
 grep -Fq '            ops/n2api' "$security_workflow"

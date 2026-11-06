@@ -31,6 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       reuse_image: ${{ steps.source.outputs.reuse_image }}
+      digest: ${{ steps.source.outputs.digest }}
     steps:
       - name: Require main branch
         run: test "$GITHUB_REF" = refs/heads/main
@@ -51,8 +52,14 @@ jobs:
         run: |
           set -euo pipefail
           source_ref="${REGISTRY}/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA:0:12}"
-          if docker buildx imagetools inspect "$source_ref" >/dev/null 2>&1; then
+          if source_info="$(docker buildx imagetools inspect "$source_ref" 2>/dev/null)"; then
+            digest="$(sed -n 's/^Digest:[[:space:]]*//p' <<< "$source_info" | head -n 1)"
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Existing source image has an invalid manifest digest" >&2
+              exit 1
+            fi
             echo "reuse_image=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
           else
             echo "No readable source image; running the release build pipeline"
             echo "reuse_image=false" >> "$GITHUB_OUTPUT"
@@ -71,14 +78,27 @@ jobs:
       attestations: write
       id-token: write
 
+  evidence:
+    name: Existing image evidence
+    if: inputs.mode == 'publish' && needs.source.outputs.reuse_image == 'true'
+    needs: source
+    uses: ./.github/workflows/image-evidence.yml
+    with:
+      digest: ${{ needs.source.outputs.digest }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
   prepare:
     name: Prepare release
-    needs: [source, build]
+    needs: [source, build, evidence]
     if: >-
       always() && !cancelled() &&
       (inputs.mode == 'preview' ||
        (needs.source.result == 'success' &&
-        (needs.build.result == 'success' || needs.source.outputs.reuse_image == 'true')))
+        (needs.build.result == 'success' || needs.evidence.result == 'success')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -246,8 +266,8 @@ jobs:
           set -euo pipefail
           gh attestation verify "oci://${IMAGE}@${SOURCE_DIGEST}" \
             --repo "$GITHUB_REPOSITORY" \
-            --predicate-type https://spdx.dev/Document \
-            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci-image.yml" \
+            --predicate-type https://spdx.dev/Document/v2.3 \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/image-evidence.yml" \
             --source-digest "$SOURCE_SHA"
 
       - name: Generate release notes for a new tag
@@ -353,7 +373,7 @@ jobs:
   publish:
     name: Publish release
     environment: release
-    if: inputs.mode == 'publish'
+    if: always() && !cancelled() && inputs.mode == 'publish' && needs.prepare.result == 'success'
     needs: prepare
     runs-on: ubuntu-latest
     permissions:
