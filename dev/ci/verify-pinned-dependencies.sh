@@ -134,16 +134,19 @@ fi
 
 bun_version="$(sed -n 's/.*"packageManager": "bun@\([^"]*\)".*/\1/p' frontend/package.json)"
 ci_bun_version="$(awk '$1 == "bun-version:" { print $2 }' .github/workflows/ci-image.yml)"
-docker_bun_count="$(awk '$1 == "FROM" && $2 ~ /^oven\/bun:/ { count++ } END { print count + 0 }' deploy/Dockerfile deploy/Dockerfile.e2e)"
+docker_bun_count="$(awk '$1 == "FROM" { ref = $2; if (ref ~ /^--platform=/) ref = $3; if (ref ~ /^oven\/bun:/) count++ } END { print count + 0 }' deploy/Dockerfile deploy/Dockerfile.e2e)"
 if [[ ! "$bun_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$ci_bun_version" != "$bun_version" || "$docker_bun_count" -eq 0 ]]; then
   echo "frontend packageManager and CI bun-version must use the same exact version" >&2
   exit 1
 fi
 if ! awk -v version="$bun_version" '
-  $1 == "FROM" && $2 ~ /^oven\/bun:/ {
+  $1 == "FROM" {
+    reference = $2
+    if (reference ~ /^--platform=/) reference = $3
+    if (reference !~ /^oven\/bun:/) next
     prefix = "oven/bun:" version
-    suffix = substr($2, length(prefix) + 1)
-    if (index($2, prefix) != 1 || (suffix !~ /^-/ && suffix !~ /^@sha256:/)) exit 1
+    suffix = substr(reference, length(prefix) + 1)
+    if (index(reference, prefix) != 1 || (suffix !~ /^-/ && suffix !~ /^@sha256:/)) exit 1
   }
 ' deploy/Dockerfile deploy/Dockerfile.e2e; then
   echo "Docker Bun images must match frontend packageManager bun@$bun_version" >&2
