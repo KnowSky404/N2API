@@ -358,8 +358,8 @@ not retain the callback URL or Codex request/response body.
 
 ### Release Preview
 
-This requires an owner-authorized push and a successful current-HEAD CI Image
-run. Preview does not publish:
+This requires an owner-authorized push and successful current-HEAD ordinary CI
+checks. Preview does not build images or publish:
 
 ```bash
 set -euo pipefail
@@ -395,16 +395,16 @@ new Git tag, GitHub Release, CalVer image tag, or `latest` movement occurs.
 
 ### Security Evidence Review
 
-Use the exact current source SHA and keep downloaded evidence in a private
-temporary directory:
+Use the exact candidate source SHA and the Release publish run that produced
+its image evidence. Preview runs contain no image evidence. Keep downloaded
+evidence in a private temporary directory:
 
 ```bash
 set -euo pipefail
 SOURCE_SHA="$(git rev-parse HEAD)"
-RUN_ID="$(gh run list --workflow 'CI Image' --branch main --limit 30 \
-  --json databaseId,headSha,createdAt \
-  | jq -r --arg sha "$SOURCE_SHA" 'map(select(.headSha == $sha)) | max_by(.createdAt) | .databaseId // empty')"
+RUN_ID="${RELEASE_RUN_ID:?Set RELEASE_RUN_ID to the Release publish workflow run}"
 [[ "$RUN_ID" =~ ^[0-9]+$ ]]
+test "$(gh run view "$RUN_ID" --json headSha --jq .headSha)" = "$SOURCE_SHA"
 gh run view "$RUN_ID" --exit-status
 EVIDENCE_DIR="$(mktemp -d /tmp/n2api-image-evidence.XXXXXX)"
 trap 'rm -rf -- "$EVIDENCE_DIR"' EXIT INT TERM
@@ -424,14 +424,15 @@ for platform in amd64 arm64; do
 done
 gh attestation verify "oci://ghcr.io/knowsky404/n2api@$PARENT_DIGEST" \
   --repo KnowSky404/N2API \
-  --predicate-type https://spdx.dev/Document \
-  --signer-workflow KnowSky404/N2API/.github/workflows/ci-image.yml \
+  --predicate-type https://spdx.dev/Document/v2.3 \
+  --signer-workflow KnowSky404/N2API/.github/workflows/image-evidence.yml \
   --source-digest "$SOURCE_SHA"
 ```
 
 Expected: Test, both platform smoke jobs, publish, both evidence jobs, Trivy
 policy, and the exact digest/source attestation pass. Review report-only unfixed
-findings and every active exception before approval.
+findings and every active exception before approval. Reused candidates retain
+their original build/smoke provenance and rerun both platform evidence checks.
 
 ### Repository Protection Checklist
 

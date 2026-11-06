@@ -355,7 +355,9 @@ they require an owner, reason, and expiry no more than 30 days after creation.
 Scanner execution, invalid JSON or schema, exception-registry validation,
 attestation, and artifact upload errors fail closed. Release publish runs
 verify that the tested parent digest has an SPDX attestation issued
-by this repository's `CI Image` workflow for the selected source commit; stable
+by this repository's reusable `image-evidence.yml` workflow for the selected
+source commit. Evidence generation first verifies the original `CI Image`
+build provenance for that digest and commit; stable
 tags continue to promote that same digest without rebuilding it.
 
 The read-only `Stable Image Security` workflow runs weekly and on manual
@@ -418,7 +420,7 @@ standalone preview is informational rather than a locked release candidate.
 The publish run's generated Release body records that the two platform SBOM attestations and
 report-only vulnerability evidence are tied to the tested manifest digest. The
 attestations remain associated with the immutable image in GHCR; the downloadable
-per-platform evidence artifacts are retained with the originating `CI Image`
+per-platform evidence artifacts are retained with the originating `Release`
 run for 14 days.
 
 Complete the [release checklist](release-checklist.md) for the exact candidate
@@ -429,8 +431,11 @@ Generated CI fixtures do not satisfy this operator recovery gate.
 For an approval gate, configure the repository's `release` environment with a
 required reviewer. Run the workflow with `mode` set to `publish`; it builds and
 verifies the selected source image before creating a fresh `release-preview-*`
-artifact. A readable existing source image is reused, and must pass the same
-identity and attestation checks, so a retry can resume without rebuilding it.
+artifact. A readable existing source image is reused without rebuilding it;
+the original build provenance is verified and both platform SBOM/vulnerability
+checks run again before the same identity and SPDX attestation checks. If the
+original build provenance is missing, rerun its failed manifest/provenance job
+before retrying publication.
 The publish job then waits for environment approval, consumes the artifact from
 the same workflow run, and promotes the tested manifest. Candidate `sha-*` and
 `main` tags may already exist while approval is pending; stable tags, Git tags,

@@ -1,0 +1,207 @@
+name: Image Evidence
+
+on:
+  workflow_call:
+    inputs:
+      digest:
+        description: Tested immutable source manifest digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  image-evidence:
+    name: Image evidence (${{ matrix.platform }})
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+          - platform: linux/arm64
+            suffix: arm64
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+
+      - name: Prepare evidence paths
+        env:
+          PARENT_DIGEST: ${{ inputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PARENT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid source manifest digest" >&2
+            exit 1
+          fi
+          evidence_dir="$RUNNER_TEMP/n2api-image-evidence/${{ matrix.suffix }}"
+          mkdir -p "$evidence_dir"
+          {
+            echo "EVIDENCE_IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}"
+            echo "EVIDENCE_DIR=$evidence_dir"
+            echo "SBOM_FILE=$evidence_dir/n2api-sbom-${{ matrix.suffix }}.spdx.json"
+            echo "TRIVY_FILE=$evidence_dir/n2api-trivy-${{ matrix.suffix }}.json"
+            echo "METADATA_FILE=$evidence_dir/n2api-evidence-${{ matrix.suffix }}.json"
+          } >> "$GITHUB_ENV"
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify source image provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PARENT_DIGEST: ${{ inputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh attestation verify "oci://${EVIDENCE_IMAGE}@${PARENT_DIGEST}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/ci-image.yml" \
+            --source-digest "$GITHUB_SHA"; then
+            echo "Original build provenance is required; rerun the failed manifest/provenance job before retrying publication" >&2
+            exit 1
+          fi
+
+      - name: Generate platform SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        env:
+          SYFT_PLATFORM: ${{ matrix.platform }}
+        with:
+          image: ${{ env.EVIDENCE_IMAGE }}@${{ inputs.digest }}
+          format: spdx-json
+          output-file: ${{ env.SBOM_FILE }}
+          upload-artifact: false
+          dependency-snapshot: false
+          upload-release-assets: false
+
+      - name: Validate platform SPDX SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$SBOM_FILE"
+          jq -e '
+            type == "object" and
+            (.spdxVersion | type == "string") and
+            (.SPDXID | type == "string") and
+            (.packages | type == "array")
+          ' "$SBOM_FILE" >/dev/null
+
+      - name: Attest platform SPDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.EVIDENCE_IMAGE }}
+          subject-digest: ${{ inputs.digest }}
+          sbom-path: ${{ env.SBOM_FILE }}
+          push-to-registry: true
+          show-summary: false
+
+      - name: Scan platform image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          image-ref: ${{ env.EVIDENCE_IMAGE }}@${{ inputs.digest }}
+          scanners: vuln
+          format: json
+          output: ${{ env.TRIVY_FILE }}
+          exit-code: '0'
+          ignore-unfixed: false
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+
+      - name: Validate and summarize platform evidence
+        env:
+          PARENT_DIGEST: ${{ inputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$TRIVY_FILE"
+          jq -e '
+            type == "object" and
+            (.SchemaVersion == 2) and
+            (.ArtifactName | type == "string") and
+            (.Results | type == "array") and
+            ([.Results[]? | (.Vulnerabilities // [])] | all(.[]; type == "array"))
+          ' "$TRIVY_FILE" >/dev/null
+
+          sbom_name="${SBOM_FILE##*/}"
+          trivy_name="${TRIVY_FILE##*/}"
+          jq -n \
+            --arg parentDigest "$PARENT_DIGEST" \
+            --arg platform "$PLATFORM" \
+            --arg sbom "$sbom_name" \
+            --arg vulnerabilityReport "$trivy_name" \
+            '{
+              parentDigest: $parentDigest,
+              platform: $platform,
+              files: {
+                sbom: $sbom,
+                vulnerabilityReport: $vulnerabilityReport
+              }
+            }' > "$METADATA_FILE"
+          jq -e \
+            --arg digest "$PARENT_DIGEST" \
+            --arg platform "$PLATFORM" \
+            --arg sbom "$sbom_name" \
+            --arg trivy "$trivy_name" \
+            '.parentDigest == $digest and
+             .platform == $platform and
+             .files.sbom == $sbom and
+             .files.vulnerabilityReport == $trivy' \
+            "$METADATA_FILE" >/dev/null
+
+          {
+            printf '### Image vulnerability evidence (%s)\n\n' "$PLATFORM"
+            printf '| Severity | Findings |\n'
+            printf '| --- | ---: |\n'
+            for severity in UNKNOWN LOW MEDIUM HIGH CRITICAL; do
+              count="$(
+                jq --arg severity "$severity" \
+                  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "UNKNOWN") == $severity)] | length' \
+                  "$TRIVY_FILE"
+              )"
+              printf '| %s | %s |\n' "$severity" "$count"
+            done
+            printf '\nPolicy: unexcepted HIGH/CRITICAL findings with a non-empty fixed version block this job.\n'
+            printf 'Unfixed findings remain report-only. Scanner, schema, registry, and report-generation errors fail closed.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload platform image evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: image-evidence-${{ matrix.suffix }}
+          path: |
+            ${{ env.SBOM_FILE }}
+            ${{ env.TRIVY_FILE }}
+            ${{ env.METADATA_FILE }}
+          if-no-files-found: error
+          retention-days: 14
+          include-hidden-files: false
+
+      - name: Enforce fixed vulnerability policy
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: dev/ci/evaluate-trivy-report.sh "$TRIVY_FILE" "$PLATFORM" security/exceptions.json
