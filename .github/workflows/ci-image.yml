@@ -8,6 +8,12 @@ on:
   merge_group:
     types:
       - checks_requested
+  workflow_call:
+    inputs:
+      release_build:
+        description: Run delivery builds and publish tested release source images
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -72,6 +78,7 @@ jobs:
           go test -count=1 ./...
 
       - name: Start mock OpenAI upstream
+        if: inputs.release_build
         id: mock_start
         shell: bash
         run: |
@@ -88,6 +95,7 @@ jobs:
           fi
 
       - name: Smoke test mock OpenAI scenarios
+        if: inputs.release_build
         id: mock_smoke
         shell: bash
         run: |
@@ -183,7 +191,7 @@ jobs:
           compression-level: 9
 
       - name: Stop mock OpenAI upstream
-        if: always()
+        if: always() && inputs.release_build
         timeout-minutes: 2
         run: >-
           docker compose --project-name "$MOCK_PROJECT"
@@ -208,10 +216,12 @@ jobs:
         run: bun test
 
       - name: Build frontend
+        if: inputs.release_build
         working-directory: frontend
         run: bun run build
 
       - name: Run PostgreSQL-backed gateway E2E
+        if: inputs.release_build
         id: gateway_e2e
         env:
           E2E_PROJECT: n2api-gateway-e2e-${{ github.run_id }}-${{ github.run_attempt }}
@@ -314,7 +324,7 @@ jobs:
           compression-level: 9
 
       - name: Stop PostgreSQL-backed gateway E2E
-        if: always()
+        if: always() && inputs.release_build
         timeout-minutes: 2
         env:
           E2E_PROJECT: n2api-gateway-e2e-${{ github.run_id }}-${{ github.run_attempt }}
@@ -324,6 +334,7 @@ jobs:
           down --volumes --remove-orphans --rmi local --timeout 10
 
       - name: Run official OpenAI SDK contracts
+        if: inputs.release_build
         id: sdk_contracts
         env:
           CONTRACT_PROJECT: n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}
@@ -410,7 +421,7 @@ jobs:
           compression-level: 9
 
       - name: Stop official OpenAI SDK contracts
-        if: always()
+        if: always() && inputs.release_build
         timeout-minutes: 2
         env:
           CONTRACT_PROJECT: n2api-sdk-contracts-${{ github.run_id }}-${{ github.run_attempt }}
@@ -418,6 +429,10 @@ jobs:
           docker compose --project-name "$CONTRACT_PROJECT"
           -f deploy/compose.e2e.yaml
           down --volumes --remove-orphans --rmi local --timeout 10
+
+      - name: Verify PostgreSQL fault recovery
+        if: inputs.release_build
+        run: make test-postgres-faults
 
   correctness:
     name: Correctness (${{ matrix.gate }})
@@ -431,7 +446,6 @@ jobs:
           - test-go-quality
           - test-critical-race
           - test-control-connections
-          - test-postgres-faults
           - test-request-log-profile
           - test-management-list-profile
           - test-production-deploy
@@ -452,6 +466,7 @@ jobs:
 
   image:
     name: Build and smoke test image (${{ matrix.platform }})
+    if: inputs.release_build && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs:
       - test
@@ -672,7 +687,7 @@ jobs:
           docker network rm "$SMOKE_NETWORK" || true
 
       - name: Export tested platform image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: inputs.release_build && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail
@@ -684,7 +699,7 @@ jobs:
           sha256sum "$archive_dir/image.tar.gz" > "$archive_dir/image.tar.gz.sha256"
 
       - name: Upload tested platform image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: inputs.release_build && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: tested-image-${{ matrix.suffix }}
@@ -705,7 +720,7 @@ jobs:
 
   publish-platform:
     name: Publish tested platform image (${{ matrix.platform }})
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: inputs.release_build && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: image
     strategy:
@@ -814,7 +829,7 @@ jobs:
 
   manifest:
     name: Publish multi-platform image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: inputs.release_build && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: publish-platform
     outputs:
@@ -951,7 +966,7 @@ jobs:
 
   image-evidence:
     name: Image evidence (${{ matrix.platform }})
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: inputs.release_build && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs: manifest
     strategy:

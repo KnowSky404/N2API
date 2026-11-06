@@ -110,6 +110,7 @@ if grep -Fq 'packages: write' <<< "$correctness_job"; then
   exit 1
 fi
 grep -Fq '      contents: read' <<< "$image_job"
+grep -Fq "if: inputs.release_build && github.ref == 'refs/heads/main'" <<< "$image_job"
 if grep -Fq 'packages: write' <<< "$image_job"; then
   echo "image build job unexpectedly has package write permission" >&2
   exit 1
@@ -119,6 +120,63 @@ grep -Fq '      packages: write' <<< "$publish_job"
 grep -Fq '      - name: Download tested platform image' <<< "$publish_job"
 grep -Fq '      - name: Validate and load tested platform image' <<< "$publish_job"
 grep -Fq '    needs: publish-platform' <<< "$manifest_job"
+
+release_workflow="$repo_root/.github/workflows/release.yml"
+awk '
+  $0 == "      - name: Resolve release inputs" { active = 1; next }
+  active && /^      - name:/ { exit }
+  active && /^        run: \|/ { script = 1; next }
+  script { sub(/^          /, ""); print }
+' "$release_workflow" > "$work_dir/resolve-release.sh"
+mkdir "$work_dir/release-bin"
+cat <<'DOCKER' > "$work_dir/release-bin/docker"
+#!/usr/bin/env bash
+set -euo pipefail
+touch "$N2API_RELEASE_DOCKER_CALLED"
+[[ "${N2API_RELEASE_IMAGE_AVAILABLE:-0}" == 1 ]] || exit 1
+case "$1" in
+  pull) ;;
+  buildx)
+    if [[ "$*" == *--raw* ]]; then
+      printf '%s\n' '{"manifests":[{"platform":{"os":"linux","architecture":"amd64"}},{"platform":{"os":"linux","architecture":"arm64"}}]}'
+    else
+      printf 'Digest: sha256:%064d\n' 0
+    fi
+    ;;
+  image)
+    jq -cn --arg source "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+      --arg revision "$GITHUB_SHA" --arg version "sha-${GITHUB_SHA:0:12}" \
+      --arg created "$(date -u -d "@$(git show -s --format=%ct "$GITHUB_SHA")" +'%Y-%m-%dT%H:%M:%SZ')" \
+      '{"org.opencontainers.image.source":$source,"org.opencontainers.image.revision":$revision,"org.opencontainers.image.version":$version,"org.opencontainers.image.created":$created}'
+    ;;
+  *) exit 1 ;;
+esac
+DOCKER
+printf '#!/usr/bin/env bash\nexit 1\n' > "$work_dir/release-bin/gh"
+chmod +x "$work_dir/release-bin/"*
+resolve_release() (
+  cd "$repo_root"
+  : > "$work_dir/release-outputs"
+  env PATH="$work_dir/release-bin:$PATH" RELEASE_MODE="$1" \
+    REGISTRY=ghcr.io GITHUB_REPOSITORY=KnowSky404/N2API \
+    GITHUB_SERVER_URL=https://github.com GITHUB_SHA="$(git -C "$repo_root" rev-parse HEAD)" \
+    GITHUB_OUTPUT="$work_dir/release-outputs" \
+    N2API_RELEASE_DOCKER_CALLED="$work_dir/docker-called" \
+    bash "$work_dir/resolve-release.sh"
+)
+resolve_release preview >/dev/null
+grep -Fx 'source_digest=not-built' "$work_dir/release-outputs" >/dev/null
+if [[ -e "$work_dir/docker-called" ]]; then
+  echo "release preview unexpectedly accessed container images" >&2
+  exit 1
+fi
+if resolve_release publish >/dev/null 2>&1; then
+  echo "release publish unexpectedly accepted an unavailable source image" >&2
+  exit 1
+fi
+test -f "$work_dir/docker-called"
+N2API_RELEASE_IMAGE_AVAILABLE=1 resolve_release publish >/dev/null
+grep -Eq '^source_digest=sha256:[0-9a-f]{64}$' "$work_dir/release-outputs"
 
 security_workflow="$repo_root/.github/workflows/security.yml"
 grep -Fq '            ops/n2api' "$security_workflow"
