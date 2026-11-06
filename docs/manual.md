@@ -302,8 +302,8 @@ Published images support:
 - `linux/arm64`
 
 All repository-owned container builds pin readable dependency versions and their
-multi-platform manifest digests. The current baseline is Bun `1.3.14`, Go
-`1.26.6` on Alpine `3.23`, Alpine `3.23.5`, and PostgreSQL `18.4` on Alpine
+multi-platform manifest digests. The current baseline is Bun `1.4.2`, Go
+`1.26.10` on Alpine `3.23`, Alpine `3.24.1`, and PostgreSQL `18.6` on Alpine
 `3.23`. E2E-only uv and Python images are pinned the same way. A version tag
 communicates the intended dependency while the digest makes the resolved bytes
 reproducible on both supported architectures. Update both together; never
