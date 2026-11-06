@@ -31,14 +31,13 @@ Select these exact GitHub Actions check names after each has completed at least
 once on GitHub:
 
 - `Test`
+- `Correctness (test-ops)`
 - `Correctness (test-go-quality)`
 - `Correctness (test-critical-race)`
 - `Correctness (test-control-connections)`
 - `Correctness (test-request-log-profile)`
 - `Correctness (test-management-list-profile)`
 - `Correctness (test-production-deploy)`
-- `Build and smoke test image (linux/amd64)`
-- `Build and smoke test image (linux/arm64)`
 - `Security exception policy`
 - `CodeQL (go)`
 - `CodeQL (javascript-typescript)`
@@ -49,10 +48,10 @@ Both required workflows listen for `pull_request` and
 queue. If merge queue is enabled, verify a real queued pull request before
 treating the ruleset as complete.
 
-The image jobs depend on both `Test` and the entire `Correctness` matrix. The
+Release-only image jobs depend on both `Test` and the entire `Correctness` matrix. The
 matrix pins Staticcheck, runs `go vet` and critical-package race coverage, and
 uses isolated PostgreSQL/Compose projects for control connections, query
-profiles, and release configuration. Do not replace the six concrete matrix
+profiles, and release configuration. Do not replace the concrete matrix
 check names with the matrix parent label when configuring the ruleset.
 
 ### Code Scanning Merge Protection
@@ -70,9 +69,11 @@ temporary accepted finding must use the exact, expiring exception policy in
 expiry.
 
 Do not require the following checks on pull requests or merge groups because
-their jobs intentionally run only after a push to `main`, on a schedule, or on
-manual dispatch:
+their jobs intentionally run only during release publication, on a schedule, or
+on manual dispatch:
 
+- `Build and smoke test image (linux/amd64)`
+- `Build and smoke test image (linux/arm64)`
 - `Publish tested platform image (linux/amd64)`
 - `Publish tested platform image (linux/arm64)`
 - `Publish multi-platform image`
@@ -83,6 +84,8 @@ manual dispatch:
 - `Stable image evidence (linux/arm64)`
 - `Prepare release`
 - `Publish release`
+- `Resolve release source`
+- `Build and verify release images`
 
 Requiring an event-incompatible check would leave pull requests or merge groups
 permanently waiting for a job that cannot start.
@@ -104,9 +107,12 @@ For a single-maintainer repository, leave self-review enabled so the owner can
 perform the explicit approval. When a second trusted maintainer is available,
 enable prevention of self-review and require that independent reviewer.
 
-The environment protects only `Publish release`. `Prepare release` remains a
-read-only preview and verification job so it can produce evidence before an
-owner decides whether to approve publication.
+The environment protects `Publish release`. Publish mode builds and verifies
+its candidate first so the owner can inspect evidence before approving stable
+promotion. Preview mode skips builds and generates release notes without
+requiring an existing source image. Rejecting publication leaves Git tags,
+GitHub Releases, and stable CalVer/latest package tags unchanged; tested source
+`sha-*` and `main` candidate tags may already have been published.
 
 ## Activation And Verification
 
@@ -124,8 +130,8 @@ Apply protections in this order:
 5. If using merge queue, enqueue the test pull request and confirm both required
    workflows run for the merge group.
 6. Create the `release` environment and run Release in `preview` mode first.
-   Confirm `publish` waits for approval and that rejection leaves tags, Releases,
-   and package tags unchanged.
+   Confirm `publish` waits for approval and that rejection leaves Git tags, Releases,
+   and stable package tags unchanged.
 
 If a rule prevents all normal recovery, disable only that exact rule, record
 the reason, restore the repository, and re-enable it after the same required

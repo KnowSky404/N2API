@@ -279,15 +279,19 @@ documented persistence requirement.
 
 ## Published Images
 
-The `CI Image` workflow tests every pull request without publishing an image.
-After a commit reaches `main`, the same image that passed the PostgreSQL smoke
-test on both supported platforms is published as a multi-platform image with
-two development tags:
+The `CI Image` workflow runs backend/frontend tests, type checks, and ordinary
+correctness gates for pull requests and `main`. These runs do not build frontend
+delivery assets or container images. Security scans remain enabled separately.
+Release `publish` calls the same workflow with delivery builds enabled: it runs
+the mock, gateway, SDK, and PostgreSQL fault checks, then builds and smoke-tests
+both supported image platforms. The tested multi-platform image receives two
+source tags before stable promotion:
 
-- `main` moves to the newest tested commit on the default branch.
+- `main` moves to the tested release-build commit when it is still the current
+  default-branch commit; ordinary pushes do not update this tag.
 - `sha-<12 characters>` identifies one tested source commit and is immutable.
 
-Stable releases add two more tags without rebuilding the image:
+Stable promotion adds two more tags without rebuilding that tested image:
 
 - `YYYYMMDDNN` is an immutable Europe/Berlin CalVer release, for example
   `2026071401`.
@@ -314,8 +318,10 @@ GitHub Actions, Dockerfiles, and Compose definitions every Monday. Patch and
 minor updates are grouped by ecosystem; major updates remain isolated for
 explicit review. Every dependency pull request must pass the normal `CI Image`
 workflow. Container update pull requests must also pass
-`dev/ci/verify-pinned-dependencies.sh`, keep readable version tags next to
-digests, and smoke-test both supported image architectures before merge.
+`dev/ci/verify-pinned-dependencies.sh` and keep readable version tags next to
+digests. Both image architectures are smoke-tested during release publication.
+Static frontend assets are built on the builder's native architecture for both
+target platforms, avoiding JavaScript tooling under ARM64 emulation.
 
 Every tested image carries the same build identity in the binary and OCI
 metadata:
@@ -333,7 +339,7 @@ already-tested manifest without rebuilding it, so a running release continues
 to report its source `sha-<12 characters>` build version while the CalVer tag
 identifies the promoted manifest.
 
-For every published `main` image, CI generates separate SPDX JSON SBOMs and
+For every release source image, CI generates separate SPDX JSON SBOMs and
 Trivy vulnerability reports for `linux/amd64` and `linux/arm64`. Both evidence
 jobs read the same immutable parent manifest reference, `IMAGE@sha256:...`, and
 select their platform without rebuilding the image. Each platform SBOM is
@@ -347,8 +353,8 @@ image is not permanently blocked when no remediation exists. Exact CVE or
 package exceptions may be recorded per platform in `security/exceptions.json`;
 they require an owner, reason, and expiry no more than 30 days after creation.
 Scanner execution, invalid JSON or schema, exception-registry validation,
-attestation, and artifact upload errors fail closed. Release preview and
-publish runs verify that the tested parent digest has an SPDX attestation issued
+attestation, and artifact upload errors fail closed. Release publish runs
+verify that the tested parent digest has an SPDX attestation issued
 by this repository's `CI Image` workflow for the selected source commit; stable
 tags continue to promote that same digest without rebuilding it.
 
@@ -402,13 +408,14 @@ feature.
 ## Preview and Publish a Release
 
 Open **Actions > Release > Run workflow** on the `main` branch. Keep `mode` set
-to `preview` first. Preview mode verifies the tested `sha-<12 characters>` image,
-calculates the next CalVer, generates release notes from Conventional Commits,
-and uploads the proposed Release body. It does not create Git tags, container
-tags, or GitHub Releases. A later run may select a newer `main` commit, so a
+to `preview` first. Preview mode calculates the next CalVer, generates release
+notes from Conventional Commits, and uploads the proposed Release body without
+requiring an existing source image. The manifest digest remains pending until
+publication. It does not build images or create Git tags, container tags, or
+GitHub Releases. A later run may select a newer `main` commit, so a
 standalone preview is informational rather than a locked release candidate.
 
-The generated Release body records that the two platform SBOM attestations and
+The publish run's generated Release body records that the two platform SBOM attestations and
 report-only vulnerability evidence are tied to the tested manifest digest. The
 attestations remain associated with the immutable image in GHCR; the downloadable
 per-platform evidence artifacts are retained with the originating `CI Image`
@@ -420,9 +427,14 @@ restore drill and every immutable image tag or digest exercised by that drill.
 Generated CI fixtures do not satisfy this operator recovery gate.
 
 For an approval gate, configure the repository's `release` environment with a
-required reviewer. Run the workflow with `mode` set to `publish`; its prepare
-job creates a fresh `release-preview-*` artifact, then the publish job waits for
-environment approval and consumes that artifact from the same workflow run.
+required reviewer. Run the workflow with `mode` set to `publish`; it builds and
+verifies the selected source image before creating a fresh `release-preview-*`
+artifact. A readable existing source image is reused, and must pass the same
+identity and attestation checks, so a retry can resume without rebuilding it.
+The publish job then waits for environment approval, consumes the artifact from
+the same workflow run, and promotes the tested manifest. Candidate `sha-*` and
+`main` tags may already exist while approval is pending; stable tags, Git tags,
+and GitHub Releases remain unchanged until publication is approved.
 After approval it creates the Git tag, promotes the tested digest to the CalVer
 tag, publishes the GitHub Release, and only then moves `latest`. The workflow
 never rebuilds the image and refuses to replace a CalVer tag that points to

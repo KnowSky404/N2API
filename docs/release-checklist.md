@@ -14,7 +14,7 @@ record.
 - [ ] Platforms are exactly `linux/amd64` and `linux/arm64`:
 - [ ] Release preview workflow run:
 - [ ] Required backend, frontend, and image checks passed:
-- [ ] All six `Correctness (...)` matrix checks passed for the exact commit:
+- [ ] All `Correctness (...)` checks and the release-only PostgreSQL fault check passed for the exact commit:
 
 ## Supply Chain Evidence
 
