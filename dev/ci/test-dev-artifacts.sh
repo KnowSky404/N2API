@@ -363,7 +363,7 @@ grep -Fq '503 Service Unavailable' <<<"${postgres_faults_block}" ||
 grep -Fq 'docker unpause' <<<"${postgres_faults_block}" ||
   fail "PostgreSQL fault runner does not recover the database container"
 grep -Fq 'test-postgres-faults' "${repo_root}/.github/workflows/ci-image.yml" ||
-  fail "CI correctness matrix does not run the PostgreSQL fault gate"
+  fail "release CI does not run the PostgreSQL fault gate"
 grep -Fq '          - test-ops' "${repo_root}/.github/workflows/ci-image.yml" ||
   fail "CI correctness matrix does not run the operator safety gate"
 grep -Fq '            ops/n2api' "${repo_root}/.github/workflows/security.yml" ||

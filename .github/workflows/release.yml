@@ -25,8 +25,60 @@ env:
   TZ: Europe/Berlin
 
 jobs:
+  source:
+    name: Resolve release source
+    if: inputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    outputs:
+      reuse_image: ${{ steps.source.outputs.reuse_image }}
+    steps:
+      - name: Require main branch
+        run: test "$GITHUB_REF" = refs/heads/main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for an existing source image
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_ref="${REGISTRY}/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA:0:12}"
+          if docker buildx imagetools inspect "$source_ref" >/dev/null 2>&1; then
+            echo "reuse_image=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No readable source image; running the release build pipeline"
+            echo "reuse_image=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build and verify release images
+    if: inputs.mode == 'publish' && needs.source.outputs.reuse_image != 'true'
+    needs: source
+    uses: ./.github/workflows/ci-image.yml
+    with:
+      release_build: true
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+
   prepare:
     name: Prepare release
+    needs: [source, build]
+    if: >-
+      always() && !cancelled() &&
+      (inputs.mode == 'preview' ||
+       (needs.source.result == 'success' &&
+        (needs.build.result == 'success' || needs.source.outputs.reuse_image == 'true')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -56,9 +108,11 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Docker Buildx
+        if: inputs.mode == 'publish'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Login to GitHub Container Registry
+        if: inputs.mode == 'publish'
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -69,6 +123,7 @@ jobs:
         id: prepare
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_MODE: ${{ inputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
@@ -85,43 +140,46 @@ jobs:
           source_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
           commit_epoch="$(git show -s --format=%ct "$source_sha")"
           build_time="$(date -u -d "@$commit_epoch" +'%Y-%m-%dT%H:%M:%SZ')"
-          source_digest="$(
-            docker buildx imagetools inspect "$source_ref" \
-              | sed -n 's/^Digest:[[:space:]]*//p' \
-              | head -n 1
-          )"
-          if [[ ! "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "The tested source image $source_ref does not exist or has no valid manifest digest" >&2
-            exit 1
-          fi
-          source_platforms="$(
-            docker buildx imagetools inspect --raw "$source_ref" \
-              | jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)"' \
-              | sort
-          )"
-          if [ "$source_platforms" != $'linux/amd64\nlinux/arm64' ]; then
-            echo "The tested source image must contain exactly linux/amd64 and linux/arm64" >&2
-            printf '%s\n' "$source_platforms" >&2
-            exit 1
-          fi
-
-          for platform in linux/amd64 linux/arm64; do
-            docker pull --platform "$platform" "$source_ref" >/dev/null
-            labels="$(docker image inspect --format '{{json .Config.Labels}}' "$source_ref")"
-            if ! jq -e \
-              --arg source "$source_url" \
-              --arg revision "$source_sha" \
-              --arg version "$source_tag" \
-              --arg created "$build_time" \
-              '."org.opencontainers.image.source" == $source and
-               ."org.opencontainers.image.revision" == $revision and
-               ."org.opencontainers.image.version" == $version and
-               ."org.opencontainers.image.created" == $created' \
-              <<< "$labels" >/dev/null; then
-              echo "$source_ref has invalid build identity labels for $platform" >&2
+          source_digest=not-built
+          if [ "$RELEASE_MODE" = "publish" ]; then
+            source_digest="$(
+              docker buildx imagetools inspect "$source_ref" \
+                | sed -n 's/^Digest:[[:space:]]*//p' \
+                | head -n 1
+            )"
+            if [[ ! "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "The tested source image $source_ref does not exist or has no valid manifest digest" >&2
               exit 1
             fi
-          done
+            source_platforms="$(
+              docker buildx imagetools inspect --raw "$source_ref" \
+                | jq -r '.manifests[] | "\(.platform.os)/\(.platform.architecture)"' \
+                | sort
+            )"
+            if [ "$source_platforms" != $'linux/amd64\nlinux/arm64' ]; then
+              echo "The tested source image must contain exactly linux/amd64 and linux/arm64" >&2
+              printf '%s\n' "$source_platforms" >&2
+              exit 1
+            fi
+
+            for platform in linux/amd64 linux/arm64; do
+              docker pull --platform "$platform" "$source_ref" >/dev/null
+              labels="$(docker image inspect --format '{{json .Config.Labels}}' "$source_ref")"
+              if ! jq -e \
+                --arg source "$source_url" \
+                --arg revision "$source_sha" \
+                --arg version "$source_tag" \
+                --arg created "$build_time" \
+                '."org.opencontainers.image.source" == $source and
+                 ."org.opencontainers.image.revision" == $revision and
+                 ."org.opencontainers.image.version" == $version and
+                 ."org.opencontainers.image.created" == $created' \
+                <<< "$labels" >/dev/null; then
+                echo "$source_ref has invalid build identity labels for $platform" >&2
+                exit 1
+              fi
+            done
+          fi
 
           mapfile -t sha_versions < <(
             while IFS= read -r tag; do
@@ -177,6 +235,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify tested image SPDX attestation
+        if: inputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ steps.prepare.outputs.image }}
@@ -213,6 +272,7 @@ jobs:
 
       - name: Render release body
         env:
+          RELEASE_MODE: ${{ inputs.mode }}
           IMAGE: ${{ steps.prepare.outputs.image }}
           SOURCE_DIGEST: ${{ steps.prepare.outputs.source_digest }}
           SOURCE_PLATFORMS: ${{ steps.prepare.outputs.source_platforms }}
@@ -236,15 +296,19 @@ jobs:
             printf '\n## Container Image\n\n'
             printf -- "- Version: \`%s:%s\`\n" "$IMAGE" "$VERSION"
             printf -- "- Stable: \`%s:latest\`\n" "$IMAGE"
-            printf -- "- Tested source: \`%s:%s\`\n" "$IMAGE" "$SOURCE_TAG"
+            printf -- "- Source image: \`%s:%s\`\n" "$IMAGE" "$SOURCE_TAG"
             printf -- "- Source commit: \`%s\`\n" "$SOURCE_SHA"
-            printf -- "- Manifest digest: \`%s\`\n" "$SOURCE_DIGEST"
+            if [ "$RELEASE_MODE" = "preview" ]; then
+              printf -- "- Manifest digest: pending release build (preview does not build or publish images)\n"
+            else
+              printf -- "- Manifest digest: \`%s\`\n" "$SOURCE_DIGEST"
+            fi
             printf -- "- Platforms: \`%s\`\n\n" "$SOURCE_PLATFORMS"
             printf '%s\n' \
               '## Supply Chain Evidence' \
               '' \
-              "- SPDX JSON SBOM attestations for \`linux/amd64\` and \`linux/arm64\` are bound to \`${IMAGE}@${SOURCE_DIGEST}\`." \
-              '- Both platform SBOMs and vulnerability reports were generated from that existing parent manifest without rebuilding it.' \
+              '- Publication requires SPDX JSON SBOM attestations for both platforms, bound to the exact tested parent manifest digest.' \
+              '- Both platform SBOMs and vulnerability reports are generated from the tested parent manifest without rebuilding it.' \
               '- Unexcepted HIGH/CRITICAL Trivy findings with a non-empty fixed version block CI; unfixed findings remain report-only.' \
               '- Scanner, schema, exception-registry, and report-generation failures fail closed.' \
               '- The per-platform SBOM, Trivy JSON, and non-sensitive evidence metadata artifacts are retained with the originating CI run for 14 days.' \
@@ -288,10 +352,10 @@ jobs:
 
   publish:
     name: Publish release
+    environment: release
     if: inputs.mode == 'publish'
     needs: prepare
     runs-on: ubuntu-latest
-    environment: release
     permissions:
       actions: read
       contents: write
