@@ -18,7 +18,10 @@ source code from `Wei-Shaw/sub2api`.
 
 1. Read `AGENTS.md`, `README.md`, `docs/README.md`, and the relevant design or
    operations plan.
-2. Check the current worktree and preserve unrelated changes.
+2. Inspect existing worktrees and preserve unrelated changes. Fetch the target
+   branch and create a dedicated task branch and Git worktree from its current
+   remote tip before editing; reuse a worktree only to continue the same task.
+   Do not develop in the primary checkout or directly on `main`.
 3. Reproduce bugs before changing behavior.
 4. Keep one coherent behavior, fix, documentation update, or test update per
    change.
@@ -57,6 +60,32 @@ encryption keys, database dumps, or complete request/response bodies in tests,
 fixtures, logs, screenshots, traces, artifacts, issues, or pull requests.
 
 ## Commits And Pull Requests
+
+Follow [AGENTS.md](AGENTS.md#worktree-and-pull-request-workflow) for every
+repository change, including documentation, configuration, tests, and dependency
+updates, unless the user explicitly requests an exception:
+
+1. Implement and verify the scoped change in its task worktree, then make atomic
+   Conventional Commits.
+2. Before every push and before creating a PR, run local Codex `/review` against
+   the target branch, or `codex review --base <target-ref>` non-interactively.
+   Review the full PR diff, fix actionable findings, rerun affected verification,
+   and repeat review until clear. Any later change or rebase requires review
+   again; a failed or unavailable review blocks publication.
+3. Push the task branch and create a PR with the exact verification results and
+   local review outcome. The project workflow authorizes these task-scoped
+   actions, rebase merging, and merged-branch cleanup without repeated approval.
+4. Check automatic Codex bot review on the latest PR head. If triggered, wait
+   for completion, fix actionable findings, and repeat local verification,
+   `/review`, push, and remote checks. Never manually trigger or request the bot.
+   If it was not triggered, proceed once CI and repository requirements pass.
+   Pending, running, failed, or inaccessible review activity is not a clean
+   review or evidence that no review was triggered.
+5. Confirm the reviewed PR head and passing checks, then rebase merge without
+   bypassing protections. After merge confirmation, delete the remote task
+   branch, remove its clean worktree, and delete the local task branch. Preserve
+   unrelated work, update the primary checkout only when safe, and verify the
+   target-branch CI. Report any blocker instead of skipping a gate.
 
 - Make atomic changes and exclude unrelated refactors or formatting churn.
 - Use Conventional Commits, for example `fix(gateway): bound response reads`,
