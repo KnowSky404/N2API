@@ -994,14 +994,21 @@ func TestImageEvidenceDocumentationMatchesWorkflowContract(t *testing.T) {
 		},
 		"../../../.github/workflows/ci-image.yml": {
 			"needs: manifest",
+			"if: inputs.release_build && github.ref == 'refs/heads/main'",
+			"uses: ./.github/workflows/image-evidence.yml",
+		},
+		"../../../.github/workflows/image-evidence.yml": {
 			"SYFT_PLATFORM: ${{ matrix.platform }}",
 			"TRIVY_PLATFORM: ${{ matrix.platform }}",
 			"push-to-registry: true",
 			"retention-days: 14",
+			"Verify source image provenance",
 		},
 		"../../../.github/workflows/release.yml": {
 			"gh attestation verify",
-			"--predicate-type https://spdx.dev/Document",
+			"--predicate-type https://spdx.dev/Document/v2.3",
+			"uses: ./.github/workflows/ci-image.yml",
+			"uses: ./.github/workflows/image-evidence.yml",
 			"--signer-workflow",
 			"--source-digest",
 		},
