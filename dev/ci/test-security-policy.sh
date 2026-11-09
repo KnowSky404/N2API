@@ -130,6 +130,41 @@ extract_run() {
     script { sub(/^          /, ""); print }
   ' "$1"
 }
+extract_run "$workflow" 'Push tested platform image' |
+  sed 's/${{ matrix.suffix }}/amd64/g' > "$work_dir/publish-platform.sh"
+mkdir "$work_dir/platform-bin"
+cat <<'DOCKER' > "$work_dir/platform-bin/docker"
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1 $2 $3" == "buildx imagetools inspect" ]] || exit 1
+if [[ "$*" == *--raw* ]]; then
+  jq -cn --arg digest "$N2API_TEST_CONFIG_DIGEST" '{config:{digest:$digest}}'
+else
+  printf 'Digest: %s\n' "$N2API_TEST_MANIFEST_DIGEST"
+fi
+DOCKER
+chmod +x "$work_dir/platform-bin/docker"
+config_id="sha256:$(printf 'a%.0s' {1..64})"
+manifest_id="sha256:$(printf 'b%.0s' {1..64})"
+publish_platform() {
+  env PATH="$work_dir/platform-bin:$PATH" RUNNER_TEMP="$work_dir" \
+    REGISTRY=ghcr.io IMAGE_NAME=knowsky404/n2api SHORT_SHA=example \
+    LOCAL_IMAGE_ID="$1" \
+    N2API_TEST_CONFIG_DIGEST="$config_id" \
+    N2API_TEST_MANIFEST_DIGEST="${2:-$manifest_id}" \
+    bash "$work_dir/publish-platform.sh"
+}
+publish_platform "$config_id" >/dev/null
+publish_platform "$manifest_id" >/dev/null
+if publish_platform "sha256:$(printf 'c%.0s' {1..64})" >/dev/null 2>&1; then
+  echo "platform publication unexpectedly accepted an unrelated image ID" >&2
+  exit 1
+fi
+if publish_platform "$config_id" sha256:invalid >/dev/null 2>&1; then
+  echo "platform publication unexpectedly accepted an invalid manifest digest" >&2
+  exit 1
+fi
+
 extract_run "$release_workflow" 'Resolve release inputs' > "$work_dir/resolve-release.sh"
 mkdir "$work_dir/release-bin"
 cat <<'DOCKER' > "$work_dir/release-bin/docker"
