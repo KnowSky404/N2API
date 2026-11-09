@@ -1387,9 +1387,9 @@ Replace their routing-pool memberships with API-key upstreams before use.
 - `/v1/models` returns `200` with an empty model list for an unbound API key. A model-routed POST made with that key fails closed with `503` and the error code `routing_pool_required`. For a bound key, `all` exposes every currently routable configured model in the routing-pool fallback chain, while `selected` exposes the routable intersection of the key's selected models.
 - `/v1/models` never widens beyond the key's configured routing-pool fallback chain.
 - Routing diagnostics can preview scheduler fallback without sending traffic. In Selection preview, choose a **Routing pool** to inspect its bound routing path. Leaving the pool unset runs an unscoped admin diagnostic across provider accounts; it does not represent access available to an unbound API key. Set **Excluded account IDs** to a comma-separated list such as `7, 8` to simulate those provider accounts being unavailable; excluded accounts remain visible as blocked candidates with the reason `account excluded`. Routing preview also shows each candidate's active concurrency and effective account cap; candidates at a positive cap are marked **Concurrency full**. Each schedulable preview candidate includes a **Schedule reason** as diagnostic text with its pool/global priority tier, scheduling preference tier, recent-error tier, least-recently-used tie-breaker, account ID, and sticky decision; this explains the current rank and does not change scheduler behavior. Runtime concurrency is not a proportional weight: concurrency-full accounts are excluded and the gateway requests another selection, returning `429` only when no eligible account can accept the request.
-- If one enabled account cannot refresh a token or fails before streaming starts, N2API tries another eligible account that supports the same requested model.
+- If one enabled account fails before streaming starts, N2API tries another eligible account that supports the same requested model.
 - Once upstream streaming has started, N2API preserves that stream and does not retry against another account.
-- OAuth access tokens, refresh tokens, id tokens, and short-lived PKCE verifier records are encrypted before being stored. Browser/request fingerprints are stored only as hashes.
+- Provider API keys are encrypted before being stored. Historical OAuth credentials and retired fingerprint records are retained for backup compatibility only.
 
 ## Gateway Runtime Limits
 
@@ -1515,8 +1515,7 @@ Request Log CSV and JSONL exports stream the currently applied filters over an e
 API upstream accounts and `OPENAI_API_BASE_URL` require HTTPS by default so
 upstream API keys are not sent over plaintext HTTP. Set
 `N2API_ALLOW_HTTP_API_UPSTREAMS=true` only for trusted local or private HTTP
-upstreams that you control. This setting does not permit HTTP OpenAI OAuth
-authorization or token endpoints.
+upstreams that you control.
 
 For sticky session routing, clients can send `session_id` in the POST body. If a client needs a header instead, prefer `X-N2API-Session-ID` through reverse proxies; `session_id` remains supported but contains an underscore and may be dropped by default proxy settings. If N2API is behind Nginx and clients send the `session_id` header, set `underscores_in_headers on;` in the relevant `http` or `server` block. A body `session_id` overrides either header.
 
