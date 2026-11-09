@@ -73,6 +73,33 @@
 - Prefer Docker Compose for local full-stack verification.
 - Do not introduce Node.js, npm, npx, pnpm, or yarn unless Bun cannot support a required package or workflow.
 
+## Local Development Sessions
+- Local full-stack development and testing use Docker Compose only when
+  explicitly needed by the current project session. Use `make dev` for a
+  foreground development session, `make dev-check` for rebuild/probe/teardown,
+  and `make dev-stop` for an abandoned detached development stack.
+- Development containers must use `restart: "no"`. Do not install boot tasks,
+  timers, restart policies, or other automation that starts the development
+  stack outside an explicit session. The Docker daemon is shared host
+  infrastructure; do not stop, disable, or reconfigure it for project cleanup.
+- After development verification, close the session and verify that development
+  containers and networks are gone. Do not leave a detached stack running at
+  the end of a turn unless the user explicitly requests a continuing preview.
+- Remove current-run temporary files, build output, disposable test containers,
+  test networks, labelled test volumes/images, and unused builder cache. Use
+  the managed test lifecycle and `make clean-dev-artifacts` for inactive
+  labelled residue; never use broad system/image/volume prune commands.
+- Preserve `deploy_n2api-postgres`, existing application configuration,
+  credentials, backups, useful failure/acceptance evidence, unrelated resources,
+  and other active sessions. Deleting persistent development data needs an
+  explicit reset request. Never run development `compose down --volumes`.
+- Keep temporary outputs and controlled caches on the configured mounted remote
+  filesystem through `TMPDIR`, `TMP`, `TEMP`, `N2API_TMP_ROOT`, and
+  `N2API_DEV_CACHE_ROOT`. The zero-byte ownership lock in the primary checkout's
+  `.cache/` is the local exception so all worktrees share a kernel lock.
+- See `docs/development.md` for session lifetime, signal/crash recovery, and
+  cleanup boundaries.
+
 ## Operations Skills
 - Use `.agents/skills/n2api-local-refresh/SKILL.md` for the required
   non-destructive local Compose rebuild, recreation, verification, and builder
@@ -101,8 +128,14 @@
 - Use Conventional Commits for commit messages, such as `feat: add provider health check`, `fix: preserve streaming response headers`, `docs: update deployment guide`, `test: cover token refresh`, or `chore: update tooling`.
 - Follow the standing authorization and review gates in **Worktree And Pull Request Workflow** for task branches and PRs. Other remote writes, tags, releases, and repository-setting changes require an explicit user request.
 - Do not commit generated build artifacts, dependency directories, local caches, or real environment files.
-- After every conversation turn that involves code or functionality changes, rebuild and refresh the local Docker Compose dev stack so the user can test and verify. Use the `n2api-refresh-docker` skill for the exact commands. If no code or functionality was changed during the turn, skip this step.
-- Because the local Compose refresh uses `--no-cache`, run `docker builder prune --all --force` immediately before the rebuild to remove unused cache from previous builds and again after a successful rebuild, recreation, and verification so the new build cache does not accumulate. This cleanup is builder-wide. Do not automatically run `docker system prune`, prune images, or prune volumes.
+- After every conversation turn that involves code or functionality changes,
+  run `make dev-check` using `.agents/skills/n2api-local-refresh/SKILL.md`.
+  This performs a no-cache rebuild, recreation, health/page probes, and teardown
+  while preserving PostgreSQL data. Documentation-only changes skip this step.
+- The session runner prunes unused builder cache before building and during
+  teardown. This cleanup is builder-wide; do not run it concurrently with other
+  builds. Only the development project's locally built image is removed by
+  its Compose teardown; never globally prune images or volumes.
 - Do not inspect or poll GitHub CI for local commits that have not been pushed. Only after a user-authorized push succeeds, or after a merge has otherwise reached GitHub, wait for the corresponding `CI Image` workflow run to complete before claiming the remote workflow is finished. Ordinary PR and `main` runs must pass `Test` and their applicable correctness checks; delivery build, image smoke, publication, and evidence jobs are expected to be skipped. Only Release `publish` enables the full build chain, and its platform image tests, pushes, and evidence must pass before stable promotion. Release `preview` must not build or publish images. Do not dispatch a publish run without an explicit release request. If a workflow fails, inspect its logs and resolve the failure before closing the task.
 
 ## Subagent Workflow

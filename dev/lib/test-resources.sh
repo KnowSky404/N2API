@@ -47,7 +47,7 @@ n2api_acquire_run_lock() {
   }
   mkdir -p "$(dirname "${N2API_RESOURCE_LOCK_FILE}")"
   if [[ -z "${N2API_RUN_LOCK_FD:-}" ]]; then
-    exec {N2API_RUN_LOCK_FD}>"${N2API_RESOURCE_LOCK_FILE}"
+    exec {N2API_RUN_LOCK_FD}<>"${N2API_RESOURCE_LOCK_FILE}"
     flock -s "${N2API_RUN_LOCK_FD}"
   fi
 }
@@ -241,7 +241,7 @@ n2api_assert_owned_run_dir() {
 n2api_run_cleanup() {
   local status=$1
   local artifact_target cleanup_failed=0
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM HUP
 
   if [[ -n "${N2API_TEST_COMPOSE_PROJECT:-}" && -n "${N2API_TEST_COMPOSE_FILE:-}" ]]; then
     n2api_compose down --volumes --remove-orphans --rmi local --timeout 10 >/dev/null 2>&1 || cleanup_failed=1
@@ -276,7 +276,7 @@ n2api_run_cleanup() {
 n2api_signal_exit() {
   local signal=$1
   local status=$2
-  trap - INT TERM
+  trap - INT TERM HUP
   if [[ -n "${N2API_CHILD_PID:-}" ]]; then
     kill -s "${signal}" -- "-${N2API_CHILD_PID}" 2>/dev/null ||
       kill -s "${signal}" "${N2API_CHILD_PID}" 2>/dev/null || true
@@ -334,6 +334,7 @@ n2api_run_init() {
   trap 'n2api_run_cleanup $?' EXIT
   trap 'n2api_signal_exit INT 130' INT
   trap 'n2api_signal_exit TERM 143' TERM
+  trap 'n2api_signal_exit HUP 129' HUP
   mkdir -p \
     "${N2API_RUN_DIR}/tmp" \
     "${N2API_RUN_DIR}/go-build" \
@@ -350,6 +351,7 @@ n2api_run_init() {
   export N2API_RUN_ID N2API_RUN_DIR
   export N2API_TEST_RUN_ID="${N2API_RUN_ID}"
   export TMPDIR="${N2API_RUN_DIR}/tmp"
+  export TMP="${TMPDIR}" TEMP="${TMPDIR}"
   export XDG_CACHE_HOME="${N2API_RUN_DIR}/cache"
   export GOCACHE="${N2API_RUN_DIR}/go-build"
   export GOMODCACHE="${N2API_DEV_CACHE_ROOT}/go-mod"
