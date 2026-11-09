@@ -26,6 +26,9 @@ isolated test volumes continue to use the existing labelled test lifecycle.
    termination, concurrent sessions, cleanup failure, and data preservation.
 4. Update startup documentation, Agent instructions, and the repository local
    refresh skill so verification ends with teardown by default.
+5. Keep the session lock in the runner so a forced exit permits recovery. Add
+   explicit metrics sessions and recognize only the base or base-plus-metrics
+   configuration from registered worktrees.
 
 ## Acceptance Criteria
 
@@ -34,6 +37,9 @@ isolated test volumes continue to use the existing labelled test lifecycle.
   failed starts attempt teardown and cleanup failures return nonzero.
 - A second session cannot stop an active session. Release Compose resources
   are refused, and no development cleanup command deletes named volumes.
+- After SIGKILL, a surviving Compose child cannot block `make dev-stop`.
+  `N2API_DEV_METRICS=1` selects the existing metrics override; recovery accepts
+  that known file combination and rejects release or unknown extra files.
 - `make dev-check` passes a real no-cache rebuild and health/page probes, then
   leaves no development containers or network. Existing database identity and
   backup files remain intact.
