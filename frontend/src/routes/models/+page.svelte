@@ -11,9 +11,9 @@
     modelRoutingPreview,
     routingPools,
     session
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   let modelRoutingRequested = $state(false);
   let appliedModelRoutingSearch = $state('');
   let modelSearch = $state('');
@@ -165,7 +165,7 @@
     return `/api-keys?clientKeyId=${encodeURIComponent(String(key.id))}`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ModelRoutingAccount} account */
   function routingAccountHoverDetail(account) {
     const lastError = account.lastError
       ? `${account.lastError}${account.lastErrorAt ? ` - ${formatDate(account.lastErrorAt)}` : ''}`
@@ -238,13 +238,13 @@
       : `${(normalizedModelPage - 1) * modelPageSize + 1}-${(normalizedModelPage - 1) * modelPageSize + paginatedModelRoutingRows.length}`
   );
 
-  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
+  /** @param {import('#lib/admin-state.svelte.js').ModelRoutingModel} model */
   function modelHasVisibleProviderAccount(model) {
     if (!modelProviderAccountId) return true;
     return (model.accounts ?? []).some((account) => String(account.id) === modelProviderAccountId);
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
+  /** @param {import('#lib/admin-state.svelte.js').ModelRoutingModel} model */
   function modelSearchText(model) {
     return [
       model.model,
@@ -266,7 +266,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model
+   * @param {import('#lib/admin-state.svelte.js').ModelRoutingModel} model
    * @param {string} filter
    */
   function modelMatchesStatusFilter(model, filter) {
@@ -275,7 +275,7 @@
     return true;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ModelRoutingModel} model */
+  /** @param {import('#lib/admin-state.svelte.js').ModelRoutingModel} model */
   function visibleModelAccounts(model) {
     const query = modelSearch.trim().toLowerCase();
     const accounts = (model.accounts ?? []).filter((account) => {

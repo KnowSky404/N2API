@@ -27,7 +27,7 @@ const readText = await preloadTextFiles([
   'src/lib/request-log-format.js',
   'src/app.css',
   'src/app.html',
-  'svelte.config.js',
+  'vite.config.ts',
   '../DESIGN.md',
   '../README.md'
 ]);
@@ -57,7 +57,7 @@ const releaseUpdate = readText('src/lib/ReleaseUpdate.svelte');
 const releaseNotes = readText('src/lib/release-notes.js');
 const uiStyles = readText('src/app.css');
 const appHtml = readText('src/app.html');
-const svelteConfig = readText('svelte.config.js');
+const svelteConfig = readText('vite.config.ts');
 const designSystem = readText('../DESIGN.md');
 const readme = readText('../README.md');
 

@@ -1,6 +1,6 @@
 # Dependency and SDK Contract Matrix
 
-Last reviewed: 2026-11-06
+Last reviewed: 2026-11-09
 
 This matrix records the versions that are intentionally coupled across the
 repository. The files named in the source-of-truth column remain authoritative;
@@ -13,8 +13,8 @@ this document is an audit index, not a second lockfile.
 | Backend Go toolchain | `1.26.10` | `backend/go.mod` | `deploy/Dockerfile`, `deploy/Dockerfile.e2e`, and CI `setup-go` read or match `backend/go.mod` |
 | Backend direct Go dependencies | `pgx/v5 5.11.0`, `goose/v3 3.29.0`, Prometheus `1.25.0/0.6.3/0.72.0`, `utls 1.8.2`, YAML `3.0.6`, `x/crypto 0.58.0` | `backend/go.mod`, `backend/go.sum` | `go test ./...`, `go vet ./...`, Staticcheck `2026.1` |
 | Frontend package manager | Bun `1.4.2` | `frontend/package.json` | `frontend/bun.lock`, CI `setup-bun`, and application Docker images |
-| Frontend framework | SvelteKit `2.70.3`, Svelte `5.57.2`, Vite `8.3.5` | `frontend/package.json`, `frontend/bun.lock` | `make test` runs check, all Bun tests, and production build |
-| Frontend styling and adapter | Tailwind `4.3.3`, `@tailwindcss/vite 4.3.3`, adapter-static declared `^3.0.9` and locked `3.0.10` | `frontend/package.json`, `frontend/bun.lock` | Frozen Bun install in CI and Docker |
+| Frontend framework | SvelteKit `3.1.1`, Svelte `5.57.2`, Vite `8.3.5` | `frontend/package.json`, `frontend/bun.lock` | `make test` runs check, all Bun tests, and production build |
+| Frontend styling and adapter | Tailwind `4.3.3`, `@tailwindcss/vite 4.3.3`, adapter-static declared `^4.0.1` and locked `4.0.1` | `frontend/package.json`, `frontend/bun.lock` | Frozen Bun install in CI and Docker |
 | JavaScript SDK fixture | `openai 7.43.0`, Bun `1.4.2` | `tests/contracts/javascript/package.json`, `tests/contracts/javascript/bun.lock` | `deploy/Dockerfile.e2e` contracts-javascript stage; `make test-contracts` |
 | Python SDK fixture | `openai 3.15.0`, Python `3.12.13`, requires Python `3.12.*` | `tests/contracts/python/pyproject.toml`, `uv.lock`, `.python-version` | `deploy/Dockerfile.e2e` contracts-python stage; `make test-contracts` |
 | Python package manager | uv `0.12.17` | `deploy/Dockerfile.e2e` `uv-bin` stage | `uv sync --locked --no-dev --no-install-project` in the image build |
@@ -32,6 +32,32 @@ The check covers image digests and tags, external Action SHAs, Go/Bun
 toolchain alignment, and both SDK fixture package/lock/interpreter alignment.
 Frozen installs and the contract runners provide the dependency-resolution
 check; no candidate upgrade is retained by documentation alone.
+
+## Bun security update limitations
+
+Dependabot is configured with `package-ecosystem: "bun"` for both JavaScript
+projects. GitHub currently supports Bun version updates but not Bun security
+updates ([supported ecosystems](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories)).
+An automatic security job using `npm_and_yarn` cannot update `bun.lock` and
+reports `misconfigured_tooling`; adding an npm lockfile would create a second
+source of truth. Keep the Bun configuration and resolve affected dependencies
+with Bun, using the Security workflow audit as the repository check.
+
+SvelteKit 3.1.1 and adapter-static 4.0.1 remove the two SvelteKit `<3.0.0`
+advisories and replace the vulnerable cookie 0.6.0 dependency. The migration
+moves configuration into the Vite plugin and preserves the static fallback,
+CSP and navigation focus/scroll behavior. Library imports use the SvelteKit 3
+`#lib/*` package mapping, shared by Vite, type checking, and Bun tests.
+
+As of 2026-11-09, an unfiltered `bun audit` still reports
+`GHSA-gcqx-w48m-w2h4` against the build dependency deepmerge 4.3.1. The
+[official CVE record](https://github.com/CVEProject/cvelistV5/blob/main/cves/2026/93xxx/CVE-2026-93753.json)
+marks CVE-2026-93753 as `REJECTED` because it does not describe a security
+vulnerability; the [upstream report](https://github.com/TehShrike/deepmerge/issues/273)
+is closed. GitHub's advisory has not yet been withdrawn, and no patched release
+exists. This residual feed entry is retained visibly; it is not dismissed or
+added to `security/exceptions.json`. Recheck the advisory feed before changing
+this dependency or claiming a zero-finding audit.
 
 ## Official OpenAI SDK contract matrix
 

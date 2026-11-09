@@ -19,9 +19,9 @@
     providerAccounts,
     requestLogs,
     usage
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   import { ArrowRight, RefreshCw, TriangleAlert } from 'lucide-svelte';
 
   const statusItems = $derived(getStatusItems());
@@ -151,7 +151,7 @@
     return '';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  /** @param {import('#lib/admin-state.svelte.js').RequestLog} log */
   function dashboardLogHref(log) {
     if (log.requestId) {
       return `/request-logs?requestId=${encodeURIComponent(log.requestId)}`;

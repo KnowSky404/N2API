@@ -6,9 +6,9 @@
     opsMonitor,
     loadOpsDashboard,
     session,
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   let range = $state('24h');
   let pendingRange = $state('');
   const maxLatCount = $derived(opsMonitor.latency?.buckets?.length ? Math.max(...opsMonitor.latency.buckets.map((/** @type {{count: number}} */ b) => b.count), 1) : 0);

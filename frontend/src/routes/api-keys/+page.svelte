@@ -1,7 +1,7 @@
 <script>
   import { page } from '$app/state';
   import { Copy, LoaderCircle, Pencil, Plus, ScrollText, SquareCheckBig, Trash2, X } from 'lucide-svelte';
-  import { copyText } from '$lib/clipboard.js';
+  import { copyText } from '#lib/clipboard.js';
   import {
     apiKeys,
     apiKeyModelWarnings,
@@ -36,9 +36,9 @@
     updateAPIKeyName,
     updateAPIKeyModelPolicy,
     updateAPIKeyRoutingPool,
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   const activeKeys = $derived(getActiveKeys());
   let keySearch = $state('');
   let keyStatusFilter = $state('all');
@@ -50,7 +50,7 @@
   const createKeyDialog = $state({ secret: '', copyError: '' });
   const revealKeyDialog = $state({ keyId: 0, keyName: '', currentPassword: '', secret: '', error: '', loading: false });
   let editingKeyId = $state(0);
-  let editingKeyDraft = $state(/** @type {import('$lib/admin-state.svelte.js').APIKey | null} */ (null));
+  let editingKeyDraft = $state(/** @type {import('#lib/admin-state.svelte.js').APIKey | null} */ (null));
   let editKeySaving = $state(false);
   let apiKeyMutationBusy = $state(false);
   let togglingAPIKeyId = $state(0);
@@ -58,7 +58,7 @@
   const editingKey = $derived(editingKeyDraft);
   let logsKeyId = $state(0);
   const logsKey = $derived(apiKeys.items.find((key) => key.id === logsKeyId) ?? null);
-  let deleteConfirmKeyPopover = $state(/** @type {{key: import('$lib/admin-state.svelte.js').APIKey|null, bulkAction: 'revoke'|'purge'|null, top: number, left: number}|null} */ (null));
+  let deleteConfirmKeyPopover = $state(/** @type {{key: import('#lib/admin-state.svelte.js').APIKey|null, bulkAction: 'revoke'|'purge'|null, top: number, left: number}|null} */ (null));
   let deleteConfirmBusy = $state(false);
   const deleteConfirmKey = $derived(deleteConfirmKeyPopover?.key ?? null);
   let appliedAPIKeySearch = $state('');
@@ -132,7 +132,7 @@
     apiKeyNotice = { title, message };
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key @param {boolean} enabled */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key @param {boolean} enabled */
   async function toggleAPIKeyDisabled(key, enabled) {
     if (togglingAPIKeyId || apiKeyMutationBusy || apiKeys.saving) return;
     togglingAPIKeyId = key.id;
@@ -225,7 +225,7 @@
 
   /**
    * @param {string | null | undefined} model
-   * @param {import('$lib/admin-state.svelte.js').APIKey} key
+   * @param {import('#lib/admin-state.svelte.js').APIKey} key
    */
   function modelRoutingHref(model, key) {
     const value = String(model ?? '').trim();
@@ -259,7 +259,7 @@
     createKeyDialog.copyError = (await copyText(createKeyDialog.secret)) ? '' : 'Copy failed.';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function openRevealKeyModal(key) {
     revealKeyDialog.keyId = key.id;
     revealKeyDialog.keyName = key.name;
@@ -441,14 +441,14 @@
     }
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function keyStatusLabel(key) {
     if (key.revokedAt) return 'Deleted';
     if (key.disabledAt) return 'Disabled';
     return 'Active';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function keyPhysicalDeleteTitle(key) {
     if (!key.revokedAt) return keyStatusLabel(key);
     const value = key.physicalDeleteAt ? formatDate(key.physicalDeleteAt) : '7 days after deletion';
@@ -475,7 +475,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').APIKey} key
+   * @param {import('#lib/admin-state.svelte.js').APIKey} key
    * @param {MouseEvent} event
    */
   function openDeleteConfirmKey(key, event) {
@@ -667,12 +667,12 @@
     keyPage = Math.min(Math.max(page, 1), keyPageCount);
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function unroutableModelsForKey(key) {
     return apiKeyModelWarnings(key, modelRouting.models, routingPools.items);
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function apiKeySearchText(key) {
     return [
       key.name,
@@ -694,20 +694,20 @@
       .toLowerCase();
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function routingPoolFallbackNameForKey(key) {
     const pool = routingPools.items.find((item) => item.id === key.routingPoolId);
     return pool?.fallbackPoolName ?? '';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function apiKeyRoutingPoolHref(key) {
     const id = Number(key.routingPoolId ?? 0);
     if (id <= 0) return '';
     return `/routing-pools?routingPoolId=${encodeURIComponent(String(id))}`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function apiKeyRoutingPoolFallbackHref(key) {
     const pool = routingPools.items.find((item) => item.id === key.routingPoolId);
     const fallbackPoolId = Number(pool?.fallbackPoolId ?? 0);
@@ -715,7 +715,7 @@
     return `/routing-pools?routingPoolId=${encodeURIComponent(String(fallbackPoolId))}`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function apiKeyRoutingPoolFallbackChainLabel(key) {
     const names = [];
     const seen = new Set();
@@ -739,7 +739,7 @@
     return names.join(' -> ');
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').APIKey} key */
+  /** @param {import('#lib/admin-state.svelte.js').APIKey} key */
   function apiKeyRoutingPoolFallbackChainLogsHref(key) {
     const pool = routingPools.items.find((item) => item.id === key.routingPoolId);
     const fallbackPoolId = Number(pool?.fallbackPoolId ?? 0);

@@ -1,4 +1,4 @@
-import { copyText } from '$lib/clipboard.js';
+import { copyText } from '#lib/clipboard.js';
 import {
   accountModelSummary,
   accountModelsText,
@@ -10,7 +10,7 @@ import {
   removeAccountModel,
   setAccountModelEnabled,
   sourceBadgeLabel
-} from '$lib/provider-models.js';
+} from '#lib/provider-models.js';
 
 export {
   accountModelSummary,

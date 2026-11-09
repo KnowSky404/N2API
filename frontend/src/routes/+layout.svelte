@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import '../app.css';
-  import ReleaseUpdate from '$lib/ReleaseUpdate.svelte';
+  import ReleaseUpdate from '#lib/ReleaseUpdate.svelte';
   import {
     adminSessions,
     health,
@@ -18,7 +18,7 @@
     revokeOtherAdminSessions,
     session,
     updateStatus
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
   import {
     LayoutDashboard,
     Shield,
@@ -74,7 +74,7 @@
   let passwordModalOpen = $state(false);
   let sessionsModalOpen = $state(false);
   let revokeOthersConfirm = $state(false);
-  let revokeSessionConfirm = $state(/** @type {{ session: import('$lib/admin-state.svelte.js').AdminSession, top: number, left: number, width: number } | null} */ (null));
+  let revokeSessionConfirm = $state(/** @type {{ session: import('#lib/admin-state.svelte.js').AdminSession, top: number, left: number, width: number } | null} */ (null));
   let sessionNotice = $state(/** @type {string | null} */ (null));
   let mobileSidebarOpen = $state(false);
   let updateModalOpen = $state(false);
@@ -129,7 +129,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').AdminSession} target
+   * @param {import('#lib/admin-state.svelte.js').AdminSession} target
    * @param {MouseEvent} event
    */
   function openSessionRevokeConfirm(target, event) {

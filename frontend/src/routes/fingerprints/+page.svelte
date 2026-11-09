@@ -7,10 +7,10 @@
     loadFingerprintProfiles,
     session,
     updateFingerprintProfile,
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
   import { LoaderCircle, Pencil, Plus, Trash2, X } from 'lucide-svelte';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
 
   const SYSTEM_DEFAULT_KEY = 'codex_cli_default';
 

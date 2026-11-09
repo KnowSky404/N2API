@@ -20,8 +20,8 @@
     testAlertAction,
     updateAlertAction,
     updateAlertRule
-  } from '$lib/admin-state.svelte.js';
-  import AuthGate from '$lib/AuthGate.svelte';
+  } from '#lib/admin-state.svelte.js';
+  import AuthGate from '#lib/AuthGate.svelte';
   import {
     BellRing,
     CircleCheck,
@@ -152,7 +152,7 @@
     actionModalOpen = true;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AlertAction} action */
+  /** @param {import('#lib/admin-state.svelte.js').AlertAction} action */
   function openEditAction(action) {
     Object.assign(actionDraft, {
       name: action.name,
@@ -224,7 +224,7 @@
     showNotice({ kind: 'success', title: 'Action saved', message: `${saved.name} is ready for rules and connectivity tests.` });
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AlertAction} action */
+  /** @param {import('#lib/admin-state.svelte.js').AlertAction} action */
   async function runActionTest(action) {
     const result = await testAlertAction(action.id, action.updatedAt);
     if (!result) {
@@ -263,7 +263,7 @@
     ruleModalOpen = true;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AlertRule} rule */
+  /** @param {import('#lib/admin-state.svelte.js').AlertRule} rule */
   function openEditRule(rule) {
     Object.assign(ruleDraft, {
       name: rule.name,
@@ -405,7 +405,7 @@
     return kind === 'ntfy' ? 'ntfy' : 'Generic Webhook';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AlertAction} action */
+  /** @param {import('#lib/admin-state.svelte.js').AlertAction} action */
   function lastTestSummary(action) {
     if (!action.lastTestedAt || !action.lastTestStatus) return 'Not tested';
     const details = [];
@@ -415,7 +415,7 @@
     return details.join(' / ') || action.lastTestStatus;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AlertRule} rule */
+  /** @param {import('#lib/admin-state.svelte.js').AlertRule} rule */
   function ruleFilters(rule) {
     return [rule.category, rule.severity, rule.eventAction].filter(Boolean).join(' / ') || 'No filters';
   }
@@ -430,7 +430,7 @@
     return `${value}s`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AlertRule | import('$lib/admin-state.svelte.js').AlertRuleTemplate} rule */
+  /** @param {import('#lib/admin-state.svelte.js').AlertRule | import('#lib/admin-state.svelte.js').AlertRuleTemplate} rule */
   function thresholdLabel(rule) {
     return rule.aggregationCount <= 1
       ? 'Every match'
