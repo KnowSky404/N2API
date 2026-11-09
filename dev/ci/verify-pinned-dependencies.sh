@@ -67,7 +67,7 @@ while IFS=: read -r workflow line source; do
     echo "$workflow:$line must pin external Action $reference to a full commit SHA" >&2
     exit 1
   fi
-done < <(rg -n --no-heading '^[[:space:]]*uses:[[:space:]]*' .github/workflows)
+done < <(grep -nE '^[[:space:]]*uses:[[:space:]]*' .github/workflows/*.yml)
 
 declare -A build_stages=()
 while IFS= read -r stage; do
