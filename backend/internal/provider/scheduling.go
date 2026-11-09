@@ -299,6 +299,9 @@ func (s *Service) responseAffinityTopology(ctx context.Context, primaryPoolID in
 			return nil, chainLabel, err
 		}
 		for _, account := range accounts {
+			if account.AccountType != AccountTypeAPIUpstream {
+				continue
+			}
 			topology = append(topology, responseAffinityCandidate{account: account, pool: pool, depth: depth})
 		}
 	}
@@ -558,6 +561,9 @@ func (s *Service) unschedulableSelectionCandidatesForEndpoint(ctx context.Contex
 
 	candidates := make([]SelectionCandidate, 0, len(accounts))
 	for _, account := range accounts {
+		if account.AccountType != AccountTypeAPIUpstream {
+			continue
+		}
 		if _, ok := selectedIDs[account.ID]; ok {
 			continue
 		}
@@ -589,6 +595,9 @@ func (s *Service) unschedulableSelectionCandidatesInRoutingPoolForEndpoint(ctx c
 
 	candidates := make([]SelectionCandidate, 0, len(accounts))
 	for _, account := range accounts {
+		if account.AccountType != AccountTypeAPIUpstream {
+			continue
+		}
 		if _, ok := selectedIDs[account.ID]; ok {
 			continue
 		}

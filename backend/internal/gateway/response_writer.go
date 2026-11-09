@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/KnowSky404/N2API/backend/internal/requestlog"
@@ -27,32 +26,14 @@ type upstreamResponseObservation struct {
 	ResponseTiming  requestlog.ResponseTiming
 }
 
-func (p *Proxy) writeUpstreamResponseWithOptions(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream, aggregateOAuth, validateSSETerminal bool) (upstreamResponseObservation, error) {
+func (p *Proxy) writeUpstreamResponseWithOptions(ctx context.Context, w http.ResponseWriter, resp *http.Response, route string, stream bool) (upstreamResponseObservation, error) {
 	if resp == nil || resp.Body == nil {
 		return upstreamResponseObservation{Usage: Usage{Source: "missing"}}, errUpstreamResponseRead
-	}
-	if aggregateOAuth {
-		observation, body, err := p.aggregateOAuthResponses(ctx, resp.Body, route)
-		if err != nil && len(body) == 0 {
-			return observation, err
-		}
-		copyResponseHeaders(w.Header(), resp.Header)
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Del("Content-Length")
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.WriteHeader(resp.StatusCode)
-		if _, writeErr := w.Write(body); writeErr != nil {
-			return observation, writeErr
-		}
-		return observation, err
 	}
 	if stream {
 		copyResponseHeaders(w.Header(), resp.Header)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(resp.StatusCode)
-		if validateSSETerminal {
-			return copyOAuthStreamingResponse(ctx, w, resp.Body, route, p.sseIdleTimeout, p.maxResponseBody)
-		}
 		return copyStreamingResponse(ctx, w, resp.Body, route, p.sseIdleTimeout)
 	}
 	return writeBufferedUpstreamResponse(w, resp, route, p.maxResponseBody)
@@ -98,22 +79,6 @@ func upstreamResponseErrorCode(err error) string {
 		return "upstream_generation_missing"
 	case errors.Is(err, errUpstreamSSEIdleTimeout):
 		return "upstream_sse_idle_timeout"
-	case errors.Is(err, errUpstreamSSETerminalMissing):
-		return "upstream_sse_terminal_missing"
-	case errors.Is(err, errUpstreamSSETruncated):
-		return "upstream_sse_truncated"
-	case errors.Is(err, errUpstreamSSEMalformed):
-		return "upstream_sse_malformed"
-	case errors.Is(err, errUpstreamSSEError):
-		return "upstream_sse_error"
-	case errors.Is(err, errUpstreamResponseFailed):
-		return "upstream_response_failed"
-	case errors.Is(err, errUpstreamResponseIncomplete):
-		return "upstream_response_incomplete"
-	case errors.Is(err, errUpstreamResponseCanceled):
-		return "upstream_response_canceled"
-	case errors.Is(err, errUpstreamResponseDeadline):
-		return "upstream_response_timeout"
 	}
 	return "upstream_response_error"
 }
@@ -128,22 +93,6 @@ func upstreamResponseErrorMessage(err error) string {
 		return "upstream response contained no generated output"
 	case errors.Is(err, errUpstreamSSEIdleTimeout):
 		return "upstream stream timed out"
-	case errors.Is(err, errUpstreamSSETerminalMissing):
-		return "upstream SSE stream ended without a terminal response"
-	case errors.Is(err, errUpstreamSSETruncated):
-		return "upstream SSE stream ended before an event was complete"
-	case errors.Is(err, errUpstreamSSEMalformed):
-		return "upstream SSE stream contained malformed data"
-	case errors.Is(err, errUpstreamSSEError):
-		return "upstream SSE stream reported an error"
-	case errors.Is(err, errUpstreamResponseFailed):
-		return "upstream response failed"
-	case errors.Is(err, errUpstreamResponseIncomplete):
-		return "upstream response was incomplete"
-	case errors.Is(err, errUpstreamResponseCanceled):
-		return "upstream response was canceled"
-	case errors.Is(err, errUpstreamResponseDeadline):
-		return "upstream response timed out"
 	}
 	return "could not read upstream response"
 }
@@ -202,9 +151,6 @@ func copyStreamingResponse(ctx context.Context, w http.ResponseWriter, body io.R
 }
 
 func responseObservationErrorCode(observation upstreamResponseObservation, err error) string {
-	if errors.Is(err, errUpstreamResponseCanceled) {
-		return "client_canceled"
-	}
 	if err != nil {
 		return upstreamResponseErrorCode(err)
 	}

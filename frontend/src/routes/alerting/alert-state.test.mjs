@@ -63,13 +63,13 @@ function rule(overrides = {}) {
 
 function template(overrides = {}) {
   return {
-    key: 'oauth-refresh-repeated-v1',
-    name: 'Repeated OAuth refresh failures',
+    key: 'request-log-retention-failed-v1',
+    name: 'Request log retention failures',
     enabled: false,
-    category: 'oauth',
+    category: 'scheduler',
     severity: 'warning',
-    eventAction: 'oauth.refresh.automatic.failed',
-    recoveryAction: 'oauth.refresh.automatic.succeeded',
+    eventAction: 'scheduler.request_log_retention.failed',
+    recoveryAction: 'scheduler.request_log_retention.succeeded',
     aggregationCount: 3,
     aggregationWindowSeconds: 900,
     cooldownSeconds: 3600,
@@ -117,13 +117,13 @@ test('loadAlertRuleTemplates ignores an older response after a new load starts',
 
 test('installAlertRuleTemplate sends only the action and refreshes rules', async () => {
   const installed = rule({
-    templateKey: 'oauth-refresh-repeated-v1',
-    name: 'Repeated OAuth refresh failures',
+    templateKey: 'request-log-retention-failed-v1',
+    name: 'Request log retention failures',
     enabled: false,
-    category: 'oauth',
+    category: 'scheduler',
     severity: 'warning',
-    eventAction: 'oauth.refresh.automatic.failed',
-    recoveryAction: 'oauth.refresh.automatic.succeeded',
+    eventAction: 'scheduler.request_log_retention.failed',
+    recoveryAction: 'scheduler.request_log_retention.succeeded',
     aggregationCount: 3,
     aggregationWindowSeconds: 900,
     cooldownSeconds: 3600,
@@ -136,14 +136,14 @@ test('installAlertRuleTemplate sends only the action and refreshes rules', async
     return Response.json({ rules: [installed] });
   };
 
-  const result = await installAlertRuleTemplate('oauth-refresh-repeated-v1', 7);
+  const result = await installAlertRuleTemplate('request-log-retention-failed-v1', 7);
 
-  assert.equal(requests[0].path, '/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install');
+  assert.equal(requests[0].path, '/api/admin/alert-rule-templates/request-log-retention-failed-v1/install');
   assert.deepEqual(JSON.parse(requests[0].options.body), { actionId: 7 });
   assert.equal(requests[1].path, '/api/admin/alert-rules');
   assert.equal(result.created, true);
   assert.equal(result.rule.enabled, false);
-  assert.equal(alertRules.items[0].templateKey, 'oauth-refresh-repeated-v1');
+  assert.equal(alertRules.items[0].templateKey, 'request-log-retention-failed-v1');
   assert.equal(alertRuleTemplates.installingKey, '');
 });
 
@@ -181,10 +181,10 @@ test('a late template install response cannot restore state after a 401 reset', 
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   };
 
-  const pending = installAlertRuleTemplate('oauth-refresh-repeated-v1', 7);
+  const pending = installAlertRuleTemplate('request-log-retention-failed-v1', 7);
   await Promise.resolve();
   await loadAlertRules();
-  resolveInstall(Response.json({ rule: rule({ templateKey: 'oauth-refresh-repeated-v1' }), created: true }, { status: 201 }));
+  resolveInstall(Response.json({ rule: rule({ templateKey: 'request-log-retention-failed-v1' }), created: true }, { status: 201 }));
   const result = await pending;
 
   assert.equal(result, null);

@@ -7,7 +7,6 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
@@ -195,9 +194,6 @@ type fakeAdminService struct {
 	opsAccountTestsLimit  int
 	opsCostBreakdown      admin.OpsCostBreakdown
 	opsCostSince          time.Time
-	fingerprintInput      admin.FingerprintProfileInput
-	fingerprintID         int64
-	fingerprintErr        error
 	errorRuleInput        admin.ErrorPassthroughRuleInput
 	errorRuleID           int64
 	errorRuleErr          error
@@ -227,9 +223,6 @@ type fakeSecretReveal struct {
 }
 
 type fakeProviderService struct {
-	status                 provider.Status
-	connect                provider.ConnectResult
-	connectOptions         provider.ConnectOptions
 	createdAPIUpstream     provider.APIUpstreamInput
 	accounts               []provider.Account
 	accountModels          map[int64][]provider.AccountModel
@@ -255,15 +248,8 @@ type fakeProviderService struct {
 	accountModelsErr       error
 	accountTestResultsErr  error
 	replaceModelsErr       error
-	refreshErr             error
 	resetStatusErr         error
 	disconnectErr          error
-	callbackErr            error
-	callbackCode           string
-	callbackState          string
-	disconnected           bool
-	refreshedAccountID     int64
-	refreshedAccountIDs    []int64
 	testedAccountID        int64
 	testedAccountIDs       []int64
 	testResultsAccountID   int64
@@ -277,13 +263,9 @@ type fakeProviderService struct {
 	disconnectedAccountID  int64
 	disconnectedAccountIDs []int64
 
-	syncModelsResult      []provider.AccountModel
-	syncModelsSummary     provider.AccountModelSyncSummary
-	syncModelsErr         error
-	oauthSyncAccountID    int64
-	oauthRefreshAccountID int64
-	catalogStatus         provider.OAuthModelCatalogStatus
-	catalogStatusErr      error
+	syncModelsResult  []provider.AccountModel
+	syncModelsSummary provider.AccountModelSyncSummary
+	syncModelsErr     error
 }
 type fakeGatewayHandler struct {
 	called             bool
@@ -845,27 +827,8 @@ func (s *fakeAdminService) DefaultModel(ctx context.Context) (string, error) {
 
 func newFakeProviderService() *fakeProviderService {
 	return &fakeProviderService{
-		status: provider.Status{
-			Provider:    "openai",
-			Configured:  true,
-			Connected:   true,
-			DisplayName: "Codex Account",
-		},
-		connect:       provider.ConnectResult{AuthorizationURL: "https://auth.example.test/authorize?state=oauth_state"},
 		accountModels: map[int64][]provider.AccountModel{},
 	}
-}
-
-func (s *fakeProviderService) Status(_ context.Context) (provider.Status, error) {
-	return s.status, nil
-}
-
-func (s *fakeProviderService) StartConnect(_ context.Context, options provider.ConnectOptions) (provider.ConnectResult, error) {
-	if !s.status.Configured {
-		return provider.ConnectResult{}, provider.ErrNotConfigured
-	}
-	s.connectOptions = options
-	return s.connect, nil
 }
 
 func (s *fakeProviderService) ListAccounts(_ context.Context) ([]provider.Account, error) {
@@ -886,16 +849,15 @@ func (s *fakeProviderService) CreateAPIUpstreamAccount(_ context.Context, input 
 		loadFactor = 1
 	}
 	account := provider.Account{
-		ID:                   int64(len(s.accounts) + 1),
-		Provider:             "openai",
-		AccountType:          provider.AccountTypeAPIUpstream,
-		Name:                 strings.TrimSpace(input.Name),
-		DisplayName:          strings.TrimSpace(input.Name),
-		Enabled:              enabled,
-		Priority:             input.Priority,
-		LoadFactor:           loadFactor,
-		Status:               provider.AccountStatusActive,
-		FingerprintProfileID: input.FingerprintProfileID,
+		ID:          int64(len(s.accounts) + 1),
+		Provider:    "openai",
+		AccountType: provider.AccountTypeAPIUpstream,
+		Name:        strings.TrimSpace(input.Name),
+		DisplayName: strings.TrimSpace(input.Name),
+		Enabled:     enabled,
+		Priority:    input.Priority,
+		LoadFactor:  loadFactor,
+		Status:      provider.AccountStatusActive,
 		Credential: provider.AccountCredential{
 			CredentialType: provider.CredentialTypeAPIKey,
 			BaseURL:        strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"),
@@ -1029,15 +991,6 @@ func (s *fakeProviderService) PreviewAccountSelectionInRoutingPoolForEndpoint(_ 
 	return s.selectionPreview, nil
 }
 
-func (s *fakeProviderService) CompleteCallback(_ context.Context, code, state string) (provider.Account, error) {
-	s.callbackCode = code
-	s.callbackState = state
-	if s.callbackErr != nil {
-		return provider.Account{}, s.callbackErr
-	}
-	return provider.Account{ID: 7, Provider: "openai", DisplayName: "Codex Account"}, nil
-}
-
 func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update provider.AccountUpdate) (provider.Account, error) {
 	s.lastAccountUpdate = update
 	s.accountUpdateIDs = append(s.accountUpdateIDs, id)
@@ -1045,7 +998,7 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 	if s.updateErr != nil {
 		return provider.Account{}, s.updateErr
 	}
-	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil && !update.FingerprintProfileIDSet {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil {
 		return provider.Account{}, provider.ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
@@ -1081,9 +1034,6 @@ func (s *fakeProviderService) UpdateAccount(_ context.Context, id int64, update 
 			if update.APIUpstreamAPIKey != nil {
 				account.Credential.EncryptedAPIKey = "updated-encrypted-api-key"
 			}
-			if update.FingerprintProfileIDSet {
-				account.FingerprintProfileID = update.FingerprintProfileID
-			}
 			if update.ClearStatus || update.APIUpstreamBaseURL != nil || update.APIUpstreamAPIKey != nil {
 				account.Status = provider.AccountStatusActive
 				account.StatusReason = ""
@@ -1111,25 +1061,6 @@ func (s *fakeProviderService) ResetAccountStatus(_ context.Context, id int64) (p
 	s.resetStatusAccountID = id
 	s.resetStatusAccountIDs = append(s.resetStatusAccountIDs, id)
 	return account, nil
-}
-
-func (s *fakeProviderService) RefreshAccount(_ context.Context, id int64) (provider.Account, error) {
-	if s.refreshErr != nil {
-		return provider.Account{}, s.refreshErr
-	}
-	for i, account := range s.accounts {
-		if account.ID == id {
-			now := time.Now()
-			account.LastRefreshAt = &now
-			account.Status = provider.AccountStatusActive
-			account.StatusReason = ""
-			s.accounts[i] = account
-			s.refreshedAccountID = id
-			s.refreshedAccountIDs = append(s.refreshedAccountIDs, id)
-			return account, nil
-		}
-	}
-	return provider.Account{}, provider.ErrNotConnected
 }
 
 func (s *fakeProviderService) TestAccount(_ context.Context, id int64) (provider.Account, error) {
@@ -1199,39 +1130,11 @@ func (s *fakeProviderService) DisconnectAccount(_ context.Context, id int64) err
 	return provider.ErrNotConnected
 }
 
-func (s *fakeProviderService) Disconnect(_ context.Context) error {
-	s.disconnected = true
-	return nil
-}
-
 func (s *fakeProviderService) SyncUpstreamAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
 	if s.syncModelsErr != nil {
 		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
 	}
 	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
-}
-
-func (s *fakeProviderService) SyncOAuthAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
-	s.oauthSyncAccountID = accountID
-	if s.syncModelsErr != nil {
-		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
-	}
-	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
-}
-
-func (s *fakeProviderService) RefreshOAuthAccountModels(_ context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error) {
-	s.oauthRefreshAccountID = accountID
-	if s.syncModelsErr != nil {
-		return nil, provider.AccountModelSyncSummary{}, s.syncModelsErr
-	}
-	return append([]provider.AccountModel(nil), s.syncModelsResult...), s.syncModelsSummary, nil
-}
-
-func (s *fakeProviderService) OAuthModelCatalogStatus(_ context.Context, _ int64) (provider.OAuthModelCatalogStatus, error) {
-	if s.catalogStatusErr != nil {
-		return provider.OAuthModelCatalogStatus{}, s.catalogStatusErr
-	}
-	return s.catalogStatus, nil
 }
 
 func TestLivezReturnsOK(t *testing.T) {
@@ -3218,200 +3121,6 @@ func TestUpdateAPIKeyRoutingPoolEndpoint(t *testing.T) {
 	}
 }
 
-func TestProviderStatusRequiresSessionAndReturnsStatus(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai", nil))
-
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", recorder.Code)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder = httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", recorder.Code)
-	}
-	var body provider.Status
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if !body.Configured || !body.Connected || body.DisplayName != "Codex Account" {
-		t.Fatalf("provider status = %+v", body)
-	}
-}
-
-func TestUnifiedProviderAccountCodexOAuthStatusReturnsStatus(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/provider-accounts/codex-oauth/status", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	var body provider.Status
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if !body.Configured || !body.Connected || body.DisplayName != "Codex Account" {
-		t.Fatalf("provider status = %+v", body)
-	}
-}
-
-func TestProviderConnectReturnsAuthorizationURL(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", recorder.Code)
-	}
-	var body struct {
-		AuthorizationURL string `json:"authorizationUrl"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.AuthorizationURL == "" {
-		t.Fatal("authorizationUrl is empty")
-	}
-}
-
-func TestProviderConnectAcceptsAccountOptionsAndFingerprint(t *testing.T) {
-	providers := newFakeProviderService()
-	server := NewServer(config.Config{TrustedProxyCIDRs: []netip.Prefix{
-		netip.MustParsePrefix("192.0.2.0/24"),
-		netip.MustParsePrefix("198.51.100.0/24"),
-	}}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp","fingerprintProfileId":9}`))
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if providers.connectOptions.RedirectAfter != "/" ||
-		providers.connectOptions.Name != "Work Codex" ||
-		providers.connectOptions.Priority != 7 ||
-		providers.connectOptions.Enabled == nil ||
-		*providers.connectOptions.Enabled ||
-		providers.connectOptions.TargetAccountID != 42 ||
-		providers.connectOptions.FingerprintProfileID == nil ||
-		*providers.connectOptions.FingerprintProfileID != 9 {
-		t.Fatalf("connectOptions = %+v", providers.connectOptions)
-	}
-	if providers.connectOptions.Fingerprint.Value != "browser-fp" ||
-		providers.connectOptions.Fingerprint.UserAgent != "Mozilla/5.0" ||
-		providers.connectOptions.Fingerprint.IP != "203.0.113.10" {
-		t.Fatalf("fingerprint = %+v", providers.connectOptions.Fingerprint)
-	}
-}
-
-func TestUnifiedProviderAccountCodexOAuthConnectDelegatesToProviderConnect(t *testing.T) {
-	providers := newFakeProviderService()
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/connect", strings.NewReader(`{"name":"Work Codex","priority":7,"enabled":false,"targetAccountId":42,"fingerprint":"browser-fp","fingerprintProfileId":9}`))
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	var body struct {
-		AuthorizationURL string `json:"authorizationUrl"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.AuthorizationURL == "" {
-		t.Fatal("authorizationUrl is empty")
-	}
-	if providers.connectOptions.Name != "Work Codex" ||
-		providers.connectOptions.Priority != 7 ||
-		providers.connectOptions.Enabled == nil ||
-		*providers.connectOptions.Enabled ||
-		providers.connectOptions.TargetAccountID != 42 ||
-		providers.connectOptions.FingerprintProfileID == nil ||
-		*providers.connectOptions.FingerprintProfileID != 9 {
-		t.Fatalf("connectOptions = %+v", providers.connectOptions)
-	}
-}
-func TestAdminProviderConnectTreatsZeroFingerprintProfileAsDefaultSentinel(t *testing.T) {
-	providers := newFakeProviderService()
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", strings.NewReader("{\"name\":\"Zero FP\",\"fingerprintProfileId\":0}"))
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-	req.Header.Set("X-Forwarded-For", "203.0.113.10, 198.51.100.2")
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if providers.connectOptions.FingerprintProfileID != nil {
-		t.Fatalf("fingerprintProfileId = %v, want nil (resolved to default sentinel)", *providers.connectOptions.FingerprintProfileID)
-	}
-}
-func TestProviderConnectReturnsConflictWhenUnconfigured(t *testing.T) {
-	providers := newFakeProviderService()
-	providers.status.Configured = false
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/connect", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409", recorder.Code)
-	}
-	var body map[string]string
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body["error"] != "provider_not_configured" {
-		t.Fatalf("error = %q, want provider_not_configured", body["error"])
-	}
-}
-
-func TestProviderDisconnectReturnsNoContent(t *testing.T) {
-	providers := newFakeProviderService()
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/disconnect", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want 204", recorder.Code)
-	}
-	if !providers.disconnected {
-		t.Fatal("provider service was not disconnected")
-	}
-}
-
 func TestAdminProviderAccountsRequireSession(t *testing.T) {
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/providers/openai/accounts", nil)
@@ -3435,7 +3144,6 @@ func TestAdminProviderAccountsEndpointsRequireSession(t *testing.T) {
 		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
 		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
 		{name: "test all", method: http.MethodPost, path: "/api/admin/provider-accounts/test"},
-		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
 		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
@@ -3470,7 +3178,6 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 		{name: "list", method: http.MethodGet, path: "/api/admin/provider-accounts"},
 		{name: "create api upstream", method: http.MethodPost, path: "/api/admin/provider-accounts/api-upstream", body: `{"name":"Upstream","baseUrl":"https://upstream.example.test","apiKey":"secret"}`},
 		{name: "test all", method: http.MethodPost, path: "/api/admin/provider-accounts/test"},
-		{name: "connect codex oauth", method: http.MethodPost, path: "/api/admin/provider-accounts/codex-oauth/connect", body: `{"name":"Work Codex"}`},
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/provider-accounts/7", body: `{"enabled":true}`},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/provider-accounts/7/disconnect"},
 		{name: "test", method: http.MethodPost, path: "/api/admin/provider-accounts/7/test"},
@@ -3505,7 +3212,7 @@ func TestAdminProviderAccountsEndpointsRequireProviderService(t *testing.T) {
 func TestCreateAPIUpstreamAccount(t *testing.T) {
 	providers := newFakeProviderService()
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":" Upstream ","baseUrl":"https://upstream.example.test/v1/","apiKey":" secret ","proxyUrl":" http://proxy-user:proxy-pass@proxy.example.test:8080 ","enabled":true,"priority":8,"fingerprintProfileId":9,"models":[" gpt-5 ","gpt-4.1"]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/api-upstream", strings.NewReader(`{"name":" Upstream ","baseUrl":"https://upstream.example.test/v1/","apiKey":" secret ","proxyUrl":" http://proxy-user:proxy-pass@proxy.example.test:8080 ","enabled":true,"priority":8,"models":[" gpt-5 ","gpt-4.1"]}`))
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
 	recorder := httptest.NewRecorder()
 
@@ -3522,9 +3229,6 @@ func TestCreateAPIUpstreamAccount(t *testing.T) {
 	}
 	if providers.createdAPIUpstream.Enabled == nil || !*providers.createdAPIUpstream.Enabled || providers.createdAPIUpstream.Priority != 8 || len(providers.createdAPIUpstream.Models) != 2 {
 		t.Fatalf("created input scheduling/models = %+v", providers.createdAPIUpstream)
-	}
-	if providers.createdAPIUpstream.FingerprintProfileID == nil || *providers.createdAPIUpstream.FingerprintProfileID != 9 {
-		t.Fatalf("created input fingerprint profile = %+v, want 9", providers.createdAPIUpstream.FingerprintProfileID)
 	}
 	var body struct {
 		Account provider.Account `json:"account"`
@@ -3615,7 +3319,6 @@ func TestAdminProviderAccountMutationsRequireSession(t *testing.T) {
 		body   string
 	}{
 		{name: "patch", method: http.MethodPatch, path: "/api/admin/providers/openai/accounts/7", body: `{"enabled":true}`},
-		{name: "refresh", method: http.MethodPost, path: "/api/admin/providers/openai/accounts/7/refresh"},
 		{name: "disconnect", method: http.MethodPost, path: "/api/admin/providers/openai/accounts/7/disconnect"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3654,8 +3357,8 @@ func TestAdminProviderAccountsIncludeConcurrencyState(t *testing.T) {
 	admins.gatewaySettings.MaxConcurrentRequestsPerAccount = 5
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Busy", Enabled: true, Priority: 10, MaxConcurrentRequests: 3},
-		{ID: 8, Provider: "openai", DisplayName: "Inherited", Enabled: true, Priority: 10},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Busy", Enabled: true, Priority: 10, MaxConcurrentRequests: 3},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Inherited", Enabled: true, Priority: 10},
 	}
 	gateway := &fakeGatewayHandler{accountConcurrency: map[int64]int{7: 2, 8: 1}}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers, gateway)
@@ -3719,39 +3422,11 @@ func TestAdminCanUpdateUnifiedProviderAccount(t *testing.T) {
 	}
 }
 
-func TestAdminCanClearProviderAccountFingerprintProfile(t *testing.T) {
-	profileID := int64(42)
-	providers := newFakeProviderService()
-	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1, FingerprintProfileID: &profileID}}
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPatch, "/api/admin/provider-accounts/7", strings.NewReader(`{"fingerprintProfileId":null}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var body struct {
-		Account provider.Account `json:"account"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.Account.FingerprintProfileID != nil {
-		t.Fatalf("fingerprintProfileId = %v, want cleared nil", *body.Account.FingerprintProfileID)
-	}
-	if !providers.lastAccountUpdate.FingerprintProfileIDSet || providers.lastAccountUpdate.FingerprintProfileID != nil {
-		t.Fatalf("fingerprint update = set %v value %+v, want explicit clear", providers.lastAccountUpdate.FingerprintProfileIDSet, providers.lastAccountUpdate.FingerprintProfileID)
-	}
-}
-
 func TestAdminCanBulkDisableUnifiedProviderAccounts(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-update", strings.NewReader(`{"accountIds":[7,8,7],"enabled":false}`))
@@ -3785,8 +3460,8 @@ func TestAdminCanBulkDisableUnifiedProviderAccounts(t *testing.T) {
 func TestAdminCanBulkUpdateUnifiedProviderAccountScheduling(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-update", strings.NewReader(`{"accountIds":[7,8,7],"priority":2,"loadFactor":5,"maxConcurrentRequests":3}`))
@@ -3857,8 +3532,8 @@ func TestAdminBulkProviderAccountUpdateValidatesInput(t *testing.T) {
 func TestAdminCanTestSelectedUnifiedProviderAccounts(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1, Status: provider.AccountStatusCircuitOpen, LastError: "paused"},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1, Status: provider.AccountStatusRateLimited, LastError: "rate limited"},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true, Priority: 10, LoadFactor: 1, Status: provider.AccountStatusCircuitOpen, LastError: "paused"},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account B", Enabled: true, Priority: 20, LoadFactor: 1, Status: provider.AccountStatusRateLimited, LastError: "rate limited"},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-test", strings.NewReader(`{"accountIds":[7,8,7]}`))
@@ -3917,8 +3592,8 @@ func TestAdminBulkProviderAccountTestValidatesInput(t *testing.T) {
 func TestAdminCanBulkPauseUnifiedProviderAccountScheduling(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Status: provider.AccountStatusActive},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Status: provider.AccountStatusActive},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true, Status: provider.AccountStatusActive},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account B", Enabled: true, Status: provider.AccountStatusActive},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-pause", strings.NewReader(`{"accountIds":[7,8,7],"durationSeconds":600}`))
@@ -3982,8 +3657,8 @@ func TestAdminCanBulkResetUnifiedProviderAccountStatus(t *testing.T) {
 	future := time.Now().Add(time.Hour)
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future, CircuitOpenUntil: &future, FailureCount: 2},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Status: provider.AccountStatusCircuitOpen, RateLimitedUntil: &future, CircuitOpenUntil: &future, FailureCount: 3},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future, CircuitOpenUntil: &future, FailureCount: 2},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account B", Enabled: true, Status: provider.AccountStatusCircuitOpen, RateLimitedUntil: &future, CircuitOpenUntil: &future, FailureCount: 3},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-reset-status", strings.NewReader(`{"accountIds":[7,8,7]}`))
@@ -4039,74 +3714,11 @@ func TestAdminBulkProviderAccountResetStatusValidatesInput(t *testing.T) {
 	}
 }
 
-func TestAdminCanBulkRefreshUnifiedProviderAccounts(t *testing.T) {
-	providers := newFakeProviderService()
-	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Status: provider.AccountStatusCircuitOpen},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true, Status: provider.AccountStatusExpired},
-	}
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-refresh", strings.NewReader(`{"accountIds":[7,8,7]}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if !reflect.DeepEqual(providers.refreshedAccountIDs, []int64{7, 8}) {
-		t.Fatalf("refresh ids = %+v, want [7 8]", providers.refreshedAccountIDs)
-	}
-	var body struct {
-		Accounts []provider.Account `json:"accounts"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if len(body.Accounts) != 2 || body.Accounts[0].ID != 7 || body.Accounts[1].ID != 8 {
-		t.Fatalf("accounts = %+v, want entries for accounts 7 and 8", body.Accounts)
-	}
-	if body.Accounts[0].Status != provider.AccountStatusActive || body.Accounts[0].LastRefreshAt == nil || body.Accounts[1].LastRefreshAt == nil {
-		t.Fatalf("accounts = %+v, want refreshed active accounts", body.Accounts)
-	}
-}
-
-func TestAdminBulkProviderAccountRefreshValidatesInput(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-	}{
-		{name: "empty ids", body: `{"accountIds":[]}`},
-		{name: "bad id", body: `{"accountIds":[0]}`},
-		{name: "too many ids", body: `{"accountIds":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101]}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			providers := newFakeProviderService()
-			providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true}}
-			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-refresh", strings.NewReader(tc.body))
-			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-			recorder := httptest.NewRecorder()
-
-			server.ServeHTTP(recorder, req)
-
-			if recorder.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
-			}
-			if len(providers.refreshedAccountIDs) != 0 {
-				t.Fatalf("refresh ids = %+v, want no refreshes", providers.refreshedAccountIDs)
-			}
-		})
-	}
-}
-
 func TestAdminCanBulkDisconnectUnifiedProviderAccounts(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account B", Enabled: true},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/bulk-disconnect", strings.NewReader(`{"accountIds":[7,8,7]}`))
@@ -4159,8 +3771,8 @@ func TestAdminBulkProviderAccountDisconnectValidatesInput(t *testing.T) {
 func TestAdminCanBulkReplaceUnifiedProviderAccountModels(t *testing.T) {
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true},
-		{ID: 8, Provider: "openai", DisplayName: "Account B", Enabled: true},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account B", Enabled: true},
 	}
 	providers.accountModels[7] = []provider.AccountModel{{AccountID: 7, Provider: "openai", Model: "old-model", Enabled: true}}
 	providers.accountModels[8] = []provider.AccountModel{{AccountID: 8, Provider: "openai", Model: "old-model", Enabled: true}}
@@ -4432,60 +4044,6 @@ func TestAdminUpdateProviderAccountMapsErrors(t *testing.T) {
 				t.Fatalf("error = %q, want %s", body["error"], tc.code)
 			}
 		})
-	}
-}
-
-func TestAdminCanRefreshProviderAccount(t *testing.T) {
-	providers := newFakeProviderService()
-	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, Status: provider.AccountStatusCircuitOpen}}
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/accounts/7/refresh", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if providers.refreshedAccountID != 7 {
-		t.Fatalf("refreshedAccountID = %d, want 7", providers.refreshedAccountID)
-	}
-	var body struct {
-		Account provider.Account `json:"account"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastRefreshAt == nil {
-		t.Fatalf("account = %+v, want refreshed active account 7", body.Account)
-	}
-}
-
-func TestAdminCanRefreshUnifiedProviderAccount(t *testing.T) {
-	providers := newFakeProviderService()
-	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", DisplayName: "Account A", Enabled: true, Priority: 10, Status: provider.AccountStatusCircuitOpen}}
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/refresh", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if providers.refreshedAccountID != 7 {
-		t.Fatalf("refreshedAccountID = %d, want 7", providers.refreshedAccountID)
-	}
-	var body struct {
-		Account provider.Account `json:"account"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if body.Account.ID != 7 || body.Account.Status != provider.AccountStatusActive || body.Account.LastRefreshAt == nil {
-		t.Fatalf("account = %+v, want refreshed active account 7", body.Account)
 	}
 }
 
@@ -4777,7 +4335,7 @@ func TestAdminCanDeleteUnifiedProviderAccount(t *testing.T) {
 
 func TestAdminCanDisconnectUnifiedProviderAccountAction(t *testing.T) {
 	providers := newFakeProviderService()
-	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Account A", Enabled: true, Priority: 10}}
+	providers.accounts = []provider.Account{{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Account A", Enabled: true, Priority: 10}}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/disconnect", nil)
 	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
@@ -5016,86 +4574,6 @@ func TestSyncProviderAccountModelsReturnsModelsAndSummary(t *testing.T) {
 	}
 }
 
-func TestRefreshOAuthProviderAccountModelsReturnsCatalogStatus(t *testing.T) {
-	providers := newFakeProviderService()
-	now := time.Now().UTC()
-	cacheHit := false
-	providers.syncModelsResult = []provider.AccountModel{
-		{ID: 1, AccountID: 7, Provider: "openai", Model: "gpt-5.6-sol", Enabled: true, Source: provider.AccountModelSourceOAuthCatalog},
-	}
-	providers.syncModelsSummary = provider.AccountModelSyncSummary{Total: 1, New: 1}
-	providers.catalogStatus = provider.OAuthModelCatalogStatus{
-		LastAttemptAt: &now,
-		LastSuccessAt: &now,
-		Source:        "upstream",
-		CacheHit:      &cacheHit,
-	}
-
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/models/refresh", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if providers.oauthRefreshAccountID != 7 {
-		t.Fatalf("refresh account ID = %d, want 7", providers.oauthRefreshAccountID)
-	}
-	var body struct {
-		Models  []provider.AccountModel          `json:"models"`
-		Synced  provider.AccountModelSyncSummary `json:"synced"`
-		Catalog provider.OAuthModelCatalogStatus `json:"catalog"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode body: %v", err)
-	}
-	if len(body.Models) != 1 || body.Models[0].Model != "gpt-5.6-sol" || body.Synced.New != 1 {
-		t.Fatalf("body = %+v, want refreshed model and summary", body)
-	}
-	if body.Catalog.Source != "upstream" || body.Catalog.CacheHit == nil || *body.Catalog.CacheHit {
-		t.Fatalf("catalog = %+v, want upstream cache miss status", body.Catalog)
-	}
-}
-
-func TestRefreshOAuthProviderAccountModelsMapsErrors(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		err  error
-		want int
-		code string
-	}{
-		{name: "invalid input", err: provider.ErrInvalidInput, want: http.StatusBadRequest, code: "invalid_input"},
-		{name: "not found", err: provider.ErrNotConnected, want: http.StatusNotFound, code: "not_found"},
-		{name: "busy", err: provider.ErrOAuthModelCatalogBusy, want: http.StatusTooManyRequests, code: "catalog_refresh_busy"},
-		{name: "superseded", err: provider.ErrOAuthModelCatalogStale, want: http.StatusConflict, code: "catalog_refresh_superseded"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			providers := newFakeProviderService()
-			providers.syncModelsErr = tc.err
-			server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-			req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/7/models/refresh", nil)
-			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-			recorder := httptest.NewRecorder()
-
-			server.ServeHTTP(recorder, req)
-
-			if recorder.Code != tc.want {
-				t.Fatalf("status = %d, want %d", recorder.Code, tc.want)
-			}
-			var body map[string]string
-			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-				t.Fatalf("decode body: %v", err)
-			}
-			if body["error"] != tc.code {
-				t.Fatalf("error = %q, want %q", body["error"], tc.code)
-			}
-		})
-	}
-}
-
 func TestSyncProviderAccountModelsMapsProviderErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -5275,177 +4753,6 @@ func TestAdminDeleteUnifiedProviderAccountMapsErrors(t *testing.T) {
 				t.Fatalf("error = %q, want %s", body["error"], tc.code)
 			}
 		})
-	}
-}
-
-func TestProviderCallbackDoesNotConsumeManualCallback(t *testing.T) {
-	providers := newFakeProviderService()
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "http://localhost:3000/oauth/openai/callback?code=abc&state=state", nil))
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", recorder.Code)
-	}
-	if providers.callbackCode != "" || providers.callbackState != "" {
-		t.Fatalf("callback was called with code %q state %q", providers.callbackCode, providers.callbackState)
-	}
-	body := recorder.Body.String()
-	if !strings.Contains(body, "code=abc") || !strings.Contains(body, "state=state") {
-		t.Fatalf("body did not include callback values: %s", body)
-	}
-	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
-		t.Fatalf("Content-Type = %q, want text/html", got)
-	}
-}
-
-func TestManualOAuthCallbackUsesTrustedRequestInfo(t *testing.T) {
-	tests := []struct {
-		name       string
-		cfg        config.Config
-		target     string
-		remoteAddr string
-		host       string
-		headers    http.Header
-		want       string
-		reject     string
-	}{
-		{
-			name:       "untrusted forwarded metadata ignored",
-			cfg:        config.Config{PublicURL: "http://canonical.example:3000"},
-			target:     "/oauth/openai/callback?code=abc&state=state",
-			remoteAddr: "192.0.2.10:1234",
-			host:       "direct.example:3000",
-			headers: http.Header{
-				"X-Forwarded-Proto": {"https"},
-				"X-Forwarded-Host":  {"attacker.example"},
-			},
-			want:   "http://canonical.example:3000/oauth/openai/callback?code=abc",
-			reject: "attacker.example",
-		},
-		{
-			name:       "trusted forwarded metadata accepted",
-			cfg:        config.Config{TrustedProxyCIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}},
-			target:     "/oauth/openai/callback?code=abc&state=state",
-			remoteAddr: "10.0.0.2:1234",
-			host:       "internal.example:3000",
-			headers: http.Header{
-				"X-Forwarded-Proto": {"https"},
-				"X-Forwarded-Host":  {"public.example"},
-			},
-			want: "https://public.example/oauth/openai/callback?code=abc",
-		},
-		{
-			name:       "absolute form cannot bypass direct host",
-			cfg:        config.Config{PublicURL: "https://canonical.example"},
-			target:     "http://attacker.example/oauth/openai/callback?code=abc&state=state",
-			remoteAddr: "192.0.2.10:1234",
-			host:       "direct.example",
-			want:       "https://canonical.example/oauth/openai/callback?code=abc",
-			reject:     "attacker.example",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := NewServer(tt.cfg, staticHealth{}, newFakeAdminService(), newFakeProviderService())
-			req := httptest.NewRequest(http.MethodGet, tt.target, nil)
-			req.RemoteAddr = tt.remoteAddr
-			req.Host = tt.host
-			req.Header = tt.headers
-			recorder := httptest.NewRecorder()
-
-			server.ServeHTTP(recorder, req)
-
-			body := recorder.Body.String()
-			if recorder.Code != http.StatusOK || !strings.Contains(body, tt.want) {
-				t.Fatalf("status = %d body = %s, want URL containing %q", recorder.Code, body, tt.want)
-			}
-			if tt.reject != "" && strings.Contains(body, tt.reject) {
-				t.Fatalf("body contains rejected host %q: %s", tt.reject, body)
-			}
-		})
-	}
-}
-
-func TestProviderManualCallbackCompletesFromCallbackURL(t *testing.T) {
-	providers := newFakeProviderService()
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc&state=oauth_state"}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if providers.callbackCode != "abc" || providers.callbackState != "oauth_state" {
-		t.Fatalf("callback args = code %q state %q, want parsed callback URL values", providers.callbackCode, providers.callbackState)
-	}
-}
-
-func TestUnifiedProviderAccountCodexOAuthCallbackCompletesFromCallbackURL(t *testing.T) {
-	providers := newFakeProviderService()
-	providers.syncModelsResult = []provider.AccountModel{{AccountID: 7, Model: "gpt-5.6-sol", Enabled: true, Source: provider.AccountModelSourceOAuthCatalog}}
-	providers.syncModelsSummary = provider.AccountModelSyncSummary{Total: 1, New: 1}
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc&state=oauth_state"}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if providers.callbackCode != "abc" || providers.callbackState != "oauth_state" {
-		t.Fatalf("callback args = code %q state %q, want parsed callback URL values", providers.callbackCode, providers.callbackState)
-	}
-	if providers.oauthSyncAccountID != 7 {
-		t.Fatalf("OAuth model sync account ID = %d, want 7", providers.oauthSyncAccountID)
-	}
-	if !strings.Contains(recorder.Body.String(), `"source":"oauth_catalog"`) {
-		t.Fatalf("body = %s, want synced OAuth model", recorder.Body.String())
-	}
-}
-
-func TestUnifiedProviderAccountCodexOAuthCallbackReportsModelSyncFailure(t *testing.T) {
-	providers := newFakeProviderService()
-	providers.syncModelsErr = errors.New("catalog unavailable")
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/provider-accounts/codex-oauth/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc&state=oauth_state"}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d body=%s, want 502", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), `"error":"oauth_model_sync_failed"`) {
-		t.Fatalf("body = %s, want explicit OAuth model sync error", recorder.Body.String())
-	}
-	if providers.oauthSyncAccountID != 7 {
-		t.Fatalf("OAuth model sync account ID = %d, want 7", providers.oauthSyncAccountID)
-	}
-}
-
-func TestProviderManualCallbackRejectsMissingCallbackValues(t *testing.T) {
-	providers := newFakeProviderService()
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), providers)
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/providers/openai/callback", strings.NewReader(`{"callbackUrl":"http://localhost:3000/oauth/openai/callback?code=abc"}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", recorder.Code)
-	}
-	if providers.callbackCode != "" || providers.callbackState != "" {
-		t.Fatalf("callback was called with code %q state %q", providers.callbackCode, providers.callbackState)
 	}
 }
 
@@ -5696,106 +5003,6 @@ func TestErrorPassthroughRulesRouteIsRegisteredImmediately(t *testing.T) {
 	}
 	if len(body.Rules) != 1 || body.Rules[0].Pattern != "insufficient_quota" {
 		t.Fatalf("rules = %+v, want seeded error passthrough rule", body.Rules)
-	}
-}
-
-func TestFingerprintProfilesCRUDRequiresSessionAndMapsInputs(t *testing.T) {
-	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/admin/fingerprint-profiles", nil))
-
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", recorder.Code)
-	}
-
-	admins := newFakeAdminService()
-	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/fingerprint-profiles", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder = httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("list status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	var listBody struct {
-		Profiles []admin.FingerprintProfile `json:"profiles"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &listBody); err != nil {
-		t.Fatalf("decode list body: %v", err)
-	}
-	if len(listBody.Profiles) != 1 || listBody.Profiles[0].TLSFingerprint != "chrome" || listBody.Profiles[0].Headers["X-Test"] != "1" {
-		t.Fatalf("profiles = %+v, want seeded fingerprint profile", listBody.Profiles)
-	}
-
-	payload := `{"name":"Firefox","description":"desktop","userAgent":"Mozilla/5.0","tlsFingerprint":"firefox","headers":{"X-FP":"yes"},"enabled":true}`
-	req = httptest.NewRequest(http.MethodPost, "/api/admin/fingerprint-profiles", strings.NewReader(payload))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder = httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("create status = %d body=%s, want 201", recorder.Code, recorder.Body.String())
-	}
-	if admins.fingerprintInput.Name != "Firefox" || admins.fingerprintInput.TLSFingerprint != "firefox" || admins.fingerprintInput.Headers["X-FP"] != "yes" {
-		t.Fatalf("fingerprint create input = %+v", admins.fingerprintInput)
-	}
-
-	req = httptest.NewRequest(http.MethodPatch, "/api/admin/fingerprint-profiles/8", strings.NewReader(payload))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder = httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("update status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if admins.fingerprintID != 8 || admins.fingerprintInput.Name != "Firefox" {
-		t.Fatalf("fingerprint update id/input = %d/%+v, want 8/Firefox", admins.fingerprintID, admins.fingerprintInput)
-	}
-
-	req = httptest.NewRequest(http.MethodDelete, "/api/admin/fingerprint-profiles/8", nil)
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder = httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusNoContent {
-		t.Fatalf("delete status = %d body=%s, want 204", recorder.Code, recorder.Body.String())
-	}
-	if admins.fingerprintID != 8 {
-		t.Fatalf("fingerprint delete id = %d, want 8", admins.fingerprintID)
-	}
-}
-
-func TestFingerprintProfilesCRUDMapsValidationAndNotFoundErrors(t *testing.T) {
-	admins := newFakeAdminService()
-	admins.fingerprintErr = admin.ErrInvalidInput
-	server := NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/fingerprint-profiles", strings.NewReader(`{"name":""}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder := httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("invalid create status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
-	}
-
-	admins = newFakeAdminService()
-	admins.fingerprintErr = admin.ErrNotFound
-	server = NewServer(config.Config{}, staticHealth{}, admins, newFakeProviderService())
-	req = httptest.NewRequest(http.MethodPatch, "/api/admin/fingerprint-profiles/404", strings.NewReader(`{"name":"Missing"}`))
-	req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
-	recorder = httptest.NewRecorder()
-
-	server.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("not found update status = %d body=%s, want 404", recorder.Code, recorder.Body.String())
 	}
 }
 
@@ -6562,8 +5769,8 @@ func TestModelRoutingReturnsStatus(t *testing.T) {
 	admins.modelSettings = admin.ModelSettings{DefaultModel: "gpt-5"}
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", Enabled: true},
-		{ID: 8, Provider: "openai", Enabled: false},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, Enabled: true},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, Enabled: false},
 	}
 	admins.routingPools[0].Accounts = []admin.RoutingPoolAccount{{AccountID: 7, Priority: 0}}
 	admins.routingPools[0].AccountIDs = []int64{7}
@@ -6620,11 +5827,11 @@ func TestModelRoutingStatusEnabledCountUsesSchedulableAccountRules(t *testing.T)
 	past := now.Add(-time.Hour)
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", Enabled: true, Status: provider.AccountStatusExpired},
-		{ID: 8, Provider: "openai", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
-		{ID: 9, Provider: "openai", Enabled: true, Status: provider.AccountStatusCircuitOpen, CircuitOpenUntil: &future},
-		{ID: 10, Provider: "openai", Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &past},
-		{ID: 11, Provider: "openai", Enabled: true, Status: provider.AccountStatusCircuitOpen, CircuitOpenUntil: &past},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, Enabled: true, Status: provider.AccountStatusExpired},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
+		{ID: 9, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, Enabled: true, Status: provider.AccountStatusCircuitOpen, CircuitOpenUntil: &future},
+		{ID: 10, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, Enabled: true, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &past},
+		{ID: 11, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, Enabled: true, Status: provider.AccountStatusCircuitOpen, CircuitOpenUntil: &past},
 	}
 	for _, account := range providers.accounts {
 		providers.accountModels[account.ID] = []provider.AccountModel{
@@ -6660,10 +5867,10 @@ func TestModelRoutingStatusIncludesUnschedulableAccountReasons(t *testing.T) {
 	future := now.Add(time.Hour)
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Disabled", Enabled: false, Status: provider.AccountStatusActive},
-		{ID: 8, Provider: "openai", DisplayName: "Expired", Enabled: true, Status: provider.AccountStatusExpired},
-		{ID: 9, Provider: "openai", DisplayName: "Limited", Enabled: true, Status: provider.AccountStatusRateLimited, StatusReason: "quota window", LastError: "upstream quota", LastErrorAt: &now, RateLimitedUntil: &future},
-		{ID: 10, Provider: "openai", DisplayName: "Model off", Enabled: true, Status: provider.AccountStatusActive},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Disabled", Enabled: false, Status: provider.AccountStatusActive},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Expired", Enabled: true, Status: provider.AccountStatusExpired},
+		{ID: 9, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Limited", Enabled: true, Status: provider.AccountStatusRateLimited, StatusReason: "quota window", LastError: "upstream quota", LastErrorAt: &now, RateLimitedUntil: &future},
+		{ID: 10, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Model off", Enabled: true, Status: provider.AccountStatusActive},
 	}
 	for _, account := range providers.accounts {
 		providers.accountModels[account.ID] = []provider.AccountModel{
@@ -6739,11 +5946,11 @@ func TestModelRoutingStatusIncludesSchedulableAccountOrder(t *testing.T) {
 	future := now.Add(time.Hour)
 	providers := newFakeProviderService()
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Preferred", Enabled: true, Priority: 1, Status: provider.AccountStatusActive, LastUsedAt: &recent},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Preferred", Enabled: true, Priority: 1, Status: provider.AccountStatusActive, LastUsedAt: &recent},
 		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Older same priority", Enabled: true, Priority: 1, Status: provider.AccountStatusActive, LastUsedAt: &older},
-		{ID: 9, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Fallback", Enabled: true, Priority: 5, Status: provider.AccountStatusActive},
-		{ID: 10, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Rate limited", Enabled: true, Priority: 0, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
-		{ID: 11, Provider: "openai", AccountType: provider.AccountTypeCodexOAuth, DisplayName: "Model disabled", Enabled: true, Priority: 0, Status: provider.AccountStatusActive},
+		{ID: 9, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Fallback", Enabled: true, Priority: 5, Status: provider.AccountStatusActive},
+		{ID: 10, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Rate limited", Enabled: true, Priority: 0, Status: provider.AccountStatusRateLimited, RateLimitedUntil: &future},
+		{ID: 11, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Model disabled", Enabled: true, Priority: 0, Status: provider.AccountStatusActive},
 	}
 	for _, account := range providers.accounts {
 		providers.accountModels[account.ID] = []provider.AccountModel{
@@ -6824,7 +6031,7 @@ func TestModelRoutingPreviewReturnsSessionAwareSelection(t *testing.T) {
 		StickyBoundAccountID: 8,
 		Candidates: []provider.SelectionCandidate{
 			{ID: 8, DisplayName: "Sticky", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, ScheduleReason: stickyReason, Selected: true, StickyBound: true},
-			{ID: 7, DisplayName: "Fallback", AccountType: provider.AccountTypeCodexOAuth, Priority: 1, ScheduleRank: 2, ScheduleReason: fallbackReason},
+			{ID: 7, DisplayName: "Fallback", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 2, ScheduleReason: fallbackReason},
 		},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
@@ -6962,12 +6169,12 @@ func TestModelRoutingPreviewIncludesConcurrencyState(t *testing.T) {
 		SelectedAccountID: 7,
 		Candidates: []provider.SelectionCandidate{
 			{ID: 7, DisplayName: "Busy", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true},
-			{ID: 8, DisplayName: "Inherited", AccountType: provider.AccountTypeCodexOAuth, Priority: 2, ScheduleRank: 2},
+			{ID: 8, DisplayName: "Inherited", AccountType: provider.AccountTypeAPIUpstream, Priority: 2, ScheduleRank: 2},
 		},
 	}
 	providers.accounts = []provider.Account{
-		{ID: 7, Provider: "openai", DisplayName: "Busy", MaxConcurrentRequests: 2},
-		{ID: 8, Provider: "openai", DisplayName: "Inherited"},
+		{ID: 7, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Busy", MaxConcurrentRequests: 2},
+		{ID: 8, Provider: "openai", AccountType: provider.AccountTypeAPIUpstream, DisplayName: "Inherited"},
 	}
 	gateway := &fakeGatewayHandler{accountConcurrency: map[int64]int{7: 2, 8: 1}}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers, gateway)
@@ -7023,7 +6230,7 @@ func TestModelRoutingPreviewPassesExcludedAccountIDs(t *testing.T) {
 		SelectedAccountID: 9,
 		Candidates: []provider.SelectionCandidate{
 			{ID: 9, DisplayName: "Fallback", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, ScheduleRank: 1, Selected: true},
-			{ID: 7, DisplayName: "Excluded", AccountType: provider.AccountTypeCodexOAuth, Priority: 1, Schedulable: false, UnschedulableReason: "account excluded"},
+			{ID: 7, DisplayName: "Excluded", AccountType: provider.AccountTypeAPIUpstream, Priority: 1, Schedulable: false, UnschedulableReason: "account excluded"},
 		},
 	}
 	server := NewServer(config.Config{}, staticHealth{}, admins, providers)
@@ -7306,41 +6513,6 @@ func (s *fakeAdminService) GetOpsCostBreakdown(_ context.Context, since time.Tim
 	return s.opsCostBreakdown, nil
 }
 
-func (s *fakeAdminService) ListFingerprintProfiles(_ context.Context) ([]admin.FingerprintProfile, error) {
-	return []admin.FingerprintProfile{{
-		ID:             8,
-		SystemKey:      "codex_cli_default",
-		Name:           "Chrome",
-		Description:    "browser preset",
-		UserAgent:      "Mozilla/5.0",
-		TLSFingerprint: "chrome",
-		Headers:        map[string]string{"X-Test": "1"},
-		Enabled:        true,
-	}}, nil
-}
-
-func (s *fakeAdminService) CreateFingerprintProfile(_ context.Context, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
-	s.fingerprintInput = input
-	if s.fingerprintErr != nil {
-		return admin.FingerprintProfile{}, s.fingerprintErr
-	}
-	return admin.FingerprintProfile{ID: 9, Name: input.Name, Description: input.Description, UserAgent: input.UserAgent, TLSFingerprint: input.TLSFingerprint, Headers: input.Headers, Enabled: input.Enabled}, nil
-}
-
-func (s *fakeAdminService) UpdateFingerprintProfile(_ context.Context, id int64, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error) {
-	s.fingerprintID = id
-	s.fingerprintInput = input
-	if s.fingerprintErr != nil {
-		return admin.FingerprintProfile{}, s.fingerprintErr
-	}
-	return admin.FingerprintProfile{ID: id, Name: input.Name, Description: input.Description, UserAgent: input.UserAgent, TLSFingerprint: input.TLSFingerprint, Headers: input.Headers, Enabled: input.Enabled}, nil
-}
-
-func (s *fakeAdminService) DeleteFingerprintProfile(_ context.Context, id int64) error {
-	s.fingerprintID = id
-	return s.fingerprintErr
-}
-
 func (s *fakeAdminService) ListErrorPassthroughRules(_ context.Context) ([]admin.ErrorPassthroughRule, error) {
 	return []admin.ErrorPassthroughRule{{ID: 1, Pattern: "insufficient_quota", MatchType: "error_code", Enabled: true}}, nil
 }
@@ -7589,5 +6761,58 @@ func TestAdminSyncOfficialUsagePricingMapsInvalidInputTo400(t *testing.T) {
 	json.NewDecoder(rec.Body).Decode(&body)
 	if v, _ := body["error"].(string); v != "invalid_input" {
 		t.Errorf("error = %q, want invalid_input", v)
+	}
+}
+
+func TestRetiredOAuthAndFingerprintRoutesReturnNotFound(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService(), fstest.MapFS{
+		"index.html": {Data: []byte("<main>Admin UI</main>")},
+		"200.html":   {Data: []byte("<main>SPA fallback</main>")},
+	})
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/admin/provider-accounts/codex-oauth/status"},
+		{http.MethodPost, "/api/admin/provider-accounts/codex-oauth/connect"},
+		{http.MethodPost, "/api/admin/provider-accounts/codex-oauth/callback"},
+		{http.MethodPost, "/api/admin/providers/openai/connect"},
+		{http.MethodPost, "/api/admin/providers/openai/callback"},
+		{http.MethodPost, "/api/admin/provider-accounts/7/refresh"},
+		{http.MethodPost, "/api/admin/provider-accounts/bulk-refresh"},
+		{http.MethodPost, "/api/admin/provider-accounts/7/models/refresh"},
+		{http.MethodGet, "/oauth/openai/callback?code=retired-secret"},
+		{http.MethodGet, "/api/admin/fingerprint-profiles"},
+		{http.MethodPost, "/api/admin/fingerprint-profiles"},
+		{http.MethodPatch, "/api/admin/fingerprint-profiles/1"},
+		{http.MethodDelete, "/api/admin/fingerprint-profiles/1"},
+	} {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			req := httptest.NewRequest(route.method, route.path, nil)
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("status = %d body=%s, want 404", recorder.Code, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), "retired-secret") {
+				t.Fatal("retired callback reflected authorization code")
+			}
+		})
+	}
+}
+
+func TestProviderAccountRejectsRetiredFingerprintBinding(t *testing.T) {
+	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), newFakeProviderService())
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodPost, "/api/admin/provider-accounts/api-upstream", `{"name":"Upstream","baseUrl":"https://api.example.test/v1","apiKey":"secret","fingerprintProfileId":9}`},
+		{http.MethodPatch, "/api/admin/provider-accounts/7", `{"enabled":true,"fingerprintProfileId":9}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.AddCookie(&http.Cookie{Name: "n2api_admin_session", Value: "valid-session"})
+			recorder := httptest.NewRecorder()
+			server.ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s, want 400", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }

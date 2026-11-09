@@ -18,7 +18,6 @@ const expectedFiles = [
   'src/routes/alerting/+page.svelte',
   'src/routes/pricing/+page.svelte',
   'src/routes/ops/+page.svelte',
-  'src/routes/fingerprints/+page.svelte'
 ];
 
 const readText = await preloadTextFiles([
@@ -80,7 +79,7 @@ test('admin UI has focused routes behind a shared sidebar shell', () => {
   }
 
   const layout = readText('src/routes/+layout.svelte');
-  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Alerts', 'Pricing', 'Ops', 'Fingerprints', 'Active sessions', 'Sign out', 'Change password', 'Save', 'Current password', 'New password']) {
+  for (const label of ['Dashboard', 'Gateway', 'Providers', 'Routing pools', 'API Keys', 'Request Logs', 'System logs', 'Alerts', 'Pricing', 'Ops', 'Active sessions', 'Sign out', 'Change password', 'Save', 'Current password', 'New password']) {
     assert.match(layout, new RegExp(label.replace(' ', '\\s+')), `layout should include ${label}`);
   }
   assert.doesNotMatch(layout, /label:\s*'Models'/);
@@ -185,7 +184,7 @@ test('admin routes share the dashboard page heading hierarchy', () => {
     alerting: 'Alerts',
     pricing: 'Pricing',
     ops: 'Operations monitor',
-    fingerprints: 'Fingerprint profiles'
+
   };
 
   for (const [route, title] of Object.entries(routeTitles)) {
@@ -197,7 +196,7 @@ test('admin routes share the dashboard page heading hierarchy', () => {
 });
 
 test('dense management tables provide a shared mobile stacked view', () => {
-  for (const route of ['api-keys', 'providers', 'routing-pools', 'models', 'request-logs', 'system-logs', 'alerting', 'pricing', 'fingerprints']) {
+  for (const route of ['api-keys', 'providers', 'routing-pools', 'models', 'request-logs', 'system-logs', 'alerting', 'pricing']) {
     const source = readText(`src/routes/${route}/+page.svelte`);
     assert.match(source, /ui-table--stacked/, `${route} should opt its primary table into the mobile stacked view`);
     assert.match(source, /data-label=/, `${route} should label stacked table values`);
@@ -526,7 +525,6 @@ test('configuration mutations show blocking progress and transient success feedb
     ['routing pools', routingPoolsPage, /routingPoolMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Routing pool saved/],
     ['providers', providersPage, /providerMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Provider account saved/],
     ['API keys', apiKeysPage, /apiKeyMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /API key saved/],
-    ['fingerprints', readText('src/routes/fingerprints/+page.svelte'), /fingerprintMutationBusy[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Fingerprint profile saved/],
     ['gateway runtime limits', gatewayPage, /gatewaySettings\.saving[\s\S]*?ui-loading-overlay[\s\S]*?>thinking</, /Runtime limits saved/]
   ]) {
     assert.match(source, busyPattern, `${name} should show the standard thinking overlay while saving`);
@@ -537,7 +535,6 @@ test('configuration mutations show blocking progress and transient success feedb
     ['routing pools', routingPoolsPage],
     ['providers', providersPage],
     ['API keys', apiKeysPage],
-    ['fingerprints', readText('src/routes/fingerprints/+page.svelte')]
   ]) {
     assert.match(source, /role=\{[^}]*'status'[^}]*\}|role="status"/, `${name} success feedback should expose status semantics`);
     assert.match(source, /aria-live="polite"/, `${name} success feedback should be announced politely`);
@@ -551,7 +548,6 @@ test('configuration mutations show blocking progress and transient success feedb
   assert.match(providersPage, /runProviderAccountAction[\s\S]*?showProviderSuccess\('Provider account updated'/);
   assert.match(apiKeysPage, /if \(succeeded && session\.authenticated && !apiKeys\.error\)/);
   assert.match(apiKeysPage, /if \(!\(await updateAPIKeyName[\s\S]*?if \(!session\.authenticated\) return;[\s\S]*?showAPIKeySuccess\('API key saved'/);
-  assert.match(providersPage, /if \(await completeProviderCallback\(\)\)[\s\S]*?showProviderSuccess\('Provider account connected'/);
   assert.match(providersPage, /if \(!\(await updateProviderAccount[\s\S]*?if \(!session\.authenticated\) return;[\s\S]*?showProviderSuccess\('Provider account saved'/);
 });
 
@@ -1653,7 +1649,6 @@ test('route pages use shared AuthGate instead of duplicate login forms', () => {
     { name: 'alerting', path: 'src/routes/alerting/+page.svelte' },
     { name: 'pricing', path: 'src/routes/pricing/+page.svelte' },
     { name: 'ops', path: 'src/routes/ops/+page.svelte' },
-    { name: 'fingerprints', path: 'src/routes/fingerprints/+page.svelte' },
   ];
   for (const page of pages) {
     const src = readText(page.path);

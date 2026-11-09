@@ -67,8 +67,7 @@ and `database-plaintext` by default and uses separate local-only credentials
 when no `.env` exists. Set `N2API_ACCEPT_RISKS` explicitly in `.env` to narrow
 or replace those development defaults.
 
-`OPENAI_API_BASE_URL` and the OpenAI OAuth endpoints are also parsed at
-startup. OAuth authorization and token endpoints must use HTTPS. The API base
+`OPENAI_API_BASE_URL` is parsed at startup. The API base
 URL may use HTTP only when `N2API_ALLOW_HTTP_API_UPSTREAMS=true`, matching the
 explicit opt-in used for API-key upstream accounts.
 
@@ -230,10 +229,10 @@ headers.
 
 All responses include MIME sniffing, referrer, permissions, framing, and Content
 Security Policy headers. HSTS is emitted only when the trusted external scheme
-is HTTPS. Admin API and OAuth callback responses use `Cache-Control: no-store`.
+is HTTPS. Admin API responses use `Cache-Control: no-store`.
 The CSP permits only same-origin resources and `data:` images. SvelteKit emits
 build-specific SHA-256 hashes for the static bootstrap script and generated
-style elements. Inline style attributes and the manual OAuth callback style
+style elements. Inline style attributes
 remain allowed because the current UI requires them; remote scripts are not
 allowed.
 
@@ -812,13 +811,7 @@ creates the rule disabled, and is idempotent by the persisted template key:
 retries return the existing rule without changing its delivery action, enabled
 state, or later owner edits. Deleting a template-derived rule is allowed; it is
 created again only when an owner explicitly installs the template again. The
-catalog includes `oauth-refresh-repeated-v1`, which matches three
-automatic OAuth refresh failures for the same event target within 15 minutes,
-uses a one-hour cooldown, and can notify on the next automatic refresh success.
-Model-test refresh failures use the separate
-`oauth.refresh.diagnostic.failed` action and therefore do not contribute to
-this operational threshold. It also includes
-`request-log-retention-failed-v1`, which matches either complete or partial
+catalog includes `request-log-retention-failed-v1`, which matches either complete or partial
 automatic Request Log retention failures, uses a 24-hour cooldown, and can
 notify when the next scheduled retention cycle succeeds. Shutdown cancellation
 updates task status but does not emit the failure signal. Disabling the runner,
@@ -835,7 +828,7 @@ The `provider-account-expired-v1` template matches the first
 `provider_account.expired` Runtime warning for each Provider account, uses a
 24-hour cooldown, and can notify when that same account emits
 `provider_account.recovered`. It starts disabled and is deduplicated by account
-target. OAuth reauthorization and API-upstream configuration edits preserve the
+target. API-upstream configuration edits preserve the
 current health state, so they do not recover a firing rule. Recovery follows a
 confirmed 2xx gateway/account-probe response or an explicit **Reset local
 status** operator override.
@@ -1308,7 +1301,7 @@ not restart or mark the entire gateway unavailable.
 
 ## Downstream Codex CLI
 
-After connecting and testing a Codex OAuth provider account, enable the models
+After adding and testing an API-key upstream account, enable the models
 that account can serve and create a client key on the API Keys page. Save the
 following as `~/.codex/n2api.config.toml`:
 
@@ -1345,16 +1338,18 @@ routing pool returns no models.
 
 ## Provider Accounts
 
-Start the stack, log in as admin, and use Provider accounts to connect one or more Codex OAuth accounts or API-key upstream accounts. Provider accounts are gateway exits. N2API supports Codex OAuth accounts and API-key upstream accounts. Both account types share enabled state, priority, health status, and per-account model lists.
+Use **Provider accounts** to add API-key upstreams. Set the upstream base URL,
+API key, models, and optional proxy, then test the account and add it to a
+routing pool. OAuth connection, reauthorization, token refresh, and fingerprint
+profiles are no longer supported. Historical OAuth rows and credentials remain
+in PostgreSQL for backup compatibility and do not participate in routing.
+Replace their routing-pool memberships with API-key upstreams before use.
 
-The default OAuth flow uses the Codex-compatible OpenAI OAuth client with PKCE, so the OAuth client id, client secret, auth URL, and token URL can usually stay blank in `.env`.
-Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback` unless you are using your own registered OpenAI OAuth client. The built-in Codex-compatible client expects that local callback URI; after OpenAI redirects there, copy the browser URL back into N2API's callback field.
-
-- Use the account row to set a display name, priority, and **Scheduling preference**. OAuth account creation also lets you choose whether the account should be enabled after login.
+- Use the account row to set a display name, priority, and **Scheduling preference**.
 - Select rows on the Provider accounts page to bulk enable or disable provider accounts. Use **Enable selected** or **Disable selected** to change scheduling eligibility for the selected exits, and **Clear selection** to discard the selection without changing accounts.
 - Set **Bulk priority**, **Bulk scheduling preference**, or **Bulk max concurrency**, then use **Apply scheduling** to update selected provider accounts together; bulk priority, bulk scheduling preference, and bulk max concurrency fields use the same validation as each account row.
 - Configure supported models on each connected account. These per-account model rows describe account capability for gateway routing.
-- Use the Providers table **Test models** action to diagnose one or more configured models against one exact account. The modal starts with no selection; row checkboxes support one or multiple models, and the tri-state header checkbox selects only the current filtered result set. Tests use that account's stored OAuth token or API-upstream key, never fall back to another account, and persist each model's latest status and latency. They do not enable or disable models or change account scheduling health.
+- Use the Providers table **Test models** action to diagnose one or more configured models against one exact account. The modal starts with no selection; row checkboxes support one or multiple models, and the tri-state header checkbox selects only the current filtered result set. Tests use that account's stored API-upstream key, never fall back to another account, and persist each model's latest status and latency. They do not enable or disable models or change account scheduling health.
 - Selected provider accounts can also receive the same model capability list. Enter one model per line in **Bulk models**, then use **Apply models** to replace the selected accounts' manual model lists together; this controls which models the scheduler can route to those accounts.
 - Use the Provider accounts page to add or remove selected provider accounts from a routing pool without opening the pool editor. Choose **Bulk routing pool**, set **Pool priority** for new pool members, then use **Apply pool** to add the selected accounts to that pool or **Remove pool** to remove them while leaving the pool's other members unchanged.
 - Use API Keys to control the routing-pool scope and `all` or `selected` model policy. Account model configuration remains the source of truth for capability. The gateway `defaultModel` is used only when a POST request omits `model`, and the injected model must still be routable in that key's bound pool or explicit fallback chain.
@@ -1365,15 +1360,11 @@ Keep the default `OPENAI_OAUTH_REDIRECT_URL=http://localhost:1455/auth/callback`
 - New API keys are stored with an encrypted reusable secret. The Prefix column on the API Keys page can copy the full API key again after creation for active or disabled keys; older keys created before encrypted secret storage may need to be rotated if their full value was not saved.
 - API keys have three visible states: active, disabled, and deleted. Active and disabled keys can be toggled directly from the API Keys table status column, and disabled keys cannot authenticate gateway requests. Deleting an active or disabled key performs an irreversible logical delete immediately, keeps the row visible during its 7 day retention window, and exposes the scheduled physical deletion time in the deleted status tooltip. Deleted keys can be physically deleted immediately with a second confirmed Delete action. Keys past the retention window are physically removed by startup and hourly cleanup, with API key listing cleanup as a fallback.
 - API key budgets are personal operational safeguards, not billing balances. Request budgets are strict rolling 24h and 30d limits backed by atomic PostgreSQL admission. Token and estimated cost limits are explicitly observed-usage budgets: admission rejects once settled observed usage has reached the limit, but one request or concurrent requests can cross it because no trustworthy universal pre-request upper bound exists. `0` disables a budget field. Existing budgeted keys fail closed with `budget_initializing` while the bounded upgrade backfill initializes their ledger from Request Logs. When a ready key is over budget, clients receive OpenAI-compatible `rate_limit_exceeded` responses while Request Logs store the precise local reason as `api_key_request_budget_exceeded`, `api_key_token_budget_exceeded`, or `api_key_cost_budget_exceeded`.
-- Use **Refresh** to force a token refresh for one account. Saving fresh OAuth credentials preserves the account's current health state; only the follow-up account probe or a later gateway request with a 2xx upstream response confirms recovery and clears stale transient health state.
-- Use **Reauthorize** on an existing row to bind a fresh OAuth login back to that account instead of creating a second row. Reauthorization replaces the saved OAuth credentials but preserves current account health until a later 2xx account probe or an explicit local-status reset.
 - API upstream credentials can be updated from the account row. Rotating the encrypted API key, base URL, or per-account outbound proxy URL preserves current account health; run **Test account** to confirm the new settings before an expired or circuit-open account becomes schedulable again. Proxy URLs are stored encrypted because they may include credentials, and the admin UI only shows a redacted proxy summary.
-- New OAuth and API upstream account forms can bind a **Fingerprint profile** at creation time. OAuth profile selections are stored in the pending OAuth state and applied after callback completion; API upstream selections are written directly to the provider account.
-- Use **Test account** before sending client traffic through an account. The action probes one provider account with its current OAuth token or API upstream key. Only a 2xx response confirms recovery and clears local failure status; network errors and every non-2xx response record a failed test without a recovery transition. The account row keeps the last test status, last test time, and last test error so manual checks remain visible after refresh. Each probe also writes provider account test history; use the Providers page **History action** to expand **Recent test history**, or fetch the same data from `GET /api/admin/provider-accounts/{id}/test-results`.
+- Use **Test account** before sending client traffic through an account. The action probes one provider account with its current API upstream key. Only a 2xx response confirms recovery and clears local failure status; network errors and every non-2xx response record a failed test without a recovery transition. The account row keeps the last test status, last test time, and last test error so manual checks remain visible after refresh. Each probe also writes provider account test history; use the Providers page **History action** to expand **Recent test history**, or fetch the same data from `GET /api/admin/provider-accounts/{id}/test-results`.
 - Gateway account selection records only an attempt timestamp. It does not clear account health. A gateway request confirms account recovery only when its final upstream response is 2xx; redirects, client/server errors, authorization failures, network failures, and configured error passthrough do not recover the account. When fallback succeeds, only the account that produced the final 2xx response recovers.
 - The Ops Monitor page shows **Recent account tests** for the selected monitoring window so manual and automatic probe failures are visible without opening each provider account row. Fetch the same aggregate view from `GET /api/admin/ops/account-tests`.
 - Use **Test selected** to probe selected provider accounts without probing the whole account pool. It updates the same last-test fields, health fields, and test history as **Test account**.
-- Use **Refresh selected** to force credential refresh for selected provider accounts together after rotating, restoring, or reauthorizing a subset of OAuth-backed exits.
 - Use **Disconnect account** when an exit should be removed from the gateway. It deletes the provider account, stops scheduling it for new traffic, and removes its stored credentials and account-scoped model configuration through the database cascade.
 - Use **Disconnect selected** when several exits should be removed together. It deletes the selected provider accounts, stops scheduling them for new traffic, and removes their stored credentials and account-scoped model configuration through the same database cascade.
 - Provider account auto tests are disabled by default. `N2API_PROVIDER_ACCOUNT_AUTO_TEST_ENABLED` and `N2API_PROVIDER_ACCOUNT_AUTO_TEST_INTERVAL_SECONDS` are startup defaults for Gateway Settings; after sign-in, use the Gateway Settings form to save the runtime auto-test setting. Enable it to run **Test all accounts** automatically in the backend, and use an interval of `300` seconds or higher for routine checks. Automatic tests update the same last test status, last test time, last test error, test history, and local account health fields shown in Provider accounts and Routing diagnostics.
@@ -1547,8 +1538,6 @@ other than `n2api` before creating a client.
 | Timeout or disconnect before response headers | Go E2E verifies cancellation and pre-stream fallback without leaking response bodies |
 | Disconnect or clean EOF after the first SSE event | Go E2E verifies N2API never retries after streaming has begun and never fabricates a completion event |
 | Sticky routing, explicit fallback, and local key limits | Go E2E verifies persisted account selection, fallback counters, and OpenAI-compatible 429 responses |
-| Concurrent OAuth refresh single-flight | Deterministic provider component tests verify one refresh and reuse of the rotated token |
-| Real Codex OAuth and Codex CLI | Manual protected acceptance only; it is not a required PR check and must not upload request or response bodies |
 
 Run the SDK contracts locally through the managed lifecycle wrapper:
 

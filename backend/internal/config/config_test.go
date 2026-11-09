@@ -30,7 +30,6 @@ func TestLoadReadsBoundedSecretFiles(t *testing.T) {
 		"N2API_ADMIN_PASSWORD_FILE":           write("admin-password", " admin password \n"),
 		"N2API_ENCRYPTION_SECRET_FILE":        write("encryption-secret", "file-encryption-secret-at-least-32-bytes\r\n"),
 		"N2API_ENCRYPTION_PREVIOUS_KEYS_FILE": write("previous-keys", "[]\n\n"),
-		"OPENAI_OAUTH_CLIENT_SECRET_FILE":     write("oauth-secret", "oauth-secret\n"),
 		"N2API_METRICS_BEARER_TOKEN_FILE":     write("metrics-token", "metrics-token\n"),
 		"N2API_HOST":                          "127.0.0.1",
 		"N2API_PUBLIC_URL":                    "https://n2api.knowsky.uk",
@@ -44,7 +43,7 @@ func TestLoadReadsBoundedSecretFiles(t *testing.T) {
 	if cfg.AdminPassword != " admin password " {
 		t.Fatalf("AdminPassword bytes = %q", cfg.AdminPassword)
 	}
-	if cfg.EncryptionSecret != "file-encryption-secret-at-least-32-bytes" || cfg.OpenAIOAuthSecret != "oauth-secret" || cfg.MetricsBearerToken != "metrics-token" {
+	if cfg.EncryptionSecret != "file-encryption-secret-at-least-32-bytes" || cfg.MetricsBearerToken != "metrics-token" {
 		t.Fatal("secret file values were not loaded")
 	}
 	if got := values["N2API_ENCRYPTION_PREVIOUS_KEYS_FILE"]; got == "" || cfg.EncryptionKeyring.PreviousKeyCount() != 0 {
@@ -147,12 +146,10 @@ func TestLoadRejectsEveryDirectAndFileSecretConflict(t *testing.T) {
 
 func TestLoadUsesDefaultsForOptionalServerValues(t *testing.T) {
 	cfg, err := Load(mapLookup(map[string]string{
-		"DATABASE_URL":              "postgres://n2api:secret@localhost:5432/n2api?sslmode=disable",
-		"N2API_ENCRYPTION_SECRET":   "test-encryption-secret-at-least-32-bytes",
-		"N2API_ADMIN_USERNAME":      "owner",
-		"N2API_ADMIN_PASSWORD":      "test-admin-password",
-		"OPENAI_OAUTH_CLIENT_ID":    "client-id",
-		"OPENAI_OAUTH_REDIRECT_URL": "http://localhost:3000/oauth/openai/callback",
+		"DATABASE_URL":            "postgres://n2api:secret@localhost:5432/n2api?sslmode=disable",
+		"N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes",
+		"N2API_ADMIN_USERNAME":    "owner",
+		"N2API_ADMIN_PASSWORD":    "test-admin-password",
 	}))
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
@@ -596,60 +593,12 @@ func TestLoadRequestLogExportConfig(t *testing.T) {
 	}
 }
 
-func TestLoadOpenAIOAuthEndpointConfig(t *testing.T) {
-	env := map[string]string{
-		"DATABASE_URL":               "postgres://example",
-		"N2API_ENCRYPTION_SECRET":    "test-encryption-secret-at-least-32-bytes",
-		"N2API_ADMIN_PASSWORD":       "admin-password",
-		"OPENAI_OAUTH_CLIENT_ID":     "client-id",
-		"OPENAI_OAUTH_CLIENT_SECRET": "client-secret",
-		"OPENAI_OAUTH_REDIRECT_URL":  "http://localhost:3000/oauth/openai/callback",
-		"OPENAI_OAUTH_AUTH_URL":      "https://auth.example.test/authorize",
-		"OPENAI_OAUTH_TOKEN_URL":     "https://auth.example.test/token",
-	}
-	cfg, err := Load(mapLookup(env))
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-	if cfg.OpenAIOAuthAuthURL != "https://auth.example.test/authorize" {
-		t.Fatalf("OpenAIOAuthAuthURL = %q", cfg.OpenAIOAuthAuthURL)
-	}
-	if cfg.OpenAIOAuthTokenURL != "https://auth.example.test/token" {
-		t.Fatalf("OpenAIOAuthTokenURL = %q", cfg.OpenAIOAuthTokenURL)
-	}
-}
-
-func TestLoadDefaultsOpenAIOAuthForCodexPKCE(t *testing.T) {
+func TestLoadOpenAIAPIBaseURLConfig(t *testing.T) {
 	cfg, err := Load(mapLookup(map[string]string{
 		"DATABASE_URL":            "postgres://example",
 		"N2API_ENCRYPTION_SECRET": "test-encryption-secret-at-least-32-bytes",
 		"N2API_ADMIN_PASSWORD":    "admin-password",
-	}))
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-	if cfg.OpenAIOAuthClientID == "" {
-		t.Fatal("OpenAIOAuthClientID was empty")
-	}
-	if cfg.OpenAIOAuthSecret != "" {
-		t.Fatalf("OpenAIOAuthSecret = %q, want empty public PKCE client secret", cfg.OpenAIOAuthSecret)
-	}
-	if cfg.OpenAIOAuthRedirectURL != "http://localhost:1455/auth/callback" {
-		t.Fatalf("OpenAIOAuthRedirectURL = %q, want Codex callback", cfg.OpenAIOAuthRedirectURL)
-	}
-	if cfg.OpenAIOAuthAuthURL == "" || cfg.OpenAIOAuthTokenURL == "" || cfg.OpenAIOAuthRedirectURL == "" {
-		t.Fatalf("OAuth defaults incomplete: auth=%q token=%q redirect=%q", cfg.OpenAIOAuthAuthURL, cfg.OpenAIOAuthTokenURL, cfg.OpenAIOAuthRedirectURL)
-	}
-}
-
-func TestLoadOpenAIAPIBaseURLConfig(t *testing.T) {
-	cfg, err := Load(mapLookup(map[string]string{
-		"DATABASE_URL":              "postgres://example",
-		"N2API_ENCRYPTION_SECRET":   "test-encryption-secret-at-least-32-bytes",
-		"N2API_ADMIN_PASSWORD":      "admin-password",
-		"OPENAI_API_BASE_URL":       "https://api.example.test",
-		"OPENAI_OAUTH_CLIENT_ID":    "client-id",
-		"OPENAI_OAUTH_REDIRECT_URL": "http://localhost:3000/oauth/openai/callback",
+		"OPENAI_API_BASE_URL":     "https://api.example.test",
 	}))
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
@@ -1302,8 +1251,6 @@ func TestLoadRejectsUnsafeUpstreamURLs(t *testing.T) {
 		{name: "http api without opt in", overrides: map[string]string{"OPENAI_API_BASE_URL": "http://upstream.internal/v1"}, wantName: "N2API_ALLOW_HTTP_API_UPSTREAMS", secret: "upstream.internal"},
 		{name: "api userinfo", overrides: map[string]string{"OPENAI_API_BASE_URL": "https://owner:secret@upstream.internal/v1"}, wantName: "OPENAI_API_BASE_URL", secret: "secret"},
 		{name: "api invalid host", overrides: map[string]string{"OPENAI_API_BASE_URL": "https://upstream,internal/v1"}, wantName: "OPENAI_API_BASE_URL", secret: "upstream,internal"},
-		{name: "oauth auth http", overrides: map[string]string{"OPENAI_OAUTH_AUTH_URL": "http://auth.internal/authorize"}, wantName: "OPENAI_OAUTH_AUTH_URL", secret: "auth.internal"},
-		{name: "oauth token invalid scheme", overrides: map[string]string{"OPENAI_OAUTH_TOKEN_URL": "ftp://auth.internal/token"}, wantName: "OPENAI_OAUTH_TOKEN_URL", secret: "auth.internal"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1323,21 +1270,13 @@ func TestLoadRejectsUnsafeUpstreamURLs(t *testing.T) {
 
 func TestLoadNormalizesUpstreamURLSchemes(t *testing.T) {
 	cfg, err := Load(strictConfigLookup(map[string]string{
-		"OPENAI_API_BASE_URL":    "HTTPS://api.internal/v1",
-		"OPENAI_OAUTH_AUTH_URL":  "HTTPS://auth.internal/authorize",
-		"OPENAI_OAUTH_TOKEN_URL": "HTTPS://auth.internal/token",
+		"OPENAI_API_BASE_URL": "HTTPS://api.internal/v1",
 	}))
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
 	if cfg.OpenAIAPIBaseURL != "https://api.internal/v1" {
 		t.Fatalf("OpenAIAPIBaseURL = %q", cfg.OpenAIAPIBaseURL)
-	}
-	if cfg.OpenAIOAuthAuthURL != "https://auth.internal/authorize" {
-		t.Fatalf("OpenAIOAuthAuthURL = %q", cfg.OpenAIOAuthAuthURL)
-	}
-	if cfg.OpenAIOAuthTokenURL != "https://auth.internal/token" {
-		t.Fatalf("OpenAIOAuthTokenURL = %q", cfg.OpenAIOAuthTokenURL)
 	}
 }
 

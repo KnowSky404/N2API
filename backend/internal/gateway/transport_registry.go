@@ -15,11 +15,9 @@ const defaultTransportRegistryCapacity = 64
 var errTransportRegistryClosed = errors.New("upstream transport registry is closed")
 
 type transportKey struct {
-	proxyScheme    string
-	proxyAddress   string
-	proxyUserHash  [sha256.Size]byte
-	fingerprint    string
-	protocolPolicy string
+	proxyScheme   string
+	proxyAddress  string
+	proxyUserHash [sha256.Size]byte
 }
 
 type transportEntry struct {
@@ -81,7 +79,7 @@ func (r *transportRegistry) ClientFor(selected SelectedAccount) (*http.Client, e
 		return entry.client, nil
 	}
 
-	transport := newSelectedAccountTransport(proxyURL, key.fingerprint, r.timeouts)
+	transport := newSelectedAccountTransport(proxyURL, r.timeouts)
 	client := &http.Client{
 		Transport:     transport,
 		Timeout:       r.template.Timeout,
@@ -182,15 +180,7 @@ func (r *transportRegistry) closeEntriesLocked() {
 }
 
 func selectedAccountTransportKey(selected SelectedAccount) (transportKey, *url.URL, error) {
-	fingerprintValue := strings.TrimSpace(selected.FingerprintTLS)
-	fingerprint := normalizeTLSFingerprintName(fingerprintValue)
-	if fingerprintValue != "" && fingerprint == "" {
-		return transportKey{}, nil, errors.New("unsupported upstream TLS fingerprint configuration")
-	}
-	key := transportKey{
-		fingerprint:    fingerprint,
-		protocolPolicy: "http1-fingerprint-v1",
-	}
+	key := transportKey{}
 	proxyValue := strings.TrimSpace(selected.ProxyURL)
 	if proxyValue == "" {
 		return key, nil, nil

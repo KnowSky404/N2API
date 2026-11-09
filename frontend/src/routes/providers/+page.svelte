@@ -4,36 +4,26 @@
   import {
     accountLabel,
     accountTypeLabel,
-    completeProviderCallback,
-    connectProvider,
-    copyAuthorizationURL,
     createAPIUpstreamAccount,
     disconnectProviderAccount,
     formatDate,
     getAccountModelsState,
     getAccountTestResultsState,
-    getProviderStateLabel,
     isSyncedAccountModel,
     loadAccountModels,
     loadProviderAccounts,
     apiUpstreamForm,
-    provider,
     providerAccounts,
-    providerConnectForm,
-    providerOAuth,
     pauseProviderAccount,
     providerAccountEffectiveStatus,
-    refreshProviderAccount,
     removeAccountModel,
     resetProviderAccountStatus,
     saveAccountModels,
     accountModelSummary,
     accountModelsText,
-    cancelAccountModelCatalogRefresh,
     session,
     sourceBadgeLabel,
     syncAccountModels,
-    refreshAccountModelCatalog,
     setAccountModelEnabled,
     statusLabel,
     testAllProviderAccounts,
@@ -41,13 +31,10 @@
     testProviderAccountModel,
     toggleAccountTestHistory,
     updateProviderAccount,
-    fingerprintProfiles,
-    loadFingerprintProfiles
   } from '#lib/admin-state.svelte.js';
 
   import AuthGate from '#lib/AuthGate.svelte';
   import { runModelTestsWithConcurrency } from '#lib/model-test-queue.js';
-  const DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY = 'codex_cli_default';
   let accountSearch = $state('');
   let accountStatusFilter = $state('all');
   let accountTypeFilter = $state('all');
@@ -56,12 +43,9 @@
   let accountPage = $state(1);
   let accountPageSize = $state(5);
   let addAccountModalOpen = $state(false);
-  /** @type {'oauth' | 'api_upstream'} */
-  let addAccountModalTab = $state('oauth');
-  let fingerprintProfilesRequested = $state(false);
   let appliedProviderAccountSearch = $state('');
   let editingProviderAccountId = $state(0);
-  let editingProviderAccountDraft = $state(/** @type {{ name: string, enabled: boolean, priority: number, loadFactor: number, maxConcurrentRequests: number, fingerprintProfileId: number, baseUrl: string, proxyUrl: string, apiKey: string, modelsText: string, modelItems: import('#lib/admin-state.svelte.js').AccountModel[], syncModelsOnSave: boolean } | null} */ (null));
+  let editingProviderAccountDraft = $state(/** @type {{ name: string, enabled: boolean, priority: number, loadFactor: number, maxConcurrentRequests: number, baseUrl: string, proxyUrl: string, apiKey: string, modelsText: string, modelItems: import('#lib/admin-state.svelte.js').AccountModel[], syncModelsOnSave: boolean } | null} */ (null));
   let editingProviderAccountError = $state('');
   let deletingProviderAccountId = $state(0);
   let modelTestAccountId = $state(0);
@@ -73,22 +57,14 @@
   /** @type {Record<string, { status: string, errorCode: string, httpStatus: number, latencyMs: number, message: string, checkedAt: string }>} */
   let modelTestRuns = $state({});
   let modelTestRunActive = $state(false);
-  let recoveryTestAccountId = $state(0);
   let providerMutationBusy = $state(false);
   let recoveryNotice = $state(/** @type {{ kind: 'success' | 'warning' | 'error', title: string, message: string } | null} */ (null));
 
-  const providerStateLabel = $derived(getProviderStateLabel());
   const editingProviderAccount = $derived(
     providerAccounts.items.find((account) => account.id === editingProviderAccountId) ?? null
   );
   const deletingProviderAccount = $derived(
     providerAccounts.items.find((account) => account.id === deletingProviderAccountId) ?? null
-  );
-  const defaultCodexFingerprintProfile = $derived(
-    fingerprintProfiles.items.find((profile) => profile.systemKey === DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY) ?? null
-  );
-  const oauthFingerprintProfiles = $derived(
-    fingerprintProfiles.items.filter((profile) => profile.systemKey !== DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY)
   );
   const modelTestAccount = $derived(
     providerAccounts.items.find((account) => account.id === modelTestAccountId) ?? null
@@ -130,18 +106,6 @@
     recoveryNotice = { kind: 'success', title, message };
   }
 
-  $effect(() => {
-    const defaultProfileID = Number(defaultCodexFingerprintProfile?.id ?? 0);
-    if (
-      defaultProfileID > 0 &&
-      editingProviderAccount &&
-      editingProviderAccountDraft &&
-      isCodexOAuthAccount(editingProviderAccount) &&
-      Number(editingProviderAccountDraft.fingerprintProfileId) === defaultProfileID
-    ) {
-      editingProviderAccountDraft.fingerprintProfileId = 0;
-    }
-  });
   const someFilteredModelTestsSelected = $derived(
     filteredSelectedModelTestCount > 0 && !allFilteredModelTestsSelected
   );
@@ -193,16 +157,14 @@
     if (!type || type === 'all') {
       if (status === 'disabled') { accountEnabledFilter = 'disabled'; accountStatusFilter = 'all'; }
       if (status === 'api_upstream') { accountTypeFilter = 'api_upstream'; accountStatusFilter = 'all'; }
-      if (status === 'codex_oauth') { accountTypeFilter = 'codex_oauth'; accountStatusFilter = 'all'; }
     }
-    if (['all', 'api_upstream', 'codex_oauth'].includes(type)) {
+    if (['all', 'api_upstream'].includes(type)) {
       accountTypeFilter = type;
     }
     if (['all', 'enabled', 'disabled'].includes(enabled)) {
       accountEnabledFilter = enabled;
     }
   }
-
 
   /**
    * @param {string | null | undefined} model
@@ -216,17 +178,12 @@
 
   $effect(() => {
     if (!session.authenticated) {
-      fingerprintProfilesRequested = false;
       appliedProviderAccountSearch = '';
       return;
     }
     if (appliedProviderAccountSearch !== page.url.search) {
       appliedProviderAccountSearch = page.url.search;
       applyProviderAccountURLFilters(page.url.search);
-    }
-    if (!fingerprintProfilesRequested) {
-      fingerprintProfilesRequested = true;
-      void loadFingerprintProfiles();
     }
   });
 
@@ -258,7 +215,6 @@
    */
   function accountMatchesTypeFilter(account, filter) {
     if (filter === 'api_upstream') return account.accountType === 'api_upstream';
-    if (filter === 'codex_oauth') return isCodexOAuthAccount(account);
     return true;
   }
 
@@ -296,7 +252,6 @@
     if (key === 'type') return accountTypeLabel(account);
     if (key === 'status') return statusLabel(providerAccountEffectiveStatus(account));
     if (key === 'enabled') return account.enabled ? 0 : 1;
-    if (key === 'refresh') return Date.parse(account.lastRefreshAt ?? '') || 0;
     if (key === 'used') return Date.parse(account.lastUsedAt ?? '') || 0;
     return '';
   }
@@ -334,37 +289,10 @@
   }
 
   /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
-  function isCodexOAuthAccount(account) {
-    return account.accountType === 'codex_oauth' || !account.accountType;
-  }
-
-  /** @param {import('#lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
-  function catalogStatusLabel(status) {
-    if (!status?.lastAttemptAt) return 'Not refreshed';
-    if (status.lastError) return `Failed at ${formatDate(status.lastFailureAt)}`;
-    if (status.source === 'cache') return `Cache hit at ${formatDate(status.lastSuccessAt)}`;
-    if (status.source === 'upstream') return `Upstream fetched at ${formatDate(status.lastSuccessAt)}`;
-    return 'Recorded';
-  }
-
-  /** @param {import('#lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
-  function catalogStatusDetail(status) {
-    if (!status?.lastAttemptAt) return 'No catalog refresh has been recorded for this account.';
-    const timings = [];
-    if (status.upstreamFetchMs != null) timings.push(`upstream ${status.upstreamFetchMs} ms`);
-    if (status.localApplyMs != null) timings.push(`apply ${status.localApplyMs} ms`);
-    return timings.length > 0 ? timings.join(' · ') : 'Timing not recorded';
-  }
-
-  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
-  function accountEmailLabel(account) {
-    if (!isCodexOAuthAccount(account)) return '';
-    return account.displayName?.includes('@') ? account.displayName : account.subject || '';
-  }
 
   /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function accountHoverDetail(account) {
-    return [accountLabel(account), accountEmailLabel(account)].filter(Boolean).join('\n');
+    return accountLabel(account);
   }
 
   /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
@@ -382,7 +310,7 @@
 
   function closeAccountEditor() {
     const modelState = editingProviderAccountId ? getAccountModelsState(editingProviderAccountId) : null;
-    if (providerMutationBusy || providerAccounts.saving || modelState?.saving || modelState?.syncing || modelState?.refreshingCatalog) return;
+    if (providerMutationBusy || providerAccounts.saving || modelState?.saving || modelState?.syncing) return;
     editingProviderAccountId = 0;
     editingProviderAccountDraft = null;
     editingProviderAccountError = '';
@@ -393,18 +321,12 @@
    * @param {ReturnType<typeof getAccountModelsState>} modelState
    */
   function createAccountDraft(account, modelState) {
-    const fingerprintProfileID = Number(account.fingerprintProfileId ?? 0);
-    const defaultProfileID = Number(defaultCodexFingerprintProfile?.id ?? 0);
     return {
       name: accountLabel(account),
       enabled: Boolean(account.enabled),
       priority: Number(account.priority ?? 0),
       loadFactor: Number(account.loadFactor || 1),
       maxConcurrentRequests: Number(account.maxConcurrentRequests || 0),
-      fingerprintProfileId:
-        isCodexOAuthAccount(account) && defaultProfileID > 0 && fingerprintProfileID === defaultProfileID
-          ? 0
-          : fingerprintProfileID,
       baseUrl: account.baseUrl || '',
       proxyUrl: account.proxyUrlSummary || '',
       apiKey: '',
@@ -412,19 +334,6 @@
       modelItems: modelState.items.map((item) => ({ ...item })),
       syncModelsOnSave: false
     };
-  }
-
-  /**
-   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
-   * @param {number} selectedProfileID
-   */
-  function resolveFingerprintProfileID(account, selectedProfileID) {
-    const profileID = Number(selectedProfileID) || 0;
-    if (profileID > 0) return profileID;
-    if (isCodexOAuthAccount(account)) {
-      return Number(defaultCodexFingerprintProfile?.id ?? 0) || null;
-    }
-    return null;
   }
 
   /** @param {number} accountId */
@@ -435,22 +344,10 @@
   }
 
   function addAccountBusy() {
-    return provider.connecting || providerOAuth.completing || apiUpstreamForm.submitting;
+    return apiUpstreamForm.submitting;
   }
 
   function resetAddAccountDraft() {
-    Object.assign(providerConnectForm, {
-      name: '',
-      priority: 100,
-      enabled: true,
-      fingerprintProfileId: '0'
-    });
-    Object.assign(providerOAuth, {
-      authorizationUrl: '',
-      callbackUrl: '',
-      completing: false,
-      copied: false
-    });
     Object.assign(apiUpstreamForm, {
       name: '',
       baseUrl: '',
@@ -459,18 +356,15 @@
       priority: 100,
       loadFactor: 1,
       enabled: true,
-      fingerprintProfileId: '0',
       modelsText: '',
       submitting: false,
       error: ''
     });
-    provider.error = '';
     providerAccounts.error = '';
   }
 
   function openAddAccountModal() {
     resetAddAccountDraft();
-    addAccountModalTab = 'oauth';
     addAccountModalOpen = true;
   }
 
@@ -483,32 +377,18 @@
   /** @param {SubmitEvent} event */
   async function saveAddAccount(event) {
     event.preventDefault();
-    if (addAccountModalTab === 'api_upstream') {
-      const name = apiUpstreamForm.name.trim() || 'API upstream account';
-      if (await createAPIUpstreamAccount()) {
-        showProviderSuccess('Provider account created', `${name} is ready to configure.`);
-      }
-      return;
+    const name = apiUpstreamForm.name.trim() || 'API upstream account';
+    if (await createAPIUpstreamAccount()) {
+      showProviderSuccess('Provider account created', `${name} is ready to configure.`);
     }
-    if (providerOAuth.authorizationUrl) {
-      if (await completeProviderCallback()) {
-        showProviderSuccess('Provider account connected', 'The Codex OAuth account is ready to use.');
-      }
-      return;
-    }
-    await connectProvider();
   }
 
   function addAccountSaveLabel() {
-    if (addAccountModalTab === 'api_upstream') return apiUpstreamForm.submitting ? 'Saving' : 'Save';
-    if (providerOAuth.authorizationUrl) return providerOAuth.completing ? 'Saving' : 'Save';
-    return provider.connecting ? 'Saving' : 'Save';
+    return apiUpstreamForm.submitting ? 'Saving' : 'Save';
   }
 
   function addAccountSaveDisabled() {
-    if (addAccountModalTab === 'api_upstream') return apiUpstreamForm.submitting;
-    if (providerOAuth.authorizationUrl) return providerOAuth.completing || !providerOAuth.callbackUrl.trim();
-    return provider.loading || !provider.data?.configured || provider.connecting;
+    return apiUpstreamForm.submitting;
   }
 
   async function saveEditingProviderAccount() {
@@ -544,7 +424,6 @@
         priority: Number(draft.priority),
         loadFactor: Number(draft.loadFactor),
         maxConcurrentRequests: Number(draft.maxConcurrentRequests),
-        fingerprintProfileId: resolveFingerprintProfileID(account, draft.fingerprintProfileId)
       }))) {
         if (session.authenticated) {
           editingProviderAccountError = providerAccounts.error || 'Account update failed';
@@ -610,18 +489,17 @@
 
   /**
    * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
-   * @param {'pause' | 'refresh' | 'reset'} action
+   * @param {'pause' | 'reset'} action
    */
   async function runProviderAccountAction(account, action) {
     if (providerMutationBusy || providerAccounts.saving) return;
     providerMutationBusy = true;
     try {
       if (action === 'pause') await pauseProviderAccount(account);
-      else if (action === 'refresh') await refreshProviderAccount(account);
       else await resetProviderAccountStatus(account);
 
       if (!session.authenticated || providerAccounts.error) return;
-      const actionLabel = action === 'pause' ? 'paused' : action === 'refresh' ? 'refreshed' : 'reset';
+      const actionLabel = action === 'pause' ? 'paused' : 'reset';
       showProviderSuccess('Provider account updated', `${accountLabel(account)} was ${actionLabel}.`);
     } finally {
       providerMutationBusy = false;
@@ -814,32 +692,6 @@
   }
 
   /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
-  async function testAccountRecovery(account) {
-    if (!isCodexOAuthAccount(account) || providerAccounts.saving || recoveryTestAccountId) return;
-    recoveryTestAccountId = account.id;
-    recoveryNotice = null;
-    const tested = await testProviderAccount(account);
-    if (providerAccounts.error || !tested) {
-      recoveryNotice = {
-        kind: 'error',
-        title: 'Recovery test failed',
-        message: providerAccounts.error || `${accountLabel(account)} could not be tested.`
-      };
-    } else if (tested.status === 'active') {
-      recoveryNotice = {
-        kind: 'success',
-        title: 'Recovery confirmed',
-        message: `${accountLabel(account)} is active and its local failure state was cleared.`
-      };
-    } else {
-      recoveryNotice = {
-        kind: 'warning',
-        title: 'Recovery not confirmed',
-        message: tested.statusReason || tested.lastError || `${accountLabel(account)} is still ${statusLabel(tested.status)}.`
-      };
-    }
-    recoveryTestAccountId = 0;
-  }
 
   /** @param {import('#lib/admin-state.svelte.js').AccountModel[]} models */
   function enabledAccountModelCount(models) {
@@ -897,22 +749,10 @@
   <header class="ui-page-header">
     <div class="ui-page-heading">
       <h1 class="ui-page-title">Provider accounts</h1>
-      <p class="ui-page-description">Codex OAuth and API upstream gateway exits. Last refresh: {formatDate(provider.data?.lastRefreshAt)}.</p>
+      <p class="ui-page-description">API Key upstream gateway exits.</p>
     </div>
     <div class="ui-page-actions">
-    <span
-class={[
-  'inline-flex items-center gap-2 text-xs font-medium capitalize',
-  provider.data?.connected
-    ? 'text-[#0a7a5e]'
-    : provider.data?.configured
-      ? 'text-[#3c3c3c]'
-      : 'text-red-700'
-]}
-    >
-      <span class={provider.data?.connected ? 'size-2 rounded-full bg-[#10a37f]' : 'size-2 rounded-full bg-amber-500'}></span>
-{provider.loading ? 'Checking' : providerStateLabel}
-    </span>
+
       <button
         class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white hover:bg-[#1f2933] disabled:cursor-not-allowed disabled:opacity-60"
         type="button"
@@ -969,122 +809,6 @@ class={[
           </button>
         </div>
 
-        <!-- Tabs -->
-        <div class="flex border-b border-[#ededed]">
-          <button
-            class="ui-button ui-button--md flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'oauth' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
-            type="button"
-            onclick={() => { addAccountModalTab = 'oauth'; }}
-          >
-            OAuth account
-          </button>
-          <button
-            class="ui-button ui-button--md flex-1 px-6 py-3 text-sm font-medium transition-colors {addAccountModalTab === 'api_upstream' ? 'border-b-2 border-[#10a37f] text-[#10a37f]' : 'text-[#6e6e6e] hover:text-[#3c3c3c]'}"
-            type="button"
-            onclick={() => { addAccountModalTab = 'api_upstream'; }}
-          >
-            API upstream
-          </button>
-        </div>
-
-        <!-- OAuth Tab -->
-        {#if addAccountModalTab === 'oauth'}
-          <div class="p-6">
-            <p class="text-sm text-[#6e6e6e]">Generate a Codex OAuth authorization link to connect a new account.</p>
-
-            <form
-              id="add-account-oauth-generate-form"
-              class="mt-4 grid gap-4"
-              onsubmit={saveAddAccount}
-            >
-              <div class="grid gap-4 sm:grid-cols-2">
-                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-                  Account name
-                  <input
-                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-                    type="text"
-                    placeholder="Work Codex"
-                    bind:value={providerConnectForm.name}
-                  />
-                </label>
-                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-                  Priority
-                  <input
-                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm tabular-nums text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-                    type="number"
-                    min="0"
-                    step="1"
-                    bind:value={providerConnectForm.priority}
-                  />
-                </label>
-              </div>
-              <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-                Fingerprint profile
-                <select
-                  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-                  bind:value={providerConnectForm.fingerprintProfileId}
-                >
-                  <option value="0">Default Codex CLI</option>
-                  {#each oauthFingerprintProfiles as fp}
-                    <option value={String(fp.id)}>{fp.name}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
-                <input
-                  class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
-                  type="checkbox"
-                  bind:checked={providerConnectForm.enabled}
-                />
-                Enable after login
-              </label>
-
-              <!-- Authorization URL (appears after generation) -->
-              {#if providerOAuth.authorizationUrl}
-                <div class="rounded-lg border border-[#cbe7dd] bg-[#e8f5f0] p-4">
-                  <div class="flex flex-wrap items-center justify-between gap-3">
-                    <p class="text-sm font-medium text-[#0a7a5e]">OAuth authorization link</p>
-                    <button
-                      class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#b7d9cd] bg-white px-3 py-1.5 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
-                      type="button"
-                      onclick={copyAuthorizationURL}
-                    >
-                      {providerOAuth.copied ? 'Copied' : 'Copy'}
-                    </button>
-                  </div>
-                  <code class="mt-3 block overflow-x-auto rounded-md bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] break-all">
-                    {providerOAuth.authorizationUrl}
-                  </code>
-                </div>
-              {/if}
-            </form>
-
-            <!-- Callback completion (appears after OAuth flow) -->
-            {#if providerOAuth.authorizationUrl}
-              <form
-                id="add-account-oauth-complete-form"
-                class="mt-4 grid gap-3"
-                onsubmit={saveAddAccount}
-              >
-                <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-                  Callback URL
-                  <input
-                    class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-6 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-                    type="url"
-                    placeholder="http://localhost:1455/auth/callback?code=...&state=..."
-                    bind:value={providerOAuth.callbackUrl}
-                    required
-                  />
-                </label>
-              </form>
-            {/if}
-            {#if provider.error}
-              <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{provider.error}</p>
-            {/if}
-          </div>
-
-        <!-- API Upstream Tab -->
-        {:else}
           <div class="p-6">
             <p class="text-sm text-[#6e6e6e]">Add an OpenAI-compatible upstream by API key and base URL.</p>
 
@@ -1165,19 +889,6 @@ class={[
               </div>
               <p class="text-xs text-[#6e6e6e] -mt-2">Within the same priority, higher values form a strict preference tier and are considered first; this is not a proportional weight.</p>
 
-              <label class="grid min-w-0 gap-1 text-sm font-medium text-[#3c3c3c]">
-                Fingerprint profile
-                <select
-                  class="w-full min-w-0 rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0]"
-                  bind:value={apiUpstreamForm.fingerprintProfileId}
-                >
-                  <option value="0">Default API upstream (pass-through)</option>
-                  {#each fingerprintProfiles.items as fp}
-                    <option value={String(fp.id)}>{fp.name}</option>
-                  {/each}
-                </select>
-              </label>
-
               <label class="inline-flex items-center gap-2 text-sm font-medium text-[#3c3c3c]">
                 <input
                   class="size-4 shrink-0 rounded border-[#e5e5e5] text-[#10a37f] focus:ring-[#10a37f]"
@@ -1203,7 +914,7 @@ class={[
               {/if}
             </form>
           </div>
-        {/if}
+
         <div class="flex items-center justify-end gap-3 border-t border-[#ededed] px-6 py-4">
           <button
             class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]"
@@ -1216,11 +927,7 @@ class={[
           <button
             class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="submit"
-            form={addAccountModalTab === 'api_upstream'
-              ? 'add-account-api-upstream-form'
-              : providerOAuth.authorizationUrl
-                ? 'add-account-oauth-complete-form'
-                : 'add-account-oauth-generate-form'}
+            form="add-account-api-upstream-form"
             disabled={addAccountSaveDisabled()}
           >
             {addAccountSaveLabel()}
@@ -1228,12 +935,6 @@ class={[
         </div>
       </div>
     </div>
-  {/if}
-
-  {#if provider.error && !addAccountModalOpen}
-    <p class="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-{provider.error}
-    </p>
   {/if}
 
   {#if providerAccounts.error}
@@ -1259,7 +960,6 @@ Type
   bind:value={accountTypeFilter}
 >
   <option value="all">All types</option>
-  <option value="codex_oauth">Codex OAuth</option>
   <option value="api_upstream">API upstream</option>
 </select>
     </label>
@@ -1314,11 +1014,6 @@ Enabled
         Enabled<span class="text-[11px]">{sortIndicator('enabled')}</span>
       </button>
     </th>
-    <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('refresh')}>
-      <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('refresh')}>
-        Last refresh<span class="text-[11px]">{sortIndicator('refresh')}</span>
-      </button>
-    </th>
     <th class="w-44 px-4 py-3 font-medium" aria-sort={providerAccountSortDirection('used')}>
       <button class="ui-button inline-flex items-center gap-1 text-left font-medium hover:text-[#0d0d0d]" type="button" onclick={() => setProviderAccountSort('used')}>
         Last used<span class="text-[11px]">{sortIndicator('used')}</span>
@@ -1330,15 +1025,15 @@ Enabled
 <tbody class="divide-y divide-[#ededed]">
   {#if providerAccounts.loading}
     <tr>
-      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="7">Loading provider accounts...</td>
+      <td class="ui-table-empty ui-table-empty--loading px-4 py-5 text-[#6e6e6e]" colspan="6">Loading provider accounts...</td>
     </tr>
   {:else if providerAccounts.items.length === 0}
     <tr>
-      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">No provider accounts connected yet.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="6">No provider accounts connected yet.</td>
     </tr>
   {:else if filteredProviderAccounts.length === 0}
     <tr>
-      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="7">No accounts match your search.</td>
+      <td class="ui-table-empty px-4 py-5 text-[#6e6e6e]" colspan="6">No accounts match your search.</td>
     </tr>
   {:else}
     {#each paginatedProviderAccounts as account}
@@ -1349,9 +1044,6 @@ Enabled
       <tr class="bg-white align-top">
         <td class="px-4 py-3 align-middle" data-label="Account" title={accountHoverDetail(account)}>
           <p class="max-w-[22rem] truncate font-medium text-[#0d0d0d]">{accountLabel(account)}</p>
-          {#if accountEmailLabel(account)}
-            <p class="mt-1 max-w-[22rem] truncate text-[#6e6e6e]">{accountEmailLabel(account)}</p>
-          {/if}
         </td>
         <td class="px-4 py-3 align-middle" data-label="Type">
           <span class="inline-flex whitespace-nowrap rounded-full bg-[#f5f5f5] px-2.5 py-1 text-xs font-medium text-[#3c3c3c]">
@@ -1390,23 +1082,10 @@ Enabled
             <span class="text-xs text-[#6e6e6e]">{account.enabled ? 'Enabled' : 'Disabled'}</span>
           </label>
         </td>
-        <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]" data-label="Last refresh">{formatDate(account.lastRefreshAt)}</td>
         <td class="whitespace-nowrap px-4 py-3 align-middle text-[#3c3c3c]" data-label="Last used">{formatDate(account.lastUsedAt)}</td>
         <td class="sticky right-0 bg-white px-3 py-3 align-middle shadow-[-8px_0_12px_rgba(255,255,255,0.85)]" data-label="Actions">
           <div class="relative flex justify-end gap-2 whitespace-nowrap">
-            {#if isCodexOAuthAccount(account)}
-              <button
-                class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-                type="button"
-                disabled={providerAccounts.saving || recoveryTestAccountId !== 0}
-                onclick={() => testAccountRecovery(account)}
-                title="Test recovery"
-                aria-label={`Test recovery for ${accountLabel(account)}`}
-              >
-                <RefreshCw class={recoveryTestAccountId === account.id ? 'size-4 animate-spin' : 'size-4'} aria-hidden="true" />
-                <span class="sr-only">Test recovery</span>
-              </button>
-            {/if}
+
             <button
               class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
               type="button"
@@ -1746,7 +1425,7 @@ Enabled
         <button
           class="ui-button ui-button--icon ui-button--secondary inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-[#e5e5e5] bg-white text-[#0d0d0d] hover:bg-[#f5f5f5]"
           type="button"
-          disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
+          disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing}
           onclick={closeAccountEditor}
           aria-label="Close edit account modal"
           title="Close"
@@ -1822,41 +1501,26 @@ Enabled
               />
               <span class="text-xs text-[#6e6e6e]">Active {account.currentConcurrentRequests || 0} / {concurrencyLimitLabel(account.effectiveMaxConcurrentRequests)}</span>
             </label>
-            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
-              Fingerprint profile
-              <select
-                class="w-full rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 text-sm text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5]"
-                disabled={providerAccounts.saving}
-                bind:value={draft.fingerprintProfileId}
-              >
-                <option value={0}>{account.accountType === 'api_upstream' ? 'Default API upstream (pass-through)' : 'Default Codex CLI'}</option>
-                {#each account.accountType === 'api_upstream' ? fingerprintProfiles.items : oauthFingerprintProfiles as fp}
-                  <option value={fp.id}>{fp.name}</option>
-                {/each}
-              </select>
-            </label>
+
           </div>
         </div>
         <div class="grid content-start gap-3">
           <h3 class="text-sm font-semibold text-[#0d0d0d]">Account actions</h3>
           <div class="flex flex-wrap gap-2">
             <a class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5]" href={`/request-logs?providerAccountId=${account.id}`}>Request logs</a>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => isCodexOAuthAccount(account) ? testAccountRecovery(account) : testProviderAccount(account)}>{isCodexOAuthAccount(account) ? 'Test recovery' : 'Test'}</button>
+            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => testProviderAccount(account)}>Test</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerAccounts.saving} onclick={() => toggleAccountTestHistory(account.id)}>History</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving} onclick={() => runProviderAccountAction(account, 'pause')}>Pause</button>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving || modelState.refreshingCatalog || !isCodexOAuthAccount(account)} onclick={() => runProviderAccountAction(account, 'refresh')}>Refresh credentials</button>
             <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={providerMutationBusy || providerAccounts.saving || (!account.rateLimitedUntil && !account.circuitOpenUntil && !account.lastError)} onclick={() => runProviderAccountAction(account, 'reset')}>Reset local status</button>
-            <button class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]" type="button" disabled={provider.connecting || providerAccounts.saving || !isCodexOAuthAccount(account)} onclick={() => connectProvider(account)}>Reauthorize</button>
           </div>
           <dl class="grid gap-2 text-xs text-[#6e6e6e]">
             <div><dt class="font-medium text-[#3c3c3c]">Type</dt><dd>{accountTypeLabel(account)}</dd></div>
-            <div><dt class="font-medium text-[#3c3c3c]">Token expiry</dt><dd>{formatDate(account.accessTokenExpiresAt)}</dd></div>
           </dl>
         </div>
       </div>
 
       <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
-        {#if account.accountType === 'api_upstream'}
+
           <div class="grid gap-2">
             <h3 class="text-sm font-semibold text-[#0d0d0d]">Upstream credential</h3>
             <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
@@ -1874,41 +1538,19 @@ Enabled
               </label>
             </div>
           </div>
-        {:else}
-          <div class="grid content-start gap-2">
-            <h3 class="text-sm font-semibold text-[#0d0d0d]">Proxy</h3>
-            <label class="grid gap-1 text-xs font-medium text-[#3c3c3c]">
-              Proxy URL
-              <input class="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1.5 font-mono text-[12px] text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]" name="proxyUrl" type="url" bind:value={draft.proxyUrl} placeholder="Leave blank to clear proxy" disabled={providerAccounts.saving} />
-            </label>
-          </div>
-        {/if}
+
         <div class="grid gap-2">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h3 class="text-sm font-semibold text-[#0d0d0d]">Models</h3>
             <div class="flex flex-wrap items-center gap-2">
-              {#if isCodexOAuthAccount(account)}
-                <button
-                  class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2.5 py-1.5 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
-                  type="button"
-                  disabled={providerMutationBusy || providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
-                  onclick={() => void refreshAccountModelCatalog(account.id)}
-                >{modelState.refreshingCatalog ? 'Refreshing catalog' : 'Refresh catalog'}</button>
-                {#if modelState.refreshingCatalog}
-                  <button
-                    class="ui-button ui-button--sm ui-button--secondary rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                    type="button"
-                    onclick={() => cancelAccountModelCatalogRefresh(account.id)}
-                  >Cancel</button>
-                {/if}
-              {/if}
+
               {#if account.accountType === 'api_upstream'}
                 <label class="inline-flex items-center gap-2 text-xs font-medium text-[#3c3c3c]">
                   <input
                     class="size-4 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f]"
                     type="checkbox"
                     bind:checked={draft.syncModelsOnSave}
-                    disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
+                    disabled={modelState.loading || modelState.saving || modelState.syncing}
                   />
                   Sync from upstream on Save
                 </label>
@@ -1923,7 +1565,7 @@ Enabled
               class="min-h-16 w-full resize-y rounded-lg border border-[#e5e5e5] bg-white px-3 py-2 font-mono text-[13px] leading-5 text-[#0d0d0d] outline-none focus:border-[#10a37f] focus:ring-2 focus:ring-[#e8f5f0] disabled:cursor-not-allowed disabled:bg-[#f5f5f5] disabled:text-[#9b9b9b]"
               placeholder={'gpt-4.1\ngpt-4.1-mini'}
               bind:value={draft.modelsText}
-              disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
+              disabled={modelState.loading || modelState.saving || modelState.syncing}
             ></textarea>
           </label>
           {#if draft.modelItems.length > 0}
@@ -1935,7 +1577,7 @@ Enabled
                       class="size-4 shrink-0 rounded border-[#d9d9d9] text-[#10a37f] focus:ring-[#10a37f] disabled:cursor-not-allowed disabled:opacity-60"
                       type="checkbox"
                       checked={configuredModel.enabled}
-                      disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog || isSyncedAccountModel(configuredModel)}
+                      disabled={modelState.loading || modelState.saving || modelState.syncing || isSyncedAccountModel(configuredModel)}
                       aria-label={`${configuredModel.enabled ? 'Disable' : 'Enable'} ${configuredModel.model}`}
                       onchange={(event) => {
                         draft.modelItems = setAccountModelEnabled(draft.modelItems, configuredModel.model, event.currentTarget.checked);
@@ -1950,7 +1592,7 @@ Enabled
                     <button
                       class="ui-button ui-button--sm ui-button--secondary rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:text-[#9b9b9b]"
                       type="button"
-                      disabled={modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
+                      disabled={modelState.loading || modelState.saving || modelState.syncing}
                       onclick={() => {
                         draft.modelItems = removeAccountModel(draft.modelItems, configuredModel.model);
                         draft.modelsText = accountModelsText(draft.modelItems);
@@ -1970,11 +1612,7 @@ Enabled
           {#if modelState.error}<p class="text-xs text-red-700">{modelState.error}</p>{/if}
           {#if modelState.syncMessage}<p class="text-xs text-[#0a7a5e]">{modelState.syncMessage}</p>{/if}
           {#if modelState.syncError}<p class="text-xs text-red-700">{modelState.syncError}</p>{/if}
-          {#if isCodexOAuthAccount(account)}
-            <p class="text-xs text-[#6e6e6e]" title={catalogStatusDetail(modelState.catalogStatus)}>Catalog: {catalogStatusLabel(modelState.catalogStatus)}</p>
-            {#if modelState.catalogRefreshMessage}<p class="text-xs text-[#0a7a5e]">{modelState.catalogRefreshMessage}</p>{/if}
-            {#if modelState.catalogRefreshError}<p class="text-xs text-red-700">{modelState.catalogRefreshError}</p>{/if}
-          {/if}
+
         </div>
       </div>
 
@@ -2030,7 +1668,7 @@ Enabled
           <button
             class="ui-button ui-button--sm ui-button--secondary rounded-lg border border-[#e5e5e5] bg-white px-4 py-2 text-sm font-medium text-[#0d0d0d] hover:bg-[#f5f5f5] disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
-            disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
+            disabled={providerMutationBusy || providerAccounts.saving || modelState.saving || modelState.syncing}
             onclick={closeAccountEditor}
           >
             Cancel
@@ -2038,7 +1676,7 @@ Enabled
           <button
             class="ui-button ui-button--sm ui-button--primary rounded-lg bg-[#0d0d0d] px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
             type="button"
-            disabled={providerMutationBusy || providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing || modelState.refreshingCatalog}
+            disabled={providerMutationBusy || providerAccounts.saving || modelState.loading || modelState.saving || modelState.syncing}
             onclick={saveEditingProviderAccount}
           >
             {providerMutationBusy || providerAccounts.saving || modelState.saving ? 'Saving' : 'Save'}

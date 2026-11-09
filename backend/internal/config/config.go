@@ -28,11 +28,6 @@ type Config struct {
 	EncryptionSecret                       string
 	EncryptionKeyID                        string
 	EncryptionKeyring                      *secret.Keyring
-	OpenAIOAuthClientID                    string
-	OpenAIOAuthSecret                      string
-	OpenAIOAuthRedirectURL                 string
-	OpenAIOAuthAuthURL                     string
-	OpenAIOAuthTokenURL                    string
 	OpenAIAPIBaseURL                       string
 	AllowHTTPAPIUpstreams                  bool
 	AllowUnsafeMultiInstance               bool
@@ -79,11 +74,6 @@ type Config struct {
 }
 
 const (
-	defaultOpenAIOAuthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-	defaultOpenAIOAuthRedirect = "http://localhost:1455/auth/callback"
-	defaultOpenAIOAuthAuthURL  = "https://auth.openai.com/oauth/authorize"
-	defaultOpenAIOAuthTokenURL = "https://auth.openai.com/oauth/token"
-
 	defaultProviderAccountAutoTestInterval    = 5 * time.Minute
 	minProviderAccountAutoTestInterval        = time.Minute
 	defaultRequestLogRetentionInterval        = 24 * time.Hour
@@ -122,7 +112,6 @@ var secretFileEnvironmentNames = [...]string{
 	"N2API_ADMIN_PASSWORD",
 	"N2API_ENCRYPTION_SECRET",
 	"N2API_ENCRYPTION_PREVIOUS_KEYS",
-	"OPENAI_OAUTH_CLIENT_SECRET",
 	"N2API_METRICS_BEARER_TOKEN",
 }
 
@@ -153,15 +142,10 @@ func Load(lookup func(string) string) (Config, error) {
 		AdminUsername: valueOrDefault(lookup("N2API_ADMIN_USERNAME"), "admin"),
 		AdminPassword: lookup("N2API_ADMIN_PASSWORD"),
 
-		DatabaseURL:            lookup("DATABASE_URL"),
-		EncryptionSecret:       lookup("N2API_ENCRYPTION_SECRET"),
-		EncryptionKeyID:        valueOrDefault(lookup("N2API_ENCRYPTION_KEY_ID"), secret.DefaultEncryptionKeyID),
-		OpenAIOAuthClientID:    valueOrDefault(lookup("OPENAI_OAUTH_CLIENT_ID"), defaultOpenAIOAuthClientID),
-		OpenAIOAuthSecret:      lookup("OPENAI_OAUTH_CLIENT_SECRET"),
-		OpenAIOAuthRedirectURL: valueOrDefault(lookup("OPENAI_OAUTH_REDIRECT_URL"), defaultOpenAIOAuthRedirect),
-		OpenAIOAuthAuthURL:     valueOrDefault(lookup("OPENAI_OAUTH_AUTH_URL"), defaultOpenAIOAuthAuthURL),
-		OpenAIOAuthTokenURL:    valueOrDefault(lookup("OPENAI_OAUTH_TOKEN_URL"), defaultOpenAIOAuthTokenURL),
-		OpenAIAPIBaseURL:       valueOrDefault(lookup("OPENAI_API_BASE_URL"), "https://api.openai.com"),
+		DatabaseURL:      lookup("DATABASE_URL"),
+		EncryptionSecret: lookup("N2API_ENCRYPTION_SECRET"),
+		EncryptionKeyID:  valueOrDefault(lookup("N2API_ENCRYPTION_KEY_ID"), secret.DefaultEncryptionKeyID),
+		OpenAIAPIBaseURL: valueOrDefault(lookup("OPENAI_API_BASE_URL"), "https://api.openai.com"),
 	}
 	allowHTTPAPIUpstreams, err := parseBool(lookup("N2API_ALLOW_HTTP_API_UPSTREAMS"), "N2API_ALLOW_HTTP_API_UPSTREAMS")
 	if err != nil {
@@ -735,16 +719,6 @@ func validateStartupSecurity(cfg *Config, acceptedRisks map[string]struct{}) err
 		return err
 	}
 	cfg.OpenAIAPIBaseURL = openAIAPIBaseURL
-	openAIOAuthAuthURL, err := validateUpstreamURL("OPENAI_OAUTH_AUTH_URL", cfg.OpenAIOAuthAuthURL, false)
-	if err != nil {
-		return err
-	}
-	cfg.OpenAIOAuthAuthURL = openAIOAuthAuthURL
-	openAIOAuthTokenURL, err := validateUpstreamURL("OPENAI_OAUTH_TOKEN_URL", cfg.OpenAIOAuthTokenURL, false)
-	if err != nil {
-		return err
-	}
-	cfg.OpenAIOAuthTokenURL = openAIOAuthTokenURL
 	return nil
 }
 

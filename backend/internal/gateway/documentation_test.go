@@ -441,27 +441,6 @@ func TestGatewayDocumentationMentionsAPIUpstreamCredentialRotation(t *testing.T)
 	}
 }
 
-func TestGatewayDocumentationMentionsProviderAccountFingerprintProfileCreation(t *testing.T) {
-	for _, path := range []string{"../../../docs/manual.md"} {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
-		}
-		text := string(content)
-		for _, want := range []string{
-			"Fingerprint profile",
-			"at creation time",
-			"pending OAuth state",
-			"callback completion",
-			"API upstream selections",
-		} {
-			if !strings.Contains(text, want) {
-				t.Fatalf("%s missing %q in provider account fingerprint profile creation documentation", path, want)
-			}
-		}
-	}
-}
-
 func TestGatewayDocumentationOmitsGlobalAllowedModelList(t *testing.T) {
 	for _, path := range []string{"../../../docs/manual.md"} {
 		content, err := os.ReadFile(path)
@@ -645,7 +624,6 @@ func TestGatewayDocumentationMentionsExplicitProviderAccountRecoveryPaths(t *tes
 	}
 	text := string(content)
 	for _, want := range []string{
-		"Reauthorization replaces the saved OAuth credentials but preserves current account health",
 		"Rotating the encrypted API key, base URL, or per-account outbound proxy URL preserves current account health",
 		"Reset is an explicit operator override",
 		"records both the status-reset audit event and a runtime recovery event",
@@ -748,25 +726,6 @@ func TestGatewayDocumentationMentionsSelectedProviderAccountTests(t *testing.T) 
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("%s missing %q in selected provider account test documentation", path, want)
-			}
-		}
-	}
-}
-
-func TestGatewayDocumentationMentionsProviderAccountBulkRefresh(t *testing.T) {
-	for _, path := range []string{"../../../docs/manual.md"} {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("ReadFile(%q) returned error: %v", path, err)
-		}
-		text := string(content)
-		for _, want := range []string{
-			"Refresh selected",
-			"selected provider accounts",
-			"force credential refresh",
-		} {
-			if !strings.Contains(text, want) {
-				t.Fatalf("%s missing %q in provider account bulk refresh documentation", path, want)
 			}
 		}
 	}

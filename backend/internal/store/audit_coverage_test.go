@@ -25,10 +25,6 @@ func TestAuditedStoreMutationsConsumeEventIntent(t *testing.T) {
 			"SaveUsagePricing":        "insertIntentSystemEvent", "SaveModelSettings": "insertIntentSystemEvent",
 			"SaveGatewaySettings": "insertIntentSystemEvent",
 		},
-		"fingerprint.go": {
-			"CreateFingerprintProfile": "insertIntentSystemEvent", "UpdateFingerprintProfile": "insertIntentSystemEvent",
-			"DeleteFingerprintProfile": "insertIntentSystemEvent",
-		},
 		"error_passthrough.go": {
 			"CreateErrorPassthroughRule": "insertIntentSystemEvent", "UpdateErrorPassthroughRule": "insertIntentSystemEvent",
 			"DeleteErrorPassthroughRule": "insertIntentSystemEvent",

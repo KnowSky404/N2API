@@ -3,7 +3,6 @@ package alerting
 import "github.com/KnowSky404/N2API/backend/internal/systemevent"
 
 const (
-	OAuthRefreshRepeatedTemplateKey       = "oauth-refresh-repeated-v1"
 	RequestLogRetentionFailedTemplateKey  = "request-log-retention-failed-v1"
 	ProviderAutoTestFailedTemplateKey     = "provider-auto-test-failed-v1"
 	ProviderAccountExpiredTemplateKey     = "provider-account-expired-v1"
@@ -16,20 +15,6 @@ const (
 )
 
 var ruleTemplateCatalog = []RuleTemplate{
-	{
-		Key:                      OAuthRefreshRepeatedTemplateKey,
-		Name:                     "Repeated OAuth refresh failures",
-		Enabled:                  false,
-		Category:                 systemevent.CategoryOAuth,
-		Severity:                 systemevent.SeverityWarning,
-		EventAction:              systemevent.ActionOAuthRefreshAutomaticFailed,
-		RecoveryAction:           systemevent.ActionOAuthRefreshAutomaticSucceeded,
-		AggregationCount:         3,
-		AggregationWindowSeconds: 900,
-		CooldownSeconds:          3600,
-		DeduplicationScope:       DeduplicationScopeTarget,
-		NotifyRecovery:           true,
-	},
 	{
 		Key:                RequestLogRetentionFailedTemplateKey,
 		Name:               "Request log retention failures",

@@ -9,7 +9,6 @@ const {
   changePassword,
   changePasswordForm,
   errorPassthroughRules,
-  fingerprintProfiles,
   health,
   loadAdminSessions,
   loadHealth,
@@ -169,7 +168,6 @@ test('protected request 401 clears authentication and all session state', async 
   providerAccountBulkModelsForm.text = 'gpt-5';
   Object.assign(changePasswordForm, { currentPassword: 'old-secret', newPassword: 'new-secret', submitting: true, error: 'stale', saved: true, revokedOtherSessions: 2 });
   Object.assign(opsMonitor, { loading: true, error: 'stale', stats: { total: 1 } });
-  Object.assign(fingerprintProfiles, { loading: true, error: 'stale', items: [{ id: 2 }], saving: true });
   Object.assign(errorPassthroughRules, { loading: true, error: 'stale', items: [{ id: 4 }], saving: true });
   globalThis.fetch = async () => Response.json({ error: 'unauthorized' }, { status: 401 });
 
@@ -190,7 +188,6 @@ test('protected request 401 clears authentication and all session state', async 
   assert.equal(opsMonitor.loading, false);
   assert.equal(opsMonitor.error, '');
   assert.equal(opsMonitor.stats, null);
-  assert.deepEqual(fingerprintProfiles, { loading: false, error: '', items: [], saving: false });
   assert.deepEqual(errorPassthroughRules, { loading: false, error: '', items: [], saving: false });
 });
 

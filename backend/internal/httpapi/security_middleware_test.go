@@ -11,7 +11,7 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/config"
 )
 
-func TestBrowserSecurityHeadersCoverStaticAdminOAuthAndHTTPS(t *testing.T) {
+func TestBrowserSecurityHeadersCoverStaticAdminAndHTTPS(t *testing.T) {
 	web := fstest.MapFS{
 		"index.html": {Data: []byte("<!doctype html><script>import('/app.js')</script><main>N2API</main>")},
 	}
@@ -26,14 +26,18 @@ func TestBrowserSecurityHeadersCoverStaticAdminOAuthAndHTTPS(t *testing.T) {
 		{name: "static HTTP", target: "http://n2api.example/", wantCSP: browserAppContentSecurityPolicy},
 		{name: "static HTTPS", target: "https://n2api.example/", wantHSTS: true, wantCSP: browserAppContentSecurityPolicy},
 		{name: "admin API", target: "http://n2api.example/api/admin/bootstrap", wantNoStore: true, wantCSP: browserDataContentSecurityPolicy},
-		{name: "OAuth callback", target: "http://n2api.example/oauth/openai/callback?code=secret", wantNoStore: true, wantCSP: browserOAuthContentSecurityPolicy},
+		{name: "retired OAuth callback", target: "http://n2api.example/oauth/openai/callback?code=secret", wantNoStore: true, wantCSP: browserDataContentSecurityPolicy},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			server.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tt.target, nil))
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
+			wantStatus := http.StatusOK
+			if strings.HasPrefix(tt.target, "http://n2api.example/oauth/") {
+				wantStatus = http.StatusNotFound
+			}
+			if recorder.Code != wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", recorder.Code, recorder.Body.String(), wantStatus)
 			}
 			assertBrowserSecurityHeaders(t, recorder.Header(), tt.wantCSP)
 			if got := recorder.Header().Get("Cache-Control"); (got == "no-store") != tt.wantNoStore {

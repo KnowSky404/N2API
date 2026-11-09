@@ -8,12 +8,13 @@ import (
 const ConfigurationRedactedValue = "[redacted]"
 
 type ConfigurationSnapshot struct {
-	RoutingPools          []ConfigurationRoutingPool          `json:"routingPools"`
-	APIKeyTemplates       []ConfigurationAPIKeyTemplate       `json:"apiKeyTemplates"`
-	ProviderAccounts      []ConfigurationProviderAccount      `json:"providerAccounts"`
-	ModelSettings         ModelSettings                       `json:"modelSettings"`
-	UsagePricing          UsagePricing                        `json:"usagePricing"`
-	GatewaySettings       GatewaySettings                     `json:"gatewaySettings"`
+	RoutingPools     []ConfigurationRoutingPool     `json:"routingPools"`
+	APIKeyTemplates  []ConfigurationAPIKeyTemplate  `json:"apiKeyTemplates"`
+	ProviderAccounts []ConfigurationProviderAccount `json:"providerAccounts"`
+	ModelSettings    ModelSettings                  `json:"modelSettings"`
+	UsagePricing     UsagePricing                   `json:"usagePricing"`
+	GatewaySettings  GatewaySettings                `json:"gatewaySettings"`
+	// FingerprintProfiles preserves retired profile data for backup compatibility.
 	FingerprintProfiles   []ConfigurationFingerprintProfile   `json:"fingerprintProfiles"`
 	ErrorPassthroughRules []ConfigurationErrorPassthroughRule `json:"errorPassthroughRules"`
 	AlertActions          []ConfigurationAlertAction          `json:"alertActions"`

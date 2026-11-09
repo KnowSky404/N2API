@@ -466,10 +466,6 @@ type Repository interface {
 	GetOpsAccountHealth(ctx context.Context, since time.Time) (OpsAccountHealth, error)
 	ListOpsAccountTests(ctx context.Context, since time.Time, limit int) ([]OpsAccountTest, error)
 	GetOpsCostBreakdown(ctx context.Context, since time.Time) (OpsCostBreakdown, error)
-	ListFingerprintProfiles(ctx context.Context) ([]FingerprintProfile, error)
-	CreateFingerprintProfile(ctx context.Context, input FingerprintProfileInput) (FingerprintProfile, error)
-	UpdateFingerprintProfile(ctx context.Context, id int64, input FingerprintProfileInput) (FingerprintProfile, error)
-	DeleteFingerprintProfile(ctx context.Context, id int64) error
 	ListErrorPassthroughRules(ctx context.Context) ([]ErrorPassthroughRule, error)
 	CreateErrorPassthroughRule(ctx context.Context, input ErrorPassthroughRuleInput) (ErrorPassthroughRule, error)
 	UpdateErrorPassthroughRule(ctx context.Context, id int64, input ErrorPassthroughRuleInput) (ErrorPassthroughRule, error)
@@ -1823,42 +1819,9 @@ func validOpsInterval(interval string) bool {
 	return false
 }
 
-func (s *Service) ListFingerprintProfiles(ctx context.Context) ([]FingerprintProfile, error) {
-	return s.repo.ListFingerprintProfiles(ctx)
-}
 
-func (s *Service) CreateFingerprintProfile(ctx context.Context, input FingerprintProfileInput) (FingerprintProfile, error) {
-	if strings.TrimSpace(input.Name) == "" {
-		return FingerprintProfile{}, ErrInvalidInput
-	}
-	if err := input.Normalize(); err != nil {
-		return FingerprintProfile{}, err
-	}
-	ctx = withAuditIntent(ctx, systemevent.ActionFingerprintProfileCreated, "fingerprint_profile", "", input.Name, nil)
-	return s.repo.CreateFingerprintProfile(ctx, input)
-}
 
-func (s *Service) UpdateFingerprintProfile(ctx context.Context, id int64, input FingerprintProfileInput) (FingerprintProfile, error) {
-	if id <= 0 {
-		return FingerprintProfile{}, ErrInvalidInput
-	}
-	if strings.TrimSpace(input.Name) == "" {
-		return FingerprintProfile{}, ErrInvalidInput
-	}
-	if err := input.Normalize(); err != nil {
-		return FingerprintProfile{}, err
-	}
-	ctx = withAuditIntent(ctx, systemevent.ActionFingerprintProfileUpdated, "fingerprint_profile", auditID(id), input.Name, changedFields("name", "description", "user_agent", "tls_fingerprint", "headers", "enabled"))
-	return s.repo.UpdateFingerprintProfile(ctx, id, input)
-}
 
-func (s *Service) DeleteFingerprintProfile(ctx context.Context, id int64) error {
-	if id <= 0 {
-		return ErrInvalidInput
-	}
-	ctx = withAuditIntent(ctx, systemevent.ActionFingerprintProfileDeleted, "fingerprint_profile", auditID(id), "", nil)
-	return s.repo.DeleteFingerprintProfile(ctx, id)
-}
 
 func (s *Service) ListErrorPassthroughRules(ctx context.Context) ([]ErrorPassthroughRule, error) {
 	return s.repo.ListErrorPassthroughRules(ctx)

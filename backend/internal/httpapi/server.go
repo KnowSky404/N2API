@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -99,10 +98,6 @@ type AdminService interface {
 	GetOpsAccountHealth(ctx context.Context, since time.Time) (admin.OpsAccountHealth, error)
 	ListOpsAccountTests(ctx context.Context, since time.Time, limit int) ([]admin.OpsAccountTest, error)
 	GetOpsCostBreakdown(ctx context.Context, since time.Time) (admin.OpsCostBreakdown, error)
-	ListFingerprintProfiles(ctx context.Context) ([]admin.FingerprintProfile, error)
-	CreateFingerprintProfile(ctx context.Context, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
-	UpdateFingerprintProfile(ctx context.Context, id int64, input admin.FingerprintProfileInput) (admin.FingerprintProfile, error)
-	DeleteFingerprintProfile(ctx context.Context, id int64) error
 	ListErrorPassthroughRules(ctx context.Context) ([]admin.ErrorPassthroughRule, error)
 	CreateErrorPassthroughRule(ctx context.Context, input admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error)
 	UpdateErrorPassthroughRule(ctx context.Context, id int64, input admin.ErrorPassthroughRuleInput) (admin.ErrorPassthroughRule, error)
@@ -111,32 +106,24 @@ type AdminService interface {
 }
 
 type ProviderService interface {
-	Status(ctx context.Context) (provider.Status, error)
 	ListAccounts(ctx context.Context) ([]provider.Account, error)
 	CreateAPIUpstreamAccount(ctx context.Context, input provider.APIUpstreamInput) (provider.Account, error)
-	StartConnect(ctx context.Context, options provider.ConnectOptions) (provider.ConnectResult, error)
-	CompleteCallback(ctx context.Context, code, state string) (provider.Account, error)
 	UpdateAccount(ctx context.Context, id int64, update provider.AccountUpdate) (provider.Account, error)
 	ListAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, error)
 	ListAccountModelsForAccounts(ctx context.Context, accountIDs []int64) (map[int64][]provider.AccountModel, error)
 	ReplaceAccountModels(ctx context.Context, accountID int64, models []provider.AccountModelInput) ([]provider.AccountModel, error)
 	SyncUpstreamAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
-	SyncOAuthAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
-	RefreshOAuthAccountModels(ctx context.Context, accountID int64) ([]provider.AccountModel, provider.AccountModelSyncSummary, error)
-	OAuthModelCatalogStatus(ctx context.Context, accountID int64) (provider.OAuthModelCatalogStatus, error)
 	TestAccountModel(ctx context.Context, accountID int64, model string) (provider.AccountModelTestResult, error)
 	PreviewAccountSelection(ctx context.Context, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPool(ctx context.Context, routingPoolID int64, model, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionForEndpoint(ctx context.Context, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
 	PreviewAccountSelectionInRoutingPoolForEndpoint(ctx context.Context, routingPoolID int64, model, endpoint, sessionID string, excludedAccountIDs ...int64) (provider.SelectionPreview, error)
-	RefreshAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccount(ctx context.Context, id int64) (provider.Account, error)
 	TestAccounts(ctx context.Context) ([]provider.Account, error)
 	ListAccountTestResults(ctx context.Context, accountID int64, limit int) ([]provider.AccountTestResult, error)
 	PauseAccountScheduling(ctx context.Context, id int64, duration time.Duration) (provider.Account, error)
 	ResetAccountStatus(ctx context.Context, id int64) (provider.Account, error)
 	DisconnectAccount(ctx context.Context, id int64) error
-	Disconnect(ctx context.Context) error
 }
 
 type ProviderAccountAutoTestStatusSource interface {
@@ -1435,77 +1422,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		writeJSON(w, http.StatusOK, breakdown)
 	}))
 
-	mux.HandleFunc("GET /api/admin/fingerprint-profiles", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		profiles, err := admins.ListFingerprintProfiles(r.Context())
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string][]admin.FingerprintProfile{"profiles": profiles})
-	}))
-
-	mux.HandleFunc("POST /api/admin/fingerprint-profiles", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		var req admin.FingerprintProfileInput
-		if err := decodeJSON(w, r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request")
-			return
-		}
-		profile, err := admins.CreateFingerprintProfile(r.Context(), req)
-		if err != nil {
-			if errors.Is(err, admin.ErrInvalidInput) {
-				writeError(w, http.StatusBadRequest, "invalid_input")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		writeJSON(w, http.StatusCreated, map[string]admin.FingerprintProfile{"profile": profile})
-	}))
-
-	mux.HandleFunc("PATCH /api/admin/fingerprint-profiles/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		id, err := parsePositivePathID(r, "id")
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request")
-			return
-		}
-		var req admin.FingerprintProfileInput
-		if err := decodeJSON(w, r, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request")
-			return
-		}
-		profile, err := admins.UpdateFingerprintProfile(r.Context(), id, req)
-		if err != nil {
-			if errors.Is(err, admin.ErrInvalidInput) {
-				writeError(w, http.StatusBadRequest, "invalid_input")
-				return
-			}
-			if errors.Is(err, admin.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "not_found")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]admin.FingerprintProfile{"profile": profile})
-	}))
-
-	mux.HandleFunc("DELETE /api/admin/fingerprint-profiles/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		id, err := parsePositivePathID(r, "id")
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request")
-			return
-		}
-		if err := admins.DeleteFingerprintProfile(r.Context(), id); err != nil {
-			if errors.Is(err, admin.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "not_found")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
 	mux.HandleFunc("GET /api/admin/error-passthrough-rules", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		rules, err := admins.ListErrorPassthroughRules(r.Context())
 		if err != nil {
@@ -1639,34 +1555,28 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 			return
 		}
 		var req struct {
-			Name                 string   `json:"name"`
-			BaseURL              string   `json:"baseUrl"`
-			APIKey               string   `json:"apiKey"`
-			ProxyURL             string   `json:"proxyUrl"`
-			Enabled              *bool    `json:"enabled"`
-			Priority             int      `json:"priority"`
-			LoadFactor           int      `json:"loadFactor"`
-			FingerprintProfileID *int64   `json:"fingerprintProfileId"`
-			Models               []string `json:"models"`
+			Name       string   `json:"name"`
+			BaseURL    string   `json:"baseUrl"`
+			APIKey     string   `json:"apiKey"`
+			ProxyURL   string   `json:"proxyUrl"`
+			Enabled    *bool    `json:"enabled"`
+			Priority   int      `json:"priority"`
+			LoadFactor int      `json:"loadFactor"`
+			Models     []string `json:"models"`
 		}
 		if err := decodeJSON(w, r, &req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request")
 			return
 		}
-		fingerprintProfileID := req.FingerprintProfileID
-		if fingerprintProfileID != nil && *fingerprintProfileID == 0 {
-			fingerprintProfileID = nil
-		}
 		account, err := providers.CreateAPIUpstreamAccount(r.Context(), provider.APIUpstreamInput{
-			Name:                 req.Name,
-			BaseURL:              req.BaseURL,
-			APIKey:               req.APIKey,
-			ProxyURL:             req.ProxyURL,
-			Enabled:              req.Enabled,
-			Priority:             req.Priority,
-			LoadFactor:           req.LoadFactor,
-			FingerprintProfileID: fingerprintProfileID,
-			Models:               req.Models,
+			Name:       req.Name,
+			BaseURL:    req.BaseURL,
+			APIKey:     req.APIKey,
+			ProxyURL:   req.ProxyURL,
+			Enabled:    req.Enabled,
+			Priority:   req.Priority,
+			LoadFactor: req.LoadFactor,
+			Models:     req.Models,
 		})
 		if err != nil {
 			writeProviderAccountError(w, err)
@@ -1687,10 +1597,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleBulkTestProviderAccounts(w, r, providers, systemEvents)
 	}))
 
-	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleBulkRefreshProviderAccounts(w, r, providers, systemEvents)
-	}))
-
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleBulkDisconnectProviderAccounts(w, r, providers, systemEvents)
 	}))
@@ -1705,18 +1611,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/bulk-models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleBulkReplaceProviderAccountModels(w, r, providers, systemEvents)
-	}))
-
-	mux.HandleFunc("GET /api/admin/provider-accounts/codex-oauth/status", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleProviderStatus(w, r, providers)
-	}))
-
-	mux.HandleFunc("POST /api/admin/provider-accounts/codex-oauth/connect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleProviderConnect(w, r, providers)
-	}))
-
-	mux.HandleFunc("POST /api/admin/provider-accounts/codex-oauth/callback", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleProviderCallback(w, r, providers)
 	}))
 
 	mux.HandleFunc("PATCH /api/admin/provider-accounts/{id}", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -1743,16 +1637,8 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleSyncProviderAccountModels(w, r, providers)
 	}))
 
-	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/models/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleRefreshProviderAccountModels(w, r, providers)
-	}))
-
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/model-tests", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleTestProviderAccountModel(w, r, providers)
-	}))
-
-	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleRefreshProviderAccount(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/provider-accounts/{id}/test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -1771,30 +1657,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		handleResetProviderAccountStatus(w, r, providers)
 	}))
 
-	mux.HandleFunc("GET /api/admin/providers/openai", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleProviderStatus(w, r, providers)
-	}))
-
-	mux.HandleFunc("POST /api/admin/providers/openai/connect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleProviderConnect(w, r, providers)
-	}))
-
-	mux.HandleFunc("POST /api/admin/providers/openai/callback", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleProviderCallback(w, r, providers)
-	}))
-
-	mux.HandleFunc("POST /api/admin/providers/openai/disconnect", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		if providers == nil {
-			writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-			return
-		}
-		if err := providers.Disconnect(r.Context()); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error")
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
 	mux.HandleFunc("GET /api/admin/providers/openai/accounts", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleListProviderAccounts(w, r, admins, providers, accountConcurrencySource)
 	}))
@@ -1809,10 +1671,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 
 	mux.HandleFunc("PUT /api/admin/providers/openai/accounts/{id}/models", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
 		handleReplaceProviderAccountModels(w, r, providers)
-	}))
-
-	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/refresh", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
-		handleRefreshProviderAccount(w, r, providers)
 	}))
 
 	mux.HandleFunc("POST /api/admin/providers/openai/accounts/{id}/test", requireAdmin(func(w http.ResponseWriter, r *http.Request, _ admin.Admin) {
@@ -1857,10 +1715,6 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	mux.HandleFunc("GET /oauth/openai/callback", func(w http.ResponseWriter, r *http.Request) {
-		writeManualOAuthCallbackPage(w, r)
-	})
-
 	if gateway != nil {
 		mux.Handle("/v1/", gateway)
 	}
@@ -1870,6 +1724,10 @@ func NewServer(cfg config.Config, health HealthChecker, admins AdminService, pro
 	})
 
 	mux.HandleFunc("/api/admin/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found")
+	})
+
+	mux.HandleFunc("/oauth/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 	})
 
@@ -1934,12 +1792,6 @@ func providerAccountErrorResponse(err error) (int, string) {
 	}
 	if errors.Is(err, provider.ErrNotConnected) || errors.Is(err, admin.ErrNotFound) {
 		return http.StatusNotFound, "not_found"
-	}
-	if errors.Is(err, provider.ErrOAuthModelCatalogBusy) {
-		return http.StatusTooManyRequests, "catalog_refresh_busy"
-	}
-	if errors.Is(err, provider.ErrOAuthModelCatalogStale) {
-		return http.StatusConflict, "catalog_refresh_superseded"
 	}
 	return http.StatusInternalServerError, "internal_error"
 }
@@ -2268,79 +2120,6 @@ func parseExcludedAccountIDs(raw string) ([]int64, error) {
 	return ids, nil
 }
 
-func handleProviderStatus(w http.ResponseWriter, r *http.Request, providers ProviderService) {
-	if providers == nil {
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-		return
-	}
-	status, err := providers.Status(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	writeJSON(w, http.StatusOK, status)
-}
-
-func handleProviderConnect(w http.ResponseWriter, r *http.Request, providers ProviderService) {
-	if providers == nil {
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-		return
-	}
-	options, err := decodeConnectOptions(w, r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request")
-		return
-	}
-	result, err := providers.StartConnect(r.Context(), options)
-	if err != nil {
-		if errors.Is(err, provider.ErrNotConfigured) {
-			writeError(w, http.StatusConflict, "provider_not_configured")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"authorizationUrl": result.AuthorizationURL})
-}
-
-func handleProviderCallback(w http.ResponseWriter, r *http.Request, providers ProviderService) {
-	if providers == nil {
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-		return
-	}
-	code, state, err := decodeCallbackURL(w, r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request")
-		return
-	}
-	account, err := providers.CompleteCallback(r.Context(), code, state)
-	if err != nil {
-		if errors.Is(err, provider.ErrInvalidState) {
-			writeError(w, http.StatusBadRequest, "invalid_oauth_callback")
-			return
-		}
-		if errors.Is(err, provider.ErrNotConfigured) {
-			writeError(w, http.StatusConflict, "provider_not_configured")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	models, summary, err := providers.SyncOAuthAccountModels(r.Context(), account.ID)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error":   "oauth_model_sync_failed",
-			"account": account,
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"account": account,
-		"models":  models,
-		"synced":  summary,
-	})
-}
-
 func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
@@ -2361,7 +2140,6 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		BaseURL               *string `json:"baseUrl"`
 		APIKey                *string `json:"apiKey"`
 		ProxyURL              *string `json:"proxyUrl"`
-		FingerprintProfileID  *int64  `json:"fingerprintProfileId"`
 	}
 	body, err := readJSONBody(w, r)
 	if err != nil {
@@ -2372,27 +2150,20 @@ func handlePatchProviderAccount(w http.ResponseWriter, r *http.Request, provider
 		writeError(w, http.StatusBadRequest, "bad_request")
 		return
 	}
-	fingerprintProfileIDSet, err := jsonFieldPresent(body, "fingerprintProfileId")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request")
-		return
-	}
-	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil && req.ProxyURL == nil && !fingerprintProfileIDSet {
+	if req.Enabled == nil && req.Priority == nil && req.LoadFactor == nil && req.MaxConcurrentRequests == nil && req.Name == nil && req.BaseURL == nil && req.APIKey == nil && req.ProxyURL == nil {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
 
 	account, err := providers.UpdateAccount(r.Context(), id, provider.AccountUpdate{
-		Enabled:                 req.Enabled,
-		Priority:                req.Priority,
-		LoadFactor:              req.LoadFactor,
-		MaxConcurrentRequests:   req.MaxConcurrentRequests,
-		Name:                    req.Name,
-		APIUpstreamBaseURL:      req.BaseURL,
-		APIUpstreamAPIKey:       req.APIKey,
-		ProxyURL:                req.ProxyURL,
-		FingerprintProfileIDSet: fingerprintProfileIDSet,
-		FingerprintProfileID:    req.FingerprintProfileID,
+		Enabled:               req.Enabled,
+		Priority:              req.Priority,
+		LoadFactor:            req.LoadFactor,
+		MaxConcurrentRequests: req.MaxConcurrentRequests,
+		Name:                  req.Name,
+		APIUpstreamBaseURL:    req.BaseURL,
+		APIUpstreamAPIKey:     req.APIKey,
+		ProxyURL:              req.ProxyURL,
 	})
 	if err != nil {
 		writeProviderAccountError(w, err)
@@ -2511,43 +2282,6 @@ func parseBulkProviderAccountIDs(w http.ResponseWriter, ids []int64) ([]int64, b
 		accountIDs = append(accountIDs, id)
 	}
 	return accountIDs, true
-}
-
-func handleBulkRefreshProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
-	if providers == nil {
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-		return
-	}
-	var req struct {
-		AccountIDs []int64 `json:"accountIds"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request")
-		return
-	}
-	accountIDs, ok := parseBulkProviderAccountIDs(w, req.AccountIDs)
-	if !ok {
-		return
-	}
-
-	accounts := make([]provider.Account, 0, len(accountIDs))
-	audit := newProviderBatchAudit(systemevent.ActionProviderAccountBatchRefreshed, accountIDs)
-	started := time.Now()
-	targetContext := audit.targetContext(r.Context())
-	for _, id := range accountIDs {
-		account, err := providers.RefreshAccount(targetContext, id)
-		if err != nil {
-			statusCode, errorCode := providerAccountErrorResponse(err)
-			audit.failed(id, errorCode)
-			audit.record(r.Context(), recorder, statusCode, time.Since(started))
-			writeProviderAccountError(w, err)
-			return
-		}
-		audit.succeeded(id)
-		accounts = append(accounts, account)
-	}
-	audit.record(r.Context(), recorder, http.StatusOK, time.Since(started))
-	writeJSON(w, http.StatusOK, map[string][]provider.Account{"accounts": accounts})
 }
 
 func handleBulkDisconnectProviderAccounts(w http.ResponseWriter, r *http.Request, providers ProviderService, recorder SystemEventRecorder) {
@@ -2745,9 +2479,6 @@ func handleListProviderAccountModels(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 	response := map[string]any{"models": models}
-	if status, statusErr := providers.OAuthModelCatalogStatus(r.Context(), id); statusErr == nil {
-		response["catalog"] = status
-	}
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -2797,29 +2528,6 @@ func handleSyncProviderAccountModels(w http.ResponseWriter, r *http.Request, pro
 	writeJSON(w, http.StatusOK, map[string]any{"models": models, "synced": summary})
 }
 
-func handleRefreshProviderAccountModels(w http.ResponseWriter, r *http.Request, providers ProviderService) {
-	if providers == nil {
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-		return
-	}
-	id, err := parsePositivePathID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request")
-		return
-	}
-
-	models, summary, err := providers.RefreshOAuthAccountModels(r.Context(), id)
-	if err != nil {
-		writeProviderAccountError(w, err)
-		return
-	}
-	response := map[string]any{"models": models, "synced": summary}
-	if status, statusErr := providers.OAuthModelCatalogStatus(r.Context(), id); statusErr == nil {
-		response["catalog"] = status
-	}
-	writeJSON(w, http.StatusOK, response)
-}
-
 func handleTestProviderAccountModel(w http.ResponseWriter, r *http.Request, providers ProviderService) {
 	if providers == nil {
 		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
@@ -2843,33 +2551,6 @@ func handleTestProviderAccountModel(w http.ResponseWriter, r *http.Request, prov
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]provider.AccountModelTestResult{"result": result})
-}
-
-func handleRefreshProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
-	if providers == nil {
-		writeError(w, http.StatusServiceUnavailable, "service_unavailable")
-		return
-	}
-	id, err := parsePositivePathID(r, "id")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request")
-		return
-	}
-
-	account, err := providers.RefreshAccount(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, provider.ErrInvalidInput) {
-			writeError(w, http.StatusBadRequest, "invalid_input")
-			return
-		}
-		if errors.Is(err, provider.ErrNotConnected) {
-			writeError(w, http.StatusNotFound, "not_found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
 }
 
 func handleTestProviderAccount(w http.ResponseWriter, r *http.Request, providers ProviderService) {
@@ -2975,41 +2656,6 @@ func handleResetProviderAccountStatus(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]provider.Account{"account": account})
-}
-
-func writeManualOAuthCallbackPage(w http.ResponseWriter, r *http.Request) {
-	callbackURL := absoluteRequestURL(r)
-	escapedURL := html.EscapeString(callbackURL)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>N2API OAuth Callback</title>
-  <style>
-    body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fafafa; color: #0d0d0d; }
-    main { max-width: 760px; margin: 10vh auto; padding: 0 24px; }
-    code { display: block; margin-top: 16px; padding: 14px; overflow-x: auto; border: 1px solid #e5e5e5; border-radius: 8px; background: #fff; font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>OAuth callback received</h1>
-    <p>Copy this callback URL into the N2API admin provider form to complete the account connection.</p>
-    <code>`+escapedURL+`</code>
-  </main>
-</body>
-</html>`)
-}
-
-func absoluteRequestURL(r *http.Request) string {
-	info := requestInfoForRequest(r)
-	if info.Host == "" {
-		return r.URL.RequestURI()
-	}
-	return info.Scheme + "://" + info.Host + r.URL.RequestURI()
 }
 
 func modelRoutingStatus(ctx context.Context, admins AdminService, providers ProviderService) (admin.ModelRoutingStatus, error) {
@@ -3181,66 +2827,6 @@ func normalizedProviderAccountLoadFactor(value int) int {
 		return 1
 	}
 	return value
-}
-
-func decodeCallbackURL(w http.ResponseWriter, r *http.Request) (string, string, error) {
-	var req struct {
-		CallbackURL string `json:"callbackUrl"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		return "", "", err
-	}
-	parsed, err := url.Parse(strings.TrimSpace(req.CallbackURL))
-	if err != nil {
-		return "", "", err
-	}
-	code := strings.TrimSpace(parsed.Query().Get("code"))
-	state := strings.TrimSpace(parsed.Query().Get("state"))
-	if code == "" || state == "" {
-		return "", "", provider.ErrInvalidState
-	}
-	return code, state, nil
-}
-
-func decodeConnectOptions(w http.ResponseWriter, r *http.Request) (provider.ConnectOptions, error) {
-	options := provider.ConnectOptions{
-		RedirectAfter: "/",
-		Fingerprint: provider.Fingerprint{
-			UserAgent: strings.TrimSpace(r.UserAgent()),
-			IP:        requestInfoForRequest(r).ClientIP,
-		},
-	}
-	if r.Body == nil {
-		return options, nil
-	}
-	if r.ContentLength == 0 {
-		return options, nil
-	}
-	var req struct {
-		RedirectAfter        string `json:"redirectAfter"`
-		Name                 string `json:"name"`
-		Priority             int    `json:"priority"`
-		Enabled              *bool  `json:"enabled"`
-		TargetAccountID      int64  `json:"targetAccountId"`
-		FingerprintProfileID *int64 `json:"fingerprintProfileId"`
-		Fingerprint          string `json:"fingerprint"`
-	}
-	if err := decodeJSON(w, r, &req); err != nil {
-		return provider.ConnectOptions{}, err
-	}
-	if strings.TrimSpace(req.RedirectAfter) != "" {
-		options.RedirectAfter = strings.TrimSpace(req.RedirectAfter)
-	}
-	options.Name = strings.TrimSpace(req.Name)
-	options.Priority = req.Priority
-	options.Enabled = req.Enabled
-	options.TargetAccountID = req.TargetAccountID
-	options.FingerprintProfileID = req.FingerprintProfileID
-	if options.FingerprintProfileID != nil && *options.FingerprintProfileID == 0 {
-		options.FingerprintProfileID = nil
-	}
-	options.Fingerprint.Value = strings.TrimSpace(req.Fingerprint)
-	return options, nil
 }
 
 func parseServerOptions(options ...any) (http.Handler, fs.FS, ProviderAccountAutoTestStatusSource, buildinfo.Info) {
@@ -3454,15 +3040,6 @@ func decodeJSONBytes(body []byte, value any) error {
 		return err
 	}
 	return nil
-}
-
-func jsonFieldPresent(body []byte, field string) (bool, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return false, err
-	}
-	_, ok := raw[field]
-	return ok, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

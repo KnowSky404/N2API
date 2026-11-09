@@ -575,21 +575,13 @@ func TestServiceCreatesAndValidatesRules(t *testing.T) {
 
 func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	templates := RuleTemplates()
-	if len(templates) != 10 {
-		t.Fatalf("RuleTemplates count = %d, want 10", len(templates))
+	if len(templates) != 9 {
+		t.Fatalf("RuleTemplates count = %d, want 9", len(templates))
 	}
-	if templates[0].Key != OAuthRefreshRepeatedTemplateKey || templates[1].Key != RequestLogRetentionFailedTemplateKey || templates[2].Key != ProviderAutoTestFailedTemplateKey || templates[3].Key != ProviderAccountExpiredTemplateKey || templates[4].Key != ProviderAccountCircuitOpenTemplateKey || templates[5].Key != APIKeyBudget80PercentTemplateKey || templates[6].Key != APIKeyBudget100PercentTemplateKey || templates[7].Key != RoutingPoolExhaustedTemplateKey || templates[8].Key != APIKeyPurgeFailedTemplateKey || templates[9].Key != SystemEventRetentionFailedTemplateKey {
+	if templates[0].Key != RequestLogRetentionFailedTemplateKey || templates[1].Key != ProviderAutoTestFailedTemplateKey || templates[2].Key != ProviderAccountExpiredTemplateKey || templates[3].Key != ProviderAccountCircuitOpenTemplateKey || templates[4].Key != APIKeyBudget80PercentTemplateKey || templates[5].Key != APIKeyBudget100PercentTemplateKey || templates[6].Key != RoutingPoolExhaustedTemplateKey || templates[7].Key != APIKeyPurgeFailedTemplateKey || templates[8].Key != SystemEventRetentionFailedTemplateKey {
 		t.Fatalf("template order = %+v", templates)
 	}
-	oauthTemplate := templates[0]
-	if oauthTemplate.Name != "Repeated OAuth refresh failures" || oauthTemplate.Enabled ||
-		oauthTemplate.Category != systemevent.CategoryOAuth || oauthTemplate.Severity != systemevent.SeverityWarning ||
-		oauthTemplate.EventAction != systemevent.ActionOAuthRefreshAutomaticFailed || oauthTemplate.RecoveryAction != systemevent.ActionOAuthRefreshAutomaticSucceeded ||
-		oauthTemplate.AggregationCount != 3 || oauthTemplate.AggregationWindowSeconds != 900 || oauthTemplate.CooldownSeconds != 3600 ||
-		oauthTemplate.DeduplicationScope != DeduplicationScopeTarget || !oauthTemplate.NotifyRecovery {
-		t.Fatalf("OAuth template = %+v", oauthTemplate)
-	}
-	retentionTemplate := templates[1]
+	retentionTemplate := templates[0]
 	if retentionTemplate.Name != "Request log retention failures" || retentionTemplate.Enabled ||
 		retentionTemplate.Category != systemevent.CategoryScheduler || retentionTemplate.Severity != "" ||
 		retentionTemplate.EventAction != systemevent.ActionSchedulerRequestLogRetentionFailed || retentionTemplate.RecoveryAction != systemevent.ActionSchedulerRequestLogRetentionSucceeded ||
@@ -597,7 +589,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		retentionTemplate.DeduplicationScope != DeduplicationScopeRule || !retentionTemplate.NotifyRecovery {
 		t.Fatalf("retention template = %+v", retentionTemplate)
 	}
-	autoTestTemplate := templates[2]
+	autoTestTemplate := templates[1]
 	if autoTestTemplate.Name != "Provider account auto-test failures" || autoTestTemplate.Enabled ||
 		autoTestTemplate.Category != systemevent.CategoryScheduler || autoTestTemplate.Severity != "" ||
 		autoTestTemplate.EventAction != systemevent.ActionSchedulerProviderAutoTestFailed || autoTestTemplate.RecoveryAction != systemevent.ActionSchedulerProviderAutoTestCompleted ||
@@ -605,7 +597,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		autoTestTemplate.DeduplicationScope != DeduplicationScopeTarget || !autoTestTemplate.NotifyRecovery {
 		t.Fatalf("auto-test template = %+v", autoTestTemplate)
 	}
-	expiredTemplate := templates[3]
+	expiredTemplate := templates[2]
 	if expiredTemplate.Name != "Provider account expiry" || expiredTemplate.Enabled ||
 		expiredTemplate.Category != systemevent.CategoryRuntime || expiredTemplate.Severity != systemevent.SeverityWarning ||
 		expiredTemplate.EventAction != systemevent.ActionProviderAccountExpired || expiredTemplate.RecoveryAction != systemevent.ActionProviderAccountRecovered ||
@@ -613,7 +605,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		expiredTemplate.DeduplicationScope != DeduplicationScopeTarget || !expiredTemplate.NotifyRecovery {
 		t.Fatalf("expired template = %+v", expiredTemplate)
 	}
-	circuitTemplate := templates[4]
+	circuitTemplate := templates[3]
 	if circuitTemplate.Name != "Provider account circuit open" || circuitTemplate.Enabled ||
 		circuitTemplate.Category != systemevent.CategoryRuntime || circuitTemplate.Severity != systemevent.SeverityWarning ||
 		circuitTemplate.EventAction != systemevent.ActionProviderAccountCircuitOpened || circuitTemplate.RecoveryAction != systemevent.ActionProviderAccountRecovered ||
@@ -621,7 +613,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		circuitTemplate.DeduplicationScope != DeduplicationScopeTarget || !circuitTemplate.NotifyRecovery {
 		t.Fatalf("circuit template = %+v", circuitTemplate)
 	}
-	budget80Template := templates[5]
+	budget80Template := templates[4]
 	if budget80Template.Name != "API key budget at 80 percent" || budget80Template.Enabled ||
 		budget80Template.Category != systemevent.CategoryRuntime || budget80Template.Severity != systemevent.SeverityWarning ||
 		budget80Template.EventAction != systemevent.ActionAPIKeyBudgetThreshold80Crossed || budget80Template.RecoveryAction != systemevent.ActionAPIKeyBudgetThreshold80Recovered ||
@@ -629,7 +621,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		budget80Template.DeduplicationScope != DeduplicationScopeTarget || !budget80Template.NotifyRecovery {
 		t.Fatalf("80 percent budget template = %+v", budget80Template)
 	}
-	budget100Template := templates[6]
+	budget100Template := templates[5]
 	if budget100Template.Name != "API key budget exhausted" || budget100Template.Enabled ||
 		budget100Template.Category != systemevent.CategoryRuntime || budget100Template.Severity != systemevent.SeverityError ||
 		budget100Template.EventAction != systemevent.ActionAPIKeyBudgetThreshold100Crossed || budget100Template.RecoveryAction != systemevent.ActionAPIKeyBudgetThreshold100Recovered ||
@@ -637,7 +629,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		budget100Template.DeduplicationScope != DeduplicationScopeTarget || !budget100Template.NotifyRecovery {
 		t.Fatalf("100 percent budget template = %+v", budget100Template)
 	}
-	routingExhaustedTemplate := templates[7]
+	routingExhaustedTemplate := templates[6]
 	if routingExhaustedTemplate.Name != "API key routing pool exhausted" || routingExhaustedTemplate.Enabled ||
 		routingExhaustedTemplate.Category != systemevent.CategoryRuntime || routingExhaustedTemplate.Severity != systemevent.SeverityError ||
 		routingExhaustedTemplate.EventAction != systemevent.ActionAPIKeyRoutingPoolExhausted || routingExhaustedTemplate.RecoveryAction != systemevent.ActionAPIKeyRoutingPoolRecovered ||
@@ -645,7 +637,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		routingExhaustedTemplate.DeduplicationScope != DeduplicationScopeTarget || !routingExhaustedTemplate.NotifyRecovery {
 		t.Fatalf("routing exhaustion template = %+v", routingExhaustedTemplate)
 	}
-	apiKeyPurgeFailedTemplate := templates[8]
+	apiKeyPurgeFailedTemplate := templates[7]
 	if apiKeyPurgeFailedTemplate.Name != "API key purge failures" || apiKeyPurgeFailedTemplate.Enabled ||
 		apiKeyPurgeFailedTemplate.Category != systemevent.CategoryScheduler || apiKeyPurgeFailedTemplate.Severity != systemevent.SeverityError ||
 		apiKeyPurgeFailedTemplate.EventAction != systemevent.ActionSchedulerAPIKeyPurgeFailed || apiKeyPurgeFailedTemplate.RecoveryAction != systemevent.ActionSchedulerAPIKeyPurgeCompleted ||
@@ -653,7 +645,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 		apiKeyPurgeFailedTemplate.DeduplicationScope != DeduplicationScopeTarget || !apiKeyPurgeFailedTemplate.NotifyRecovery {
 		t.Fatalf("API key purge failure template = %+v", apiKeyPurgeFailedTemplate)
 	}
-	systemEventRetentionFailedTemplate := templates[9]
+	systemEventRetentionFailedTemplate := templates[8]
 	if systemEventRetentionFailedTemplate.Name != "System event retention failures" || systemEventRetentionFailedTemplate.Enabled ||
 		systemEventRetentionFailedTemplate.Category != systemevent.CategoryScheduler || systemEventRetentionFailedTemplate.Severity != "" ||
 		systemEventRetentionFailedTemplate.EventAction != systemevent.ActionSchedulerEventRetentionFailed || systemEventRetentionFailedTemplate.RecoveryAction != systemevent.ActionSchedulerEventRetentionCompleted ||
@@ -664,20 +656,16 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 
 	repo := newMemoryRepository()
 	service := NewService(repo, testKeyring(t))
-	rule, created, err := service.InstallRuleTemplate(context.Background(), OAuthRefreshRepeatedTemplateKey, 7)
+	rule, created, err := service.InstallRuleTemplate(context.Background(), RequestLogRetentionFailedTemplateKey, 7)
 	if err != nil || !created {
 		t.Fatalf("first InstallRuleTemplate = %+v, %v, %v", rule, created, err)
 	}
-	if rule.TemplateKey != OAuthRefreshRepeatedTemplateKey || rule.ActionID != 7 || rule.Enabled || repo.lastRuleInstall.Rule.TemplateKey != OAuthRefreshRepeatedTemplateKey {
+	if rule.TemplateKey != RequestLogRetentionFailedTemplateKey || rule.ActionID != 7 || rule.Enabled || repo.lastRuleInstall.Rule.TemplateKey != RequestLogRetentionFailedTemplateKey {
 		t.Fatalf("installed rule = %+v input=%+v", rule, repo.lastRuleInstall)
 	}
-	again, created, err := service.InstallRuleTemplate(context.Background(), OAuthRefreshRepeatedTemplateKey, 99)
+	again, created, err := service.InstallRuleTemplate(context.Background(), RequestLogRetentionFailedTemplateKey, 99)
 	if err != nil || created || again.ID != rule.ID || again.ActionID != 7 {
 		t.Fatalf("second InstallRuleTemplate = %+v, %v, %v", again, created, err)
-	}
-	retentionRule, created, err := service.InstallRuleTemplate(context.Background(), RequestLogRetentionFailedTemplateKey, 11)
-	if err != nil || !created || retentionRule.TemplateKey != RequestLogRetentionFailedTemplateKey || retentionRule.ActionID != 11 || retentionRule.Enabled {
-		t.Fatalf("retention InstallRuleTemplate = %+v, %v, %v", retentionRule, created, err)
 	}
 	autoTestRule, created, err := service.InstallRuleTemplate(context.Background(), ProviderAutoTestFailedTemplateKey, 13)
 	if err != nil || !created || autoTestRule.TemplateKey != ProviderAutoTestFailedTemplateKey || autoTestRule.ActionID != 13 || autoTestRule.Enabled {
@@ -742,7 +730,7 @@ func TestRuleTemplateCatalogAndIdempotentInstall(t *testing.T) {
 	for _, input := range []struct {
 		key      string
 		actionID int64
-	}{{"unknown", 7}, {OAuthRefreshRepeatedTemplateKey, 0}} {
+	}{{"unknown", 7}, {"oauth-refresh-repeated-v1", 7}, {RequestLogRetentionFailedTemplateKey, 0}} {
 		if _, _, err := service.InstallRuleTemplate(context.Background(), input.key, input.actionID); !errors.Is(err, ErrInvalidInput) {
 			t.Fatalf("InstallRuleTemplate(%q, %d) error = %v", input.key, input.actionID, err)
 		}

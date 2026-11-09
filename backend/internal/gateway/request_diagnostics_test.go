@@ -15,7 +15,7 @@ import (
 
 func TestRequestDiagnosticsBoundsAttemptTimelineAndPreservesOrder(t *testing.T) {
 	diagnostics := newRequestDiagnostics()
-	selected := SelectedAccount{AccountID: 42, AccountType: "codex_oauth", DisplayName: "owner"}
+	selected := SelectedAccount{AccountID: 42, AccountType: "api_upstream", DisplayName: "owner"}
 	for index := 0; index < requestlog.MaxRequestAttemptTimelineEntries+3; index++ {
 		span := diagnostics.beginAttempt("upstream_http", selected, "retryable_status")
 		span.finish(503, "upstream_unavailable")

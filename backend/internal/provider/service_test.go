@@ -2,19 +2,13 @@ package provider
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,24 +16,11 @@ import (
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
 )
 
-type captureProviderMetrics struct {
-	refreshes [][2]string
-}
-
-func (m *captureProviderMetrics) ObserveProviderRefresh(mode, outcome string) {
-	m.refreshes = append(m.refreshes, [2]string{mode, outcome})
-}
-
 func TestStatusReportsConfigurationAndConnection(t *testing.T) {
 	repo := newMemoryRepo()
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:     "openai",
-		ClientID:     "client-id",
-		ClientSecret: "client-secret",
-		RedirectURL:  "http://localhost/oauth/openai/callback",
-		AuthURL:      "https://auth.example.test/authorize",
-		TokenURL:     "https://auth.example.test/token",
-		Secret:       "encryption-secret",
+	service := NewService(repo, fakeProbeClient{}, Config{
+		Provider: "openai",
+		Secret:   "encryption-secret",
 	})
 
 	status, err := service.Status(context.Background())
@@ -50,25 +31,19 @@ func TestStatusReportsConfigurationAndConnection(t *testing.T) {
 		t.Fatalf("status = %+v, want configured disconnected provider", status)
 	}
 
-	expiresAt := time.Now().Add(time.Hour).UTC()
-	if _, err := repo.SaveAccount(context.Background(), Account{
-		Provider:              "openai",
-		Subject:               "acct_1",
-		DisplayName:           "Codex Account",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "access-token"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token"),
-		AccessTokenExpiresAt:  &expiresAt,
-		LastRefreshAt:         nil,
-	}); err != nil {
-		t.Fatalf("SaveAccount returned error: %v", err)
+	account := testAccount(t, 1, true, 1, "api-key")
+	account.DisplayName = "API Account"
+	account.Name = "API Account"
+	if _, err := repo.SaveAccount(context.Background(), account); err != nil {
+		t.Fatal(err)
 	}
 
 	status, err = service.Status(context.Background())
 	if err != nil {
 		t.Fatalf("Status returned error: %v", err)
 	}
-	if !status.Connected || status.DisplayName != "Codex Account" {
-		t.Fatalf("status = %+v, want connected Codex Account", status)
+	if !status.Connected || status.DisplayName != "API Account" {
+		t.Fatalf("status = %+v, want connected API Account", status)
 	}
 }
 
@@ -81,7 +56,7 @@ func TestServiceEncryptionKeyringWritesCurrentAndReadsLegacyPreviousKey(t *testi
 	if err != nil {
 		t.Fatalf("NewKeyring returned error: %v", err)
 	}
-	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{EncryptionKeyring: keyring})
+	service := NewService(newMemoryRepo(), fakeProbeClient{}, Config{EncryptionKeyring: keyring})
 
 	encrypted, err := service.encryptString(secret.SecretKindOAuthAccessToken, "current-provider-token")
 	if err != nil {
@@ -102,1007 +77,13 @@ func TestServiceEncryptionKeyringWritesCurrentAndReadsLegacyPreviousKey(t *testi
 	}
 }
 
-func TestStartConnectStoresHashedStateAndBuildsAuthorizationURL(t *testing.T) {
-	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	result, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	parsed, err := url.Parse(result.AuthorizationURL)
-	if err != nil {
-		t.Fatalf("authorization URL did not parse: %v", err)
-	}
-	if parsed.Query().Get("client_id") != "client-id" {
-		t.Fatalf("client_id = %q", parsed.Query().Get("client_id"))
-	}
-	if parsed.Query().Get("redirect_uri") != "http://localhost/oauth/openai/callback" {
-		t.Fatalf("redirect_uri = %q", parsed.Query().Get("redirect_uri"))
-	}
-	state := parsed.Query().Get("state")
-	if state == "" {
-		t.Fatal("state was empty")
-	}
-	if strings.Contains(repo.states[0].StateHash, state) {
-		t.Fatal("state repository stored cleartext state")
-	}
-}
-
-func TestStartConnectUsesBuiltInCodexPKCEConfig(t *testing.T) {
-	repo := newMemoryRepo()
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider: "openai",
-		Secret:   "encryption-secret",
-	})
-
-	result, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	parsed, err := url.Parse(result.AuthorizationURL)
-	if err != nil {
-		t.Fatalf("authorization URL did not parse: %v", err)
-	}
-	query := parsed.Query()
-	if query.Get("client_id") == "" {
-		t.Fatal("client_id was empty")
-	}
-	if query.Get("redirect_uri") != "http://localhost:1455/auth/callback" {
-		t.Fatalf("redirect_uri = %q, want Codex callback", query.Get("redirect_uri"))
-	}
-	if query.Get("code_challenge") == "" {
-		t.Fatal("code_challenge was empty")
-	}
-	if query.Get("code_challenge_method") != "S256" {
-		t.Fatalf("code_challenge_method = %q, want S256", query.Get("code_challenge_method"))
-	}
-	if query.Get("response_type") != "code" {
-		t.Fatalf("response_type = %q, want code", query.Get("response_type"))
-	}
-	if repo.states[0].CodeVerifierHash == "" {
-		t.Fatal("state did not record code verifier hash")
-	}
-	if repo.states[0].CodeVerifier == "" {
-		t.Fatal("memory repo did not retain verifier for token exchange")
-	}
-	if repo.states[0].EncryptedCodeVerifier == "" {
-		t.Fatal("state did not record encrypted code verifier")
-	}
-	if strings.Contains(repo.states[0].CodeVerifierHash, repo.states[0].CodeVerifier) {
-		t.Fatal("state stored cleartext code verifier in hash field")
-	}
-}
-
-func TestStartConnectStoresPendingAccountOptionsAndFingerprintHashes(t *testing.T) {
-	repo := newMemoryRepo()
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-	profileID := int64(9)
-	repo.fingerprintProfiles[profileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
-
-	result, err := service.StartConnect(context.Background(), ConnectOptions{
-		RedirectAfter:        "/",
-		Name:                 "Work Codex",
-		Priority:             25,
-		Enabled:              boolPtr(false),
-		FingerprintProfileID: &profileID,
-		Fingerprint: Fingerprint{
-			Value:     "browser-fingerprint",
-			UserAgent: "Mozilla/5.0",
-			IP:        "203.0.113.10",
-		},
-	})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	if mustQuery(t, result.AuthorizationURL, "state") == "" {
-		t.Fatal("authorization URL missing state")
-	}
-	state := repo.states[0]
-	if state.PendingAccountName != "Work Codex" || state.PendingPriority != 25 || state.PendingEnabled == nil || *state.PendingEnabled {
-		t.Fatalf("state pending account fields = %+v", state)
-	}
-	if state.PendingFingerprintProfileID == nil || *state.PendingFingerprintProfileID != profileID {
-		t.Fatalf("state pending fingerprint profile = %+v, want %d", state.PendingFingerprintProfileID, profileID)
-	}
-	if state.FingerprintHash == "" || state.UserAgentHash == "" || state.IPHash == "" {
-		t.Fatalf("state fingerprint hashes incomplete: %+v", state)
-	}
-	if repo.ensureDefaultFingerprintProfileCalls != 0 {
-		t.Fatalf("EnsureDefaultCodexFingerprintProfile called %d times, want 0 (explicit profile provided)", repo.ensureDefaultFingerprintProfileCalls)
-	}
-	for _, cleartext := range []string{"browser-fingerprint", "Mozilla/5.0", "203.0.113.10"} {
-		if strings.Contains(state.FingerprintHash+state.UserAgentHash+state.IPHash, cleartext) {
-			t.Fatalf("fingerprint hash leaked cleartext %q", cleartext)
-		}
-	}
-}
-
-func TestStartConnectStoresDefaultFingerprintProfileWhenUnset(t *testing.T) {
-	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	result, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	if mustQuery(t, result.AuthorizationURL, "state") == "" {
-		t.Fatal("authorization URL missing state")
-	}
-	state := repo.states[0]
-	if state.PendingFingerprintProfileID == nil {
-		t.Fatal("PendingFingerprintProfileID is nil, want default Codex fingerprint profile ID")
-	}
-	if *state.PendingFingerprintProfileID != repo.defaultFingerprintProfileID {
-		t.Fatalf("PendingFingerprintProfileID = %d, want default %d", *state.PendingFingerprintProfileID, repo.defaultFingerprintProfileID)
-	}
-	if repo.ensureDefaultFingerprintProfileCalls != 1 {
-		t.Fatalf("EnsureDefaultCodexFingerprintProfile called %d times, want 1", repo.ensureDefaultFingerprintProfileCalls)
-	}
-}
-
-func TestStartConnectPreservesExplicitFingerprintProfile(t *testing.T) {
-	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
-	customProfileID := int64(42)
-	repo.fingerprintProfiles[customProfileID] = FingerprintProfileData{UserAgent: "custom-agent"}
-
-	result, err := service.StartConnect(context.Background(), ConnectOptions{
-		RedirectAfter:        "/",
-		FingerprintProfileID: &customProfileID,
-	})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	if mustQuery(t, result.AuthorizationURL, "state") == "" {
-		t.Fatal("authorization URL missing state")
-	}
-	state := repo.states[0]
-	if state.PendingFingerprintProfileID == nil || *state.PendingFingerprintProfileID != customProfileID {
-		t.Fatalf("PendingFingerprintProfileID = %+v, want %d", state.PendingFingerprintProfileID, customProfileID)
-	}
-	if repo.ensureDefaultFingerprintProfileCalls != 0 {
-		t.Fatalf("EnsureDefaultCodexFingerprintProfile called %d times, want 0", repo.ensureDefaultFingerprintProfileCalls)
-	}
-}
-
-func TestCompleteCallbackPreservesExistingFingerprintOnReconnect(t *testing.T) {
-	repo := newMemoryRepo()
-	existingProfileID := int64(7)
-	repo.fingerprintProfiles[existingProfileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
-	existing, err := repo.SaveAccount(context.Background(), Account{
-		Provider:              "openai",
-		Subject:               "acct_same",
-		Name:                  "Existing",
-		DisplayName:           "same@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
-		Enabled:               true,
-		Priority:              12,
-		FingerprintProfileID:  &existingProfileID,
-		Status:                AccountStatusActive,
-		Metadata:              map[string]string{"chatgpt_account_id": "acct_same"},
-	})
-	if err != nil {
-		t.Fatalf("SaveAccount returned error: %v", err)
-	}
-	client := fakeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-			AccountID:    "acct_same",
-			Email:        "same@example.com",
-		},
-	}
-	service := NewService(repo, client, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if account.ID != existing.ID {
-		t.Fatalf("account ID = %d, want existing %d", account.ID, existing.ID)
-	}
-	if account.FingerprintProfileID == nil || *account.FingerprintProfileID != existingProfileID {
-		t.Fatalf("account FingerprintProfileID = %+v, want existing %d", account.FingerprintProfileID, existingProfileID)
-	}
-}
-
-func TestCompleteCallbackReauthorizationUpdatesFingerprintProfile(t *testing.T) {
-	repo := newMemoryRepo()
-	existing, err := repo.SaveAccount(context.Background(), Account{
-		Provider:              "openai",
-		Subject:               "acct_old",
-		Name:                  "Old Account",
-		DisplayName:           "old@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
-		Enabled:               true,
-		Priority:              30,
-		Status:                AccountStatusActive,
-		Metadata:              map[string]string{"chatgpt_account_id": "acct_old"},
-	})
-	if err != nil {
-		t.Fatalf("SaveAccount returned error: %v", err)
-	}
-	client := fakeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-			AccountID:    "acct_new",
-			Email:        "new@example.com",
-		},
-	}
-	service := NewService(repo, client, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{
-		RedirectAfter:   "/",
-		TargetAccountID: existing.ID,
-	})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if account.ID != existing.ID {
-		t.Fatalf("account ID = %d, want target %d", account.ID, existing.ID)
-	}
-	if account.FingerprintProfileID == nil || *account.FingerprintProfileID != repo.defaultFingerprintProfileID {
-		t.Fatalf("account FingerprintProfileID = %+v, want default Codex profile %d", account.FingerprintProfileID, repo.defaultFingerprintProfileID)
-	}
-}
-
-func TestCompleteCallbackRejectsInvalidState(t *testing.T) {
-	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
-	if _, err := service.CompleteCallback(context.Background(), "code", "missing-state"); !errors.Is(err, ErrInvalidState) {
-		t.Fatalf("CompleteCallback error = %v, want ErrInvalidState", err)
-	}
-}
-
-func TestCompleteCallbackStoresEncryptedTokensAndConsumesState(t *testing.T) {
-	repo := newMemoryRepo()
-	client := fakeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "access-token",
-			RefreshToken: "refresh-token",
-			ExpiresIn:    3600,
-			Subject:      "acct_1",
-			DisplayName:  "Codex Account",
-		},
-	}
-	service := newConfiguredService(repo, client)
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	state := mustQuery(t, started.AuthorizationURL, "state")
-	account, err := service.CompleteCallback(context.Background(), "auth-code", state)
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if account.DisplayName != "Codex Account" {
-		t.Fatalf("DisplayName = %q", account.DisplayName)
-	}
-	if repo.accounts[0].EncryptedAccessToken == "access-token" || repo.accounts[0].EncryptedRefreshToken == "refresh-token" {
-		t.Fatal("repository stored cleartext tokens")
-	}
-	if repo.states[0].ConsumedAt == nil {
-		t.Fatal("state was not consumed")
-	}
-}
-
-func TestCompleteCallbackPassesPKCEVerifierAndStoresTokenMetadata(t *testing.T) {
-	repo := newMemoryRepo()
-	client := &captureExchangeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "access-token",
-			RefreshToken: "refresh-token",
-			IDToken:      "id-token",
-			ExpiresIn:    3600,
-			AccountID:    "acct_chatgpt",
-			Email:        "owner@example.com",
-			PlanType:     "plus",
-			ClientID:     "codex-client",
-		},
-	}
-	service := NewService(repo, client, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	state := mustQuery(t, started.AuthorizationURL, "state")
-	account, err := service.CompleteCallback(context.Background(), "auth-code", state)
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if client.gotCodeVerifier == "" {
-		t.Fatal("ExchangeCode did not receive PKCE code verifier")
-	}
-	if account.Subject != "acct_chatgpt" || account.DisplayName != "owner@example.com" {
-		t.Fatalf("account identity = %q/%q, want account id and email display", account.Subject, account.DisplayName)
-	}
-	if account.Metadata["email"] != "owner@example.com" || account.Metadata["account_id"] != "acct_chatgpt" || account.Metadata["plan_type"] != "plus" || account.Metadata["client_id"] != "codex-client" {
-		t.Fatalf("metadata = %+v", account.Metadata)
-	}
-	idToken, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthIDToken, account.EncryptedIDToken)
-	if err != nil {
-		t.Fatalf("decrypt id token returned error: %v", err)
-	}
-	if idToken != "id-token" {
-		t.Fatalf("id token = %q, want id-token", idToken)
-	}
-}
-
-func TestCompleteCallbackCreatesNamedAccountWithIsolatedFingerprint(t *testing.T) {
-	repo := newMemoryRepo()
-	client := &captureExchangeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "access-token",
-			RefreshToken: "refresh-token",
-			ExpiresIn:    3600,
-			AccountID:    "acct_work",
-			Email:        "work@example.com",
-			ClientID:     "codex-client",
-		},
-	}
-	service := NewService(repo, client, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{
-		RedirectAfter: "/",
-		Name:          "Work Account",
-		Priority:      7,
-		Fingerprint: Fingerprint{
-			Value:     "browser-fingerprint",
-			UserAgent: "Mozilla/5.0",
-			IP:        "203.0.113.10",
-		},
-	})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if account.Name != "Work Account" || account.Priority != 7 || account.Status != AccountStatusActive {
-		t.Fatalf("account = %+v, want named active priority 7 account", account)
-	}
-	if account.FingerprintHash == "" || account.UserAgentHash == "" || account.IPHash == "" {
-		t.Fatalf("account fingerprint hashes incomplete: %+v", account)
-	}
-	if account.Metadata["email"] != "work@example.com" || account.Metadata["chatgpt_account_id"] != "acct_work" || account.Metadata["access_token_sha256"] == "" {
-		t.Fatalf("metadata = %+v", account.Metadata)
-	}
-	for _, intent := range repo.intents {
-		if intent.Action == systemevent.ActionProviderAccountRecovered {
-			t.Fatalf("new account connect emitted recovery intent: %+v", intent)
-		}
-	}
-}
-
-func TestCompleteCallbackReauthorizesTargetAccountInsteadOfMatchingDifferentIdentity(t *testing.T) {
-	repo := newMemoryRepo()
-	existing, err := repo.SaveAccount(context.Background(), Account{
-		Provider:              "openai",
-		Subject:               "acct_old",
-		Name:                  "Old Account",
-		DisplayName:           "old@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
-		Enabled:               true,
-		Priority:              30,
-		Status:                AccountStatusActive,
-		Metadata:              map[string]string{"chatgpt_account_id": "acct_old"},
-	})
-	if err != nil {
-		t.Fatalf("SaveAccount returned error: %v", err)
-	}
-	now := time.Now()
-	until := now.Add(time.Hour)
-	repo.accounts[0].Status = AccountStatusExpired
-	repo.accounts[0].StatusReason = "existing authorization failure"
-	repo.accounts[0].LastError = "existing authorization failure"
-	repo.accounts[0].LastErrorAt = &now
-	repo.accounts[0].FailureCount = 2
-	repo.accounts[0].CircuitOpenUntil = &until
-	client := &captureExchangeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-			AccountID:    "acct_new_identity",
-			Email:        "new@example.com",
-		},
-	}
-	service := NewService(repo, client, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{
-		RedirectAfter:   "/",
-		TargetAccountID: existing.ID,
-		Name:            "Renamed Account",
-	})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if account.ID != existing.ID {
-		t.Fatalf("account ID = %d, want target account %d", account.ID, existing.ID)
-	}
-	if account.Name != "Renamed Account" || account.Metadata["chatgpt_account_id"] != "acct_new_identity" {
-		t.Fatalf("account after reauth = %+v", account)
-	}
-	token, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
-	if err != nil {
-		t.Fatalf("DecryptString returned error: %v", err)
-	}
-	if token != "new-access" {
-		t.Fatalf("token = %q, want new-access", token)
-	}
-	if account.Status != AccountStatusExpired || account.StatusReason != "existing authorization failure" || account.LastError != "existing authorization failure" ||
-		account.LastErrorAt == nil || account.FailureCount != 2 || account.CircuitOpenUntil == nil {
-		t.Fatalf("account health after reauthorization = %+v, want preserved until confirmed recovery", account)
-	}
-}
-
-func TestCompleteCallbackUpdatesExistingAccountByIdentityWhenNoTarget(t *testing.T) {
-	repo := newMemoryRepo()
-	existing, err := repo.SaveAccount(context.Background(), Account{
-		Provider:              "openai",
-		Subject:               "acct_same",
-		Name:                  "Existing",
-		DisplayName:           "same@example.com",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "old-refresh"),
-		Enabled:               true,
-		Priority:              12,
-		Status:                AccountStatusActive,
-		Metadata:              map[string]string{"chatgpt_account_id": "acct_same"},
-	})
-	if err != nil {
-		t.Fatalf("SaveAccount returned error: %v", err)
-	}
-	client := fakeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-			AccountID:    "acct_same",
-			Email:        "same@example.com",
-		},
-	}
-	service := NewService(repo, client, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/", Name: "Incoming Duplicate"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	account, err := service.CompleteCallback(context.Background(), "auth-code", mustQuery(t, started.AuthorizationURL, "state"))
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if account.ID != existing.ID {
-		t.Fatalf("account ID = %d, want existing account %d", account.ID, existing.ID)
-	}
-	if len(repo.accounts) != 1 {
-		t.Fatalf("account count = %d, want duplicate update", len(repo.accounts))
-	}
-	if account.Name != "Existing" {
-		t.Fatalf("account name = %q, want existing name preserved", account.Name)
-	}
-}
-
-func TestCompleteCallbackExtractsIdentityMetadataFromIDTokenClaims(t *testing.T) {
-	repo := newMemoryRepo()
-	client := fakeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "access-token",
-			RefreshToken: "refresh-token",
-			IDToken: mustUnsignedIDToken(t, map[string]any{
-				"sub":   "user-subject",
-				"email": "owner@example.com",
-				"https://api.openai.com/auth": map[string]any{
-					"chatgpt_account_id": "acct_chatgpt",
-					"chatgpt_plan_type":  "plus",
-				},
-			}),
-			ExpiresIn: 3600,
-			ClientID:  "codex-client",
-		},
-	}
-	service := NewService(repo, client, Config{
-		Provider:    "openai",
-		RedirectURL: "http://localhost:3000/oauth/openai/callback",
-		Secret:      "encryption-secret",
-	})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	state := mustQuery(t, started.AuthorizationURL, "state")
-	account, err := service.CompleteCallback(context.Background(), "auth-code", state)
-	if err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if account.Subject != "user-subject" || account.DisplayName != "owner@example.com" {
-		t.Fatalf("account identity = %q/%q, want id token subject and email", account.Subject, account.DisplayName)
-	}
-	if account.Metadata["account_id"] != "acct_chatgpt" || account.Metadata["plan_type"] != "plus" {
-		t.Fatalf("metadata = %+v", account.Metadata)
-	}
-}
-
-func TestCompleteCallbackConsumesStateWhenTokenExchangeFails(t *testing.T) {
-	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{exchangeErr: errors.New("token endpoint unavailable")})
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	state := mustQuery(t, started.AuthorizationURL, "state")
-	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err == nil {
-		t.Fatal("CompleteCallback returned nil error, want token exchange error")
-	}
-	if repo.states[0].ConsumedAt == nil {
-		t.Fatal("state was not consumed")
-	}
-}
-
-func TestCompleteCallbackClaimsStateBeforeSavingTokens(t *testing.T) {
-	repo := newMemoryRepo()
-	client := fakeOAuthClient{
-		exchange: TokenResponse{
-			AccessToken:  "access-token",
-			RefreshToken: "refresh-token",
-			ExpiresIn:    3600,
-			Subject:      "acct_1",
-		},
-	}
-	service := newConfiguredService(repo, client)
-
-	started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-	if err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	state := mustQuery(t, started.AuthorizationURL, "state")
-	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err != nil {
-		t.Fatalf("CompleteCallback returned error: %v", err)
-	}
-	if _, err := service.CompleteCallback(context.Background(), "auth-code", state); !errors.Is(err, ErrInvalidState) {
-		t.Fatalf("replay error = %v, want ErrInvalidState", err)
-	}
-	if repo.saveCount != 1 {
-		t.Fatalf("saveCount = %d, want 1", repo.saveCount)
-	}
-}
-
-func TestCompleteCallbackGeneratesLocalSubjectsForBlankTokenSubject(t *testing.T) {
-	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{
-		exchanges: []TokenResponse{
-			{AccessToken: "access-token-1", RefreshToken: "refresh-token-1", ExpiresIn: 3600},
-			{AccessToken: "access-token-2", RefreshToken: "refresh-token-2", ExpiresIn: 3600},
-		},
-	})
-
-	for i := 0; i < 2; i++ {
-		started, err := service.StartConnect(context.Background(), ConnectOptions{RedirectAfter: "/"})
-		if err != nil {
-			t.Fatalf("StartConnect %d returned error: %v", i, err)
-		}
-		state := mustQuery(t, started.AuthorizationURL, "state")
-		if _, err := service.CompleteCallback(context.Background(), "auth-code", state); err != nil {
-			t.Fatalf("CompleteCallback %d returned error: %v", i, err)
-		}
-	}
-
-	if len(repo.accounts) != 2 {
-		t.Fatalf("account count = %d, want 2", len(repo.accounts))
-	}
-	if strings.TrimSpace(repo.accounts[0].Subject) == "" || strings.TrimSpace(repo.accounts[1].Subject) == "" {
-		t.Fatalf("subjects = %q/%q, want non-empty local subjects", repo.accounts[0].Subject, repo.accounts[1].Subject)
-	}
-	if repo.accounts[0].Subject == repo.accounts[1].Subject {
-		t.Fatalf("subjects matched: %q", repo.accounts[0].Subject)
-	}
-}
-
-func TestAccessTokenReturnsUnexpiredToken(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	if _, err := repo.SaveAccount(context.Background(), Account{
-		Provider:              "openai",
-		Subject:               "acct_1",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "access-token"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token"),
-		AccessTokenExpiresAt:  &expiresAt,
-	}); err != nil {
-		t.Fatalf("SaveAccount returned error: %v", err)
-	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	token, err := service.AccessToken(context.Background())
-	if err != nil {
-		t.Fatalf("AccessToken returned error: %v", err)
-	}
-	if token != "access-token" {
-		t.Fatalf("token = %q, want access-token", token)
-	}
-}
-
-func TestRefreshAccountAuthorizationRefreshesRejectedUnexpiredToken(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expiresAt)
-	repo.accounts = []Account{account}
-	client := &captureRefreshOAuthClient{refresh: TokenResponse{
-		AccessToken:  "new-access",
-		RefreshToken: "new-refresh",
-		ExpiresIn:    3600,
-	}}
-	service := newConfiguredService(repo, client)
-
-	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
-		context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
-	)
-	if err != nil {
-		t.Fatalf("RefreshAccountAuthorization returned error: %v", err)
-	}
-	if !retry || token != "new-access" {
-		t.Fatalf("refresh result = token %q retry %v, want new-access/true", token, retry)
-	}
-	if failureRecorded {
-		t.Fatal("successful refresh reported an account failure")
-	}
-	if client.calls != 1 {
-		t.Fatalf("refresh calls = %d, want 1", client.calls)
-	}
-	if repo.accounts[0].LastRefreshAt == nil {
-		t.Fatal("LastRefreshAt was not updated")
-	}
-}
-
-func TestRefreshAccountAuthorizationReusesConcurrentlyRotatedToken(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	account := testExpiredAccount(t, 7, true, 3, "new-access", "new-refresh", expiresAt)
-	repo.accounts = []Account{account}
-	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "unexpected-refresh", ExpiresIn: 3600}}
-	service := newConfiguredService(repo, client)
-
-	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
-		context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
-	)
-	if err != nil {
-		t.Fatalf("RefreshAccountAuthorization returned error: %v", err)
-	}
-	if !retry || token != "new-access" {
-		t.Fatalf("refresh result = token %q retry %v, want new-access/true", token, retry)
-	}
-	if failureRecorded {
-		t.Fatal("concurrently rotated token reported an account failure")
-	}
-	if client.calls != 0 {
-		t.Fatalf("refresh calls = %d, want 0 for already rotated token", client.calls)
-	}
-}
-
-func TestRefreshAccountAuthorizationSerializesConcurrentRejectedTokenRefresh(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expiresAt)
-	repo.accounts = []Account{account}
-	client := &blockingOAuthClient{
-		refresh: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-		},
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-	service := newConfiguredService(repo, client)
-
-	type result struct {
-		token           string
-		retry           bool
-		failureRecorded bool
-		err             error
-	}
-	results := make(chan result, 2)
-	for i := 0; i < 2; i++ {
-		go func() {
-			token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
-				context.Background(), account.ID, "old-access", http.StatusUnauthorized, "invalid access token",
-			)
-			results <- result{token: token, retry: retry, failureRecorded: failureRecorded, err: err}
-		}()
-	}
-
-	<-client.entered
-	client.release <- struct{}{}
-	for i := 0; i < 2; i++ {
-		got := <-results
-		if got.err != nil || !got.retry || got.failureRecorded || got.token != "new-access" {
-			t.Fatalf("refresh result = token %q retry %v failureRecorded %v error %v", got.token, got.retry, got.failureRecorded, got.err)
-		}
-	}
-	if client.calls != 1 {
-		t.Fatalf("refresh calls = %d, want 1", client.calls)
-	}
-}
-
-func TestRefreshAccountAuthorizationSkipsScopePermissionFailure(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	account := testExpiredAccount(t, 7, true, 3, "access-token", "refresh-token", expiresAt)
-	repo.accounts = []Account{account}
-	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "unexpected-refresh", ExpiresIn: 3600}}
-	service := newConfiguredService(repo, client)
-
-	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
-		context.Background(), account.ID, "access-token", http.StatusForbidden, "missing scopes: api.responses.write",
-	)
-	if err != nil {
-		t.Fatalf("RefreshAccountAuthorization returned error: %v", err)
-	}
-	if retry || token != "" {
-		t.Fatalf("refresh result = token %q retry %v, want empty/false", token, retry)
-	}
-	if failureRecorded {
-		t.Fatal("scope permission failure reported an OAuth refresh failure")
-	}
-	if client.calls != 0 {
-		t.Fatalf("refresh calls = %d, want 0 for scope permission failure", client.calls)
-	}
-}
-
-func TestRefreshAccountAuthorizationReportsPersistedRefreshFailure(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	account := testExpiredAccount(t, 7, true, 3, "access-token", "refresh-token", expiresAt)
-	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh rejected")})
-
-	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
-		context.Background(), account.ID, "access-token", http.StatusUnauthorized, "invalid access token",
-	)
-	if err == nil {
-		t.Fatal("RefreshAccountAuthorization returned nil error")
-	}
-	if token != "" || !retry || !failureRecorded {
-		t.Fatalf("refresh result = token %q retry %v failureRecorded %v, want empty/true/true", token, retry, failureRecorded)
-	}
-	if repo.accounts[0].FailureCount != 1 {
-		t.Fatalf("failure count = %d, want 1", repo.accounts[0].FailureCount)
-	}
-}
-
-func TestRefreshAccountAuthorizationReportsUnpersistedCredentialError(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	account := testExpiredAccount(t, 7, true, 3, "access-token", "refresh-token", expiresAt)
-	account.EncryptedRefreshToken = "invalid-ciphertext"
-	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	token, retry, failureRecorded, err := service.RefreshAccountAuthorization(
-		context.Background(), account.ID, "access-token", http.StatusUnauthorized, "invalid access token",
-	)
-	if err == nil {
-		t.Fatal("RefreshAccountAuthorization returned nil error")
-	}
-	if token != "" || !retry || failureRecorded {
-		t.Fatalf("refresh result = token %q retry %v failureRecorded %v, want empty/true/false", token, retry, failureRecorded)
-	}
-	if repo.accounts[0].FailureCount != 0 {
-		t.Fatalf("failure count = %d, want no provider refresh failure record", repo.accounts[0].FailureCount)
-	}
-}
-
-func TestAccessTokenRefreshesExpiredToken(t *testing.T) {
-	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
-	if _, err := repo.SaveAccount(context.Background(), Account{
-		Provider:              "openai",
-		Subject:               "acct_1",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, "old-access"),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token"),
-		AccessTokenExpiresAt:  &expired,
-	}); err != nil {
-		t.Fatalf("SaveAccount returned error: %v", err)
-	}
-	service := newConfiguredService(repo, fakeOAuthClient{
-		refresh: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-		},
-	})
-
-	token, err := service.AccessToken(context.Background())
-	if err != nil {
-		t.Fatalf("AccessToken returned error: %v", err)
-	}
-	if token != "new-access" {
-		t.Fatalf("token = %q, want new-access", token)
-	}
-	if repo.accounts[0].LastRefreshAt == nil {
-		t.Fatal("LastRefreshAt was not updated")
-	}
-}
-
-func TestAccessTokenForAccountRefreshPreservesExistingIdentityAndRefreshToken(t *testing.T) {
-	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
-	repo.accounts = []Account{
-		testExpiredAccount(t, 7, false, 3, "old-access", "old-refresh", expired),
-	}
-	repo.accounts[0].Subject = "acct_original"
-	service := newConfiguredService(repo, fakeOAuthClient{
-		refresh: TokenResponse{
-			AccessToken: "new-access",
-			ExpiresIn:   3600,
-			Subject:     "acct_changed",
-			DisplayName: "Updated Name",
-		},
-	})
-
-	token, err := service.AccessTokenForAccount(context.Background(), repo.accounts[0])
-	if err != nil {
-		t.Fatalf("AccessTokenForAccount returned error: %v", err)
-	}
-	if token != "new-access" {
-		t.Fatalf("token = %q, want new-access", token)
-	}
-	if len(repo.accounts) != 1 {
-		t.Fatalf("account count = %d, want 1", len(repo.accounts))
-	}
-	account := repo.accounts[0]
-	if account.ID != 7 || account.Subject != "acct_original" || account.Enabled || account.Priority != 3 {
-		t.Fatalf("account = %+v, want original id/subject/enabled/priority preserved", account)
-	}
-	refreshToken, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, account.EncryptedRefreshToken)
-	if err != nil {
-		t.Fatalf("DecryptString returned error: %v", err)
-	}
-	if refreshToken != "old-refresh" {
-		t.Fatalf("refreshToken = %q, want old-refresh", refreshToken)
-	}
-}
-
-func TestAccessTokenForAccountRefreshPassesConfiguredProxyURL(t *testing.T) {
-	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
-	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
-	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderProxyURL, "http://proxy.example.test:8080")
-	repo.accounts = []Account{account}
-	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "new-access", ExpiresIn: 3600, Subject: "acct_7"}}
-	service := newConfiguredService(repo, client)
-
-	if _, err := service.AccessTokenForAccount(context.Background(), repo.accounts[0]); err != nil {
-		t.Fatalf("AccessTokenForAccount returned error: %v", err)
-	}
-	if client.gotConfig.ProxyURL != "http://proxy.example.test:8080" {
-		t.Fatalf("refresh proxy URL = %q, want account proxy URL", client.gotConfig.ProxyURL)
-	}
-}
-
-func TestAccessTokenForAccountRefreshRejectsUnreadableProxyWithoutBypass(t *testing.T) {
-	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
-	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
-	account.Credential.EncryptedProxyURL = "n2api:v1:missing:provider-proxy-url:AAAA"
-	repo.accounts = []Account{account}
-	client := &captureRefreshOAuthClient{refresh: TokenResponse{AccessToken: "new-access", ExpiresIn: 3600}}
-	service := newConfiguredService(repo, client)
-
-	if _, err := service.AccessTokenForAccount(context.Background(), account); err == nil {
-		t.Fatal("AccessTokenForAccount returned nil error for unreadable proxy")
-	}
-	if client.calls != 0 {
-		t.Fatalf("refresh calls = %d, want 0", client.calls)
-	}
-}
-
-func TestAccessTokenForAccountSerializesConcurrentRefresh(t *testing.T) {
-	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
-	repo.accounts = []Account{
-		testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired),
-	}
-	client := &blockingOAuthClient{
-		refresh: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-		},
-		entered: make(chan struct{}),
-		release: make(chan struct{}),
-	}
-	service := newConfiguredService(repo, client)
-	account := repo.accounts[0]
-
-	errs := make(chan error, 2)
-	tokens := make(chan string, 2)
-	for i := 0; i < 2; i++ {
-		go func() {
-			token, err := service.AccessTokenForAccount(context.Background(), account)
-			if err != nil {
-				errs <- err
-				return
-			}
-			tokens <- token
-			errs <- nil
-		}()
-	}
-
-	<-client.entered
-	client.release <- struct{}{}
-	for i := 0; i < 2; i++ {
-		if err := <-errs; err != nil {
-			t.Fatalf("AccessTokenForAccount returned error: %v", err)
-		}
-	}
-	for i := 0; i < 2; i++ {
-		if token := <-tokens; token != "new-access" {
-			t.Fatalf("token = %q, want new-access", token)
-		}
-	}
-	if client.calls != 1 {
-		t.Fatalf("refresh calls = %d, want 1", client.calls)
-	}
-}
-
 func TestSelectAccountForModelSkipsDisabledAndUsesPriority(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, false, 1, "disabled-token"),
 		testAccount(t, 2, true, 10, "enabled-token"),
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -1110,24 +91,6 @@ func TestSelectAccountForModelSkipsDisabledAndUsesPriority(t *testing.T) {
 	}
 	if selected.AccountID != 2 || selected.AuthorizationToken != "enabled-token" {
 		t.Fatalf("selected = %+v", selected)
-	}
-}
-
-func TestSelectAccountForModelReturnsChatGPTAccountMetadata(t *testing.T) {
-	repo := newMemoryRepo()
-	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	repo.accounts[0].Metadata = map[string]string{"chatgpt_account_id": "acct_chatgpt"}
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	selected, err := service.SelectAccountForModel(context.Background(), "")
-	if err != nil {
-		t.Fatalf("SelectAccountForModel returned error: %v", err)
-	}
-	if selected.AccountID != 7 || selected.AuthorizationToken != "access-token" {
-		t.Fatalf("selected = %+v, want account 7 authorization token", selected)
-	}
-	if selected.ChatGPTAccountID != "acct_chatgpt" {
-		t.Fatalf("ChatGPTAccountID = %q, want metadata value", selected.ChatGPTAccountID)
 	}
 }
 
@@ -1149,7 +112,7 @@ func TestSelectAccountForModelReturnsAPIUpstreamCredentialAndBaseURL(t *testing.
 		Status:   AccountStatusActive,
 		Metadata: map[string]string{},
 	}}
-	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("oauth refresh should not be called")})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -1206,7 +169,7 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithInvalidBaseURL(t *testing.T) {
 			Metadata: map[string]string{},
 		},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -1260,7 +223,7 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithHTTPBaseURLUnlessAllowed(t *te
 			Metadata: map[string]string{},
 		},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -1277,13 +240,8 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithHTTPBaseURLUnlessAllowed(t *te
 	repo.accounts[0].LastError = ""
 	repo.accounts[0].LastErrorAt = nil
 	repo.accounts[0].CircuitOpenUntil = nil
-	allowed := NewService(repo, fakeOAuthClient{}, Config{
+	allowed := NewService(repo, fakeProbeClient{}, Config{
 		Provider:              "openai",
-		ClientID:              "client-id",
-		ClientSecret:          "client-secret",
-		RedirectURL:           "http://localhost/oauth/openai/callback",
-		AuthURL:               "https://auth.example.test/authorize",
-		TokenURL:              "https://auth.example.test/token",
 		Secret:                "encryption-secret",
 		AllowHTTPAPIUpstreams: true,
 	})
@@ -1299,18 +257,17 @@ func TestSelectAccountForModelSkipsAPIUpstreamWithHTTPBaseURLUnlessAllowed(t *te
 func TestSelectAccountForModelSkipsRateLimitedCircuitOpenAndExpiredAccounts(t *testing.T) {
 	repo := newMemoryRepo()
 	now := time.Now()
-	expired := now.Add(-time.Hour)
 	future := now.Add(time.Hour)
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "rate-limited-token"),
 		testAccount(t, 2, true, 2, "circuit-open-token"),
-		testExpiredAccount(t, 3, true, 3, "expired-token", "expired-refresh", expired),
+		testAccount(t, 3, true, 3, "expired-token"),
 		testAccount(t, 4, true, 4, "usable-token"),
 	}
 	repo.accounts[0].RateLimitedUntil = &future
 	repo.accounts[1].CircuitOpenUntil = &future
 	repo.accounts[2].Status = AccountStatusExpired
-	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -1329,7 +286,7 @@ func TestSelectAccountForModelAllowsExpiredRateLimitAndCircuitWindows(t *testing
 	}
 	repo.accounts[0].Status = AccountStatusRateLimited
 	repo.accounts[0].RateLimitedUntil = &past
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -1350,199 +307,6 @@ func TestSelectAccountForModelAllowsExpiredRateLimitAndCircuitWindows(t *testing
 	}
 }
 
-func TestAccessTokenForAccountRefreshFailureOpensCircuitAfterThreshold(t *testing.T) {
-	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
-	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
-	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
-
-	for i := 0; i < refreshFailureCircuitThreshold; i++ {
-		_, _ = service.AccessTokenForAccount(context.Background(), repo.accounts[0])
-	}
-	if repo.accounts[0].FailureCount != refreshFailureCircuitThreshold {
-		t.Fatalf("FailureCount = %d, want %d", repo.accounts[0].FailureCount, refreshFailureCircuitThreshold)
-	}
-	if repo.accounts[0].CircuitOpenUntil == nil || !repo.accounts[0].CircuitOpenUntil.After(time.Now()) {
-		t.Fatalf("CircuitOpenUntil = %v, want future circuit", repo.accounts[0].CircuitOpenUntil)
-	}
-	if repo.accounts[0].Status != AccountStatusCircuitOpen {
-		t.Fatalf("Status = %q, want circuit_open", repo.accounts[0].Status)
-	}
-}
-
-func TestRefreshAccountForcesOAuthTokenRefreshAndClearsFailureState(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	repo.accounts = []Account{
-		testAccount(t, 7, true, 3, "old-access"),
-	}
-	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
-	repo.accounts[0].AccessTokenExpiresAt = &expiresAt
-	repo.accounts[0].Status = AccountStatusCircuitOpen
-	repo.accounts[0].StatusReason = "previous failure"
-	repo.accounts[0].FailureCount = 3
-	future := time.Now().Add(time.Hour)
-	repo.accounts[0].CircuitOpenUntil = &future
-	service := newConfiguredService(repo, fakeOAuthClient{
-		refresh: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-		},
-	})
-
-	account, err := service.RefreshAccount(context.Background(), 7)
-	if err != nil {
-		t.Fatalf("RefreshAccount returned error: %v", err)
-	}
-	token, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
-	if err != nil {
-		t.Fatalf("DecryptString returned error: %v", err)
-	}
-	if token != "new-access" {
-		t.Fatalf("token = %q, want new-access", token)
-	}
-	if account.Status != AccountStatusActive || account.FailureCount != 0 || account.CircuitOpenUntil != nil || account.LastRefreshAt == nil {
-		t.Fatalf("account after refresh = %+v", account)
-	}
-}
-
-func TestProviderRefreshMetricsDistinguishModesAndOutcomes(t *testing.T) {
-	t.Run("manual success", func(t *testing.T) {
-		repo := newMemoryRepo()
-		account := testAccount(t, 7, true, 0, "old-access")
-		account.EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
-		repo.accounts = []Account{account}
-		metrics := &captureProviderMetrics{}
-		service := newConfiguredService(repo, fakeOAuthClient{refresh: TokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600}})
-		service.metrics = metrics
-		if _, err := service.RefreshAccount(context.Background(), account.ID); err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(metrics.refreshes, [][2]string{{"manual", "success"}}) {
-			t.Fatalf("refresh metrics = %+v", metrics.refreshes)
-		}
-	})
-
-	t.Run("rejected token skipped", func(t *testing.T) {
-		metrics := &captureProviderMetrics{}
-		service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
-		service.metrics = metrics
-		_, _, _, err := service.RefreshAccountAuthorization(context.Background(), 7, "token", http.StatusForbidden, "missing scopes: api.responses.write")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(metrics.refreshes, [][2]string{{"rejected_token", "skipped"}}) {
-			t.Fatalf("refresh metrics = %+v", metrics.refreshes)
-		}
-	})
-
-	t.Run("automatic failure", func(t *testing.T) {
-		repo := newMemoryRepo()
-		expired := time.Now().Add(-time.Minute)
-		account := testExpiredAccount(t, 7, true, 0, "old-access", "old-refresh", expired)
-		repo.accounts = []Account{account}
-		metrics := &captureProviderMetrics{}
-		service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
-		service.metrics = metrics
-		_, _ = service.AccessTokenForAccount(context.Background(), account)
-		if !reflect.DeepEqual(metrics.refreshes, [][2]string{{"automatic", "failure"}}) {
-			t.Fatalf("refresh metrics = %+v", metrics.refreshes)
-		}
-	})
-}
-
-func TestRefreshAccountRejectsAPIUpstreamAccount(t *testing.T) {
-	repo := newMemoryRepo()
-	repo.accounts = []Account{
-		testAccount(t, 7, true, 3, "upstream-key"),
-	}
-	repo.accounts[0].AccountType = AccountTypeAPIUpstream
-	repo.accounts[0].Credential.CredentialType = CredentialTypeAPIKey
-	repo.accounts[0].EncryptedRefreshToken = ""
-	repo.accounts[0].Credential.EncryptedRefreshToken = ""
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	if _, err := service.RefreshAccount(context.Background(), 7); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("RefreshAccount error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestRefreshAccountProbesLatestStatusAfterTokenRefresh(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	repo.accounts = []Account{
-		testAccount(t, 7, true, 3, "old-access"),
-	}
-	repo.accounts[0].EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
-	repo.accounts[0].AccessTokenExpiresAt = &expiresAt
-	service := newConfiguredService(repo, fakeOAuthClient{
-		refresh: TokenResponse{
-			AccessToken:  "new-access",
-			RefreshToken: "new-refresh",
-			ExpiresIn:    3600,
-		},
-		probe: probeResult{
-			statusCode: http.StatusTooManyRequests,
-			retryAfter: "120",
-			message:    "usage limit reached",
-		},
-	})
-
-	account, err := service.RefreshAccount(context.Background(), 7)
-	if err != nil {
-		t.Fatalf("RefreshAccount returned error: %v", err)
-	}
-	if account.Status != AccountStatusRateLimited {
-		t.Fatalf("Status = %q, want rate_limited", account.Status)
-	}
-	if account.StatusReason != "usage limit reached" || account.LastError != "usage limit reached" {
-		t.Fatalf("account failure message not recorded: %+v", account)
-	}
-	if account.RateLimitedUntil == nil || !account.RateLimitedUntil.After(time.Now().Add(100*time.Second)) {
-		t.Fatalf("RateLimitedUntil = %v, want retry-after window", account.RateLimitedUntil)
-	}
-	if account.LastTestStatus != AccountTestStatusFailed || account.LastTestError != "usage limit reached" {
-		t.Fatalf("test status/error = %q/%q, want failed probe result", account.LastTestStatus, account.LastTestError)
-	}
-}
-
-func TestRefreshAccountPreservesHealthWhenProbeCannotConfirmRecovery(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(time.Hour)
-	account := testAccount(t, 7, true, 3, "old-access")
-	account.EncryptedRefreshToken = mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, "refresh-token")
-	account.AccessTokenExpiresAt = &expiresAt
-	account.Status = AccountStatusCircuitOpen
-	account.StatusReason = "existing circuit"
-	account.LastError = "existing circuit"
-	account.FailureCount = 3
-	until := time.Now().Add(time.Hour)
-	account.CircuitOpenUntil = &until
-	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{
-		refresh:  TokenResponse{AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600},
-		probeErr: errors.New("probe network unavailable"),
-	})
-
-	refreshed, err := service.RefreshAccount(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("RefreshAccount returned error: %v", err)
-	}
-	if refreshed.Status != AccountStatusCircuitOpen || refreshed.StatusReason != "existing circuit" || refreshed.LastError != "existing circuit" ||
-		refreshed.FailureCount != 3 || refreshed.CircuitOpenUntil == nil {
-		t.Fatalf("account health = %+v, want preserved until confirmed probe recovery", refreshed)
-	}
-	if refreshed.LastTestStatus != AccountTestStatusFailed || refreshed.LastTestError != "probe network unavailable" {
-		t.Fatalf("test status/error = %q/%q, want failed network probe result", refreshed.LastTestStatus, refreshed.LastTestError)
-	}
-	token, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, refreshed.EncryptedAccessToken)
-	if err != nil || token != "new-access" {
-		t.Fatalf("refreshed token = %q, err=%v", token, err)
-	}
-}
-
 func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	repo := newMemoryRepo()
 	account := testAccount(t, 7, true, 3, "unused-oauth-token")
@@ -1559,7 +323,7 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	account.CircuitOpenUntil = &circuitOpenUntil
 	account.FailureCount = 2
 	repo.accounts = []Account{account}
-	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
+	client := &captureProbeClient{probe: probeResult{statusCode: http.StatusOK}}
 	service := newConfiguredService(repo, client)
 	requestLogger := &captureAccountTestRequestLogger{err: errors.New("request log unavailable")}
 	service.accountTestRequestLogger = requestLogger
@@ -1572,8 +336,8 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 		t.Fatalf("TestAccount returned error: %v", err)
 	}
 
-	if client.gotAccessToken != "upstream-secret" || client.gotConfig.APIBaseURL != "https://upstream.example.test" || client.gotConfig.ProbeChatGPTAccountID != "" {
-		t.Fatalf("probe call token=%q apiBase=%q chatgpt=%q", client.gotAccessToken, client.gotConfig.APIBaseURL, client.gotConfig.ProbeChatGPTAccountID)
+	if client.gotAccessToken != "upstream-secret" || client.gotConfig.APIBaseURL != "https://upstream.example.test" {
+		t.Fatalf("probe call token=%q apiBase=%q", client.gotAccessToken, client.gotConfig.APIBaseURL)
 	}
 	if tested.Status != AccountStatusActive || tested.StatusReason != "" || tested.LastError != "" || tested.LastErrorAt != nil || tested.CircuitOpenUntil != nil || tested.FailureCount != 0 {
 		t.Fatalf("tested account = %+v, want local failure state cleared", tested)
@@ -1596,93 +360,6 @@ func TestTestAccountProbesAPIUpstreamAndClearsFailureState(t *testing.T) {
 	}
 }
 
-func TestTestAccountOAuthRecoveryClearsRateLimitState(t *testing.T) {
-	repo := newMemoryRepo()
-	account := testAccount(t, 7, true, 3, "oauth-access-token")
-	account.AccountType = AccountTypeCodexOAuth
-	account.Metadata = map[string]string{"chatgpt_account_id": "acct_chatgpt"}
-	account.Status = AccountStatusRateLimited
-	account.StatusReason = "previous rate limit"
-	account.LastError = "previous rate limit"
-	now := time.Now()
-	rateLimitedUntil := now.Add(-time.Minute)
-	account.LastErrorAt = &now
-	account.RateLimitedUntil = &rateLimitedUntil
-	repo.accounts = []Account{account}
-	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
-	service := newConfiguredService(repo, client)
-
-	tested, err := service.TestAccount(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("TestAccount returned error: %v", err)
-	}
-
-	if client.gotConfig.ProbeChatGPTAccountID != "acct_chatgpt" || client.gotAccessToken != "oauth-access-token" {
-		t.Fatalf("probe account/token = %q/%q, want acct_chatgpt/oauth-access-token", client.gotConfig.ProbeChatGPTAccountID, client.gotAccessToken)
-	}
-	if tested.Status != AccountStatusActive || tested.StatusReason != "" || tested.LastError != "" || tested.LastErrorAt != nil || tested.RateLimitedUntil != nil {
-		t.Fatalf("tested account = %+v, want recovered active account", tested)
-	}
-	if tested.LastTestAt == nil || tested.LastTestStatus != AccountTestStatusPassed || tested.LastTestError != "" {
-		t.Fatalf("test result = at:%v status:%q error:%q, want passed result", tested.LastTestAt, tested.LastTestStatus, tested.LastTestError)
-	}
-}
-
-func TestTestAccountLogsModelOnlyForCodexResponsesProbe(t *testing.T) {
-	testCases := []struct {
-		name               string
-		chatGPTAccountID   string
-		wantModel          string
-		wantRoute          string
-		wantMethod         string
-		wantProbeAccountID string
-	}{
-		{
-			name:       "missing ChatGPT account ID",
-			wantRoute:  "/v1/models",
-			wantMethod: http.MethodGet,
-		},
-		{
-			name:               "with ChatGPT account ID",
-			chatGPTAccountID:   "acct_chatgpt",
-			wantModel:          "gpt-5.4-mini",
-			wantRoute:          "/backend-api/codex/responses",
-			wantMethod:         http.MethodPost,
-			wantProbeAccountID: "acct_chatgpt",
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			repo := newMemoryRepo()
-			account := testAccount(t, 7, true, 3, "oauth-access-token")
-			account.AccountType = AccountTypeCodexOAuth
-			if testCase.chatGPTAccountID != "" {
-				account.Metadata = map[string]string{"chatgpt_account_id": testCase.chatGPTAccountID}
-			}
-			repo.accounts = []Account{account}
-			client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
-			service := newConfiguredService(repo, client)
-			requestLogger := &captureAccountTestRequestLogger{}
-			service.accountTestRequestLogger = requestLogger
-
-			if _, err := service.TestAccount(context.Background(), account.ID); err != nil {
-				t.Fatalf("TestAccount returned error: %v", err)
-			}
-			if client.gotConfig.ProbeChatGPTAccountID != testCase.wantProbeAccountID {
-				t.Fatalf("probe ChatGPT account ID = %q, want %q", client.gotConfig.ProbeChatGPTAccountID, testCase.wantProbeAccountID)
-			}
-			if len(requestLogger.entries) != 1 {
-				t.Fatalf("request log count = %d, want 1", len(requestLogger.entries))
-			}
-			entry := requestLogger.entries[0]
-			if entry.Model != testCase.wantModel || entry.Route != testCase.wantRoute || entry.Method != testCase.wantMethod {
-				t.Fatalf("request log model/route/method = %q/%q/%q, want %q/%q/%q", entry.Model, entry.Route, entry.Method, testCase.wantModel, testCase.wantRoute, testCase.wantMethod)
-			}
-		})
-	}
-}
-
 func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	repo := newMemoryRepo()
 	account := testAccount(t, 7, true, 3, "unused-oauth-token")
@@ -1691,7 +368,7 @@ func TestTestAccountRecordsAPIUpstreamFailure(t *testing.T) {
 	account.Credential.EncryptedAPIKey = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "upstream-secret")
 	account.Credential.BaseURL = "https://upstream.example.test"
 	repo.accounts = []Account{account}
-	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusTooManyRequests, retryAfter: "120", message: "quota window"}}
+	client := &captureProbeClient{probe: probeResult{statusCode: http.StatusTooManyRequests, retryAfter: "120", message: "quota window"}}
 	service := newConfiguredService(repo, client)
 	requestLogger := &captureAccountTestRequestLogger{}
 	service.accountTestRequestLogger = requestLogger
@@ -1727,7 +404,7 @@ func TestTestAccountRequiresTwoHundredStatusForRecovery(t *testing.T) {
 			until := time.Now().Add(time.Hour)
 			account.CircuitOpenUntil = &until
 			repo.accounts = []Account{account}
-			client := &captureProbeOAuthClient{probe: probeResult{statusCode: statusCode, message: "non-success probe"}}
+			client := &captureProbeClient{probe: probeResult{statusCode: statusCode, message: "non-success probe"}}
 			service := newConfiguredService(repo, client)
 
 			tested, err := service.TestAccount(context.Background(), account.ID)
@@ -1766,7 +443,7 @@ func TestTestAccountsProbesEveryProviderAccount(t *testing.T) {
 	second.LastErrorAt = &now
 	second.CircuitOpenUntil = &until
 	repo.accounts = []Account{first, second}
-	client := &captureProbeOAuthClient{probes: []probeResult{{statusCode: http.StatusOK}, {statusCode: http.StatusOK}}}
+	client := &captureProbeClient{probes: []probeResult{{statusCode: http.StatusOK}, {statusCode: http.StatusOK}}}
 	service := newConfiguredService(repo, client)
 
 	tested, err := service.TestAccounts(context.Background())
@@ -1794,7 +471,7 @@ func TestTestAccountPassesConfiguredProxyURLToProbe(t *testing.T) {
 	account.Credential.EncryptedProxyURL = mustEncrypt(t, "encryption-secret", secret.SecretKindProviderProxyURL, "http://proxy.example.test:8080")
 	account.Credential.BaseURL = "https://upstream.example.test"
 	repo.accounts = []Account{account}
-	client := &captureProbeOAuthClient{probe: probeResult{statusCode: http.StatusOK}}
+	client := &captureProbeClient{probe: probeResult{statusCode: http.StatusOK}}
 	service := newConfiguredService(repo, client)
 
 	if _, err := service.TestAccount(context.Background(), account.ID); err != nil {
@@ -1822,11 +499,6 @@ func TestTestAccountModelUsesExactAPIUpstreamAndPersistsFailureWithoutChangingHe
 	profileID := int64(9)
 	account.FingerprintProfileID = &profileID
 	repo.accounts = []Account{account}
-	repo.fingerprintProfiles[profileID] = FingerprintProfileData{
-		UserAgent:      "model-probe-agent",
-		TLSFingerprint: "chrome",
-		Headers:        map[string]string{"X-Probe": "profile"},
-	}
 	_, err := repo.ReplaceAccountModels(context.Background(), "openai", account.ID, []AccountModelInput{{Model: "gpt-test", Enabled: false}})
 	if err != nil {
 		t.Fatalf("ReplaceAccountModels returned error: %v", err)
@@ -1836,7 +508,7 @@ func TestTestAccountModelUsesExactAPIUpstreamAndPersistsFailureWithoutChangingHe
 		errorCode:  "rate_limited",
 		message:    " quota upstream-secret  window\nreached ",
 	}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	service.modelProber = prober
 	requestLogger := &captureAccountTestRequestLogger{}
 	service.accountTestRequestLogger = requestLogger
@@ -1847,9 +519,6 @@ func TestTestAccountModelUsesExactAPIUpstreamAndPersistsFailureWithoutChangingHe
 	}
 	if prober.model != "gpt-test" || prober.selected.AccountID != account.ID || prober.selected.AuthorizationToken != "upstream-secret" || prober.selected.BaseURL != "https://upstream.example.test/v1" || prober.selected.ProxyURL != "http://proxy.example.test:8080" {
 		t.Fatalf("model probe selected account = %+v model=%q", prober.selected, prober.model)
-	}
-	if prober.selected.FingerprintUA != "model-probe-agent" || prober.selected.FingerprintTLS != "chrome" || prober.selected.FingerprintHeaders["X-Probe"] != "profile" {
-		t.Fatalf("model probe fingerprint = ua:%q tls:%q headers:%v", prober.selected.FingerprintUA, prober.selected.FingerprintTLS, prober.selected.FingerprintHeaders)
 	}
 	if result.Status != AccountTestStatusFailed || result.ErrorCode != "rate_limited" || result.HTTPStatus != http.StatusTooManyRequests || result.Message != "quota [redacted] window reached" || result.CheckedAt.IsZero() {
 		t.Fatalf("result = %+v", result)
@@ -1888,7 +557,7 @@ func TestTestAccountModelRejectsModelsNotConfiguredForAccount(t *testing.T) {
 		t.Fatalf("ReplaceAccountModels returned error: %v", err)
 	}
 	prober := &captureAccountModelProber{}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	service.modelProber = prober
 
 	_, err = service.TestAccountModel(context.Background(), 7, "other-model")
@@ -1897,73 +566,6 @@ func TestTestAccountModelRejectsModelsNotConfiguredForAccount(t *testing.T) {
 	}
 	if prober.calls != 0 {
 		t.Fatalf("model prober calls = %d, want 0", prober.calls)
-	}
-}
-
-func TestTestAccountModelRefreshFailureDoesNotChangeAccountHealth(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(-time.Minute)
-	account := testExpiredAccount(t, 7, true, 3, "expired-access", "refresh-token", expiresAt)
-	account.Status = AccountStatusActive
-	repo.accounts = []Account{account}
-	_, err := repo.ReplaceAccountModels(context.Background(), "openai", 7, []AccountModelInput{{Model: "gpt-test", Enabled: true}})
-	if err != nil {
-		t.Fatalf("ReplaceAccountModels returned error: %v", err)
-	}
-	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh unavailable")})
-
-	_, err = service.TestAccountModel(context.Background(), 7, "gpt-test")
-	if err == nil {
-		t.Fatal("TestAccountModel returned nil error, want refresh failure")
-	}
-	unchanged, err := repo.FindAccountByID(context.Background(), "openai", 7)
-	if err != nil {
-		t.Fatalf("FindAccountByID returned error: %v", err)
-	}
-	if unchanged.Status != AccountStatusActive || unchanged.FailureCount != 0 || unchanged.LastRefreshError != "" {
-		t.Fatalf("refresh failure changed diagnostic account health: %+v", unchanged)
-	}
-}
-
-func TestTestAccountModelSuccessfulRefreshUpdatesOnlyCredentialState(t *testing.T) {
-	repo := newMemoryRepo()
-	expiresAt := time.Now().Add(-time.Minute)
-	account := testExpiredAccount(t, 7, true, 3, "expired-access", "refresh-token", expiresAt)
-	account.Status = AccountStatusCircuitOpen
-	account.StatusReason = "existing health state"
-	account.LastError = "existing health state"
-	account.FailureCount = 4
-	until := time.Now().Add(time.Hour)
-	account.CircuitOpenUntil = &until
-	repo.accounts = []Account{account}
-	_, err := repo.ReplaceAccountModels(context.Background(), "openai", 7, []AccountModelInput{{Model: "gpt-test", Enabled: true}})
-	if err != nil {
-		t.Fatalf("ReplaceAccountModels returned error: %v", err)
-	}
-	prober := &captureAccountModelProber{result: modelProbeResult{statusCode: http.StatusOK}}
-	service := newConfiguredService(repo, fakeOAuthClient{refresh: TokenResponse{
-		AccessToken:  "refreshed-access",
-		RefreshToken: "refreshed-refresh",
-		ExpiresIn:    3600,
-	}})
-	service.modelProber = prober
-
-	if _, err := service.TestAccountModel(context.Background(), 7, "gpt-test"); err != nil {
-		t.Fatalf("TestAccountModel returned error: %v", err)
-	}
-	if prober.selected.AuthorizationToken != "refreshed-access" {
-		t.Fatalf("model probe token = %q, want refreshed-access", prober.selected.AuthorizationToken)
-	}
-	unchanged, err := repo.FindAccountByID(context.Background(), "openai", 7)
-	if err != nil {
-		t.Fatalf("FindAccountByID returned error: %v", err)
-	}
-	if unchanged.Status != AccountStatusCircuitOpen || unchanged.StatusReason != "existing health state" || unchanged.LastError != "existing health state" || unchanged.FailureCount != 4 || unchanged.CircuitOpenUntil == nil {
-		t.Fatalf("successful diagnostic refresh changed account health: %+v", unchanged)
-	}
-	refreshedToken, err := decryptForTest(t, "encryption-secret", secret.SecretKindOAuthAccessToken, unchanged.Credential.EncryptedAccessToken)
-	if err != nil || refreshedToken != "refreshed-access" {
-		t.Fatalf("refreshed credential token = %q error=%v", refreshedToken, err)
 	}
 }
 
@@ -1982,7 +584,7 @@ func TestListAccountTestResultsValidatesAndNormalizesLimit(t *testing.T) {
 			CreatedAt: checkedAt,
 		})
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.ListAccountTestResults(context.Background(), 0, 20); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid id error = %v, want ErrInvalidInput", err)
@@ -2009,7 +611,7 @@ func TestListAccountTestResultsValidatesAndNormalizesLimit(t *testing.T) {
 func TestPauseAccountSchedulingTemporarilyOpensCircuit(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 3, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	paused, err := service.PauseAccountScheduling(context.Background(), 7, 5*time.Minute)
 	if err != nil {
@@ -2030,7 +632,7 @@ func TestPauseAccountSchedulingTemporarilyOpensCircuit(t *testing.T) {
 func TestRecordAccountFailureMapsUpstreamStatusesToAccountState(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if err := service.RecordAccountFailure(context.Background(), 7, 429, "120", "rate limited"); err != nil {
 		t.Fatalf("RecordAccountFailure rate limit returned error: %v", err)
@@ -2075,7 +677,7 @@ func TestRecordAccountFailureDoesNotExpireAccountForResponsesScopeForbidden(t *t
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
 	repo.accounts[0].Status = AccountStatusActive
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	message := "You have insufficient permissions for this operation. Missing scopes: api.responses.write."
 
 	if err := service.RecordAccountFailure(context.Background(), 7, 403, "", message); err != nil {
@@ -2104,7 +706,7 @@ func TestResetAccountStatusClearsLocalFailureWindows(t *testing.T) {
 	repo.accounts[0].RateLimitedUntil = &future
 	repo.accounts[0].CircuitOpenUntil = &future
 	repo.accounts[0].FailureCount = 3
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	account, err := service.ResetAccountStatus(context.Background(), 7)
 	if err != nil {
@@ -2124,7 +726,7 @@ func TestSelectAccountForModelUsesPriorityOrder(t *testing.T) {
 		testAccount(t, 1, true, 10, "low-priority-token"),
 		testAccount(t, 2, true, 1, "high-priority-token"),
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -2142,7 +744,7 @@ func TestSelectAccountForModelUsesLoadFactorWithinPriority(t *testing.T) {
 	second := testAccount(t, 2, true, 1, "high-capacity-token")
 	second.LoadFactor = 5
 	repo.accounts = []Account{first, second}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -2158,7 +760,7 @@ func TestSelectedAccountIncludesMaxConcurrentRequests(t *testing.T) {
 	account := testAccount(t, 7, true, 1, "access-token")
 	account.MaxConcurrentRequests = 2
 	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "")
 	if err != nil {
@@ -2172,7 +774,7 @@ func TestSelectedAccountIncludesMaxConcurrentRequests(t *testing.T) {
 func TestUpdateAccountCanRenameLocalAccountLabel(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	name := " Work Codex "
 
 	account, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{Name: &name})
@@ -2210,7 +812,7 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 		FailureCount:     3,
 		CircuitOpenUntil: &openUntil,
 	}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	oldEncryptedAPIKey := repo.accounts[0].Credential.EncryptedAPIKey
 	baseURL := "https://new.example.test/v1/"
 	apiKey := "new-secret"
@@ -2244,7 +846,7 @@ func TestUpdateAccountCanRotateAPIUpstreamCredential(t *testing.T) {
 func TestUpdateAccountRejectsNegativeMaxConcurrentRequests(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	enabled := true
 	maxConcurrentRequests := -1
 
@@ -2253,69 +855,14 @@ func TestUpdateAccountRejectsNegativeMaxConcurrentRequests(t *testing.T) {
 	}
 }
 
-func TestUpdateAccountRejectsAPIUpstreamCredentialPatchForOAuthAccount(t *testing.T) {
-	repo := newMemoryRepo()
-	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
-	baseURL := "https://new.example.test/v1"
-
-	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{APIUpstreamBaseURL: &baseURL}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("UpdateAccount error = %v, want ErrInvalidInput", err)
-	}
-}
-
 func TestUpdateAccountRejectsEmptyLocalAccountLabel(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	name := " "
 
 	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{Name: &name}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("UpdateAccount error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestUpdateAccountRejectsUnknownFingerprintProfile(t *testing.T) {
-	repo := newMemoryRepo()
-	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
-	profileID := int64(999)
-
-	if _, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{FingerprintProfileIDSet: true, FingerprintProfileID: &profileID}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("UpdateAccount error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestUpdateAccountCanSetKnownFingerprintProfile(t *testing.T) {
-	profileID := int64(7)
-	repo := newMemoryRepo()
-	repo.accounts = []Account{testAccount(t, 7, true, 1, "access-token")}
-	repo.fingerprintProfiles[profileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	updated, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{FingerprintProfileIDSet: true, FingerprintProfileID: &profileID})
-	if err != nil {
-		t.Fatalf("UpdateAccount returned error: %v", err)
-	}
-	if updated.FingerprintProfileID == nil || *updated.FingerprintProfileID != profileID {
-		t.Fatalf("FingerprintProfileID = %+v, want %d", updated.FingerprintProfileID, profileID)
-	}
-}
-
-func TestUpdateAccountAllowsClearingFingerprintProfile(t *testing.T) {
-	profileID := int64(7)
-	repo := newMemoryRepo()
-	account := testAccount(t, 7, true, 1, "access-token")
-	account.FingerprintProfileID = &profileID
-	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{})
-
-	updated, err := service.UpdateAccount(context.Background(), 7, AccountUpdate{FingerprintProfileIDSet: true})
-	if err != nil {
-		t.Fatalf("UpdateAccount returned error: %v", err)
-	}
-	if updated.FingerprintProfileID != nil {
-		t.Fatalf("FingerprintProfileID = %v, want cleared nil", *updated.FingerprintProfileID)
 	}
 }
 
@@ -2325,7 +872,7 @@ func TestSelectAccountForModelSkipsExcludedAccount(t *testing.T) {
 		testAccount(t, 1, true, 1, "first-token"),
 		testAccount(t, 2, true, 2, "fallback-token"),
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "", 1)
 	if err != nil {
@@ -2346,7 +893,7 @@ func TestSelectAccountForModelFiltersByRequestedModel(t *testing.T) {
 		1: {{AccountID: 1, Provider: "openai", Model: "gpt-4.1", Enabled: true}},
 		2: {{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "gpt-5")
 	if err != nil {
@@ -2365,7 +912,7 @@ func TestSelectAccountForModelReturnsModelUnavailableWhenNoAccountSupportsModel(
 	repo.accountModels = map[int64][]AccountModel{
 		1: {{AccountID: 1, Provider: "openai", Model: "gpt-4.1", Enabled: true}},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); !errors.Is(err, ErrModelUnavailable) {
 		t.Fatalf("SelectAccountForModel error = %v, want ErrModelUnavailable", err)
@@ -2380,7 +927,7 @@ func TestSelectAccountForModelReturnsAccountsDisabledWhenAllModelAccountsDisable
 	repo.accountModels = map[int64][]AccountModel{
 		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); !errors.Is(err, ErrAccountsDisabled) {
 		t.Fatalf("SelectAccountForModel error = %v, want ErrAccountsDisabled", err)
@@ -2395,7 +942,7 @@ func TestSelectAccountForModelReturnsAccountsUnavailableWhenOnlyModelAccountExcl
 	repo.accountModels = map[int64][]AccountModel{
 		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5", 1); !errors.Is(err, ErrAccountsUnavailable) {
 		t.Fatalf("SelectAccountForModel error = %v, want ErrAccountsUnavailable", err)
@@ -2405,12 +952,12 @@ func TestSelectAccountForModelReturnsAccountsUnavailableWhenOnlyModelAccountExcl
 func TestSelectAccountForModelReturnsAccountsUnavailableWhenModelAccountsCannotProvideToken(t *testing.T) {
 	repo := newMemoryRepo()
 	badToken := testAccount(t, 1, true, 1, "access-token")
-	badToken.EncryptedAccessToken = "not-encrypted"
+	badToken.Credential.EncryptedAPIKey = "not-encrypted"
 	repo.accounts = []Account{badToken}
 	repo.accountModels = map[int64][]AccountModel{
 		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); !errors.Is(err, ErrAccountsUnavailable) {
 		t.Fatalf("SelectAccountForModel error = %v, want ErrAccountsUnavailable", err)
@@ -2430,7 +977,7 @@ func TestSelectAccountForModelIgnoresDisabledModelRows(t *testing.T) {
 		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: false}},
 		2: {{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "gpt-5")
 	if err != nil {
@@ -2451,7 +998,7 @@ func TestSelectAccountForModelRespectsExcludedAccountIDsWithModelFilter(t *testi
 		1: {{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}},
 		2: {{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}},
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModel(context.Background(), "gpt-5", 1)
 	if err != nil {
@@ -2459,77 +1006,6 @@ func TestSelectAccountForModelRespectsExcludedAccountIDsWithModelFilter(t *testi
 	}
 	if selected.AccountID != 2 || selected.AuthorizationToken != "fallback-token" {
 		t.Fatalf("selected = %+v, want non-excluded account 2", selected)
-	}
-}
-
-func TestSelectAccountAppliesFingerprintProfileForOAuthAndAPIUpstream(t *testing.T) {
-	profileID := int64(7)
-	for _, tc := range []struct {
-		name        string
-		account     Account
-		wantToken   string
-		wantBaseURL string
-	}{
-		{
-			name: "codex oauth",
-			account: func() Account {
-				account := testAccount(t, 1, true, 1, "oauth-token")
-				account.FingerprintProfileID = &profileID
-				return account
-			}(),
-			wantToken:   "oauth-token",
-			wantBaseURL: "https://api.openai.example.test",
-		},
-		{
-			name: "api upstream",
-			account: Account{
-				ID:                   2,
-				Provider:             "openai",
-				AccountType:          AccountTypeAPIUpstream,
-				Subject:              "api-upstream",
-				DisplayName:          "API upstream",
-				Enabled:              true,
-				Priority:             1,
-				FingerprintProfileID: &profileID,
-				Credential: AccountCredential{
-					BaseURL:         "https://upstream.example.test/v1",
-					EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, "api-token"),
-				},
-			},
-			wantToken:   "api-token",
-			wantBaseURL: "https://upstream.example.test/v1",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			repo := newMemoryRepo()
-			repo.accounts = []Account{tc.account}
-			repo.accountModels[tc.account.ID] = []AccountModel{{AccountID: tc.account.ID, Provider: "openai", Model: "gpt-5", Enabled: true}}
-			repo.fingerprintProfiles[profileID] = FingerprintProfileData{
-				UserAgent:      "Mozilla/5.0",
-				TLSFingerprint: "chrome",
-				Headers:        map[string]string{"X-Fingerprint": "enabled"},
-			}
-			service := newConfiguredService(repo, fakeOAuthClient{})
-			service.cfg.APIBaseURL = "https://api.openai.example.test"
-
-			selected, err := service.SelectAccountForModel(context.Background(), "gpt-5")
-			if err != nil {
-				t.Fatalf("SelectAccountForModel returned error: %v", err)
-			}
-
-			if selected.AuthorizationToken != tc.wantToken || selected.BaseURL != tc.wantBaseURL {
-				t.Fatalf("selected token/baseURL = %q/%q, want %q/%q", selected.AuthorizationToken, selected.BaseURL, tc.wantToken, tc.wantBaseURL)
-			}
-			if selected.FingerprintUA != "Mozilla/5.0" {
-				t.Fatalf("fingerprint UA = %q, want Mozilla/5.0", selected.FingerprintUA)
-			}
-			if selected.FingerprintTLS != "chrome" {
-				t.Fatalf("fingerprint TLS = %q, want chrome", selected.FingerprintTLS)
-			}
-			if selected.FingerprintHeaders["X-Fingerprint"] != "enabled" {
-				t.Fatalf("fingerprint headers = %+v, want custom header", selected.FingerprintHeaders)
-			}
-		})
 	}
 }
 
@@ -2549,7 +1025,7 @@ func TestSelectAccountForModelAndSessionUsesStickyHashAcrossCandidateOrder(t *te
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123")
 	if err != nil {
@@ -2589,7 +1065,7 @@ func TestSelectAccountForModelAndSessionPersistsAndReusesBinding(t *testing.T) {
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123")
 	if err != nil {
@@ -2624,7 +1100,7 @@ func TestSelectAccountForModelInRoutingPoolScopesCandidates(t *testing.T) {
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPool(context.Background(), 7, "gpt-5")
 	if err != nil {
@@ -2651,7 +1127,7 @@ func TestSelectAccountForModelInRoutingPoolUsesMembershipPriority(t *testing.T) 
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPool(context.Background(), 7, "gpt-5")
 	if err != nil {
@@ -2680,7 +1156,7 @@ func TestSelectAccountForModelAndSessionInRoutingPoolKeepsStickyHashInsideGlobal
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selectedIDs := map[int64]bool{}
 	for i := 0; i < 100; i++ {
@@ -2713,7 +1189,7 @@ func TestSelectAccountForModelInRoutingPoolMissingPoolFailsClosed(t *testing.T) 
 		testAccount(t, 1, true, 1, "global-token"),
 	}
 	repo.accountModels[1] = []AccountModel{{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModelInRoutingPool(context.Background(), 99, "gpt-5"); !errors.Is(err, ErrRoutingPoolNotFound) {
 		t.Fatalf("SelectAccountForModelInRoutingPool error = %v, want ErrRoutingPoolNotFound", err)
@@ -2732,7 +1208,7 @@ func TestSelectAccountForModelInRoutingPoolChainFallsBackByModel(t *testing.T) {
 	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if err != nil {
@@ -2758,7 +1234,7 @@ func TestSelectResponseAffinityAccountByIDAcrossRoutingPoolChain(t *testing.T) {
 	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20}}
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-5", Enabled: true}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountByIDInRoutingPoolChain(context.Background(), 1, 20, "gpt-5")
 	if err != nil {
@@ -2785,7 +1261,7 @@ func TestSelectSingleResponseAffinityAccountRequiresUniqueScope(t *testing.T) {
 			repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20}}
 			repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
 		}
-		return newConfiguredService(repo, fakeOAuthClient{})
+		return newConfiguredService(repo, fakeProbeClient{})
 	}
 
 	selected, unique, err := newService(false).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
@@ -2859,7 +1335,7 @@ func TestSelectSingleResponseAffinityAccountUsesFullTopology(t *testing.T) {
 			repo.accountModels[second.ID] = []AccountModel{{AccountID: second.ID, Provider: "openai", Model: "gpt-5", Enabled: true}}
 			testCase.configureSecond(repo, &repo.accounts[1])
 
-			selected, unique, err := newConfiguredService(repo, fakeOAuthClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+			selected, unique, err := newConfiguredService(repo, fakeProbeClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
 			if err != nil || unique || selected.AccountID != 0 {
 				t.Fatalf("topology selection = %+v/%v/%v, want empty/false/nil", selected, unique, err)
 			}
@@ -2874,7 +1350,7 @@ func TestSelectSingleResponseAffinityAccountValidatesUniqueAccountScheduling(t *
 	repo.routingPoolAccounts[1] = []RoutingPoolAccount{{AccountID: 10}}
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-5", Enabled: true}}
 
-	selected, unique, err := newConfiguredService(repo, fakeOAuthClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	selected, unique, err := newConfiguredService(repo, fakeProbeClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if !errors.Is(err, ErrAccountsUnavailable) || unique || selected.AccountID != 0 {
 		t.Fatalf("disabled unique selection = %+v/%v/%v, want empty/false/ErrAccountsUnavailable", selected, unique, err)
 	}
@@ -2889,7 +1365,7 @@ func TestSelectSingleResponseAffinityAccountDeduplicatesMembershipsAcrossChain(t
 	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 10}}
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-5", Enabled: true}}
 
-	selected, unique, err := newConfiguredService(repo, fakeOAuthClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	selected, unique, err := newConfiguredService(repo, fakeProbeClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if err != nil || !unique || selected.AccountID != 10 || selected.RoutingPoolID != 1 {
 		t.Fatalf("shared topology selection = %+v/%v/%v, want account 10 in primary pool", selected, unique, err)
 	}
@@ -2908,7 +1384,7 @@ func TestSelectSingleResponseAffinityAccountCountsDisabledFallbackTopology(t *te
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-5", Enabled: true}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
 
-	selected, unique, err := newConfiguredService(repo, fakeOAuthClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	selected, unique, err := newConfiguredService(repo, fakeProbeClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if err != nil || unique || selected.AccountID != 0 {
 		t.Fatalf("disabled fallback topology selection = %+v/%v/%v, want empty/false/nil", selected, unique, err)
 	}
@@ -2922,7 +1398,7 @@ func TestSelectSingleResponseAffinityAccountSelectsUniqueFallbackAccount(t *test
 	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
 
-	selected, unique, err := newConfiguredService(repo, fakeOAuthClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	selected, unique, err := newConfiguredService(repo, fakeProbeClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if err != nil || !unique || selected.AccountID != 20 || selected.RoutingPoolID != 2 || selected.RoutingPoolFallbackDepth != 1 {
 		t.Fatalf("fallback topology selection = %+v/%v/%v, want account 20 in fallback pool", selected, unique, err)
 	}
@@ -2936,7 +1412,7 @@ func TestSelectSingleResponseAffinityAccountRejectsDisabledPrimaryPool(t *testin
 	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
 
-	selected, unique, err := newConfiguredService(repo, fakeOAuthClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
+	selected, unique, err := newConfiguredService(repo, fakeProbeClient{}).SelectSingleAccountInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if !errors.Is(err, ErrAccountsDisabled) || unique || selected.AccountID != 0 {
 		t.Fatalf("disabled primary selection = %+v/%v/%v, want empty/false/ErrAccountsDisabled", selected, unique, err)
 	}
@@ -2961,7 +1437,7 @@ func TestSelectAccountForModelInRoutingPoolChainSkipsDisabledFallbackPool(t *tes
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
 	repo.accountModels[30] = []AccountModel{{AccountID: 30, Provider: "openai", Model: "gpt-5", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if err != nil {
@@ -2979,7 +1455,7 @@ func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
 	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true, FallbackPoolID: ptrInt64(1)}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if !errors.Is(err, ErrRoutingPoolCycle) {
@@ -2991,7 +1467,7 @@ func TestSelectAccountForModelInRoutingPoolChainRejectsCycle(t *testing.T) {
 }
 
 func TestSelectAccountForModelInRoutingPoolChainMarksUnavailableDiagnostics(t *testing.T) {
-	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
+	service := newConfiguredService(newMemoryRepo(), fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 99, "gpt-5")
 	if !errors.Is(err, ErrRoutingPoolNotFound) {
@@ -3005,7 +1481,7 @@ func TestSelectAccountForModelInRoutingPoolChainMarksUnavailableDiagnostics(t *t
 func TestSelectAccountForModelInRoutingPoolChainMarksMissingFallbackAsExhausted(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if !errors.Is(err, ErrRoutingPoolExhausted) {
@@ -3031,7 +1507,7 @@ func TestSelectAccountForModelInRoutingPoolChainMarksExhaustedDiagnostics(t *tes
 	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-4", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if !errors.Is(err, ErrModelUnavailable) {
@@ -3049,7 +1525,7 @@ func TestSelectAccountForModelInRoutingPoolChainMarksDisabledPrimaryDiagnostics(
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: false, FallbackPoolID: ptrInt64(2)}
 	repo.routingPools[2] = RoutingPool{ID: 2, Name: "secondary", Enabled: true}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if !errors.Is(err, ErrAccountsDisabled) {
@@ -3066,7 +1542,7 @@ func TestSelectAccountForModelInRoutingPoolChainMarksDisabledPrimaryDiagnostics(
 func TestSelectAccountForModelInRoutingPoolChainMarksEmptyPrimaryDiagnostics(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChain(context.Background(), 1, "gpt-5")
 	if !errors.Is(err, ErrRoutingPoolEmpty) {
@@ -3094,7 +1570,7 @@ func TestListExposedModelsForRoutingPoolChainIncludesFallbackModels(t *testing.T
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4", Enabled: true}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
 	repo.accountModels[30] = []AccountModel{{AccountID: 30, Provider: "openai", Model: "global-only", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	models, err := service.ListExposedModelsForRoutingPoolChain(context.Background(), 1)
 	if err != nil {
@@ -3120,7 +1596,7 @@ func TestSelectAccountForModelAndSessionInRoutingPoolDoesNotCrossScope(t *testin
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	first, err := service.SelectAccountForModelAndSessionInRoutingPool(context.Background(), 7, "gpt-5", "workspace-123")
 	if err != nil {
@@ -3159,7 +1635,7 @@ func TestSelectAccountForModelAndSessionInRoutingPoolRebindsWhenBoundAccountExcl
 		AccountID: 1,
 		CreatedAt: time.Now().Add(-time.Hour),
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelAndSessionInRoutingPool(context.Background(), 7, "gpt-5", "workspace-123", 1)
 	if err != nil {
@@ -3196,7 +1672,7 @@ func TestSelectAccountForModelAndSessionRebindsWhenBoundAccountExcluded(t *testi
 		AccountID: 1,
 		CreatedAt: time.Now().Add(-time.Hour),
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", "workspace-123", 1)
 	if err != nil {
@@ -3217,7 +1693,7 @@ func TestSelectAccountForModelDoesNotCreateSessionBinding(t *testing.T) {
 		testAccount(t, 1, true, 1, "first-token"),
 	}
 	repo.accountModels[1] = []AccountModel{{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModel(context.Background(), "gpt-5"); err != nil {
 		t.Fatalf("SelectAccountForModel returned error: %v", err)
@@ -3239,7 +1715,7 @@ func TestSelectAccountForModelAndSessionKeepsStickySelectionInsideHighestPriorit
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	for _, sessionID := range []string{
 		"workspace-1",
@@ -3274,7 +1750,7 @@ func TestPreviewAccountSelectionMeasuresStrictLoadFactorTierAcrossTenThousandSes
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	const sessionCount = 10_000
 	counts := map[int64]int{}
@@ -3326,7 +1802,7 @@ func TestSelectAccountForModelAndSessionDoesNotPromoteErroredPriorityPeer(t *tes
 	if sessionID == "" {
 		t.Fatal("could not find deterministic sticky session fixture")
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelAndSession(context.Background(), "gpt-5", sessionID)
 	if err != nil {
@@ -3355,7 +1831,7 @@ func TestPreviewAccountSelectionUsesStickySessionWithoutMarkingAccountUsed(t *te
 			{AccountID: repo.accounts[i].ID, Provider: "openai", Model: "gpt-5", Enabled: true},
 		}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	sessionID := "workspace-123"
 	expectedStart := stickyAccountIndex(sessionID, 2) + 1
 
@@ -3420,7 +1896,7 @@ func TestPreviewAccountSelectionIncludesScheduleReasons(t *testing.T) {
 		SessionID: "workspace-123",
 		AccountID: 2,
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "workspace-123")
 	if err != nil {
@@ -3470,7 +1946,7 @@ func TestPreviewAccountSelectionReportsStoredStickyBindingWithoutMutation(t *tes
 		UpdatedAt:  createdAt,
 		LastUsedAt: createdAt,
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "workspace-123")
 	if err != nil {
@@ -3509,7 +1985,7 @@ func TestPreviewAccountSelectionReportsStoredStickyBindingForSingleCandidate(t *
 		UpdatedAt:  createdAt,
 		LastUsedAt: createdAt,
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "workspace-123")
 	if err != nil {
@@ -3539,7 +2015,7 @@ func TestPreviewAccountSelectionIncludesUnschedulableReasons(t *testing.T) {
 	repo.accountModels[2] = []AccountModel{{AccountID: 2, Provider: "openai", Model: "gpt-5", Enabled: true}}
 	repo.accountModels[3] = []AccountModel{{AccountID: 3, Provider: "openai", Model: "gpt-4.1", Enabled: true}}
 	repo.accountModels[4] = []AccountModel{{AccountID: 4, Provider: "openai", Model: "gpt-5", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "", 4)
 	if err != nil {
@@ -3582,7 +2058,7 @@ func TestPreviewAccountSelectionReturnsBlockedCandidatesWhenNoneSchedulable(t *t
 	}
 	repo.accountModels[1] = []AccountModel{{AccountID: 1, Provider: "openai", Model: "gpt-5", Enabled: true}}
 	repo.accountModels[2] = []AccountModel{{AccountID: 2, Provider: "openai", Model: "gpt-4.1", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelection(context.Background(), "gpt-5", "")
 	if err != nil {
@@ -3642,7 +2118,7 @@ func TestPreviewAccountSelectionInRoutingPoolScopesCandidatesAndStickyBinding(t 
 		UpdatedAt:  createdAt,
 		LastUsedAt: createdAt,
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelectionInRoutingPool(context.Background(), 7, "gpt-5", "workspace-123")
 	if err != nil {
@@ -3688,7 +2164,7 @@ func TestPreviewAccountSelectionInRoutingPoolScopesCandidatesAndStickyBinding(t 
 func TestPreviewAccountSelectionInRoutingPoolMarksMissingFallbackAsExhausted(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.routingPools[1] = RoutingPool{ID: 1, Name: "primary", Enabled: true, FallbackPoolID: ptrInt64(2)}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelectionInRoutingPool(context.Background(), 1, "gpt-5", "")
 	if !errors.Is(err, ErrRoutingPoolExhausted) {
@@ -3714,7 +2190,7 @@ func TestPreviewAccountSelectionInRoutingPoolFollowsFallbackChain(t *testing.T) 
 	repo.routingPoolAccounts[2] = []RoutingPoolAccount{{AccountID: 20, Priority: 0}}
 	repo.accountModels[10] = []AccountModel{{AccountID: 10, Provider: "openai", Model: "gpt-4.1", Enabled: true}}
 	repo.accountModels[20] = []AccountModel{{AccountID: 20, Provider: "openai", Model: "gpt-5", Enabled: true}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	preview, err := service.PreviewAccountSelectionInRoutingPool(context.Background(), 1, "gpt-5", "")
 	if err != nil {
@@ -3737,7 +2213,7 @@ func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 	repo.accounts = []Account{
 		testAccount(t, 7, true, 1, "access-token"),
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	models, err := service.ReplaceAccountModels(context.Background(), 7, []AccountModelInput{
 		{Model: " gpt-5 ", Enabled: false},
@@ -3774,7 +2250,7 @@ func TestReplaceAndListAccountModelsNormalizeInputs(t *testing.T) {
 
 func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T) {
 	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
 		Name:     "  OpenAI proxy  ",
@@ -3826,7 +2302,7 @@ func TestCreateAPIUpstreamAccountSavesEncryptedKeyAndEnabledModels(t *testing.T)
 
 func TestCreateAPIUpstreamAccountStoresEncryptedProxyURL(t *testing.T) {
 	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
 		Name:     "Upstream",
@@ -3853,32 +2329,9 @@ func TestCreateAPIUpstreamAccountStoresEncryptedProxyURL(t *testing.T) {
 	}
 }
 
-func TestCreateAPIUpstreamAccountSetsKnownFingerprintProfile(t *testing.T) {
-	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
-	profileID := int64(9)
-	repo.fingerprintProfiles[profileID] = FingerprintProfileData{UserAgent: "Mozilla/5.0"}
-
-	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
-		Name:                 "Upstream",
-		BaseURL:              "https://upstream.example.test/v1",
-		APIKey:               "sk-upstream",
-		FingerprintProfileID: &profileID,
-	})
-	if err != nil {
-		t.Fatalf("CreateAPIUpstreamAccount returned error: %v", err)
-	}
-	if account.FingerprintProfileID == nil || *account.FingerprintProfileID != profileID {
-		t.Fatalf("FingerprintProfileID = %+v, want %d", account.FingerprintProfileID, profileID)
-	}
-	if repo.accounts[0].FingerprintProfileID == nil || *repo.accounts[0].FingerprintProfileID != profileID {
-		t.Fatalf("saved FingerprintProfileID = %+v, want %d", repo.accounts[0].FingerprintProfileID, profileID)
-	}
-}
-
 func TestUpdateAccountCanSetAndClearProxyURL(t *testing.T) {
 	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
 		Name:    "Upstream",
 		BaseURL: "https://upstream.example.test/v1",
@@ -3924,7 +2377,7 @@ func TestUpdateAccountCanSetAndClearProxyURL(t *testing.T) {
 
 func TestCreateAPIUpstreamAccountDefaultsEnabledWhenOmitted(t *testing.T) {
 	repo := newMemoryRepo()
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	account, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
 		Name:    "OpenAI proxy",
@@ -3945,7 +2398,7 @@ func TestCreateAPIUpstreamAccountDefaultsEnabledWhenOmitted(t *testing.T) {
 func TestCreateAPIUpstreamAccountDeletesAccountWhenInitialModelsFail(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.replaceModelsErr = errors.New("replace models failed")
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.CreateAPIUpstreamAccount(context.Background(), APIUpstreamInput{
 		Name:    "Upstream",
@@ -3961,7 +2414,7 @@ func TestCreateAPIUpstreamAccountDeletesAccountWhenInitialModelsFail(t *testing.
 }
 
 func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
-	service := newConfiguredService(newMemoryRepo(), fakeOAuthClient{})
+	service := newConfiguredService(newMemoryRepo(), fakeProbeClient{})
 	valid := APIUpstreamInput{Name: "Upstream", BaseURL: "https://upstream.example.test/v1", APIKey: "secret"}
 
 	for _, tc := range []struct {
@@ -3989,13 +2442,8 @@ func TestCreateAPIUpstreamAccountRejectsInvalidInput(t *testing.T) {
 
 func TestCreateAPIUpstreamAccountAllowsHTTPBaseURLWhenConfigured(t *testing.T) {
 	repo := newMemoryRepo()
-	service := NewService(repo, fakeOAuthClient{}, Config{
+	service := NewService(repo, fakeProbeClient{}, Config{
 		Provider:              "openai",
-		ClientID:              "client-id",
-		ClientSecret:          "client-secret",
-		RedirectURL:           "http://localhost/oauth/openai/callback",
-		AuthURL:               "https://auth.example.test/authorize",
-		TokenURL:              "https://auth.example.test/token",
 		Secret:                "encryption-secret",
 		AllowHTTPAPIUpstreams: true,
 	})
@@ -4031,13 +2479,8 @@ func TestSyncUpstreamAccountModelsFetchesAndSyncs(t *testing.T) {
 	defer ts.Close()
 
 	repo := newMemoryRepo()
-	service := NewService(repo, fakeOAuthClient{}, Config{
+	service := NewService(repo, fakeProbeClient{}, Config{
 		Provider:              "openai",
-		ClientID:              "client-id",
-		ClientSecret:          "client-secret",
-		RedirectURL:           "http://localhost/oauth/openai/callback",
-		AuthURL:               "https://auth.example.test/authorize",
-		TokenURL:              "https://auth.example.test/token",
 		Secret:                "encryption-secret",
 		AllowHTTPAPIUpstreams: true,
 	})
@@ -4105,13 +2548,8 @@ func TestSyncUpstreamAccountModelsDoesNotDoubleV1BaseURL(t *testing.T) {
 	defer ts.Close()
 
 	repo := newMemoryRepo()
-	service := NewService(repo, fakeOAuthClient{}, Config{
+	service := NewService(repo, fakeProbeClient{}, Config{
 		Provider:              "openai",
-		ClientID:              "client-id",
-		ClientSecret:          "client-secret",
-		RedirectURL:           "http://localhost/oauth/openai/callback",
-		AuthURL:               "https://auth.example.test/authorize",
-		TokenURL:              "https://auth.example.test/token",
 		Secret:                "encryption-secret",
 		AllowHTTPAPIUpstreams: true,
 	})
@@ -4145,11 +2583,11 @@ func TestSyncUpstreamAccountModelsRejectsNonAPIUpstream(t *testing.T) {
 	account := testAccount(t, 5, true, 1, "oauth-token")
 	account.AccountType = AccountTypeCodexOAuth
 	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	_, _, err := service.SyncUpstreamAccountModels(context.Background(), 5)
-	if err != ErrInvalidInput {
-		t.Fatalf("err = %v, want ErrInvalidInput for non-api_upstream account", err)
+	if err != ErrNotConnected {
+		t.Fatalf("err = %v, want ErrNotConnected for non-api_upstream account", err)
 	}
 }
 
@@ -4160,13 +2598,8 @@ func TestSyncUpstreamAccountModelsNon2xxDoesNotUpdateRows(t *testing.T) {
 	defer ts.Close()
 
 	repo := newMemoryRepo()
-	service := NewService(repo, fakeOAuthClient{}, Config{
+	service := NewService(repo, fakeProbeClient{}, Config{
 		Provider:              "openai",
-		ClientID:              "client-id",
-		ClientSecret:          "client-secret",
-		RedirectURL:           "http://localhost/oauth/openai/callback",
-		AuthURL:               "https://auth.example.test/authorize",
-		TokenURL:              "https://auth.example.test/token",
 		Secret:                "encryption-secret",
 		AllowHTTPAPIUpstreams: true,
 	})
@@ -4195,556 +2628,27 @@ func TestSyncUpstreamAccountModelsNon2xxDoesNotUpdateRows(t *testing.T) {
 	}
 }
 
-func TestSyncOAuthAccountModelsFetchesCurrentCatalogAndEnablesNewModels(t *testing.T) {
-	var requestCount int
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		if r.Method != http.MethodGet {
-			t.Errorf("method = %s, want GET", r.Method)
-		}
-		if r.URL.Path != "/backend-api/codex/models" {
-			t.Errorf("path = %s, want /backend-api/codex/models", r.URL.Path)
-		}
-		if r.URL.Query().Get("client_version") != DefaultCodexFingerprintVersion {
-			t.Errorf("client_version = %q, want %q", r.URL.Query().Get("client_version"), DefaultCodexFingerprintVersion)
-		}
-		if auth := r.Header.Get("Authorization"); auth != "Bearer oauth-access" {
-			t.Errorf("Authorization = %q, want OAuth bearer token", auth)
-		}
-		if accountID := r.Header.Get("ChatGPT-Account-ID"); accountID != "chatgpt-account-7" {
-			t.Errorf("ChatGPT-Account-ID = %q, want chatgpt-account-7", accountID)
-		}
-		if originator := r.Header.Get("originator"); originator != DefaultCodexFingerprintOriginator {
-			t.Errorf("originator = %q, want %q", originator, DefaultCodexFingerprintOriginator)
-		}
-
-		models := `[
-			{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null},
-			{"slug":"gpt-5.6-terra","visibility":"list","supported_in_api":true,"upgrade":null},
-			{"slug":"gpt-5.2","visibility":"list","supported_in_api":true,"upgrade":null},
-			{"slug":"gpt-5.3-codex","visibility":"list","supported_in_api":true,"upgrade":null},
-			{"slug":"gpt-5.4","visibility":"hide","supported_in_api":true,"upgrade":{"model":"gpt-5.6-terra"}},
-			{"slug":"codex-auto-review","visibility":"hide","supported_in_api":true,"upgrade":null},
-			{"slug":"not-api-supported","visibility":"list","supported_in_api":false,"upgrade":null},
-			{"slug":"retired-model","visibility":"list","supported_in_api":true,"upgrade":{"model":"gpt-5.6-sol"}}
-		]`
-		if requestCount > 1 {
-			models = `[
-				{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null},
-				{"slug":"gpt-5.6-luna","visibility":"list","supported_in_api":true,"upgrade":null}
-			]`
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"models":` + models + `}`))
-	}))
-	defer ts.Close()
-
-	repo := newMemoryRepo()
-	account := testAccount(t, 7, true, 1, "oauth-access")
-	account.AccountType = AccountTypeCodexOAuth
-	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "plus"}
-	repo.accounts = []Account{account}
-	catalogNow := time.Date(2026, 7, 31, 8, 0, 0, 0, time.UTC)
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:                  "openai",
-		Secret:                    "encryption-secret",
-		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
-		OAuthModelCatalogCacheTTL: time.Hour,
-	})
-	service.oauthModelCatalogNow = func() time.Time { return catalogNow }
-
-	models, summary, err := service.SyncOAuthAccountModels(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("SyncOAuthAccountModels returned error: %v", err)
-	}
-	if summary.Total != 2 || summary.New != 2 || summary.Preserved != 0 {
-		t.Fatalf("first summary = %+v, want two new current models", summary)
-	}
-	if got := accountModelNames(models); !reflect.DeepEqual(got, []string{"gpt-5.6-sol", "gpt-5.6-terra"}) {
-		t.Fatalf("models = %v, want only current visible models", got)
-	}
-	for _, model := range models {
-		if !model.Enabled || model.Source != AccountModelSourceOAuthCatalog {
-			t.Fatalf("model = %+v, want enabled OAuth catalog row", model)
-		}
-	}
-
-	repo.accountModels[account.ID][0].Enabled = false
-	catalogNow = catalogNow.Add(time.Hour + time.Second)
-	models, summary, err = service.SyncOAuthAccountModels(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("second SyncOAuthAccountModels returned error: %v", err)
-	}
-	if summary.Total != 2 || summary.New != 1 || summary.Preserved != 1 {
-		t.Fatalf("second summary = %+v, want one preserved and one new model", summary)
-	}
-	if got := accountModelNames(models); !reflect.DeepEqual(got, []string{"gpt-5.6-luna", "gpt-5.6-sol"}) {
-		t.Fatalf("models = %v, want stale catalog model removed", got)
-	}
-	for _, model := range models {
-		if model.Model == "gpt-5.6-sol" && model.Enabled {
-			t.Fatalf("preserved model = %+v, want existing disabled state", model)
-		}
-		if model.Model == "gpt-5.6-luna" && !model.Enabled {
-			t.Fatalf("new model = %+v, want enabled by default", model)
-		}
-	}
-	if requestCount != 2 {
-		t.Fatalf("catalog requests = %d, want 2 after cache expiry", requestCount)
-	}
-}
-
-func TestSyncOAuthAccountModelsDoesNotShareCatalogAcrossAccounts(t *testing.T) {
-	var requestCount atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount.Add(1)
-		model := "gpt-5.6-sol"
-		if r.Header.Get("ChatGPT-Account-ID") == "chatgpt-account-8" {
-			model = "gpt-5.6-terra"
-		}
-		_, _ = fmt.Fprintf(w, `{"models":[{"slug":%q,"visibility":"list","supported_in_api":true,"upgrade":null}]}`, model)
-	}))
-	defer ts.Close()
-
-	repo := newMemoryRepo()
-	first := testAccount(t, 7, true, 1, "first-access")
-	first.AccountType = AccountTypeCodexOAuth
-	first.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "Plus"}
-	second := testAccount(t, 8, true, 1, "second-access")
-	second.AccountType = AccountTypeCodexOAuth
-	second.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-8", "plan_type": " plus "}
-	repo.accounts = []Account{first, second}
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:              "openai",
-		Secret:                "encryption-secret",
-		CodexResponsesBaseURL: ts.URL + "/backend-api/codex",
-	})
-
-	for i, accountID := range []int64{first.ID, second.ID} {
-		models, _, err := service.SyncOAuthAccountModels(context.Background(), accountID)
-		if err != nil {
-			t.Fatalf("SyncOAuthAccountModels(%d): %v", accountID, err)
-		}
-		want := []string{"gpt-5.6-sol"}
-		if i == 1 {
-			want = []string{"gpt-5.6-terra"}
-		}
-		if got := accountModelNames(models); !reflect.DeepEqual(got, want) {
-			t.Fatalf("account %d models = %v, want %v", accountID, got, want)
-		}
-	}
-	models, _, err := service.SyncOAuthAccountModels(context.Background(), first.ID)
-	if err != nil {
-		t.Fatalf("repeat SyncOAuthAccountModels(%d): %v", first.ID, err)
-	}
-	if got, want := accountModelNames(models), []string{"gpt-5.6-sol"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("repeated account %d models = %v, want %v", first.ID, got, want)
-	}
-	if got := requestCount.Load(); got != 2 {
-		t.Fatalf("catalog requests = %d, want 2 account-scoped requests with same-account reuse", got)
-	}
-}
-
-func TestOAuthModelCatalogCacheKeySeparatesAccountPlanAndClientVersion(t *testing.T) {
-	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{CodexResponsesBaseURL: "https://catalog.example.test/codex"})
-	account := Account{ID: 7, Metadata: map[string]string{"plan_type": "Plus"}}
-	selected := SelectedAccount{FingerprintHeaders: map[string]string{"Version": "1.2.3"}}
-	base := service.oauthModelCatalogCacheKey(account, selected)
-
-	account.ID = 8
-	if got := service.oauthModelCatalogCacheKey(account, selected); got == base {
-		t.Fatal("different accounts shared an OAuth model catalog cache key")
-	}
-	account.ID = 7
-	account.Metadata["plan_type"] = "Pro"
-	if got := service.oauthModelCatalogCacheKey(account, selected); got == base {
-		t.Fatal("different plan types shared an OAuth model catalog cache key")
-	}
-	account.Metadata["plan_type"] = "Plus"
-	selected.FingerprintHeaders["Version"] = "2.0.0"
-	if got := service.oauthModelCatalogCacheKey(account, selected); got == base {
-		t.Fatal("different client versions shared an OAuth model catalog cache key")
-	}
-}
-
-func TestOAuthModelCatalogCacheEvictsSnapshotNearestExpiry(t *testing.T) {
-	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{})
-	base := time.Date(2026, 7, 31, 8, 0, 0, 0, time.UTC)
-	for i := range maxOAuthModelCatalogCacheEntries + 1 {
-		key := oauthModelCatalogCacheKey{baseURL: "https://catalog.example.test", clientVersion: strconv.Itoa(i), planType: "plus"}
-		service.storeOAuthModelCatalogCacheLocked(key, oauthModelCatalogCacheEntry{
-			models:    []AccountModelInput{{Model: "gpt-5.6-sol", Enabled: true}},
-			expiresAt: base.Add(time.Duration(i) * time.Minute),
-		})
-	}
-	if got := len(service.oauthModelCatalogCache); got != maxOAuthModelCatalogCacheEntries {
-		t.Fatalf("cache entries = %d, want %d", got, maxOAuthModelCatalogCacheEntries)
-	}
-	oldest := oauthModelCatalogCacheKey{baseURL: "https://catalog.example.test", clientVersion: "0", planType: "plus"}
-	if _, exists := service.oauthModelCatalogCache[oldest]; exists {
-		t.Fatal("snapshot nearest expiry was not evicted")
-	}
-}
-
-func TestOAuthModelCatalogCoalescesConcurrentRefreshes(t *testing.T) {
-	var requestCount atomic.Int32
-	started := make(chan struct{}, 8)
-	release := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requestCount.Add(1)
-		started <- struct{}{}
-		<-release
-		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-	}))
-	defer ts.Close()
-
-	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{CodexResponsesBaseURL: ts.URL + "/backend-api/codex"})
-	account := Account{ID: 7, Metadata: map[string]string{"plan_type": "plus"}}
-	selected := SelectedAccount{
-		AuthorizationToken: "oauth-access",
-		ChatGPTAccountID:   "chatgpt-account-7",
-	}
-
-	const callers = 8
-	var wg sync.WaitGroup
-	errs := make(chan error, callers)
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			models, err := service.oauthModelCatalog(context.Background(), account, selected)
-			if err == nil && !reflect.DeepEqual(models, []AccountModelInput{{Model: "gpt-5.6-sol", Enabled: true}}) {
-				err = fmt.Errorf("models = %+v", models)
-			}
-			errs <- err
-		}()
-	}
-	<-started
-	close(release)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := requestCount.Load(); got != 1 {
-		t.Fatalf("catalog requests = %d, want 1 coalesced refresh", got)
-	}
-}
-
-func TestRefreshOAuthAccountModelsBypassesCompletedCache(t *testing.T) {
-	var requestCount atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if requestCount.Add(1) == 1 {
-			_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-luna","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-	}))
-	defer ts.Close()
-
-	repo := newMemoryRepo()
-	account := testAccount(t, 7, true, 1, "oauth-access")
-	account.AccountType = AccountTypeCodexOAuth
-	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "plus"}
-	repo.accounts = []Account{account}
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:                  "openai",
-		Secret:                    "encryption-secret",
-		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
-		OAuthModelCatalogCacheTTL: time.Hour,
-	})
-
-	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
-		t.Fatalf("ordinary catalog sync returned error: %v", err)
-	}
-	models, _, err := service.RefreshOAuthAccountModels(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("forced catalog refresh returned error: %v", err)
-	}
-	if got, want := accountModelNames(models), []string{"gpt-5.6-luna"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("refreshed models = %v, want %v", got, want)
-	}
-	if got := requestCount.Load(); got != 2 {
-		t.Fatalf("catalog requests = %d, want 2 after forced refresh", got)
-	}
-	status, err := service.OAuthModelCatalogStatus(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("OAuthModelCatalogStatus returned error: %v", err)
-	}
-	if status.Source != "upstream" || status.CacheHit == nil || *status.CacheHit {
-		t.Fatalf("status = %+v, want latest forced upstream fetch", status)
-	}
-	if status.LastAttemptAt == nil || status.LastSuccessAt == nil || status.UpstreamFetchMS == nil || status.LocalApplyMS == nil {
-		t.Fatalf("status = %+v, want attempt, success, and timing observations", status)
-	}
-}
-
-func TestSyncOAuthAccountModelsRecordsCacheHitFreshness(t *testing.T) {
-	var requestCount atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requestCount.Add(1)
-		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-	}))
-	defer ts.Close()
-
-	repo := newMemoryRepo()
-	account := testAccount(t, 7, true, 1, "oauth-access")
-	account.AccountType = AccountTypeCodexOAuth
-	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "plus"}
-	repo.accounts = []Account{account}
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:                  "openai",
-		Secret:                    "encryption-secret",
-		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
-		OAuthModelCatalogCacheTTL: time.Hour,
-	})
-
-	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
-		t.Fatalf("initial catalog sync returned error: %v", err)
-	}
-	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
-		t.Fatalf("cache-hit catalog sync returned error: %v", err)
-	}
-	status, err := service.OAuthModelCatalogStatus(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("OAuthModelCatalogStatus returned error: %v", err)
-	}
-	if got := requestCount.Load(); got != 1 {
-		t.Fatalf("catalog requests = %d, want one upstream request", got)
-	}
-	if status.Source != "cache" || status.CacheHit == nil || !*status.CacheHit {
-		t.Fatalf("status = %+v, want cache hit", status)
-	}
-	if status.UpstreamFetchMS != nil || status.LocalApplyMS == nil || status.LastAttemptAt == nil || status.LastSuccessAt == nil {
-		t.Fatalf("status = %+v, want cache and local-apply observations", status)
-	}
-}
-
-func TestOAuthModelCatalogFailureRetainsPriorModelsAndFreshness(t *testing.T) {
-	var requestCount atomic.Int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if requestCount.Add(1) == 1 {
-			_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-			return
-		}
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`upstream unavailable`))
-	}))
-	defer ts.Close()
-
-	repo := newMemoryRepo()
-	account := testAccount(t, 7, true, 1, "oauth-access")
-	account.AccountType = AccountTypeCodexOAuth
-	account.Metadata = map[string]string{"chatgpt_account_id": "chatgpt-account-7", "plan_type": "plus"}
-	repo.accounts = []Account{account}
-	service := NewService(repo, fakeOAuthClient{}, Config{
-		Provider:                  "openai",
-		Secret:                    "encryption-secret",
-		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
-		OAuthModelCatalogCacheTTL: time.Hour,
-	})
-
-	if _, _, err := service.SyncOAuthAccountModels(context.Background(), account.ID); err != nil {
-		t.Fatalf("initial catalog sync returned error: %v", err)
-	}
-	if _, _, err := service.RefreshOAuthAccountModels(context.Background(), account.ID); err == nil {
-		t.Fatal("forced catalog refresh succeeded for a failed upstream")
-	}
-	models, err := service.ListAccountModels(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("ListAccountModels returned error: %v", err)
-	}
-	if got, want := accountModelNames(models), []string{"gpt-5.6-sol"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("models after failed refresh = %v, want retained %v", got, want)
-	}
-	status, err := service.OAuthModelCatalogStatus(context.Background(), account.ID)
-	if err != nil {
-		t.Fatalf("OAuthModelCatalogStatus returned error: %v", err)
-	}
-	if status.LastSuccessAt == nil || status.LastFailureAt == nil || status.LastError == "" {
-		t.Fatalf("status = %+v, want retained success and recorded failure", status)
-	}
-	if status.Source != "upstream" || status.CacheHit == nil || *status.CacheHit {
-		t.Fatalf("status = %+v, want failed upstream attempt", status)
-	}
-	if status.LocalApplyMS != nil {
-		t.Fatalf("status.localApplyMs = %v, want unknown after fetch failure", *status.LocalApplyMS)
-	}
-}
-
-func TestOAuthModelCatalogForcedRefreshCoalescesWithBoundedAdmission(t *testing.T) {
-	var requestCount atomic.Int32
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		request := requestCount.Add(1)
-		if request > 1 {
-			started <- struct{}{}
-			<-release
-		}
-		_, _ = w.Write([]byte(`{"models":[{"slug":"gpt-5.6-sol","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-	}))
-	defer ts.Close()
-
-	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{
-		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
-		OAuthModelCatalogCacheTTL: time.Hour,
-	})
-	account := Account{ID: 7, AccountType: AccountTypeCodexOAuth, Metadata: map[string]string{"plan_type": "plus"}}
-	selected := SelectedAccount{AuthorizationToken: "oauth-access", ChatGPTAccountID: "chatgpt-account-7"}
-	if _, err := service.oauthModelCatalogWithOptions(context.Background(), account, selected, false); err != nil {
-		t.Fatalf("initial catalog fetch returned error: %v", err)
-	}
-
-	const callers = 8
-	var wg sync.WaitGroup
-	errs := make(chan error, callers)
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := service.oauthModelCatalogWithOptions(context.Background(), account, selected, true)
-			errs <- err
-		}()
-	}
-	<-started
-	close(release)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got := requestCount.Load(); got != 2 {
-		t.Fatalf("catalog requests = %d, want one initial and one coalesced forced fetch", got)
-	}
-}
-
-func TestOAuthModelCatalogGenerationRejectsLateCacheWrites(t *testing.T) {
-	var requestCount atomic.Int32
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		request := requestCount.Add(1)
-		if request == 1 {
-			started <- struct{}{}
-			<-release
-			_, _ = w.Write([]byte(`{"models":[{"slug":"old-model","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-			return
-		}
-		_, _ = w.Write([]byte(`{"models":[{"slug":"new-model","visibility":"list","supported_in_api":true,"upgrade":null}]}`))
-	}))
-	defer ts.Close()
-
-	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{
-		CodexResponsesBaseURL:     ts.URL + "/backend-api/codex",
-		OAuthModelCatalogCacheTTL: time.Hour,
-	})
-	account := Account{ID: 7, AccountType: AccountTypeCodexOAuth, Metadata: map[string]string{"plan_type": "plus"}}
-	selected := SelectedAccount{AuthorizationToken: "old-access", ChatGPTAccountID: "old-chatgpt-account"}
-	oldResult := make(chan error, 1)
-	go func() {
-		_, err := service.oauthModelCatalog(context.Background(), account, selected)
-		oldResult <- err
-	}()
-	<-started
-	service.invalidateOAuthModelCatalog(account.ID)
-	close(release)
-	if err := <-oldResult; err != nil {
-		t.Fatalf("late old catalog request returned error: %v", err)
-	}
-
-	models, err := service.oauthModelCatalog(context.Background(), account, selected)
-	if err != nil {
-		t.Fatalf("new-generation catalog request returned error: %v", err)
-	}
-	if got, want := accountModelInputNames(models), []string{"new-model"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("new-generation models = %v, want %v", got, want)
-	}
-	if got := requestCount.Load(); got != 2 {
-		t.Fatalf("catalog requests = %d, want late old response excluded from cache", got)
-	}
-}
-
-func TestOAuthModelCatalogAdmissionIsBounded(t *testing.T) {
-	service := NewService(newMemoryRepo(), fakeOAuthClient{}, Config{CodexResponsesBaseURL: "https://catalog.example.test/codex"})
-	service.oauthModelCatalogMu.Lock()
-	for i := 0; i < maxOAuthModelCatalogFlights; i++ {
-		service.oauthModelCatalogFlights[oauthModelCatalogCacheKey{accountID: int64(i + 1)}] = &oauthModelCatalogFlight{done: make(chan struct{})}
-	}
-	service.oauthModelCatalogMu.Unlock()
-
-	account := Account{ID: maxOAuthModelCatalogFlights + 1, AccountType: AccountTypeCodexOAuth}
-	selected := SelectedAccount{AuthorizationToken: "oauth-access"}
-	_, err := service.oauthModelCatalogWithOptions(context.Background(), account, selected, true)
-	if !errors.Is(err, ErrOAuthModelCatalogBusy) {
-		t.Fatalf("oauthModelCatalogWithOptions error = %v, want bounded admission error", err)
-	}
-}
-
-func accountModelNames(models []AccountModel) []string {
-	names := make([]string, 0, len(models))
-	for _, model := range models {
-		names = append(names, model.Model)
-	}
-	sort.Strings(names)
-	return names
-}
-
-func accountModelInputNames(models []AccountModelInput) []string {
-	names := make([]string, 0, len(models))
-	for _, model := range models {
-		names = append(names, model.Model)
-	}
-	sort.Strings(names)
-	return names
-}
-
 func TestSelectAccountForModelReturnsUnavailableWhenAllEnabledAccountsExcluded(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{
 		testAccount(t, 1, true, 1, "only-token"),
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModel(context.Background(), "", 1); !errors.Is(err, ErrAccountsUnavailable) {
 		t.Fatalf("SelectAccountForModel error = %v, want accounts unavailable", err)
 	}
 }
 
-func TestSelectAccountForModelFallsBackWhenRefreshFails(t *testing.T) {
-	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
-	repo.accounts = []Account{
-		testExpiredAccount(t, 1, true, 1, "old-token", "bad-refresh", expired),
-		testAccount(t, 2, true, 2, "fallback-token"),
-	}
-	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
-
-	selected, err := service.SelectAccountForModel(context.Background(), "")
-	if err != nil {
-		t.Fatalf("SelectAccountForModel returned error: %v", err)
-	}
-	if selected.AccountID != 2 || selected.AuthorizationToken != "fallback-token" {
-		t.Fatalf("selected = %+v", selected)
-	}
-	if repo.accounts[0].LastError == "" {
-		t.Fatal("first account error was not marked")
-	}
-}
-
 func TestSelectAccountForModelReturnsMarkAccountErrorFailure(t *testing.T) {
 	repo := newMemoryRepo()
-	expired := time.Now().Add(-time.Minute)
 	repo.accounts = []Account{
-		testExpiredAccount(t, 1, true, 1, "old-token", "bad-refresh", expired),
+		testAccount(t, 1, true, 1, "bad-key"),
 		testAccount(t, 2, true, 2, "fallback-token"),
 	}
+	repo.accounts[0].Credential.EncryptedAPIKey = "invalid-envelope"
 	repo.markAccountErrorErr = errors.New("mark account error failed")
-	service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("refresh failed")})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if _, err := service.SelectAccountForModel(context.Background(), ""); !errors.Is(err, repo.markAccountErrorErr) {
 		t.Fatalf("SelectAccountForModel error = %v, want mark account error failure", err)
@@ -4764,7 +2668,7 @@ func TestRecordAccountUsedOnlyMarksAttemptWithoutClearingHealth(t *testing.T) {
 	account.CircuitOpenUntil = &until
 	account.LastRefreshError = "refresh diagnostic"
 	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if err := service.RecordAccountUsed(context.Background(), 1); err != nil {
 		t.Fatalf("RecordAccountUsed returned error: %v", err)
@@ -4796,7 +2700,7 @@ func TestRecordAccountRecoveredClearsHealthWithRecoveryIntent(t *testing.T) {
 	account.RateLimitedUntil = &until
 	account.LastRefreshError = "preserved refresh diagnostic"
 	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if err := service.RecordAccountRecovered(context.Background(), 1); err != nil {
 		t.Fatalf("RecordAccountRecovered returned error: %v", err)
@@ -4819,7 +2723,7 @@ func TestRecordAccountUsedReturnsMarkAccountUsedFailure(t *testing.T) {
 		testAccount(t, 1, true, 1, "access-token"),
 	}
 	repo.markAccountUsedErr = errors.New("mark account used failed")
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	if err := service.RecordAccountUsed(context.Background(), 1); !errors.Is(err, repo.markAccountUsedErr) {
 		t.Fatalf("RecordAccountUsed error = %v, want mark account used failure", err)
@@ -4829,7 +2733,7 @@ func TestRecordAccountUsedReturnsMarkAccountUsedFailure(t *testing.T) {
 func TestProviderServiceAttachesLifecycleIntentsAndPreservesBatchID(t *testing.T) {
 	repo := newMemoryRepo()
 	repo.accounts = []Account{testAccount(t, 7, true, 3, "access-token")}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 	ctx := systemevent.WithIntent(context.Background(), systemevent.EventIntent{
 		Metadata: map[string]any{"batch_id": "batch-123"},
 	})
@@ -4849,125 +2753,12 @@ func TestProviderServiceAttachesLifecycleIntentsAndPreservesBatchID(t *testing.T
 	}
 }
 
-func TestOAuthRefreshIntentsDistinguishManualAndAutomaticWithoutSecrets(t *testing.T) {
-	expired := time.Now().Add(-time.Minute)
-	for _, testCase := range []struct {
-		name         string
-		refresh      func(*Service, Account) error
-		wantAction   systemevent.Action
-		wantTrigger  string
-		wantSeverity systemevent.Severity
-	}{
-		{
-			name: "manual",
-			refresh: func(service *Service, account Account) error {
-				_, err := service.RefreshAccount(context.Background(), account.ID)
-				return err
-			},
-			wantAction:   systemevent.ActionOAuthRefreshManualFailed,
-			wantTrigger:  string(RefreshTriggerManual),
-			wantSeverity: systemevent.SeverityWarning,
-		},
-		{
-			name: "gateway request",
-			refresh: func(service *Service, account Account) error {
-				_, err := service.AccessTokenForAccount(context.Background(), account)
-				return err
-			},
-			wantAction:   systemevent.ActionOAuthRefreshAutomaticFailed,
-			wantTrigger:  string(RefreshTriggerGatewayRequest),
-			wantSeverity: systemevent.SeverityWarning,
-		},
-		{
-			name: "model test",
-			refresh: func(service *Service, account Account) error {
-				_, err := service.selectedAccountForDiagnostic(context.Background(), account)
-				return err
-			},
-			wantAction:   systemevent.ActionOAuthRefreshDiagnosticFailed,
-			wantTrigger:  string(RefreshTriggerModelTest),
-			wantSeverity: systemevent.SeverityWarning,
-		},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			repo := newMemoryRepo()
-			account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
-			repo.accounts = []Account{account}
-			service := newConfiguredService(repo, fakeOAuthClient{refreshErr: errors.New("raw upstream refresh failure")})
-			if err := testCase.refresh(service, account); err == nil {
-				t.Fatal("refresh returned nil error, want upstream failure")
-			}
-			if len(repo.intents) == 0 {
-				t.Fatal("refresh did not attach an event intent")
-			}
-			intent := repo.intents[len(repo.intents)-1]
-			if intent.Action != testCase.wantAction || intent.Metadata["trigger"] != testCase.wantTrigger || intent.Severity != testCase.wantSeverity {
-				t.Fatalf("intent = %+v, want action %q trigger %q", intent, testCase.wantAction, testCase.wantTrigger)
-			}
-			encoded, err := json.Marshal(intent)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, forbidden := range []string{"raw upstream refresh failure", "old-access", "old-refresh"} {
-				if strings.Contains(string(encoded), forbidden) {
-					t.Fatalf("intent contains sensitive/raw value %q: %s", forbidden, encoded)
-				}
-			}
-			if err := systemevent.ValidateIntent(intent); err != nil {
-				t.Fatalf("ValidateIntent returned error: %v", err)
-			}
-		})
-	}
-}
-
-func TestDiagnosticRefreshSuccessUsesAutomaticRecoveryAction(t *testing.T) {
-	expired := time.Now().Add(-time.Minute)
-	repo := newMemoryRepo()
-	account := testExpiredAccount(t, 7, true, 3, "old-access", "old-refresh", expired)
-	repo.accounts = []Account{account}
-	service := newConfiguredService(repo, fakeOAuthClient{refresh: TokenResponse{
-		AccessToken: "new-access", RefreshToken: "new-refresh", ExpiresIn: 3600,
-	}})
-
-	if _, err := service.selectedAccountForDiagnostic(context.Background(), account); err != nil {
-		t.Fatalf("selectedAccountForDiagnostic returned error: %v", err)
-	}
-	if len(repo.intents) == 0 {
-		t.Fatal("diagnostic refresh success did not attach an event intent")
-	}
-	intent := repo.intents[len(repo.intents)-1]
-	if intent.Action != systemevent.ActionOAuthRefreshAutomaticSucceeded || intent.Severity != systemevent.SeverityInfo || intent.Metadata["trigger"] != string(RefreshTriggerModelTest) {
-		t.Fatalf("intent = %+v, want automatic refresh recovery", intent)
-	}
-}
-
-func TestStartConnectAttachesOAuthIntentWithoutAuthorizationMaterial(t *testing.T) {
-	repo := newMemoryRepo()
-	repo.defaultFingerprintProfileID = 9
-	service := newConfiguredService(repo, fakeOAuthClient{})
-	if _, err := service.StartConnect(context.Background(), ConnectOptions{}); err != nil {
-		t.Fatalf("StartConnect returned error: %v", err)
-	}
-	if len(repo.intents) != 1 || repo.intents[0].Action != systemevent.ActionOAuthConnectStarted {
-		t.Fatalf("intents = %+v, want oauth connect started", repo.intents)
-	}
-	encoded, err := json.Marshal(repo.intents[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, forbidden := range []string{"authorize", "state", "verifier", "challenge"} {
-		if strings.Contains(strings.ToLower(string(encoded)), forbidden) {
-			t.Fatalf("connect intent contains forbidden material %q: %s", forbidden, encoded)
-		}
-	}
-}
-
 func TestAccountMutationsInvalidateGatewayTransportsAfterSuccess(t *testing.T) {
 	repo := &memoryRepo{accounts: []Account{
 		{ID: 7, Provider: "openai", AccountType: AccountTypeAPIUpstream, Name: "first"},
 		{ID: 8, Provider: "openai", AccountType: AccountTypeAPIUpstream, Name: "second"},
 	}}
-	service := NewService(repo, &fakeOAuthClient{}, Config{Provider: "openai", Secret: "encryption-secret"})
+	service := NewService(repo, &fakeProbeClient{}, Config{Provider: "openai", Secret: "encryption-secret"})
 	invalidator := &recordingTransportInvalidator{}
 	service.SetAccountTransportInvalidator(invalidator)
 
@@ -4984,15 +2775,12 @@ func TestAccountMutationsInvalidateGatewayTransportsAfterSuccess(t *testing.T) {
 	if err := service.DisconnectAccount(context.Background(), 999); !errors.Is(err, ErrNotConnected) {
 		t.Fatalf("failed DisconnectAccount error = %v, want ErrNotConnected", err)
 	}
-	if err := service.Disconnect(context.Background()); err != nil {
-		t.Fatalf("Disconnect returned error: %v", err)
-	}
 
 	if got, want := invalidator.accountIDs, []int64{7, 8}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("invalidated account IDs = %v, want %v", got, want)
 	}
-	if invalidator.allCalls != 1 {
-		t.Fatalf("invalidate all calls = %d, want 1", invalidator.allCalls)
+	if invalidator.allCalls != 0 {
+		t.Fatalf("invalidate all calls = %d, want 0", invalidator.allCalls)
 	}
 }
 
@@ -5016,20 +2804,17 @@ type memoryRepo struct {
 	sessionBindings     map[string]SessionBinding
 	routingPools        map[int64]RoutingPool
 	routingPoolAccounts map[int64][]RoutingPoolAccount
-	fingerprintProfiles map[int64]FingerprintProfileData
 	states              []OAuthState
 
-	saveCount                            int
-	nextID                               int64
-	defaultFingerprintProfileID          int64
-	ensureDefaultFingerprintProfileCalls int
-	markAccountErrorErr                  error
-	markAccountUsedErr                   error
-	replaceModelsErr                     error
-	listAccountModelsCalls               int
-	listAccountModelsBatchCalls          int
-	lastSavedAccount                     Account
-	intents                              []systemevent.EventIntent
+	saveCount                   int
+	nextID                      int64
+	markAccountErrorErr         error
+	markAccountUsedErr          error
+	replaceModelsErr            error
+	listAccountModelsCalls      int
+	listAccountModelsBatchCalls int
+	lastSavedAccount            Account
+	intents                     []systemevent.EventIntent
 }
 
 func (r *memoryRepo) captureIntent(ctx context.Context) {
@@ -5044,7 +2829,6 @@ func newMemoryRepo() *memoryRepo {
 		sessionBindings:     make(map[string]SessionBinding),
 		routingPools:        make(map[int64]RoutingPool),
 		routingPoolAccounts: make(map[int64][]RoutingPoolAccount),
-		fingerprintProfiles: make(map[int64]FingerprintProfileData),
 		nextID:              1,
 	}
 }
@@ -5311,29 +3095,6 @@ func (r *memoryRepo) DeleteAccounts(ctx context.Context, providerName string) er
 	}
 	r.accounts = kept
 	return nil
-}
-
-func (r *memoryRepo) FindFingerprintProfileByID(_ context.Context, id int64) (FingerprintProfileData, error) {
-	profile, ok := r.fingerprintProfiles[id]
-	if !ok {
-		return FingerprintProfileData{}, ErrNotConnected
-	}
-	return profile, nil
-}
-
-func (r *memoryRepo) EnsureDefaultCodexFingerprintProfile(_ context.Context) (int64, error) {
-	r.ensureDefaultFingerprintProfileCalls++
-	if r.defaultFingerprintProfileID == 0 {
-		r.defaultFingerprintProfileID = 9001
-	}
-	if r.fingerprintProfiles == nil {
-		r.fingerprintProfiles = make(map[int64]FingerprintProfileData)
-	}
-	r.fingerprintProfiles[r.defaultFingerprintProfileID] = FingerprintProfileData{
-		UserAgent: DefaultCodexFingerprintUserAgent,
-		Headers:   DefaultCodexFingerprintHeaders(),
-	}
-	return r.defaultFingerprintProfileID, nil
 }
 
 func (r *memoryRepo) MarkAccountUsed(ctx context.Context, providerName string, id int64, usedAt time.Time) error {
@@ -5888,41 +3649,12 @@ func (r *memoryRepo) ClaimState(ctx context.Context, providerName, stateHash str
 	return OAuthState{}, ErrInvalidState
 }
 
-type fakeOAuthClient struct {
-	exchange    TokenResponse
-	exchanges   []TokenResponse
-	exchangeErr error
-	refresh     TokenResponse
-	probe       probeResult
-	refreshErr  error
-	probeErr    error
+type fakeProbeClient struct {
+	probe    probeResult
+	probeErr error
 }
 
-func (c fakeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
-	if c.exchangeErr != nil {
-		return TokenResponse{}, c.exchangeErr
-	}
-	if len(c.exchanges) > 0 {
-		return c.exchanges[0], nil
-	}
-	return c.exchange, nil
-}
-
-type captureExchangeOAuthClient struct {
-	exchange        TokenResponse
-	gotCodeVerifier string
-}
-
-func (c *captureExchangeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
-	c.gotCodeVerifier = cfg.CodeVerifier
-	return c.exchange, nil
-}
-
-func (c *captureExchangeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
-	return TokenResponse{}, errors.New("unexpected refresh")
-}
-
-type captureProbeOAuthClient struct {
+type captureProbeClient struct {
 	probe           probeResult
 	probes          []probeResult
 	gotConfig       Config
@@ -5964,15 +3696,7 @@ func (p *captureAccountModelProber) ProbeAccountModel(_ context.Context, _ Confi
 	return p.result
 }
 
-func (c *captureProbeOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
-	return TokenResponse{}, errors.New("unexpected exchange")
-}
-
-func (c *captureProbeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
-	return TokenResponse{}, errors.New("unexpected refresh")
-}
-
-func (c *captureProbeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
+func (c *captureProbeClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
 	c.gotConfig = cfg
 	c.gotAccessToken = accessToken
 	c.gotAccessTokens = append(c.gotAccessTokens, accessToken)
@@ -5990,30 +3714,7 @@ func (c *captureProbeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Co
 	return c.probe, nil
 }
 
-type captureRefreshOAuthClient struct {
-	refresh   TokenResponse
-	gotConfig Config
-	calls     int
-}
-
-func (c *captureRefreshOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
-	return TokenResponse{}, errors.New("unexpected exchange")
-}
-
-func (c *captureRefreshOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
-	c.calls++
-	c.gotConfig = cfg
-	return c.refresh, nil
-}
-
-func (c fakeOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
-	if c.refreshErr != nil {
-		return TokenResponse{}, c.refreshErr
-	}
-	return c.refresh, nil
-}
-
-func (c fakeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
+func (c fakeProbeClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
 	if c.probeErr != nil {
 		return probeResult{}, c.probeErr
 	}
@@ -6023,35 +3724,10 @@ func (c fakeOAuthClient) ProbeAccountStatus(ctx context.Context, cfg Config, acc
 	return c.probe, nil
 }
 
-type blockingOAuthClient struct {
-	refresh TokenResponse
-	entered chan struct{}
-	release chan struct{}
-	calls   int
-}
-
-func (c *blockingOAuthClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
-	return TokenResponse{}, errors.New("unexpected exchange")
-}
-
-func (c *blockingOAuthClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
-	c.calls++
-	if c.calls == 1 {
-		c.entered <- struct{}{}
-		<-c.release
-	}
-	return c.refresh, nil
-}
-
-func newConfiguredService(repo Repository, client OAuthClient) *Service {
+func newConfiguredService(repo Repository, client any) *Service {
 	return NewService(repo, client, Config{
-		Provider:     "openai",
-		ClientID:     "client-id",
-		ClientSecret: "client-secret",
-		RedirectURL:  "http://localhost/oauth/openai/callback",
-		AuthURL:      "https://auth.example.test/authorize",
-		TokenURL:     "https://auth.example.test/token",
-		Secret:       "encryption-secret",
+		Provider: "openai",
+		Secret:   "encryption-secret",
 	})
 }
 
@@ -6081,28 +3757,6 @@ func boolPtr(value bool) *bool {
 	return &value
 }
 
-func mustQuery(t *testing.T, rawURL, key string) string {
-	t.Helper()
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		t.Fatalf("url.Parse returned error: %v", err)
-	}
-	return parsed.Query().Get(key)
-}
-
-func mustUnsignedIDToken(t *testing.T, claims map[string]any) string {
-	t.Helper()
-	header, err := json.Marshal(map[string]string{"alg": "none", "typ": "JWT"})
-	if err != nil {
-		t.Fatalf("json.Marshal header returned error: %v", err)
-	}
-	payload, err := json.Marshal(claims)
-	if err != nil {
-		t.Fatalf("json.Marshal claims returned error: %v", err)
-	}
-	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + "."
-}
-
 func modelNamesAndEnabled(models []AccountModel) []string {
 	values := make([]string, 0, len(models))
 	for _, model := range models {
@@ -6121,27 +3775,7 @@ func exposedModelIDs(models []ExposedModel) []string {
 
 func testAccount(t *testing.T, id int64, enabled bool, priority int, accessToken string) Account {
 	t.Helper()
-	expiresAt := time.Now().Add(time.Hour)
-	return testExpiredAccount(t, id, enabled, priority, accessToken, "refresh-token", expiresAt)
-}
-
-func testExpiredAccount(t *testing.T, id int64, enabled bool, priority int, accessToken, refreshToken string, expiresAt time.Time) Account {
-	t.Helper()
-	now := time.Now()
-	return Account{
-		ID:                    id,
-		Provider:              "openai",
-		Subject:               "acct_" + string(rune('0'+id)),
-		DisplayName:           "Account",
-		EncryptedAccessToken:  mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthAccessToken, accessToken),
-		EncryptedRefreshToken: mustEncrypt(t, "encryption-secret", secret.SecretKindOAuthRefreshToken, refreshToken),
-		AccessTokenExpiresAt:  &expiresAt,
-		Enabled:               enabled,
-		Priority:              priority,
-		LoadFactor:            1,
-		CreatedAt:             now,
-		UpdatedAt:             now,
-	}
+	return Account{ID: id, Provider: "openai", AccountType: AccountTypeAPIUpstream, Name: "Account", DisplayName: "Account", Enabled: enabled, Priority: priority, LoadFactor: 1, Credential: AccountCredential{CredentialType: CredentialTypeAPIKey, BaseURL: "https://api.openai.com", EncryptedAPIKey: mustEncrypt(t, "encryption-secret", secret.SecretKindProviderAPIKey, accessToken)}}
 }
 
 func ptrInt64(value int64) *int64 {
