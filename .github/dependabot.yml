@@ -20,6 +20,7 @@ updates:
           - "minor"
           - "patch"
 
+  # Bun security updates are unsupported; see docs/dependency-contract-matrix.md.
   - package-ecosystem: "bun"
     directories:
       - "/frontend"

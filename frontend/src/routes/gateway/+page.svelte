@@ -25,10 +25,10 @@
     session,
     updateGatewaySettings,
     usage
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
   import { Download, LoaderCircle, X } from 'lucide-svelte';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   let gatewayRequested = $state(false);
 
   const gatewayReadyKeys = $derived(getGatewayReadyKeys());
@@ -102,7 +102,7 @@
 
   /**
    * @param {string} title
-   * @param {import('$lib/admin-state.svelte.js').UsageSummary | null} summary
+   * @param {import('#lib/admin-state.svelte.js').UsageSummary | null} summary
    */
   function usageRows(title, summary) {
     return { title, summary };
@@ -128,7 +128,7 @@
 
   /**
    * @param {string} sectionTitle
-   * @param {import('$lib/admin-state.svelte.js').UsageSummaryRow} row
+   * @param {import('#lib/admin-state.svelte.js').UsageSummaryRow} row
    */
   function usageRowHref(sectionTitle, row) {
     const id = String(row?.id ?? '');

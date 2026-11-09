@@ -1,14 +1,14 @@
 <script>
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   import {
     formatDate,
     loadSystemEvents,
     resetSystemEventFilters,
     session,
     systemEvents
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
   import {
     Activity,
     ChevronDown,
@@ -25,7 +25,7 @@
     X
   } from 'lucide-svelte';
 
-  /** @typedef {import('$lib/admin-state.svelte.js').SystemEvent} SystemEvent */
+  /** @typedef {import('#lib/admin-state.svelte.js').SystemEvent} SystemEvent */
 
   const categories = ['audit', 'security', 'oauth', 'scheduler', 'runtime'];
   const outcomes = ['success', 'failure', 'partial'];
@@ -40,7 +40,7 @@
 
   let appliedSearch = $state(/** @type {string | null} */ (null));
   let timeRange = $state('all');
-  let selectedEvent = $state(/** @type {import('$lib/admin-state.svelte.js').SystemEvent | null} */ (null));
+  let selectedEvent = $state(/** @type {import('#lib/admin-state.svelte.js').SystemEvent | null} */ (null));
   let expandedBatchIds = $state(/** @type {Record<string, boolean>} */ ({}));
   let eventPage = $state(1);
   let eventPageSize = $state(5);
@@ -172,8 +172,7 @@
       return;
     }
     await goto(search ? `/system-logs?${search}` : '/system-logs', {
-      keepFocus: true,
-      noScroll: true
+      reset: false
     });
   }
 
@@ -181,7 +180,7 @@
     resetSystemEventFilters();
     timeRange = 'all';
     eventPage = 1;
-    await goto('/system-logs', { keepFocus: true, noScroll: true });
+    await goto('/system-logs', { reset: false });
   }
 
   async function refreshSystemEvents() {

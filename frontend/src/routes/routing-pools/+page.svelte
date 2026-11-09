@@ -16,9 +16,9 @@
     routingPools,
     session,
     updateRoutingPool
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   let requested = $state(false);
   let appliedRoutingPoolSearch = $state('');
   let selectedRoutingPoolId = $state('all');
@@ -29,7 +29,7 @@
   let deletingRoutingPoolId = $state(0);
   let routingPoolMutationBusy = $state(false);
   let routingPoolNotice = $state(/** @type {{ title: string, message: string } | null} */ (null));
-  let editingRoutingPoolDraft = $state(/** @type {import('$lib/admin-state.svelte.js').RoutingPool | null} */ (null));
+  let editingRoutingPoolDraft = $state(/** @type {import('#lib/admin-state.svelte.js').RoutingPool | null} */ (null));
   const routingPoolBusy = $derived(routingPoolMutationBusy || routingPools.saving);
   const visibleRoutingPools = $derived(
     routingPools.items.filter((pool) => {
@@ -60,7 +60,7 @@
     routingPoolNotice = { title, message };
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool @param {boolean} enabled */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool @param {boolean} enabled */
   async function setRoutingPoolEnabled(pool, enabled) {
     if (routingPoolMutationBusy) return;
     const previous = pool.enabled;
@@ -77,7 +77,7 @@
     }
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function openDeleteRoutingPool(pool) {
     routingPools.error = '';
     deletingRoutingPoolId = pool.id;
@@ -170,12 +170,12 @@
     routingPools.newPoolFallbackPoolId = '0';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function routingPoolLabel(pool) {
     return pool.name || `Pool ${pool.id}`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function openRoutingPoolEditor(pool) {
     editingRoutingPoolId = pool.id;
     editingRoutingPoolDraft = {
@@ -229,7 +229,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
+   * @param {import('#lib/admin-state.svelte.js').RoutingPool} pool
    * @param {number} accountId
    */
   function poolHasAccount(pool, accountId) {
@@ -237,14 +237,14 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
+   * @param {import('#lib/admin-state.svelte.js').RoutingPool} pool
    * @param {number} accountId
    */
   function poolAccountPriority(pool, accountId) {
     return (pool.accounts ?? []).find((account) => account.accountId === accountId)?.priority ?? 0;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function poolAccountRows(pool) {
     return [...providerAccounts.items].sort((left, right) => {
       const leftIncluded = poolHasAccount(pool, left.id);
@@ -272,13 +272,13 @@
     });
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function accountDisplayName(account) {
     return account.displayName || account.name || account.subject || account.provider || `Account ${account.id}`;
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
+   * @param {import('#lib/admin-state.svelte.js').RoutingPool} pool
    * @param {number} accountId
    * @param {boolean} checked
    */
@@ -290,7 +290,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
+   * @param {import('#lib/admin-state.svelte.js').RoutingPool} pool
    * @param {number} accountId
    * @param {string | number} value
    */
@@ -301,12 +301,12 @@
     );
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function boundAPIKeyCount(pool) {
     return apiKeys.items.filter((key) => Number(key.routingPoolId ?? 0) === pool.id && !key.revokedAt).length;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function poolSearchText(pool) {
     return [
       pool.name,
@@ -321,7 +321,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').RoutingPool} pool
+   * @param {import('#lib/admin-state.svelte.js').RoutingPool} pool
    * @param {string} filter
    */
   function poolMatchesStatusFilter(pool, filter) {
@@ -333,13 +333,13 @@
     return true;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function schedulablePoolMemberCount(pool) {
     const accountIDs = new Set((pool.accounts ?? []).map((account) => Number(account.accountId)));
     return getSchedulableProviderAccounts(providerAccounts.items).filter((account) => accountIDs.has(account.id)).length;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function fallbackWarning(pool) {
     const fallbackID = Number(pool.fallbackPoolId ?? 0);
     if (fallbackID <= 0) return '';
@@ -349,14 +349,14 @@
     return '';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function fallbackPoolHref(pool) {
     const fallbackID = Number(pool.fallbackPoolId ?? 0);
     if (fallbackID <= 0) return '';
     return `/routing-pools?routingPoolId=${encodeURIComponent(String(fallbackID))}`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function routingPoolFallbackChainLabel(pool) {
     const names = [];
     const seen = new Set();
@@ -380,7 +380,7 @@
     return names.join(' -> ');
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function routingPoolFallbackChainLogsHref(pool) {
     const fallbackID = Number(pool.fallbackPoolId ?? 0);
     if (fallbackID <= 0) return '';
@@ -388,7 +388,7 @@
     return `/request-logs?routingPoolChain=${encodeURIComponent(chain)}`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RoutingPool} pool */
+  /** @param {import('#lib/admin-state.svelte.js').RoutingPool} pool */
   function routingPoolDiagnosticsHref(pool) {
     return `/models?routingPoolId=${encodeURIComponent(String(pool.id))}`;
   }

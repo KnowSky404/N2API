@@ -43,10 +43,10 @@
     updateProviderAccount,
     fingerprintProfiles,
     loadFingerprintProfiles
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
 
-  import AuthGate from '$lib/AuthGate.svelte';
-  import { runModelTestsWithConcurrency } from '$lib/model-test-queue.js';
+  import AuthGate from '#lib/AuthGate.svelte';
+  import { runModelTestsWithConcurrency } from '#lib/model-test-queue.js';
   const DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY = 'codex_cli_default';
   let accountSearch = $state('');
   let accountStatusFilter = $state('all');
@@ -61,7 +61,7 @@
   let fingerprintProfilesRequested = $state(false);
   let appliedProviderAccountSearch = $state('');
   let editingProviderAccountId = $state(0);
-  let editingProviderAccountDraft = $state(/** @type {{ name: string, enabled: boolean, priority: number, loadFactor: number, maxConcurrentRequests: number, fingerprintProfileId: number, baseUrl: string, proxyUrl: string, apiKey: string, modelsText: string, modelItems: import('$lib/admin-state.svelte.js').AccountModel[], syncModelsOnSave: boolean } | null} */ (null));
+  let editingProviderAccountDraft = $state(/** @type {{ name: string, enabled: boolean, priority: number, loadFactor: number, maxConcurrentRequests: number, fingerprintProfileId: number, baseUrl: string, proxyUrl: string, apiKey: string, modelsText: string, modelItems: import('#lib/admin-state.svelte.js').AccountModel[], syncModelsOnSave: boolean } | null} */ (null));
   let editingProviderAccountError = $state('');
   let deletingProviderAccountId = $state(0);
   let modelTestAccountId = $state(0);
@@ -206,7 +206,7 @@
 
   /**
    * @param {string | null | undefined} model
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    */
   function modelRoutingHref(model, account) {
     const value = String(model ?? '').trim();
@@ -239,7 +239,7 @@
   });
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    * @param {string} filter
    */
   function accountMatchesStatusFilter(account, filter) {
@@ -253,7 +253,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    * @param {string} filter
    */
   function accountMatchesTypeFilter(account, filter) {
@@ -263,7 +263,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    * @param {string} filter
    */
   function accountMatchesEnabledFilter(account, filter) {
@@ -273,7 +273,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount[]} accounts
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount[]} accounts
    */
   function sortProviderAccounts(accounts) {
     return [...accounts].sort((left, right) => {
@@ -288,7 +288,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    * @param {string} key
    */
   function accountSortValue(account, key) {
@@ -333,12 +333,12 @@
     return limit > 0 ? String(limit) : 'unlimited';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function isCodexOAuthAccount(account) {
     return account.accountType === 'codex_oauth' || !account.accountType;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
+  /** @param {import('#lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
   function catalogStatusLabel(status) {
     if (!status?.lastAttemptAt) return 'Not refreshed';
     if (status.lastError) return `Failed at ${formatDate(status.lastFailureAt)}`;
@@ -347,7 +347,7 @@
     return 'Recorded';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
+  /** @param {import('#lib/admin-state.svelte.js').OAuthModelCatalogStatus | null} status */
   function catalogStatusDetail(status) {
     if (!status?.lastAttemptAt) return 'No catalog refresh has been recorded for this account.';
     const timings = [];
@@ -356,18 +356,18 @@
     return timings.length > 0 ? timings.join(' · ') : 'Timing not recorded';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function accountEmailLabel(account) {
     if (!isCodexOAuthAccount(account)) return '';
     return account.displayName?.includes('@') ? account.displayName : account.subject || '';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function accountHoverDetail(account) {
     return [accountLabel(account), accountEmailLabel(account)].filter(Boolean).join('\n');
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function openAccountEditor(account) {
     const modelState = getAccountModelsState(account.id);
     modelState.saved = false;
@@ -389,7 +389,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    * @param {ReturnType<typeof getAccountModelsState>} modelState
    */
   function createAccountDraft(account, modelState) {
@@ -415,7 +415,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    * @param {number} selectedProfileID
    */
   function resolveFingerprintProfileID(account, selectedProfileID) {
@@ -609,7 +609,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').ProviderAccount} account
+   * @param {import('#lib/admin-state.svelte.js').ProviderAccount} account
    * @param {'pause' | 'refresh' | 'reset'} action
    */
   async function runProviderAccountAction(account, action) {
@@ -628,7 +628,7 @@
     }
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function toggleDeleteConfirmation(account) {
     providerAccounts.error = '';
     editingProviderAccountId = 0;
@@ -636,7 +636,7 @@
     deletingProviderAccountId = deletingProviderAccountId === account.id ? 0 : account.id;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function openModelTests(account) {
     editingProviderAccountId = 0;
     deletingProviderAccountId = 0;
@@ -678,23 +678,23 @@
     selectedModelTests = {};
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  /** @param {import('#lib/admin-state.svelte.js').AccountModel} model */
   function displayedModelTestStatus(model) {
     return modelTestRuns[model.model]?.status || model.lastTestStatus || 'not_tested';
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  /** @param {import('#lib/admin-state.svelte.js').AccountModel} model */
   function displayedModelTestLatency(model) {
     const run = modelTestRuns[model.model];
     return run?.latencyMs ?? model.lastTestLatencyMs ?? 0;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  /** @param {import('#lib/admin-state.svelte.js').AccountModel} model */
   function displayedModelTestCheckedAt(model) {
     return modelTestRuns[model.model]?.checkedAt || model.lastTestAt || null;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AccountModel} model */
+  /** @param {import('#lib/admin-state.svelte.js').AccountModel} model */
   function modelTestDetail(model) {
     const run = modelTestRuns[model.model];
     const httpStatus = run?.httpStatus ?? model.lastTestHttpStatus ?? 0;
@@ -790,7 +790,7 @@
     void runModelTestQueue(modelTestAccount.id, [model]);
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   async function confirmDisconnectProviderAccount(account) {
     await disconnectProviderAccount(account);
     if (session.authenticated && !providerAccounts.error) {
@@ -799,7 +799,7 @@
     }
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   function statusHoverDetail(account) {
     if (account.status === 'rate_limited' && account.rateLimitedUntil) {
       if (providerAccountEffectiveStatus(account) === 'active') {
@@ -813,7 +813,7 @@
     return statusLabel(account.status);
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').ProviderAccount} account */
+  /** @param {import('#lib/admin-state.svelte.js').ProviderAccount} account */
   async function testAccountRecovery(account) {
     if (!isCodexOAuthAccount(account) || providerAccounts.saving || recoveryTestAccountId) return;
     recoveryTestAccountId = account.id;
@@ -841,7 +841,7 @@
     recoveryTestAccountId = 0;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').AccountModel[]} models */
+  /** @param {import('#lib/admin-state.svelte.js').AccountModel[]} models */
   function enabledAccountModelCount(models) {
     return models.filter((model) => model.enabled).length;
   }

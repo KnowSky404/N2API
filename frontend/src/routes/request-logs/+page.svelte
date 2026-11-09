@@ -17,16 +17,16 @@
     resetRequestLogFilters,
     routingPools,
     session,
-  } from '$lib/admin-state.svelte.js';
+  } from '#lib/admin-state.svelte.js';
 
-  import AuthGate from '$lib/AuthGate.svelte';
+  import AuthGate from '#lib/AuthGate.svelte';
   import {
     requestLogAttemptAccountLabel,
     requestLogAttemptTimestampLabel,
     requestLogAttemptTypeLabel,
     requestLogDiagnosticDurationLabel,
     requestLogErrorLabel
-  } from '$lib/request-log-format.js';
+  } from '#lib/request-log-format.js';
   import { ChevronDown, Download, Eye, Search, SlidersHorizontal, X } from 'lucide-svelte';
 
   let providerAccountsRequested = $state(false);
@@ -36,7 +36,7 @@
   let appliedRequestLogSearch = $state(null);
   let showAdvancedFilters = $state(false);
   let requestLogDateRange = $state('all');
-  let selectedRequestLog = $state(/** @type {import('$lib/admin-state.svelte.js').RequestLog | null} */ (null));
+  let selectedRequestLog = $state(/** @type {import('#lib/admin-state.svelte.js').RequestLog | null} */ (null));
   let advancedRequestLogFilterCount = $derived(
     [
       requestLogs.requestId.trim(),
@@ -266,7 +266,7 @@
     return params;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  /** @param {import('#lib/admin-state.svelte.js').RequestLog} log */
   function errorHref(log) {
     if (!log.error) return '';
     const params = requestLogDrilldownParams();
@@ -274,7 +274,7 @@
     return `/request-logs?${params.toString()}`;
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  /** @param {import('#lib/admin-state.svelte.js').RequestLog} log */
   function routingPoolFallbackChainHref(log) {
     if (!log.routingPoolFallbackChain) return '';
     const params = requestLogDrilldownParams();
@@ -340,8 +340,7 @@
       return;
     }
     await goto(search ? `/request-logs?${search}` : '/request-logs', {
-      keepFocus: true,
-      noScroll: true
+      reset: false
     });
   }
 
@@ -353,7 +352,7 @@
       await loadRequestLogs();
       return;
     }
-    await goto('/request-logs', { keepFocus: true, noScroll: true });
+    await goto('/request-logs', { reset: false });
   }
 
   /** @param {SubmitEvent} event */
@@ -362,7 +361,7 @@
     void applyRequestLogFilters();
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').RequestLog} log */
+  /** @param {import('#lib/admin-state.svelte.js').RequestLog} log */
   function openRequestLogDetails(log) {
     selectedRequestLog = log;
   }

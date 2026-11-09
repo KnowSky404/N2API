@@ -1,5 +1,5 @@
 <script>
-  import { login, loginForm, session } from '$lib/admin-state.svelte.js';
+  import { login, loginForm, session } from '#lib/admin-state.svelte.js';
   let { children } = $props();
 </script>
 

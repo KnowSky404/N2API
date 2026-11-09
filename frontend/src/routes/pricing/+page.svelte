@@ -5,8 +5,8 @@
     savePricingRows,
     syncOfficialUsagePricing,
     usagePricing,
-  } from '$lib/admin-state.svelte.js';
-  import AuthGate from '$lib/AuthGate.svelte';
+  } from '#lib/admin-state.svelte.js';
+  import AuthGate from '#lib/AuthGate.svelte';
   import { LoaderCircle, Plus, TriangleAlert, X } from 'lucide-svelte';
 
   function emptyPricingRow() {
@@ -36,10 +36,10 @@
   let addPricingOriginalModel = $state('');
   let selectedShutdownModels = $state(/** @type {string[]} */ ([]));
 
-  /** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */
+  /** @type {import('#lib/admin-state.svelte.js').UsagePricingRow|null} */
   let editingPricingRow = $state(null);
-  let editingPricingOriginal = $state(/** @type {import('$lib/admin-state.svelte.js').UsagePricingRow|null} */ (null));
-  let deleteConfirmPricingPopover = $state(/** @type {{row: import('$lib/admin-state.svelte.js').UsagePricingRow, top: number, left: number}|null} */ (null));
+  let editingPricingOriginal = $state(/** @type {import('#lib/admin-state.svelte.js').UsagePricingRow|null} */ (null));
+  let deleteConfirmPricingPopover = $state(/** @type {{row: import('#lib/admin-state.svelte.js').UsagePricingRow, top: number, left: number}|null} */ (null));
 
   const pricingBusy = $derived(
     usagePricing.loading ||
@@ -88,7 +88,7 @@
     }
   });
 
-  /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
+  /** @param {import('#lib/admin-state.svelte.js').UsagePricingRow} row */
   function startEditingPricingRow(row) {
     editingPricingRow = row;
     editingPricingOriginal = { ...row };
@@ -109,7 +109,7 @@
     }
   }
 
-  /** @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row */
+  /** @param {import('#lib/admin-state.svelte.js').UsagePricingRow} row */
   async function confirmRemovePricingRow(row) {
     const priorRows = [...(usagePricing.rows || [])];
     const index = (usagePricing.rows || []).indexOf(row);
@@ -127,7 +127,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row
+   * @param {import('#lib/admin-state.svelte.js').UsagePricingRow} row
    * @param {MouseEvent} event
    */
   function openDeleteConfirmPricingRow(row, event) {
@@ -213,7 +213,7 @@
   }
 
   /**
-   * @param {import('$lib/admin-state.svelte.js').UsagePricingRow} row
+   * @param {import('#lib/admin-state.svelte.js').UsagePricingRow} row
    * @param {'inputMicrousdPerMillion'|'cachedInputMicrousdPerMillion'|'outputMicrousdPerMillion'|'longInputMicrousdPerMillion'|'longCachedInputMicrousdPerMillion'|'longOutputMicrousdPerMillion'} field
    * @param {Event & { currentTarget: HTMLInputElement }} event
    */
