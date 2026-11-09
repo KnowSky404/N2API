@@ -34,6 +34,12 @@ the user explicitly requests a continuing preview. On this VPS the app is at
 Compose publishes the configured port on IPv4 and IPv6. Other hosts can use
 `http://localhost:3000`.
 
+For host-side metrics, configure the dedicated bearer token described in the
+operator manual and use `N2API_DEV_METRICS=1 make dev` or
+`N2API_DEV_METRICS=1 make dev-check`. This adds the existing metrics Compose
+override. `N2API_METRICS_ENABLED` alone continues to configure the internal
+listener without publishing another host port.
+
 The runner preserves `deploy_n2api-postgres`, the primary checkout's `.env`,
 and its `backups/` directory across task worktrees. Closing a session is not a
 database reset. Persistent data requires a separate explicit reset request;
@@ -44,7 +50,9 @@ A zero-byte ownership lock in the primary checkout's
 `.cache/.n2api-dev-session.lock` is shared across worktrees. It stays local for
 kernel locking, independent of temporary/cache overrides. A second session or
 `make dev-stop` refuses to interrupt an active foreground owner. The runner
-also refuses a `deploy` project belonging to release or unrelated Compose
+keeps the lock out of Compose child processes so a killed owner permits recovery.
+It accepts the base development file or its known metrics override combination
+and refuses a `deploy` project belonging to release or unrelated Compose
 files before changing it.
 
 SIGKILL, a host crash, or an external detached `compose up -d` cannot run an

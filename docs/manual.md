@@ -108,15 +108,23 @@ N2API_METRICS_PORT=9090
 ```
 
 ```bash
-docker compose -f deploy/compose.yaml -f deploy/compose.metrics.yaml --env-file .env up -d
+N2API_DEV_METRICS=1 make dev
+```
+
+Keep the foreground session open, and scrape from another terminal:
+
+```bash
 curl --fail --silent --show-error \
   --header "Authorization: Bearer ${N2API_METRICS_BEARER_TOKEN}" \
   http://127.0.0.1:9090/metrics
 ```
 
-Use the same override after `deploy/compose.release.yaml` for an immutable image
-deployment. Publishing metrics beyond host loopback requires an explicit
-`N2API_METRICS_BIND_ADDRESS` plus firewall policy; bearer authentication remains
+Ctrl-C closes the metrics development session and removes its containers and
+network. `make dev-stop` also recognizes older detached metrics stacks.
+
+Use `deploy/compose.metrics.yaml` after `deploy/compose.release.yaml` for an
+immutable image deployment. Publishing metrics beyond host loopback requires
+an explicit `N2API_METRICS_BIND_ADDRESS` plus firewall policy; bearer authentication remains
 mandatory. Do not send the bearer token over an untrusted network without a TLS
 reverse proxy or private encrypted transport. Missing or incorrect credentials
 return HTTP 401.

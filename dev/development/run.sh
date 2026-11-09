@@ -25,6 +25,9 @@ flock -n -x "${session_lock_fd}" || {
 export N2API_ENV_FILE="${primary_root}/.env"
 export N2API_DEV_BACKUP_DIR="${primary_root}/backups"
 compose=(docker compose --project-name deploy --file "${repo_root}/deploy/compose.yaml")
+if [[ "${N2API_DEV_METRICS:-0}" == 1 ]]; then
+  compose+=(--file "${repo_root}/deploy/compose.metrics.yaml")
+fi
 if [[ -f "${N2API_ENV_FILE}" ]]; then
   compose+=(--env-file "${N2API_ENV_FILE}")
 fi
@@ -34,7 +37,9 @@ while IFS= read -r container; do
   config_files="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "${container}")"
   owned=0
   while IFS= read -r worktree; do
-    [[ "${config_files}" == "${worktree}/deploy/compose.yaml" ]] && owned=1
+    case "${config_files}" in
+      "${worktree}/deploy/compose.yaml"|"${worktree}/deploy/compose.yaml,${worktree}/deploy/compose.metrics.yaml") owned=1 ;;
+    esac
   done <<<"${worktrees}"
   if (( owned == 0 )); then
     echo "development_status=blocked reason=foreign_compose_project container=${container}" >&2
@@ -66,6 +71,11 @@ cleanup_development() {
 }
 trap cleanup_development EXIT
 
+run_compose() {
+  # Keep the lock in the runner so surviving children cannot block recovery.
+  n2api_run_command "${compose[@]}" "$@" {session_lock_fd}>&-
+}
+
 if [[ "${mode}" == stop ]]; then
   stack_started=1
   exit 0
@@ -73,9 +83,9 @@ fi
 
 docker builder prune --all --force
 build_started=1
-n2api_run_command "${compose[@]}" build --no-cache
+run_compose build --no-cache
 stack_started=1
-n2api_run_command "${compose[@]}" up -d --force-recreate --wait --wait-timeout 120
+run_compose up -d --force-recreate --wait --wait-timeout 120
 "${compose[@]}" ps
 container_id="$("${compose[@]}" ps --quiet n2api)"
 [[ -n "${container_id}" ]]
@@ -87,5 +97,5 @@ echo "development_status=verified"
 
 if [[ "${mode}" == session ]]; then
   echo "Development session ready; keep this process open and press Ctrl-C to clean up."
-  n2api_run_command "${compose[@]}" up --no-build --abort-on-container-exit
+  run_compose up --no-build --abort-on-container-exit
 fi
