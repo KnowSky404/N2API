@@ -694,7 +694,7 @@ jobs:
           archive_dir="$RUNNER_TEMP/n2api-tested-image-${{ matrix.suffix }}"
           mkdir -p "$archive_dir"
           docker image inspect --format '{{.Id}}' "$LOCAL_IMAGE" \
-            > "$archive_dir/config-digest"
+            > "$archive_dir/image-id"
           docker save "$LOCAL_IMAGE" | gzip -1 > "$archive_dir/image.tar.gz"
           sha256sum "$archive_dir/image.tar.gz" > "$archive_dir/image.tar.gz.sha256"
 
@@ -761,18 +761,18 @@ jobs:
           archive_dir="$RUNNER_TEMP/n2api-tested-image-${{ matrix.suffix }}"
           cd "$archive_dir"
           sha256sum --check image.tar.gz.sha256
-          expected_config_digest="$(tr -d '[:space:]' < config-digest)"
-          if [[ ! "$expected_config_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Invalid tested image config digest" >&2
+          expected_image_id="$(tr -d '[:space:]' < image-id)"
+          if [[ ! "$expected_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid tested image ID" >&2
             exit 1
           fi
           gzip -dc image.tar.gz | docker load
-          actual_config_digest="$(docker image inspect --format '{{.Id}}' "$LOCAL_IMAGE")"
-          if [ "$actual_config_digest" != "$expected_config_digest" ]; then
-            echo "Downloaded image does not match the tested config digest" >&2
+          actual_image_id="$(docker image inspect --format '{{.Id}}' "$LOCAL_IMAGE")"
+          if [ "$actual_image_id" != "$expected_image_id" ]; then
+            echo "Downloaded image does not match the tested image ID" >&2
             exit 1
           fi
-          echo "LOCAL_CONFIG_DIGEST=$actual_config_digest" >> "$GITHUB_ENV"
+          echo "LOCAL_IMAGE_ID=$actual_image_id" >> "$GITHUB_ENV"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
@@ -801,18 +801,20 @@ jobs:
             docker push "$platform_ref"
           fi
 
+          platform_digest="$(digest_for "$platform_ref")"
+          if [[ ! "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve the pushed manifest digest for $platform_ref" >&2
+            exit 1
+          fi
+
           remote_config_digest="$(
             docker buildx imagetools inspect --raw "$platform_ref" \
               | jq -r '.config.digest // empty'
           )"
-          if [ "$remote_config_digest" != "$LOCAL_CONFIG_DIGEST" ]; then
+          # Docker image stores expose either config or manifest digests as image IDs.
+          if [ "$remote_config_digest" != "$LOCAL_IMAGE_ID" ] &&
+             [ "$platform_digest" != "$LOCAL_IMAGE_ID" ]; then
             echo "$platform_ref does not match the image that passed the smoke test" >&2
-            exit 1
-          fi
-
-          platform_digest="$(digest_for "$platform_ref")"
-          if [[ ! "$platform_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Could not resolve the pushed manifest digest for $platform_ref" >&2
             exit 1
           fi
 
