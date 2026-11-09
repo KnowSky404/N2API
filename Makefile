@@ -1,8 +1,18 @@
 SHELL := /usr/bin/env bash
+.DEFAULT_GOAL := test
 
-.PHONY: test test-ops ops-describe ops-doctor test-go-quality test-critical-race test-control-connections test-postgres-faults test-request-log-profile test-management-list-profile test-production-deploy test-e2e test-contracts test-playwright playwright-install \
+.PHONY: dev dev-check dev-stop test test-ops ops-describe ops-doctor test-go-quality test-critical-race test-control-connections test-postgres-faults test-request-log-profile test-management-list-profile test-production-deploy test-e2e test-contracts test-playwright playwright-install \
 	disk-check disk-check-heavy clean-dev-artifacts clean-dev-artifacts-deep \
 	test-dev-artifacts test-restore-backup backup-dev
+
+dev:
+	dev/development/run.sh session
+
+dev-check:
+	dev/development/run.sh check
+
+dev-stop:
+	dev/development/run.sh stop
 
 test:
 	dev/testing/run.sh unit
@@ -64,6 +74,7 @@ clean-dev-artifacts-deep:
 
 test-dev-artifacts:
 	dev/ci/test-dev-artifacts.sh
+	dev/ci/test-dev-session.sh
 	dev/ci/test-postgres-backup.sh
 
 test-restore-backup:

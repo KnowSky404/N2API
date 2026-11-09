@@ -26,7 +26,7 @@ operations.
 
 ## Quick Start
 
-Requirements: Docker Engine with Docker Compose v2.
+Requirements: Docker Engine with Docker Compose v2, Git, Make, and Bash.
 
 ```bash
 git clone https://github.com/KnowSky404/N2API.git
@@ -39,11 +39,17 @@ Replace every `change-me` value in `.env`. At minimum, configure a strong
 start the stack:
 
 ```bash
-docker compose -f deploy/compose.yaml --env-file .env up --build
+make dev
 ```
 
 Open `http://localhost:3000` and sign in with the admin credentials from
-`.env`. The development Compose file explicitly accepts its HTTP public origin,
+`.env`. Keep the command open during development; Ctrl-C removes the containers
+and network while preserving the database and backups. Services do not restart
+automatically. Use `make dev-check` for one-shot verification and
+`make dev-stop` for abandoned detached containers. See the
+[development lifecycle](docs/development.md) for cleanup and remote access.
+
+The development Compose file explicitly accepts its HTTP public origin,
 container wildcard bind, and plaintext private-network database topology;
 published-image deployments remain fail-closed until those risks are selected
 individually. See the [operator manual](docs/manual.md#host-binding-modes) for

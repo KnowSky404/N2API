@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    restart: unless-stopped
+    restart: "no"
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777,uid=10001,gid=10001
@@ -14,7 +14,7 @@ services:
     stop_grace_period: 35s
     env_file:
       - path: ../.env.example
-      - path: ../.env
+      - path: ${N2API_ENV_FILE:-../.env}
         required: false
     environment:
       N2API_ACCEPT_RISKS: ${N2API_ACCEPT_RISKS:-public-http,public-bind,database-plaintext}
@@ -37,6 +37,7 @@ services:
 
   postgres:
     image: postgres:18.6-alpine3.23@sha256:885cf05d376c7cf27afef02073e6bdac3841252537f16e244fd1c1e6a7c99fb1
+    restart: "no"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-n2api}
       POSTGRES_USER: ${POSTGRES_USER:-n2api}
@@ -51,7 +52,7 @@ services:
 
   postgres-backup:
     image: postgres:18.6-alpine3.23@sha256:885cf05d376c7cf27afef02073e6bdac3841252537f16e244fd1c1e6a7c99fb1
-    restart: unless-stopped
+    restart: "no"
     entrypoint: ["/usr/local/bin/n2api-postgres-backup"]
     command: ["daemon"]
     environment:
@@ -65,13 +66,14 @@ services:
       N2API_BACKUP_GID: ${N2API_BACKUP_GID:-1000}
     volumes:
       - ./postgres-backup.sh:/usr/local/bin/n2api-postgres-backup:ro
-      - ../backups:/backups
+      - ${N2API_DEV_BACKUP_DIR:-../backups}:/backups
     depends_on:
       postgres:
         condition: service_healthy
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=4m,mode=1777
+      - /var/lib/postgresql:rw,noexec,nosuid,nodev,size=1m,mode=1777
     security_opt:
       - no-new-privileges:true
     cap_drop:

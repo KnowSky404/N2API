@@ -9,13 +9,21 @@ deployment target is Docker Compose on a small VPS.
 From the repository root:
 
 ```bash
-docker compose -f deploy/compose.yaml up --build
+make dev
 ```
 
 The default app URL is `http://localhost:3000`. This zero-configuration path
 uses predictable development-only credentials. To customize them, copy
-`.env.example` to `.env`, replace every `change-me` value, and then add
-`--env-file .env` to the command.
+`.env.example` to `.env` and replace every `change-me` value. The session runner
+loads the primary checkout's `.env` and keeps its backup directory when run
+from a task worktree.
+
+Keep the foreground session open while using the app. Ctrl-C, TERM, or HUP
+removes development containers, network, and the locally built application
+image; the named database volume and backups remain. No development service
+restarts automatically. Use `make dev-check` for a rebuild/probe/teardown and
+`make dev-stop` to recover an abandoned detached stack. The Docker daemon stays
+available to other projects. See the [development lifecycle](development.md).
 
 An existing zero-configuration development volume created before startup
 validation still has the legacy PostgreSQL password stored inside the volume.
@@ -23,7 +31,7 @@ Migrate that local role once without deleting data, then start the stack again:
 
 ```bash
 docker compose -f deploy/compose.yaml exec postgres psql -U n2api -d n2api -v ON_ERROR_STOP=1 -c "ALTER ROLE n2api PASSWORD 'n2api-local-postgres-password'"
-docker compose -f deploy/compose.yaml up -d --force-recreate
+make dev
 ```
 
 Do not run this fixed development-password command on a deployment with custom

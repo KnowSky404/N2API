@@ -1,68 +1,59 @@
 ---
 name: n2api-local-refresh
-description: Rebuild, recreate, and verify the local N2API Docker Compose development stack after repository code or functionality changes. Use when Codex finishes an N2API implementation, needs the running local stack to reflect source changes, or the user asks to refresh, rebuild, or recreate the local N2API deployment.
+description: Rebuild, recreate, verify, and tear down the local N2API Docker Compose development stack after code changes, preserving persistent data. Use for local development refresh and session cleanup.
 ---
 
 # N2API Local Refresh
 
-Run this workflow from the repository root after relevant code or functionality changes.
+Run this workflow from the task worktree after code or functionality changes.
+Apply the repository's current session rules instead of leaving a detached
+development stack running. No production operation is authorized here.
 
 ## Refresh
 
-1. Confirm the intended repository changes and relevant tests are complete.
-2. Remove unused builder cache from earlier builds:
+1. Confirm the intended changes and relevant tests are complete. Check that no
+   other build is using the shared builder before builder-wide cache cleanup.
+2. Configure temporary files and controlled caches on the required mounted
+   remote filesystem through `TMPDIR`, `TMP`, `TEMP`, `N2API_TMP_ROOT`, and
+   `N2API_DEV_CACHE_ROOT`. Verify the mount and available space before writing.
+3. Run the managed one-shot refresh:
 
    ```bash
-   docker builder prune --all --force
+   make dev-check
    ```
 
-3. Rebuild without cache:
-
-   ```bash
-   docker compose -f deploy/compose.yaml build --no-cache
-   ```
-
-4. Recreate the development stack without deleting data:
-
-   ```bash
-   docker compose -f deploy/compose.yaml up -d --force-recreate
-   ```
+The runner prunes unused builder cache, builds with `--no-cache`, recreates and
+waits for the development services to become healthy, and probes `/livez`,
+`/readyz`, `/version`, and `/` inside the app container. On exit it removes the
+development containers, network, locally built app image, and run directory,
+then prunes unused builder cache. Named PostgreSQL data and backups remain.
 
 ## Verify
 
-1. Require `n2api` and `postgres` to be running and healthy:
+After the command, require no remaining development containers or network and
+confirm the existing volume still exists:
 
-   ```bash
-   docker compose -f deploy/compose.yaml ps
-   ```
+```bash
+docker ps -a --filter label=com.docker.compose.project=deploy
+docker network ls --filter label=com.docker.compose.project=deploy
+docker volume inspect deploy_n2api-postgres --format '{{.Name}}'
+```
 
-2. Resolve the current application container and run probes inside it:
+Report the exact commands, probe results, teardown, and preserved data. A failed
+probe or incomplete cleanup is a failure; inspect the error and retain useful
+diagnostic evidence before resolving it. Do not leave failed containers running
+by default.
 
-   ```bash
-   container_id="$(docker compose -f deploy/compose.yaml ps --quiet n2api)"
-   docker exec "${container_id}" wget -qO- http://127.0.0.1:3000/livez
-   docker exec "${container_id}" wget -qO- http://127.0.0.1:3000/readyz
-   docker exec "${container_id}" wget -qO- http://127.0.0.1:3000/version
-   ```
+## Interactive Development
 
-3. Run a container-local bootstrap page smoke check:
-
-   ```bash
-   docker exec "${container_id}" wget -qO- http://127.0.0.1:3000/
-   ```
-
-4. Remove build cache created by the no-cache rebuild only after recreation and verification succeed:
-
-   ```bash
-   docker builder prune --all --force
-   ```
-
-Report the exact commands, Compose service state, and probe results.
+Use `make dev` to keep a foreground session open. Ctrl-C, TERM, or HUP tears it
+down. Keep a preview running beyond verification only when the user explicitly
+requests it, and report how to stop it. Use `make dev-stop` after a hard kill,
+host failure, or a legacy detached startup; never stop another active session.
 
 ## Boundaries
 
-- Do not run `docker system prune`.
-- Do not prune images or volumes.
-- Do not run `compose down`, delete the PostgreSQL volume, or reset application data.
-- Do not substitute the production Compose file for this local refresh.
-- If verification fails, preserve the stack and inspect logs; do not report success or perform destructive cleanup.
+- Do not use global system/image/volume prune or development `down --volumes`.
+- Do not remove PostgreSQL data, credentials, backups, or unrelated resources.
+- Do not substitute production Compose or change the host Docker daemon.
+- Disposable labelled test volumes remain managed by their isolated test runner.

@@ -4,34 +4,124 @@ N2API's local verification commands isolate temporary files and disposable
 Docker resources so repeated development runs cannot silently consume the host
 disk. Use the root `Makefile` instead of creating ad hoc caches under `/tmp`.
 
+## Development Sessions
+
+Start the local Compose stack explicitly from the current checkout or task
+worktree:
+
+```bash
+make dev
+```
+
+The command rebuilds without cache, waits for healthy services, probes the app,
+and stays in the foreground. Keep it open while developing. Ctrl-C, TERM, HUP
+(terminal disconnect), a service exit, or a failed start triggers teardown.
+The runner removes development containers, the network, the locally built app
+image, its temporary directory, and unused builder cache. All services use
+`restart: "no"`, so Docker/host restarts do not start a development stack.
+Do not add host boot jobs or scheduled startup for local testing. The Docker
+daemon is shared infrastructure and stays available to other projects.
+
+For verification that exits after the health and bootstrap-page checks:
+
+```bash
+make dev-check
+```
+
+Do not leave detached services running after development verification unless
+the user explicitly requests a continuing preview. On this VPS the app is at
+`http://oc-de-fra-1.knowsky.uk:3000` while the foreground session is open;
+Compose publishes the configured port on IPv4 and IPv6. Other hosts can use
+`http://localhost:3000`.
+
+The runner preserves `deploy_n2api-postgres`, the primary checkout's `.env`,
+and its `backups/` directory across task worktrees. Closing a session is not a
+database reset. Persistent data requires a separate explicit reset request;
+never use `down --volumes` for the development project. Disposable test volumes
+remain separate and are removed by the creating test runner.
+
+A zero-byte ownership lock in the primary checkout's
+`.cache/.n2api-dev-session.lock` is shared across worktrees. It stays local for
+kernel locking, independent of temporary/cache overrides. A second session or
+`make dev-stop` refuses to interrupt an active foreground owner. The runner
+also refuses a `deploy` project belonging to release or unrelated Compose
+files before changing it.
+
+SIGKILL, a host crash, or an external detached `compose up -d` cannot run an
+exit trap. Close those leftovers explicitly once no session is active:
+
+```bash
+make dev-stop
+make clean-dev-artifacts
+```
+
+After cleanup, require no development containers or network and retain the
+database volume:
+
+```bash
+docker ps -a --filter label=com.docker.compose.project=deploy
+docker network ls --filter label=com.docker.compose.project=deploy
+docker volume inspect deploy_n2api-postgres --format '{{.Name}}'
+```
+
+On this development VPS, verify the mounted remote filesystem and available
+space first, then configure artifacts before invoking managed commands:
+
+```bash
+artifact_base=/mnt/oc-de-fra-2/data/oc-de-fra-1/codex
+findmnt -T "$artifact_base"
+df -h "$artifact_base"
+mkdir -p "$artifact_base/tmp/n2api" "$artifact_base/cache/n2api"
+task_tmp=$(mktemp -d "$artifact_base/tmp/n2api/session.XXXXXXXX")
+export TMPDIR="$task_tmp" TMP="$task_tmp" TEMP="$task_tmp"
+export N2API_TMP_ROOT="$task_tmp"
+export N2API_DEV_CACHE_ROOT="$artifact_base/cache/n2api"
+make dev-check
+rmdir "$task_tmp"
+```
+
+Keep downloads, build output, reports, screenshots, and traces in those managed
+locations. Do not silently fall back if the required remote mount is absent.
+Docker's existing storage and installed tools stay at their established paths.
+Tests that require exact local ownership and permission bits (operator state
+and backup fixtures) cannot use the root-squashed NFS mount. For those small
+fixtures only, use a private `mktemp -d /tmp/n2api-*-posix.XXXXXXXX`, remove it
+after the test, and keep logs and other artifacts remote.
+
 ## Managed Resources
 
 Each test run creates a unique directory with `mktemp -d` under
-`${N2API_TMP_ROOT:-${TMPDIR:-/tmp}}`. An `EXIT`/`INT`/`TERM` trap removes only
+`${N2API_TMP_ROOT:-${TMPDIR:-/tmp}}`. An `EXIT`/`INT`/`TERM`/`HUP` trap removes only
 that directory. Concurrent runs have distinct run IDs and active markers and
 hold a shared lifecycle lock. Maintenance requires the exclusive lock, so one
 run or maintenance command cannot remove another active run.
 
 The lifecycle exports these locations:
 
-- `GOCACHE`, `GOTMPDIR`, `GOPATH`, `TMPDIR`, and `XDG_CACHE_HOME` are unique to
+- `GOCACHE`, `GOTMPDIR`, `GOPATH`, `TMPDIR`, `TMP`, `TEMP`, and `XDG_CACHE_HOME` are unique to
   the current run and are deleted at exit.
-- `GOMODCACHE` uses `.cache/dev/go-mod` and is deleted after a run if it exceeds
+- `GOMODCACHE` uses `${N2API_DEV_CACHE_ROOT}/go-mod` and is deleted after a run if it exceeds
   `N2API_GO_MOD_CACHE_MAX_MIB` (default `2048`) and no other managed run is
   active.
-- `BUN_INSTALL_CACHE_DIR` uses `.cache/dev/bun`, capped by
+- `BUN_INSTALL_CACHE_DIR` uses `${N2API_DEV_CACHE_ROOT}/bun`, capped by
   `N2API_BUN_CACHE_MAX_MIB` (default `1024`).
-- `PLAYWRIGHT_BROWSERS_PATH` uses `.cache/dev/playwright-browsers`, capped by
+- `PLAYWRIGHT_BROWSERS_PATH` uses `${N2API_DEV_CACHE_ROOT}/playwright-browsers`, capped by
   `N2API_PLAYWRIGHT_CACHE_MAX_MIB` (default `2048`). Playwright output, traces,
   screenshots, and reports stay inside the current run directory.
 - SvelteKit's bounded `.svelte-kit` workspace remains under `frontend/` so
   generated server modules can resolve frontend dependencies. The
   adapter-static `build` output is redirected into the current run directory.
-  Deep cleanup removes the repository-local `.svelte-kit` workspace.
+  Deep cleanup removes the repository-local `.svelte-kit` workspace. After
+  verification, remove current-task generated outputs once no other task uses
+  them; preserve installed dependencies and active shared tools.
+
+`N2API_DEV_CACHE_ROOT` defaults to `.cache/dev` on other hosts; set it to the
+verified remote cache path on this VPS. Bounded download caches are reused;
+per-run intermediate files and build outputs are removed on every exit.
 
 Failed Playwright evidence is deleted by default. Set
 `N2API_KEEP_FAILED_ARTIFACTS=1` to retain it under
-`.cache/dev/artifacts/<run-id>`. Regular cleanup keeps at most five sets for
+`${N2API_DEV_CACHE_ROOT}/artifacts/<run-id>`. Regular cleanup keeps at most five sets for
 seven days by default; override `N2API_ARTIFACT_KEEP_COUNT` or
 `N2API_ARTIFACT_TTL_DAYS` when needed.
 
@@ -83,7 +173,7 @@ Managed cleanup removes every test database volume.
 
 ## Local Database Backups
 
-The development Compose stack starts `postgres-backup` after PostgreSQL is
+The foreground development session starts `postgres-backup` after PostgreSQL is
 healthy. It creates a custom-format dump immediately and every six hours by
 default, validates each archive with `pg_restore --list`, then atomically moves
 it into the ignored `backups/` directory. The directory is `0750` and archives
@@ -91,7 +181,9 @@ are `0640`, owned by root and the configured host operator group. Set
 `N2API_BACKUP_GID` in `.env` to the numeric result of `id -g` for the operator
 who copies or restores backups; it defaults to `1000`. Existing matching dumps
 are normalized when the sidecar starts. Files older than seven days are
-removed. Override the bounded interval and retention with
+removed by the backup sidecar's retention policy. The sidecar stops with the
+development session and does not run independently between sessions. Override
+the bounded interval and retention with
 `N2API_BACKUP_INTERVAL_SECONDS` and `N2API_BACKUP_RETENTION_DAYS` in `.env`.
 
 Create and validate an additional backup immediately:
