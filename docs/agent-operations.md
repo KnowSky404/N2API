@@ -156,7 +156,7 @@ from fixture evidence, local tests, or GitHub CI alone.
 
 The following remain external owner gates: target-host authorization, release
 approval, exact published-image and supply-chain evidence, real-backup custody,
-real-backup restore records, reverse-proxy/TLS validation, real OAuth/provider
+real-backup restore records, reverse-proxy/TLS validation, real API-key provider
 traffic, and any manual database recovery decision.
 
 ## Scenario A: First Deployment On A New Host

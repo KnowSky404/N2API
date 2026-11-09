@@ -1,13 +1,13 @@
 # N2API Documentation
 
-This directory is the home of the N2API manual and project documentation. The
-root project README stays focused on a short introduction and the basic startup
-path; detailed usage and operations guidance belongs here.
+Read the [N2API Wiki](https://github.com/KnowSky404/N2API/wiki) for setup,
+configuration, and operations. The root README is a short project overview;
+this directory holds the version-controlled documentation sources.
 
 ## Start Here
 
-- [Quick start](../README.md#quick-start)
-- [Basic setup](../README.md#basic-setup)
+- [Wiki home](wiki/Home.md)
+- [Quick start and basic setup](wiki/Getting-Started.md)
 - [Agent-native production operations](agent-operations.md)
 - [Complete manual](manual.md)
 - [Development resource lifecycle](development.md)
@@ -51,9 +51,31 @@ completed feature delivery. New cross-cutting reliability and operations work
 is tracked under `specs/` and `plans/`; the historical records remain available
 for implementation context and are not a second active roadmap.
 
-## Documentation Site Direction
+## Wiki Maintenance
 
-The Markdown files under `docs/` use repository-relative links and keep
-user-facing manuals separate from implementation records. This provides a
-stable content root for a future Pages documentation site without coupling the
-repository README to a specific static-site generator.
+Edit these sources through the normal worktree, review, and PR workflow.
+After merging, publish the following files from the merged revision to the
+separate `N2API.wiki.git` repository:
+
+| Repository source | Wiki file |
+| --- | --- |
+| `docs/wiki/Home.md` | `Home.md` |
+| `docs/wiki/Getting-Started.md` | `Getting-Started.md` |
+| `docs/wiki/_Sidebar.md` | `_Sidebar.md` |
+| `docs/manual.md` | `Manual.md` |
+| `docs/agent-operations.md` | `Operations.md` |
+| `docs/development.md` | `Development.md` |
+| `docs/release-checklist.md` | `Release-Checklist.md` |
+| `docs/repository-protections.md` | `Repository-Protections.md` |
+| `docs/restore-drill-record.md` | `Restore-Drill-Record.md` |
+
+When copying a manual, rewrite relative Markdown links to the corresponding
+Wiki page names above without the `.md` extension, preserving heading anchors.
+Link other repository files to their absolute GitHub URLs. Keep code examples
+unchanged. Preserve unrelated Wiki pages, commit only the listed pages, and
+publish with a normal push. Verify the published pages and links from a fresh
+clone. The Wiki describes `main`; release users should also check their image's
+source revision and release notes.
+
+Implementation specifications, plans, and acceptance records remain in the
+repository. Do not treat publication as new runtime or production evidence.
