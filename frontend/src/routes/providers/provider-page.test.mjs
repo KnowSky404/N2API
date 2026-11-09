@@ -14,7 +14,6 @@ const {
   getAccountModelsState,
   futureTimeRemainingLabel,
   getAccountTestResultsState,
-  connectProvider,
   createKey,
   createAPIUpstreamAccount,
   loadModelRoutingPreview,
@@ -32,13 +31,11 @@ const {
   providerAccountEffectiveStatus,
   providerAccounts,
   providerAccountPauseForm,
-  providerConnectForm,
   requestLogs,
   routingPools,
   selectedProviderAccountIds,
   deleteRoutingPool,
   removeAccountModel,
-  refreshAccountModelCatalog,
   saveAccountModels,
   session,
   setAccountModelEnabled,
@@ -46,7 +43,6 @@ const {
   shouldApplyAccountTestResultsResponse,
   sourceBadgeLabel,
   syncAccountModels,
-  cancelAccountModelCatalogRefresh,
   testProviderAccountModel,
   toggleProviderAccountSelection,
   updateAPIKeyRoutingPool,
@@ -348,102 +344,6 @@ test('provider accounts expose per-account outbound proxy controls', () => {
   assert.match(source, /credentialPatch\.proxyUrl = draft\.proxyUrl\.trim\(\)/);
 });
 
-test('provider account create forms can bind fingerprint profiles', () => {
-  assert.match(source, /providerConnectForm\.fingerprintProfileId/);
-  assert.match(source, /apiUpstreamForm\.fingerprintProfileId/);
-  assert.match(source, /Fingerprint profile/);
-  assert.match(source, /fingerprintProfiles\.items/);
-  assert.match(adminStateSource, /fingerprintProfileId: account \? account\.fingerprintProfileId \?\? 0 : Number\(providerConnectForm\.fingerprintProfileId\)/);
-  assert.match(adminStateSource, /fingerprintProfileId: Number\(apiUpstreamForm\.fingerprintProfileId\)/);
-  assert.match(source, /<option value="0">Default Codex CLI<\/option>/);
-  assert.match(source, /<option value="0">Default API upstream \(pass-through\)<\/option>/);
-
-  // Confirm each context-specific label is correct via source slices
-  const providerConnectSlice = source.slice(
-    source.indexOf('providerConnectForm.fingerprintProfileId'),
-    source.indexOf('providerConnectForm.fingerprintProfileId') + 300
-  );
-  assert.match(providerConnectSlice, /<option value="0">Default Codex CLI<\/option>/);
-
-  const apiUpstreamSlice = source.slice(
-    source.indexOf('apiUpstreamForm.fingerprintProfileId'),
-    source.indexOf('apiUpstreamForm.fingerprintProfileId') + 300
-  );
-  assert.match(apiUpstreamSlice, /<option value="0">Default API upstream \(pass-through\)<\/option>/);
-
-  const editAccountSlice = source.slice(
-    source.lastIndexOf('bind:value={draft.fingerprintProfileId}'),
-    source.lastIndexOf('bind:value={draft.fingerprintProfileId}') + 500
-  );
-  assert.match(editAccountSlice, /account\.accountType === 'api_upstream'/);
-  assert.match(editAccountSlice, /Default API upstream \(pass-through\)/);
-  assert.match(editAccountSlice, /Default Codex CLI/);
-  assert.match(editAccountSlice, /<option value=\{0\}>/);
-});
-
-test('Codex OAuth fingerprint selectors render the system default only once', () => {
-  assert.match(source, /DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY = 'codex_cli_default'/);
-  assert.match(
-    source,
-    /oauthFingerprintProfiles = \$derived\(\s*fingerprintProfiles\.items\.filter\(\(profile\) => profile\.systemKey !== DEFAULT_CODEX_FINGERPRINT_SYSTEM_KEY\)\s*\)/
-  );
-  assert.match(source, /\{#each oauthFingerprintProfiles as fp\}/);
-  assert.match(
-    source,
-    /account\.accountType === 'api_upstream' \? fingerprintProfiles\.items : oauthFingerprintProfiles/
-  );
-  assert.match(source, /resolveFingerprintProfileID\(account, draft\.fingerprintProfileId\)/);
-});
-
-test('provider account state sends fingerprint profile on new account creation', async () => {
-  session.authenticated = true;
-  providerConnectForm.name = 'Work Codex';
-  providerConnectForm.priority = 7;
-  providerConnectForm.enabled = true;
-  providerConnectForm.fingerprintProfileId = '9';
-  apiUpstreamForm.name = 'Upstream';
-  apiUpstreamForm.baseUrl = 'https://upstream.example.test/v1';
-  apiUpstreamForm.apiKey = 'secret';
-  apiUpstreamForm.proxyUrl = '';
-  apiUpstreamForm.priority = 8;
-  apiUpstreamForm.loadFactor = 1;
-  apiUpstreamForm.enabled = true;
-  apiUpstreamForm.modelsText = 'gpt-5';
-  apiUpstreamForm.fingerprintProfileId = '9';
-
-  const requests = [];
-  globalThis.fetch = async (path, options = {}) => {
-    requests.push({ path, options });
-    if (path === '/api/admin/provider-accounts/codex-oauth/connect') {
-      return new Response(JSON.stringify({ authorizationUrl: 'https://auth.example.test' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    if (path === '/api/admin/provider-accounts/api-upstream') {
-      return new Response(JSON.stringify({ account: { id: 12 } }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    return new Response(JSON.stringify({ accounts: [], models: [] }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    });
-  };
-
-  await connectProvider();
-  const created = await createAPIUpstreamAccount();
-  assert.equal(created, true);
-
-  const oauthRequest = requests.find((request) => request.path === '/api/admin/provider-accounts/codex-oauth/connect');
-  const upstreamRequest = requests.find((request) => request.path === '/api/admin/provider-accounts/api-upstream');
-  assert.ok(oauthRequest);
-  assert.ok(upstreamRequest);
-  assert.equal(JSON.parse(oauthRequest.options.body).fingerprintProfileId, 9);
-  assert.equal(JSON.parse(upstreamRequest.options.body).fingerprintProfileId, 9);
-});
-
 test('provider account state can bulk update selected scheduling fields', () => {
   assert.match(adminStateSource, /providerAccountBulkSchedulingForm/);
   assert.match(adminStateSource, /bulkUpdateSelectedProviderAccountScheduling/);
@@ -467,20 +367,11 @@ test('provider account state can test selected accounts', () => {
   assert.match(adminStateSource, /refreshExpandedAccountTestResults/);
 });
 
-test('provider account state can refresh selected accounts', () => {
-  assert.match(adminStateSource, /refreshSelectedProviderAccounts/);
-  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-refresh/);
-  assert.match(adminStateSource, /accountIds/);
-  assert.match(adminStateSource, /loadProvider\(\)/);
-  assert.match(adminStateSource, /loadModelRouting\(\)/);
-});
-
 test('provider account state can disconnect selected accounts', () => {
   assert.match(adminStateSource, /disconnectSelectedProviderAccounts/);
   assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/bulk-disconnect/);
   assert.match(adminStateSource, /accountIds/);
   assert.match(adminStateSource, /clearProviderAccountSelection/);
-  assert.match(adminStateSource, /loadProvider\(\)/);
   assert.match(adminStateSource, /loadModelRouting\(\)/);
 });
 
@@ -775,22 +666,9 @@ test('getGatewayReadinessIssues is clear when gateway can serve traffic', () => 
   );
 });
 
-test('provider page has a unified add account entry point with tabbed modal', () => {
+test('provider page has a API-only add account modal', () => {
   assert.equal(source.includes('Connect account'), false);
   assert.match(source, /Add account/);
-  assert.match(source, /OAuth account/);
-});
-
-test('provider account state uses unified codex oauth connect endpoint', () => {
-  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/status/);
-  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/connect/);
-  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai'/);
-  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/connect/);
-});
-
-test('provider account state uses unified account refresh endpoint', () => {
-  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/\$\{account\.id\}\/refresh/);
-  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/accounts\/\$\{account\.id\}\/refresh/);
 });
 
 test('provider account state uses unified test-results endpoint', () => {
@@ -816,19 +694,12 @@ test('provider account state preinitializes test history state outside templates
   assert.match(adminStateSource, /for \(const account of providerAccounts\.items\) \{\s*ensureAccountTestResultsState\(account\.id\);\s*\}/);
 });
 
-test('provider account state uses unified codex oauth callback endpoint', () => {
-  assert.match(adminStateSource, /\/api\/admin\/provider-accounts\/codex-oauth\/callback/);
-  assert.doesNotMatch(adminStateSource, /\/api\/admin\/providers\/openai\/callback/);
-  assert.match(adminStateSource, /oauth_model_sync_failed/);
-  assert.match(adminStateSource, /OAuth account connected, but automatic model sync failed/);
-});
-
 test('provider account table supports search, sorting, and a pinned actions column', () => {
   assert.match(source, /placeholder="Account name"/);
   assert.match(source, /bind:value=\{accountStatusFilter\}/);
   assert.match(source, /bind:value=\{accountTypeFilter\}/);
   assert.match(source, /bind:value=\{accountEnabledFilter\}/);
-  for (const label of ['All types', 'Codex OAuth', 'API upstream', 'All statuses', 'Active', 'Blocked', 'Rate limited', 'Circuit open', 'Expired', 'All', 'Enabled', 'Disabled']) {
+  for (const label of ['All types', 'API upstream', 'All statuses', 'Active', 'Blocked', 'Rate limited', 'Circuit open', 'Expired', 'All', 'Enabled', 'Disabled']) {
     assert.match(source, new RegExp(label));
   }
   assert.match(source, /accountMatchesStatusFilter\(account, accountStatusFilter\)/);
@@ -876,10 +747,7 @@ test('provider account table does not expose selection without batch actions', (
 });
 
 test('provider account rows use compact controls and hover details', () => {
-  assert.match(source, /function accountEmailLabel/);
-  assert.match(source, /accountEmailLabel\(account\)/);
   assert.match(source, /function accountHoverDetail/);
-  assert.match(source, /\[accountLabel\(account\), accountEmailLabel\(account\)\]/);
   assert.match(source, /const editingProviderAccount = \$derived/);
   assert.match(source, /openAccountEditor\(account\)/);
   assert.match(source, /closeAccountEditor/);
@@ -910,15 +778,10 @@ test('provider account rows use compact controls and hover details', () => {
   assert.match(source, /bind:value=\{draft\.maxConcurrentRequests\}/);
   assert.match(source, /provider-account-max-concurrency/);
   assert.match(source, /testProviderAccount/);
-  assert.match(source, /testAccountRecovery/);
-  assert.match(source, /title="Test recovery"/);
-  assert.match(source, /recoveryTestAccountId === account\.id/);
-  assert.match(source, /Recovery confirmed/);
   assert.match(source, /href=\{`\/request-logs\?providerAccountId=\$\{account\.id\}`\}/);
   assert.match(source, /Request logs/);
   assert.match(source, /pauseProviderAccount/);
   assert.match(source, />Pause</);
-  assert.match(source, />Refresh credentials</);
   assert.match(source, /disconnectProviderAccount/);
   assert.match(source, /Delete account/);
   assert.match(source, /title=\{accountHoverDetail\(account\)\}/);
@@ -985,7 +848,6 @@ test('provider account rows hide routing pool memberships from the compact table
 
 test('providers page is account-oriented and supports api upstream accounts', () => {
   assert.match(source, /Provider accounts/);
-  assert.match(source, /Codex OAuth/);
   assert.match(source, /API upstream/);
   assert.match(source, /Base URL/);
   assert.match(source, /HTTPS is required unless HTTP upstreams are explicitly enabled/);
@@ -1028,14 +890,9 @@ test('admin state refreshes model routing after provider account scheduling chan
   const updateProviderAccountSource = adminStateSource.match(
     /export async function updateProviderAccount\(account, patch\) \{[\s\S]*?\n\}/
   )?.[0] ?? '';
-  const refreshProviderAccountSource = adminStateSource.match(
-    /export async function refreshProviderAccount\(account\) \{[\s\S]*?\n\}/
-  )?.[0] ?? '';
 
   assert.match(updateProviderAccountSource, /loadProviderAccounts\(\)/);
   assert.match(updateProviderAccountSource, /loadModelRouting\(\)/);
-  assert.match(refreshProviderAccountSource, /loadProviderAccounts\(\)/);
-  assert.match(refreshProviderAccountSource, /loadModelRouting\(\)/);
 });
 
 test('api keys page owns model policy and gateway default model', () => {
@@ -1485,88 +1342,6 @@ test('syncAccountModels stale response does not overwrite newer result', async (
   assert.equal(state.syncError, '');
 });
 
-test('refreshAccountModelCatalog uses a separate forced-refresh endpoint and status', async () => {
-  session.authenticated = true;
-  const state = getAccountModelsState(73);
-  state.items = [];
-  state.text = 'manual-model';
-  state.catalogRefreshError = 'old error';
-  state.catalogRefreshMessage = '';
-  state.catalogStatus = null;
-  const requests = [];
-  globalThis.fetch = async (path, options = {}) => {
-    requests.push({ path, options });
-    if (path === '/api/admin/provider-accounts/73/models/refresh') {
-      return new Response(JSON.stringify({
-        models: [{ model: 'gpt-5.6-sol', enabled: true, source: 'oauth_catalog' }],
-        synced: { total: 1, new: 1, preserved: 0, skippedManual: 0 },
-        catalog: {
-          lastAttemptAt: '2026-09-14T10:00:00Z',
-          lastSuccessAt: '2026-09-14T10:00:01Z',
-          source: 'upstream',
-          cacheHit: false,
-          upstreamFetchMs: 42,
-          localApplyMs: 3
-        }
-      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    }
-    if (path === '/api/admin/model-routing') {
-      return new Response(JSON.stringify({ defaultModel: '', models: [], warnings: [] }), {
-        status: 200, headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    throw new Error(`unexpected request ${path}`);
-  };
-
-  const result = await refreshAccountModelCatalog(73);
-
-  assert.equal(result, true);
-  const refreshRequest = requests.find((request) => request.path.endsWith('/models/refresh'));
-  assert.ok(refreshRequest);
-  assert.equal(refreshRequest.options.method, 'POST');
-  assert.ok(refreshRequest.options.signal);
-  assert.equal(state.refreshingCatalog, false);
-  assert.equal(state.catalogRefreshError, '');
-  assert.equal(state.catalogRefreshMessage, 'Catalog refreshed: 1 models, 1 new model.');
-  assert.equal(state.items[0].source, 'oauth_catalog');
-  assert.deepEqual(state.catalogStatus, {
-    lastAttemptAt: '2026-09-14T10:00:00Z',
-    lastSuccessAt: '2026-09-14T10:00:01Z',
-    source: 'upstream',
-    cacheHit: false,
-    upstreamFetchMs: 42,
-    localApplyMs: 3
-  });
-});
-
-test('refreshAccountModelCatalog rejects duplicate requests and supports cancellation', async () => {
-  session.authenticated = true;
-  const state = getAccountModelsState(74);
-  let rejectRefresh;
-  globalThis.fetch = (path, options = {}) => {
-    if (path !== '/api/admin/provider-accounts/74/models/refresh') {
-      return Promise.reject(new Error(`unexpected request ${path}`));
-    }
-    return new Promise((_, reject) => {
-      rejectRefresh = reject;
-      options.signal?.addEventListener('abort', () => {
-        const error = new Error('aborted');
-        error.name = 'AbortError';
-        reject(error);
-      }, { once: true });
-    });
-  };
-
-  const first = refreshAccountModelCatalog(74);
-  assert.equal(await refreshAccountModelCatalog(74), false);
-  assert.equal(cancelAccountModelCatalogRefresh(74), true);
-  assert.equal(await first, false);
-  assert.equal(state.refreshingCatalog, false);
-  assert.equal(state.catalogRefreshError, 'Catalog refresh canceled.');
-  assert.equal(typeof rejectRefresh, 'function');
-  assert.equal(cancelAccountModelCatalogRefresh(74), false);
-});
-
 test('provider account edit modal exposes account model sync controls', () => {
   assert.match(source, /Sync from upstream/);
   assert.doesNotMatch(source, /Save manual/);
@@ -1579,10 +1354,6 @@ test('provider account edit modal exposes account model sync controls', () => {
   assert.match(source, /const priorModelItems = modelState\.items\.map/);
   assert.match(source, /modelState\.items = priorModelItems/);
   assert.match(source, /Account settings were saved, but models failed/);
-  assert.match(source, /Refresh credentials/);
-  assert.match(source, /Refresh catalog/);
-  assert.match(source, /cancelAccountModelCatalogRefresh\(account\.id\)/);
-  assert.match(source, /catalogStatusLabel\(modelState\.catalogStatus\)/);
 });
 
 test('provider account model list only offers remove for manual models', () => {
@@ -1673,4 +1444,11 @@ test('api keys page uses modal to create keys and removes gateway model-settings
   assert.match(apiKeysSource, /createKeyDialog\.secret/);
   assert.doesNotMatch(adminStateSource, /oneTimeSecret/);
   assert.doesNotMatch(apiKeysSource, /You can copy it again later from the Prefix column\./);
+});
+
+test('provider accounts only expose API Key upstream access', () => {
+  assert.match(source, /API Key upstream gateway exits/);
+  assert.match(source, /add-account-api-upstream-form/);
+  assert.doesNotMatch(source, /OAuth|Reauthorize|Fingerprint|Refresh credentials/);
+  assert.doesNotMatch(adminStateSource, /codex-oauth|fingerprint-profiles|bulk-refresh|provider-accounts\/\$\{account.id\}\/refresh/);
 });

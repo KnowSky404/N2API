@@ -56,29 +56,7 @@ func newProtocolFixture(t *testing.T) *protocolFixture {
 	}
 }
 
-func (fixture *protocolFixture) createFingerprintProfile(name, scenario string) int64 {
-	fixture.t.Helper()
-	var response struct {
-		Profile struct {
-			ID int64 `json:"id"`
-		} `json:"profile"`
-	}
-	mustJSON(fixture.t, fixture.client, http.MethodPost, fixture.env.baseURL, "/api/admin/fingerprint-profiles", "fingerprint_create", nil, map[string]any{
-		"name":        name + " " + fixture.suffix,
-		"description": "gateway protocol e2e fixture",
-		"headers": map[string]string{
-			"X-N2API-E2E-Scenario": scenario,
-		},
-		"enabled": true,
-	}, &response, http.StatusCreated)
-	if response.Profile.ID <= 0 {
-		fixture.t.Fatal("stage=fingerprint_create field=id")
-	}
-	fixture.resources.fingerprintIDs = append(fixture.resources.fingerprintIDs, response.Profile.ID)
-	return response.Profile.ID
-}
-
-func (fixture *protocolFixture) createAccount(name string, priority int, fingerprintProfileID int64) int64 {
+func (fixture *protocolFixture) createAccount(name string, priority int, scenario string) int64 {
 	fixture.t.Helper()
 	input := map[string]any{
 		"name":       name + " " + fixture.suffix,
@@ -89,9 +67,10 @@ func (fixture *protocolFixture) createAccount(name string, priority int, fingerp
 		"loadFactor": 1,
 		"models":     []string{e2eModel},
 	}
-	if fingerprintProfileID > 0 {
-		input["fingerprintProfileId"] = fingerprintProfileID
+	if scenario != "" {
+		input["baseUrl"] = strings.TrimRight(fixture.env.mockBaseURL, "/") + "/__scenario/" + scenario
 	}
+
 	var response struct {
 		Account struct {
 			ID int64 `json:"id"`

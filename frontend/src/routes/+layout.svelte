@@ -30,7 +30,6 @@
     BellRing,
     BadgeDollarSign,
     Activity,
-    Fingerprint,
     PanelLeftClose,
     PanelLeftOpen,
     CircleUser,
@@ -57,7 +56,6 @@
     { href: '/alerting', label: 'Alerts', icon: BellRing },
     { href: '/pricing', label: 'Pricing', icon: BadgeDollarSign },
     { href: '/ops', label: 'Ops', icon: Activity },
-    { href: '/fingerprints', label: 'Fingerprints', icon: Fingerprint }
   ];
 
   const activePath = $derived(page.url.pathname);

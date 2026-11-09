@@ -402,58 +402,6 @@ func TestHasEnabledAccountsChecksEnabledProviderRows(t *testing.T) {
 	}
 }
 
-func TestFindFingerprintProfileByIDOnlyReturnsEnabledProfiles(t *testing.T) {
-	source, err := os.ReadFile("provider.go")
-	if err != nil {
-		t.Fatalf("ReadFile provider.go returned error: %v", err)
-	}
-	sql := strings.ToUpper(string(source))
-	if !strings.Contains(sql, "FUNC (R *PROVIDERREPOSITORY) FINDFINGERPRINTPROFILEBYID") ||
-		!strings.Contains(sql, "FROM FINGERPRINT_PROFILES") ||
-		!strings.Contains(sql, "WHERE ID = $1 AND ENABLED = TRUE") {
-		t.Fatal("FindFingerprintProfileByID must only return enabled fingerprint profiles")
-	}
-}
-
-func TestEnsureDefaultCodexFingerprintProfileUsesSystemKey(t *testing.T) {
-	source, err := os.ReadFile("provider.go")
-	if err != nil {
-		t.Fatalf("ReadFile provider.go returned error: %v", err)
-	}
-	sql := string(source)
-	for _, want := range []string{
-		"func (r *ProviderRepository) EnsureDefaultCodexFingerprintProfile",
-		"provider.DefaultCodexFingerprintSystemKey",
-		"ON CONFLICT (system_key) WHERE system_key <> ''",
-		"name = EXCLUDED.name",
-		"user_agent = EXCLUDED.user_agent",
-		"headers_json = EXCLUDED.headers_json",
-		"enabled = true",
-		"RETURNING id",
-	} {
-		if !strings.Contains(sql, want) {
-			t.Fatalf("provider store source missing %q", want)
-		}
-	}
-}
-
-func TestSystemFingerprintProfilesAreReadOnly(t *testing.T) {
-	source, err := os.ReadFile("fingerprint.go")
-	if err != nil {
-		t.Fatalf("ReadFile fingerprint.go returned error: %v", err)
-	}
-	sql := string(source)
-	for _, want := range []string{
-		"WHERE id = $1 AND system_key = ''",
-		"DELETE FROM fingerprint_profiles WHERE id = $1 AND system_key = ''",
-		"ORDER BY CASE WHEN system_key <> '' THEN 0 ELSE 1 END",
-	} {
-		if !strings.Contains(sql, want) {
-			t.Fatalf("fingerprint store source missing %q", want)
-		}
-	}
-}
-
 func TestProviderRepositorySavesAPIUpstreamAccount(t *testing.T) {
 	repo, cleanup := newProviderRepositoryForTest(t)
 	defer cleanup()
@@ -694,7 +642,8 @@ func TestProviderRepositoryListExposedModelsForRoutingPools(t *testing.T) {
 	ctx := context.Background()
 	global := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
-		AccountType:           provider.AccountTypeCodexOAuth,
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "global-account",
 		DisplayName:           "Global Account",
 		EncryptedAccessToken:  "global-token",
@@ -705,7 +654,8 @@ func TestProviderRepositoryListExposedModelsForRoutingPools(t *testing.T) {
 	})
 	pooled := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
-		AccountType:           provider.AccountTypeCodexOAuth,
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "pooled-account",
 		DisplayName:           "Pooled Account",
 		EncryptedAccessToken:  "pool-token",
@@ -721,6 +671,18 @@ func TestProviderRepositoryListExposedModelsForRoutingPools(t *testing.T) {
 		t.Fatalf("ReplaceAccountModels pooled returned error: %v", err)
 	}
 	poolID := insertProviderRoutingPool(t, repo.pool, "primary", pooled.ID)
+
+	legacy := saveProviderTestAccount(t, repo, provider.Account{
+		Provider: "openai", AccountType: provider.AccountTypeCodexOAuth,
+		Subject: "retired-oauth", DisplayName: "Retired OAuth", Enabled: true, Status: provider.AccountStatusActive,
+		EncryptedAccessToken: "legacy-token", EncryptedRefreshToken: "legacy-refresh",
+	})
+	if _, err := repo.ReplaceAccountModels(ctx, "openai", legacy.ID, []provider.AccountModelInput{{Model: "oauth-only", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.pool.Exec(ctx, `INSERT INTO routing_pool_accounts (pool_id, account_id) VALUES ($1, $2)`, poolID, legacy.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	models, err := repo.ListExposedModelsForRoutingPools(ctx, "openai", []int64{poolID})
 	if err != nil {
@@ -1059,45 +1021,6 @@ func TestUpdateAccountClearStatusClearsLocalFailureStateColumns(t *testing.T) {
 	} {
 		if strings.Contains(sql, preserved) {
 			t.Fatalf("UpdateAccount ClearStatus must preserve refresh diagnostics, found %q", preserved)
-		}
-	}
-}
-
-func TestUpdateAccountCanClearFingerprintProfileColumn(t *testing.T) {
-	source, err := os.ReadFile("provider.go")
-	if err != nil {
-		t.Fatalf("ReadFile provider.go returned error: %v", err)
-	}
-	sql := strings.ToUpper(string(source))
-	if strings.Contains(sql, "FINGERPRINT_PROFILE_ID = COALESCE($10, FINGERPRINT_PROFILE_ID)") {
-		t.Fatal("UpdateAccount must allow clearing fingerprint_profile_id instead of preserving it with COALESCE")
-	}
-	for _, want := range []string{
-		"FINGERPRINT_PROFILE_ID = CASE",
-		"WHEN $10 THEN $11",
-		"ELSE FINGERPRINT_PROFILE_ID",
-	} {
-		if !strings.Contains(sql, want) {
-			t.Fatalf("UpdateAccount must distinguish unset and null fingerprint updates, missing %q", want)
-		}
-	}
-}
-
-func TestProviderAccountSaveAndScanIncludeFingerprintProfileID(t *testing.T) {
-	source, err := os.ReadFile("provider.go")
-	if err != nil {
-		t.Fatalf("ReadFile provider.go returned error: %v", err)
-	}
-	sql := string(source)
-	for _, want := range []string{
-		"a.fingerprint_profile_id",
-		"&account.FingerprintProfileID",
-		"fingerprint_profile_id = $",
-		"fingerprint_profile_id, updated_at",
-		"account.FingerprintProfileID",
-	} {
-		if !strings.Contains(sql, want) {
-			t.Fatalf("provider store source missing %q", want)
 		}
 	}
 }
@@ -1822,6 +1745,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	later := now.Add(time.Hour)
 	account := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-enabled",
 		DisplayName:           "Exposed",
 		EncryptedAccessToken:  "access",
@@ -1832,6 +1757,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	disabledAccount := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-disabled-account",
 		DisplayName:           "Disabled",
 		EncryptedAccessToken:  "access",
@@ -1842,6 +1769,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	expiredAccount := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-expired",
 		DisplayName:           "Expired",
 		EncryptedAccessToken:  "access",
@@ -1853,6 +1782,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	unknownStatus := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-unknown",
 		DisplayName:           "Unknown",
 		EncryptedAccessToken:  "access",
@@ -1863,6 +1794,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	rateLimitedNull := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-rate-null",
 		DisplayName:           "Rate Null",
 		EncryptedAccessToken:  "access",
@@ -1873,6 +1806,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	rateLimitedFuture := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-rate-future",
 		DisplayName:           "Rate Future",
 		EncryptedAccessToken:  "access",
@@ -1884,6 +1819,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	rateLimitedPast := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-rate-past",
 		DisplayName:           "Rate Past",
 		EncryptedAccessToken:  "access",
@@ -1895,6 +1832,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	circuitOpenNull := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-circuit-null",
 		DisplayName:           "Circuit Null",
 		EncryptedAccessToken:  "access",
@@ -1905,6 +1844,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	circuitOpenFuture := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-circuit-future",
 		DisplayName:           "Circuit Future",
 		EncryptedAccessToken:  "access",
@@ -1916,6 +1857,8 @@ func TestListExposedModelsForRoutingPoolFiltersUnschedulableAccounts(t *testing.
 	})
 	circuitOpenPast := saveProviderTestAccount(t, repo, provider.Account{
 		Provider:              "openai",
+		AccountType:           provider.AccountTypeAPIUpstream,
+		Credential:            provider.AccountCredential{CredentialType: provider.CredentialTypeAPIKey, EncryptedAPIKey: "encrypted-api-key"},
 		Subject:               "exposed-circuit-past",
 		DisplayName:           "Circuit Past",
 		EncryptedAccessToken:  "access",

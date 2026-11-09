@@ -13,9 +13,8 @@ func TestTransportKeyDoesNotExposeProxyCredentials(t *testing.T) {
 		password = "plaintext-proxy-password"
 	)
 	selected := SelectedAccount{
-		AccountID:      1,
-		ProxyURL:       "http://" + username + ":" + password + "@proxy.example.test:8080",
-		FingerprintTLS: "chrome",
+		AccountID: 1,
+		ProxyURL:  "http://" + username + ":" + password + "@proxy.example.test:8080",
 	}
 
 	key := mustTransportKey(t, selected)
@@ -37,14 +36,12 @@ func TestTransportRegistrySeparatesCredentialsForCanonicalProxyAddress(t *testin
 	registry := newTransportRegistry(http.DefaultClient, upstreamTimeouts{}, 4)
 	t.Cleanup(registry.Close)
 	first := SelectedAccount{
-		AccountID:      1,
-		ProxyURL:       "http://first-user:first-password@PROXY.example.test",
-		FingerprintTLS: "chrome",
+		AccountID: 1,
+		ProxyURL:  "http://first-user:first-password@PROXY.example.test",
 	}
 	second := SelectedAccount{
-		AccountID:      2,
-		ProxyURL:       "http://second-user:second-password@proxy.example.test:80",
-		FingerprintTLS: "chrome",
+		AccountID: 2,
+		ProxyURL:  "http://second-user:second-password@proxy.example.test:80",
 	}
 
 	firstKey := mustTransportKey(t, first)
@@ -69,9 +66,8 @@ func TestTransportRegistryCredentialRotationReplacesClient(t *testing.T) {
 	registry := newTransportRegistry(http.DefaultClient, upstreamTimeouts{}, 4)
 	t.Cleanup(registry.Close)
 	before := SelectedAccount{
-		AccountID:      7,
-		ProxyURL:       "https://proxy-user:old-password@proxy.example.test:8443",
-		FingerprintTLS: "firefox",
+		AccountID: 7,
+		ProxyURL:  "https://proxy-user:old-password@proxy.example.test:8443",
 	}
 	after := before
 	after.ProxyURL = "https://proxy-user:new-password@proxy.example.test:8443"

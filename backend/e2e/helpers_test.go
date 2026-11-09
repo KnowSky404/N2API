@@ -40,7 +40,6 @@ type e2eResources struct {
 	poolName         string
 	clientKeyID      int64
 	clientSecret     string
-	fingerprintIDs   []int64
 	accountIDs       []int64
 	poolIDs          []int64
 	clientKeyIDs     []int64
@@ -280,9 +279,6 @@ func registerCleanup(t *testing.T, client *http.Client, env e2eEnvironment, reso
 		}
 		for _, id := range uniquePositiveIDs(resources.accountID, resources.accountIDs) {
 			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/provider-accounts/"+int64String(id), nil, nil, nil)
-		}
-		for _, id := range uniquePositiveIDs(0, resources.fingerprintIDs) {
-			_, _ = performJSON(ctx, client, http.MethodDelete, env.baseURL+"/api/admin/fingerprint-profiles/"+int64String(id), nil, nil, nil)
 		}
 		if resources.pricingUpdated {
 			_, _ = performJSON(ctx, client, http.MethodPut, env.baseURL+"/api/admin/usage-pricing", nil, resources.pricingBefore, nil)

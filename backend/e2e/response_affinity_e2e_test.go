@@ -233,9 +233,6 @@ func responseAffinitySelectedAccount(selected provider.SelectedAccount, err erro
 		RoutingPoolFallbackDepth: selected.RoutingPoolFallbackDepth,
 		RoutingPoolFallbackChain: selected.RoutingPoolFallbackChain,
 		RoutingPoolError:         selected.RoutingPoolError,
-		FingerprintUA:            selected.FingerprintUA,
-		FingerprintTLS:           selected.FingerprintTLS,
-		FingerprintHeaders:       selected.FingerprintHeaders,
 	}
 	return mapped, err
 }

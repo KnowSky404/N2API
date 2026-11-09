@@ -80,16 +80,6 @@ export {
  */
 
 /**
- * @typedef {object} ProviderStatus
- * @property {string} provider
- * @property {boolean} configured
- * @property {boolean} connected
- * @property {string} displayName
- * @property {string | null} accessTokenExpiresAt
- * @property {string | null} lastRefreshAt
- */
-
-/**
  * @typedef {object} AdminSession
  * @property {number} id
  * @property {boolean} current
@@ -129,7 +119,6 @@ export {
  * @property {string | null} lastTestAt
  * @property {string} lastTestStatus
  * @property {string} lastTestError
- * @property {number | null} fingerprintProfileId
  */
 
 /**
@@ -395,18 +384,6 @@ export {
  */
 
 /**
- * @typedef {object} OAuthModelCatalogStatus
- * @property {string | undefined} lastAttemptAt
- * @property {string | undefined} lastSuccessAt
- * @property {string | undefined} lastFailureAt
- * @property {string | undefined} lastError
- * @property {string | undefined} source
- * @property {boolean | undefined} cacheHit
- * @property {number | undefined} upstreamFetchMs
- * @property {number | undefined} localApplyMs
- */
-
-/**
  * @typedef {object} AccountModelsState
  * @property {boolean} loading
  * @property {boolean} saving
@@ -415,13 +392,6 @@ export {
  * @property {string} syncError
  * @property {string} syncMessage
  * @property {AccountModelSyncSummary | null} syncSummary
- * @property {boolean} refreshingCatalog
- * @property {string} catalogRefreshError
- * @property {string} catalogRefreshMessage
- * @property {AccountModelSyncSummary | null} catalogRefreshSummary
- * @property {OAuthModelCatalogStatus | null} catalogStatus
- * @property {number} catalogRefreshSeq
- * @property {AbortController | null} catalogAbortController
  * @property {boolean} saved
  * @property {string} text
  * @property {AccountModel[]} items
@@ -615,13 +585,6 @@ let healthRequestVersion = 0;
 export const loginForm = $state({ username: '', password: '', submitting: false, error: '' });
 /** @type {{ loading: boolean, error: string, items: AdminSession[], revokingId: number | null, revokingOthers: boolean }} */
 export const adminSessions = $state({ loading: false, error: '', items: [], revokingId: null, revokingOthers: false });
-/** @type {{ loading: boolean, connecting: boolean, error: string, data: ProviderStatus | null }} */
-export const provider = $state({
-  loading: false,
-  connecting: false,
-  error: '',
-  data: null
-});
 /** @type {{ loading: boolean, saving: boolean, error: string, items: ProviderAccount[] }} */
 export const providerAccounts = $state({ loading: false, saving: false, error: '', items: [] });
 /** @type {{ loading: boolean, loadingMore: boolean, saving: boolean, error: string, items: RoutingPool[], nextCursor: string, hasMore: boolean, appliedQuery: string, newPoolName: string, newPoolDescription: string, newPoolFallbackPoolId: string }} */
@@ -638,11 +601,9 @@ export const routingPools = $state({
   newPoolDescription: '',
   newPoolFallbackPoolId: '0'
 });
-export const providerConnectForm = $state({ name: '', priority: 100, enabled: true, fingerprintProfileId: '0' });
 export const providerAccountPauseForm = $state({ durationSeconds: 300 });
 export const providerAccountBulkSchedulingForm = $state({ priority: '', loadFactor: '', maxConcurrentRequests: '' });
 export const providerAccountBulkModelsForm = $state({ text: '' });
-export const providerOAuth = $state({ authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
 export const apiUpstreamForm = $state({
   name: '',
   baseUrl: '',
@@ -651,7 +612,6 @@ export const apiUpstreamForm = $state({
   priority: 100,
   loadFactor: 1,
   enabled: true,
-  fingerprintProfileId: '0',
   modelsText: '',
   submitting: false,
   error: ''
@@ -925,11 +885,7 @@ export function clearProviderAccountBulkModelsForm() {
 }
 
 export function getProviderStateLabel() {
-  return provider.data?.configured
-    ? provider.data.connected
-      ? 'connected'
-      : 'not connected'
-    : 'not configured';
+  return providerAccounts.items.some((account) => account.enabled) ? 'connected' : 'not connected';
 }
 
 export function getStatusItems() {
@@ -938,7 +894,7 @@ export function getStatusItems() {
     { label: 'Database', value: health.database },
     {
       label: 'Provider',
-      value: session.authenticated ? (provider.data ? getProviderStateLabel() : 'checking') : 'login required'
+      value: session.authenticated ? (providerAccounts.loading ? 'checking' : getProviderStateLabel()) : 'login required'
     }
   ];
 }
@@ -1309,20 +1265,6 @@ export async function revealAPIKeySecret(id, currentPassword) {
   }
 }
 
-export async function copyAuthorizationURL() {
-  if (!providerOAuth.authorizationUrl) return;
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-
-  const copied = await copyText(providerOAuth.authorizationUrl);
-  if (!isCurrentAuthenticated(version)) return;
-  if (copied) {
-    providerOAuth.copied = true;
-  } else {
-    provider.error = 'Copy failed';
-  }
-}
-
 function clearAPIKeys() {
   replaceState(apiKeys, {
     loading: false,
@@ -1484,7 +1426,6 @@ function clearAuthenticatedAdminState(error = '', incrementVersion = true) {
     accountTests: null,
     costBreakdown: null
   });
-  replaceState(fingerprintProfiles, { loading: false, error: '', items: [], saving: false });
   replaceState(errorPassthroughRules, { loading: false, error: '', items: [], saving: false });
   loginForm.password = '';
 }
@@ -1532,12 +1473,6 @@ function clearModelSettings() {
 }
 
 function clearProvider() {
-  replaceState(provider, {
-    loading: false,
-    connecting: false,
-    error: '',
-    data: null
-  });
   replaceState(providerAccounts, { loading: false, saving: false, error: '', items: [] });
   replaceState(routingPools, {
     loading: false,
@@ -1552,17 +1487,12 @@ function clearProvider() {
     newPoolDescription: '',
     newPoolFallbackPoolId: '0'
   });
-  for (const state of Object.values(accountModels)) {
-    state.catalogAbortController?.abort();
-  }
   replaceState(accountModels, {});
   replaceState(accountTestResults, {});
   replaceState(selectedProviderAccountIds, {});
-  replaceState(providerConnectForm, { name: '', priority: 100, enabled: true, fingerprintProfileId: '0' });
   replaceState(providerAccountPauseForm, { durationSeconds: 300 });
   replaceState(providerAccountBulkSchedulingForm, { priority: '', loadFactor: '', maxConcurrentRequests: '' });
   replaceState(providerAccountBulkModelsForm, { text: '' });
-  replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
   resetAPIUpstreamForm();
 }
 
@@ -1575,7 +1505,6 @@ function resetAPIUpstreamForm() {
     priority: 100,
     loadFactor: 1,
     enabled: true,
-    fingerprintProfileId: '0',
     modelsText: '',
     submitting: false,
     error: ''
@@ -1706,7 +1635,6 @@ export async function loadSession() {
     });
     await loadHealth();
     await loadUpdateStatus();
-    await loadProvider();
     await loadProviderAccounts();
     await loadModelSettings();
     await loadModelRouting();
@@ -2200,26 +2128,6 @@ export async function changePassword(event) {
   }
 }
 
-export async function loadProvider() {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-
-  provider.loading = true;
-  provider.error = '';
-
-  try {
-    const payload = await requestJSON('/api/admin/provider-accounts/codex-oauth/status');
-    if (!isCurrentAuthenticated(version)) return;
-    provider.data = payload;
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    provider.error = error instanceof Error ? error.message : 'Failed to load provider status';
-  } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    provider.loading = false;
-  }
-}
-
 export async function loadProviderAccounts() {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
@@ -2262,13 +2170,6 @@ function ensureAccountModelsState(accountId) {
       syncError: '',
       syncMessage: '',
       syncSummary: null,
-      refreshingCatalog: false,
-      catalogRefreshError: '',
-      catalogRefreshMessage: '',
-      catalogRefreshSummary: null,
-      catalogStatus: null,
-      catalogRefreshSeq: 0,
-      catalogAbortController: null,
       saved: false,
       text: '',
       items: [],
@@ -2340,7 +2241,6 @@ export async function loadAccountModels(accountId) {
     const models = payload.models ?? [];
     state.items = models;
     state.text = accountModelsText(models);
-    state.catalogStatus = payload.catalog ?? null;
   } catch (error) {
     if (!isCurrentAuthenticated(version)) return;
     if (!shouldApplyAccountModelsResponse(state, requestSeq)) return;
@@ -2510,7 +2410,6 @@ export async function syncAccountModels(accountId) {
     } else {
       state.syncMessage = `Synced ${total} models.`;
     }
-    if (payload.catalog) state.catalogStatus = payload.catalog;
     await loadModelRouting();
     return isCurrentAuthenticated(version);
   } catch (error) {
@@ -2526,12 +2425,6 @@ export async function syncAccountModels(accountId) {
 }
 
 /** @param {number} accountId */
-export function cancelAccountModelCatalogRefresh(accountId) {
-  const state = ensureAccountModelsState(accountId);
-  if (!state.refreshingCatalog || !state.catalogAbortController) return false;
-  state.catalogAbortController.abort();
-  return true;
-}
 
 /** @param {unknown} error */
 function isCanceledRequestError(error) {
@@ -2539,58 +2432,6 @@ function isCanceledRequestError(error) {
 }
 
 /** @param {number} accountId */
-export async function refreshAccountModelCatalog(accountId) {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return false;
-  const state = ensureAccountModelsState(accountId);
-  if (state.refreshingCatalog) return false;
-
-  state.requestSeq += 1;
-  const modelRequestSeq = state.requestSeq;
-  state.catalogRefreshSeq += 1;
-  const refreshSeq = state.catalogRefreshSeq;
-  const controller = new AbortController();
-  state.catalogAbortController = controller;
-  state.refreshingCatalog = true;
-  state.catalogRefreshError = '';
-  state.catalogRefreshMessage = '';
-  state.catalogRefreshSummary = null;
-  state.saved = false;
-  try {
-    const payload = await requestJSON(`/api/admin/provider-accounts/${accountId}/models/refresh`, {
-      method: 'POST',
-      signal: controller.signal
-    });
-    if (!isCurrentAuthenticated(version)) return false;
-    if (state.catalogRefreshSeq !== refreshSeq || state.requestSeq !== modelRequestSeq) return false;
-    const models = payload.models ?? [];
-    state.items = models;
-    state.text = accountModelsText(models);
-    state.catalogStatus = payload.catalog ?? state.catalogStatus;
-    state.catalogRefreshSummary = payload.synced ?? null;
-    const total = Number(payload.synced?.total ?? models.length);
-    const added = Number(payload.synced?.new ?? 0);
-    state.catalogRefreshMessage = added > 0
-      ? `Catalog refreshed: ${total} models, ${added} new model${added === 1 ? '' : 's'}.`
-      : `Catalog refreshed: ${total} models.`;
-    await loadModelRouting();
-    return isCurrentAuthenticated(version);
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return false;
-    if (state.catalogRefreshSeq !== refreshSeq || state.requestSeq !== modelRequestSeq) return false;
-    state.catalogRefreshError = isCanceledRequestError(error)
-      ? 'Catalog refresh canceled.'
-      : error instanceof Error
-        ? error.message
-        : 'Catalog refresh failed';
-    return false;
-  } finally {
-    if (isCurrentAuthenticated(version) && state.catalogRefreshSeq === refreshSeq) {
-      state.refreshingCatalog = false;
-      state.catalogAbortController = null;
-    }
-  }
-}
 
 /** @param {ProviderAccount} account */
 export function accountLabel(account) {
@@ -2599,8 +2440,7 @@ export function accountLabel(account) {
 
 /** @param {ProviderAccount} account */
 export function accountTypeLabel(account) {
-  if (account.accountType === 'api_upstream') return 'API upstream';
-  return 'Codex OAuth';
+  return 'API upstream';
 }
 
 /** @param {string | null | undefined} status */
@@ -2609,92 +2449,13 @@ export function statusLabel(status) {
   return status.replaceAll('_', ' ');
 }
 
-function browserFingerprint() {
-  if (typeof navigator === 'undefined') return '';
-  const screenInfo = globalThis.screen;
-  return [
-    navigator.userAgent,
-    navigator.language,
-    String(screenInfo?.width ?? ''),
-    String(screenInfo?.height ?? ''),
-    Intl.DateTimeFormat().resolvedOptions().timeZone
-  ].join('|');
-}
-
 /**
  * @param {ProviderAccount | null} account
  */
-export async function connectProvider(account = null) {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-
-  provider.connecting = true;
-  provider.error = '';
-
-  try {
-    const payload = await requestJSON('/api/admin/provider-accounts/codex-oauth/connect', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: account ? account.name || account.displayName || '' : providerConnectForm.name,
-        priority: account ? account.priority : Number(providerConnectForm.priority),
-        enabled: account ? account.enabled : providerConnectForm.enabled,
-        targetAccountId: account?.id ?? 0,
-        fingerprintProfileId: account ? account.fingerprintProfileId ?? 0 : Number(providerConnectForm.fingerprintProfileId),
-        fingerprint: browserFingerprint()
-      })
-    });
-    if (!isCurrentAuthenticated(version)) return;
-    providerOAuth.authorizationUrl = payload.authorizationUrl ?? '';
-    providerOAuth.callbackUrl = '';
-    providerOAuth.copied = false;
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    provider.error = error instanceof Error ? error.message : 'Failed to start provider connection';
-  } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    provider.connecting = false;
-  }
-}
-
-export async function completeProviderCallback() {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return false;
-
-  providerOAuth.completing = true;
-  provider.error = '';
-  providerAccounts.error = '';
-  try {
-    await requestJSON('/api/admin/provider-accounts/codex-oauth/callback', {
-      method: 'POST',
-      body: JSON.stringify({ callbackUrl: providerOAuth.callbackUrl })
-    });
-    if (!isCurrentAuthenticated(version)) return false;
-    replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
-    await loadProvider();
-    if (!isCurrentAuthenticated(version)) return false;
-    await loadProviderAccounts();
-    return isCurrentAuthenticated(version) && !provider.error && !providerAccounts.error;
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return false;
-    if (error instanceof Error && error.message === 'oauth_model_sync_failed') {
-      replaceState(providerOAuth, { authorizationUrl: '', callbackUrl: '', completing: false, copied: false });
-      await loadProvider();
-      if (!isCurrentAuthenticated(version)) return false;
-      await loadProviderAccounts();
-      if (!isCurrentAuthenticated(version)) return false;
-      provider.error = 'OAuth account connected, but automatic model sync failed. Reauthorize the account to retry.';
-    } else {
-      provider.error = error instanceof Error ? error.message : 'Failed to complete provider connection';
-    }
-    return false;
-  } finally {
-    if (isCurrentAuthenticated(version)) providerOAuth.completing = false;
-  }
-}
 
 /**
  * @param {ProviderAccount} account
- * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'maxConcurrentRequests' | 'name' | 'baseUrl' | 'fingerprintProfileId'>> & { apiKey?: string, proxyUrl?: string }} patch
+ * @param {Partial<Pick<ProviderAccount, 'enabled' | 'priority' | 'loadFactor' | 'maxConcurrentRequests' | 'name' | 'baseUrl'>> & { apiKey?: string, proxyUrl?: string }} patch
  */
 export async function updateProviderAccount(account, patch) {
   const version = sessionVersion;
@@ -3021,7 +2782,6 @@ export async function createAPIUpstreamAccount() {
         priority: Number(apiUpstreamForm.priority) || 100,
         loadFactor: Number(apiUpstreamForm.loadFactor) || 1,
         enabled: apiUpstreamForm.enabled,
-        fingerprintProfileId: Number(apiUpstreamForm.fingerprintProfileId),
         models: parseModelLines(apiUpstreamForm.modelsText)
       })
     });
@@ -3090,38 +2850,7 @@ export async function updateProviderAccountMaxConcurrentRequests(account, event)
   await updateProviderAccount(account, { maxConcurrentRequests });
 }
 
-
-/** @param {any} account @param {string} fingerprintProfileId "0" means clear */
-export async function updateProviderAccountFingerprintProfile(account, fingerprintProfileId) {
-  const id = fingerprintProfileId === '0' ? null : (Number(fingerprintProfileId) || null);
-  await updateProviderAccount(account, { fingerprintProfileId: id });
-}
-
-
 /** @param {ProviderAccount} account */
-export async function refreshProviderAccount(account) {
-  const version = sessionVersion;
-  providerAccounts.saving = true;
-  providerAccounts.error = '';
-  try {
-    await requestJSON(`/api/admin/provider-accounts/${account.id}/refresh`, {
-      method: 'POST'
-    });
-    if (!isCurrentAuthenticated(version)) return;
-    await loadProvider();
-    await loadProviderAccounts();
-    await loadModelRouting();
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    const message = error instanceof Error ? error.message : 'Account refresh failed';
-    providerAccounts.error = message;
-    await loadProviderAccounts();
-    if (!isCurrentAuthenticated(version)) return;
-    providerAccounts.error = message;
-  } finally {
-    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
-  }
-}
 
 /** @param {ProviderAccount} account */
 export async function testProviderAccount(account) {
@@ -3185,41 +2914,6 @@ export async function testSelectedProviderAccounts() {
 	}
 }
 
-export async function refreshSelectedProviderAccounts() {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-  const accountIds = Object.keys(selectedProviderAccountIds)
-    .map((id) => Number(id))
-    .filter((id) => Number.isFinite(id) && id > 0);
-  if (accountIds.length === 0) {
-    providerAccounts.error = 'Select at least one provider account';
-    return;
-  }
-
-  providerAccounts.saving = true;
-  providerAccounts.error = '';
-  try {
-    await requestJSON('/api/admin/provider-accounts/bulk-refresh', {
-      method: 'POST',
-      body: JSON.stringify({ accountIds })
-    });
-    if (!isCurrentAuthenticated(version)) return;
-    clearProviderAccountSelection();
-    await loadProvider();
-    await loadProviderAccounts();
-    await loadModelRouting();
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    const message = error instanceof Error ? error.message : 'Selected account refresh failed';
-    providerAccounts.error = message;
-    await loadProviderAccounts();
-    if (!isCurrentAuthenticated(version)) return;
-    providerAccounts.error = message;
-  } finally {
-    if (isCurrentAuthenticated(version)) providerAccounts.saving = false;
-  }
-}
-
 export async function disconnectSelectedProviderAccounts() {
   const version = sessionVersion;
   if (!isCurrentAuthenticated(version)) return;
@@ -3240,7 +2934,6 @@ export async function disconnectSelectedProviderAccounts() {
     });
     if (!isCurrentAuthenticated(version)) return;
     clearProviderAccountSelection();
-    await loadProvider();
     await loadProviderAccounts();
     await loadModelRouting();
   } catch (error) {
@@ -3417,7 +3110,6 @@ export async function disconnectProviderAccount(account) {
   try {
     await requestJSON(`/api/admin/provider-accounts/${account.id}`, { method: 'DELETE' });
     if (!isCurrentAuthenticated(version)) return;
-    await loadProvider();
     await loadProviderAccounts();
     await loadModelRouting();
   } catch (error) {
@@ -4732,8 +4424,6 @@ export async function deleteRevokedKey(id) {
   }
 }
 
-
-
 /**
  * @param {number | string} id
  * @param {boolean} selected
@@ -5099,103 +4789,6 @@ export async function loadOpsDashboard(rangeSeconds) {
     return loaded;
   } finally {
     opsMonitor.loading = false;
-  }
-}
-
-// --- Fingerprint profile state ---
-
-/** @type {{ loading: boolean; error: string; items: any[]; saving: boolean }} */
-export const fingerprintProfiles = $state({
-  loading: false,
-  error: '',
-  items: [],
-  saving: false,
-});
-
-export async function loadFingerprintProfiles() {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return;
-
-  fingerprintProfiles.loading = true;
-  fingerprintProfiles.error = '';
-  try {
-    const data = await requestJSON('/api/admin/fingerprint-profiles');
-    if (!isCurrentAuthenticated(version)) return;
-    fingerprintProfiles.items = data.profiles ?? [];
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return;
-    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to load fingerprint profiles';
-  } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    fingerprintProfiles.loading = false;
-  }
-}
-
-/** @param {{name: string; description: string; userAgent: string; tlsFingerprint: string; headers: Record<string,string>; enabled: boolean}} input */
-export async function createFingerprintProfile(input) {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return false;
-
-  fingerprintProfiles.saving = true;
-  fingerprintProfiles.error = '';
-  try {
-    await requestJSON('/api/admin/fingerprint-profiles', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    });
-    if (!isCurrentAuthenticated(version)) return false;
-    await loadFingerprintProfiles();
-    return true;
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return false;
-    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to create fingerprint profile';
-    return false;
-  } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    fingerprintProfiles.saving = false;
-  }
-}
-
-/** @param {number} id @param {any} input */
-export async function updateFingerprintProfile(id, input) {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return false;
-
-  fingerprintProfiles.saving = true;
-  fingerprintProfiles.error = '';
-  try {
-    await requestJSON(`/api/admin/fingerprint-profiles/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(input),
-    });
-    if (!isCurrentAuthenticated(version)) return false;
-    await loadFingerprintProfiles();
-    return true;
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return false;
-    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to update fingerprint profile';
-    return false;
-  } finally {
-    if (!isCurrentAuthenticated(version)) return;
-    fingerprintProfiles.saving = false;
-  }
-}
-
-/** @param {number} id */
-export async function deleteFingerprintProfile(id) {
-  const version = sessionVersion;
-  if (!isCurrentAuthenticated(version)) return false;
-
-  fingerprintProfiles.error = '';
-  try {
-    await requestJSON(`/api/admin/fingerprint-profiles/${id}`, { method: 'DELETE' });
-    if (!isCurrentAuthenticated(version)) return false;
-    await loadFingerprintProfiles();
-    return true;
-  } catch (error) {
-    if (!isCurrentAuthenticated(version)) return false;
-    fingerprintProfiles.error = error instanceof Error ? error.message : 'Failed to delete fingerprint profile';
-    return false;
   }
 }
 

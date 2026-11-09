@@ -24,9 +24,6 @@ import (
 )
 
 const defaultUpstreamBaseURL = "https://api.openai.com"
-const defaultCodexResponsesBaseURL = "https://chatgpt.com/backend-api/codex"
-const defaultCodexUserAgent = provider.DefaultCodexFingerprintUserAgent
-const defaultCodexInstructions = "You are Codex, a coding agent."
 const defaultMaxAcceptedRequestBody = 4 << 20
 const defaultMaxInMemoryReplayBody = 1 << 20
 const defaultMaxUpstreamResponseBody = 8 << 20
@@ -56,16 +53,12 @@ type SelectedAccount struct {
 	AuthorizationToken       string
 	BaseURL                  string
 	ProxyURL                 string
-	ChatGPTAccountID         string
 	MaxConcurrentRequests    int
 	RoutingPoolID            int64
 	RoutingPoolName          string
 	RoutingPoolFallbackDepth int
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
-	FingerprintUA            string
-	FingerprintTLS           string
-	FingerprintHeaders       map[string]string
 }
 
 type AccountProvider interface {
@@ -106,10 +99,6 @@ type EndpointAwareRoutingPoolChainAccountProvider interface {
 
 type AccountFailureReporter interface {
 	RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error
-}
-
-type AccountAuthorizationRefresher interface {
-	RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (accessToken string, retry bool, failureRecorded bool, err error)
 }
 
 type AccountUsageRecorder interface {
@@ -216,9 +205,6 @@ type RequestLog struct {
 	RoutingPoolFallbackDepth int
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
-	FingerprintUA            string
-	FingerprintTLS           string
-	FingerprintHeaders       map[string]string
 	Model                    string
 	SessionID                string
 	Route                    string
@@ -245,7 +231,6 @@ type RequestLog struct {
 
 type Config struct {
 	UpstreamBaseURL                 string
-	CodexResponsesBaseURL           string
 	MaxConcurrentGatewayRequests    int
 	MaxConcurrentRequestsPerAccount int
 	MaxConcurrentRequestsPerKey     int
@@ -277,7 +262,6 @@ type Proxy struct {
 	accounts           AccountProvider
 	client             *http.Client
 	upstreamBaseURL    string
-	codexBaseURL       string
 	staticSettings     admin.GatewaySettings
 	settings           GatewaySettingsProvider
 	limiter            *gatewayConcurrencyLimiter
@@ -321,10 +305,6 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 	if upstreamBaseURL == "" {
 		upstreamBaseURL = defaultUpstreamBaseURL
 	}
-	codexBaseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
-	if codexBaseURL == "" {
-		codexBaseURL = defaultCodexResponsesBaseURL
-	}
 	staticSettings := admin.GatewaySettings{
 		MaxConcurrentGatewayRequests:    cfg.MaxConcurrentGatewayRequests,
 		MaxConcurrentRequestsPerAccount: cfg.MaxConcurrentRequestsPerAccount,
@@ -363,7 +343,6 @@ func NewProxyWithClient(auth APIKeyAuthenticator, accounts AccountProvider, cfg 
 		accounts:           accounts,
 		client:             client,
 		upstreamBaseURL:    upstreamBaseURL,
-		codexBaseURL:       codexBaseURL,
 		staticSettings:     staticSettings,
 		settings:           cfg.SettingsProvider,
 		limiter:            newGatewayConcurrencyLimiter(),
@@ -616,7 +595,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer close(bodyReadInterruptDone)
 		_ = p.setReadDeadline(recorder, time.Now())
 	})
-	bodyFactory, maxAttempts, model, sessionID, previousResponseID, clientStream, err := p.requestBodyFactoryWithOptions(r)
+	bodyFactory, maxAttempts, model, sessionID, previousResponseID, _, err := p.requestBodyFactoryWithOptions(r)
 	if !stopBodyReadInterrupt() {
 		<-bodyReadInterruptDone
 	}
@@ -780,33 +759,24 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		)
 
 		var upstreamResp *http.Response
-		var upstreamErr error
-		var lastUpstreamSpan *requestAttemptSpan
 		upstreamRequestID = ""
-		authorizationRetried := false
-		authorizationRefreshFailureRecorded := false
-		upstreamFallbackReason := attemptFallbackReason
-		for {
-			upstreamStartedAt := time.Now()
-			upstreamSpan := diagnostics.beginAttempt(attemptTypeUpstreamHTTP, selected, upstreamFallbackReason)
-			upstreamFallbackReason = ""
-			upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
-			if err != nil {
-				upstreamSpan.setType(attemptTypeUpstreamTransport)
-				upstreamSpan.finish(http.StatusBadGateway, "upstream_request_error")
-				releaseAccount()
-				errorCode = "upstream_request_error"
-				writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
-				return
-			}
-			client, clientErr := p.clientForSelectedAccount(selected)
-			if clientErr != nil {
-				upstreamErr = clientErr
-				upstreamSpan.setType(attemptTypeUpstreamTransport)
-				upstreamSpan.finish(http.StatusBadGateway, upstreamRequestErrorCode(clientErr))
-				lastUpstreamSpan = upstreamSpan
-				break
-			}
+		upstreamStartedAt := time.Now()
+		upstreamSpan := diagnostics.beginAttempt(attemptTypeUpstreamHTTP, selected, attemptFallbackReason)
+		lastUpstreamSpan := upstreamSpan
+		upstreamReq, err := p.newUpstreamRequest(r, selected, bodyFactory())
+		if err != nil {
+			upstreamSpan.setType(attemptTypeUpstreamTransport)
+			upstreamSpan.finish(http.StatusBadGateway, "upstream_request_error")
+			releaseAccount()
+			errorCode = "upstream_request_error"
+			writeOpenAIError(recorder, http.StatusBadGateway, errorCode, "could not create upstream request")
+			return
+		}
+		client, upstreamErr := p.clientForSelectedAccount(selected)
+		if upstreamErr != nil {
+			upstreamSpan.setType(attemptTypeUpstreamTransport)
+			upstreamSpan.finish(http.StatusBadGateway, upstreamRequestErrorCode(upstreamErr))
+		} else {
 			upstreamResp, upstreamErr = client.Do(upstreamReq)
 			if upstreamErr != nil {
 				upstreamSpan.setType(attemptTypeUpstreamTransport)
@@ -815,53 +785,20 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					upstreamErrorCode = "request_canceled"
 				}
 				upstreamSpan.finish(http.StatusBadGateway, upstreamErrorCode)
-				lastUpstreamSpan = upstreamSpan
 				p.observeUpstreamAttempt(selected.AccountType, upstreamTransportOutcome(r.Context(), upstreamErr))
-				break
-			}
-			upstreamRequestID = responseUpstreamRequestID(upstreamResp)
-			upstreamSpan.setUpstreamRequestID(upstreamRequestID)
-			diagnostics.setHeaderWait(upstreamStartedAt, time.Now())
-			lastUpstreamSpan = upstreamSpan
-			if authorizationRetried || maxAttempts == 1 || !authorizationFailureStatus(upstreamResp.StatusCode) {
+			} else {
+				upstreamRequestID = responseUpstreamRequestID(upstreamResp)
+				upstreamSpan.setUpstreamRequestID(upstreamRequestID)
+				diagnostics.setHeaderWait(upstreamStartedAt, time.Now())
 				attemptErrorCode := ""
 				if upstreamResp.StatusCode >= http.StatusBadRequest {
 					attemptErrorCode = upstreamStatusErrorCode(upstreamResp.StatusCode)
 				}
 				upstreamSpan.finish(upstreamResp.StatusCode, attemptErrorCode)
 				p.observeUpstreamAttempt(selected.AccountType, upstreamHTTPOutcome(upstreamResp.StatusCode))
-				break
 			}
-
-			message, failureBody := captureFailure(upstreamResp)
-			if p.shouldPassThroughUpstreamError(r.Context(), upstreamResp.StatusCode, failureBody) {
-				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
-				p.observeUpstreamAttempt(selected.AccountType, "http_error")
-				break
-			}
-			refreshedToken, retry, failureRecorded, refreshErr := p.refreshAccountAuthorization(r.Context(), selected, upstreamResp.StatusCode, message)
-			if !retry {
-				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
-				p.observeUpstreamAttempt(selected.AccountType, "http_error")
-				break
-			}
-			authorizationRetried = true
-			authRefreshSpan := diagnostics.beginAttempt(attemptTypeAuthRefreshRetry, selected, "")
-			authRefreshSpan.setUpstreamRequestID(upstreamRequestID)
-			if refreshErr != nil || strings.TrimSpace(refreshedToken) == "" {
-				authorizationRefreshFailureRecorded = failureRecorded
-				upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
-				authRefreshSpan.finish(upstreamResp.StatusCode, "auth_refresh_failed")
-				p.observeUpstreamAttempt(selected.AccountType, "http_error")
-				break
-			}
-			p.observeUpstreamAttempt(selected.AccountType, "refresh_retry")
-			upstreamSpan.finish(upstreamResp.StatusCode, upstreamStatusErrorCode(upstreamResp.StatusCode))
-			authRefreshSpan.finish(upstreamResp.StatusCode, "")
-			_ = upstreamResp.Body.Close()
-			selected.AuthorizationToken = refreshedToken
-			gatewayAttemptCount++
 		}
+
 		if upstreamErr != nil {
 			releaseAccount()
 			if r.Context().Err() != nil {
@@ -891,10 +828,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				defer releaseAccount()
 				defer upstreamResp.Body.Close()
 
-				streamResponse := shouldStreamUpstreamResponseForClient(r, selected, upstreamResp, clientStream)
-				aggregateResponse := shouldAggregateOAuthResponses(r, selected, upstreamResp, clientStream)
+				streamResponse := shouldStreamUpstreamResponse(upstreamResp)
 				metricsStream = streamResponse
-				observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
+				observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
 				observedUsage, err = observation.Usage, writeErr
 				diagnostics.setResponseTiming(observation.ResponseTiming)
 				if streamResponse {
@@ -912,9 +848,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				return
 			}
-			if !authorizationRefreshFailureRecorded {
-				p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
-			}
+			p.recordAccountFailure(r.Context(), selected.AccountID, upstreamResp.StatusCode, upstreamResp.Header.Get("Retry-After"), message)
 			failedAccountIDs = appendUniqueInt64(failedAccountIDs, selected.AccountID)
 			if attempt+1 < maxAttempts {
 				releaseAccount()
@@ -932,10 +866,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer releaseAccount()
 		defer upstreamResp.Body.Close()
 
-		streamResponse := shouldStreamUpstreamResponseForClient(r, selected, upstreamResp, clientStream)
-		aggregateResponse := shouldAggregateOAuthResponses(r, selected, upstreamResp, clientStream)
+		streamResponse := shouldStreamUpstreamResponse(upstreamResp)
 		metricsStream = streamResponse
-		observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse, aggregateResponse, usesCodexResponsesEndpoint(r, selected))
+		observation, writeErr := p.writeUpstreamResponseWithOptions(r.Context(), recorder, upstreamResp, r.URL.Path, streamResponse)
 		observedUsage, err = observation.Usage, writeErr
 		diagnostics.setResponseTiming(observation.ResponseTiming)
 		if streamResponse {
@@ -1667,17 +1600,6 @@ func (p *Proxy) recordAccountFailure(ctx context.Context, accountID int64, statu
 	_ = reporter.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
 }
 
-func (p *Proxy) refreshAccountAuthorization(ctx context.Context, selected SelectedAccount, statusCode int, message string) (string, bool, bool, error) {
-	if selected.AccountID <= 0 || selected.AccountType != provider.AccountTypeCodexOAuth {
-		return "", false, false, nil
-	}
-	refresher, ok := p.accounts.(AccountAuthorizationRefresher)
-	if !ok {
-		return "", false, false, nil
-	}
-	return refresher.RefreshAccountAuthorization(ctx, selected.AccountID, selected.AuthorizationToken, statusCode, message)
-}
-
 func containsInt64(values []int64, target int64) bool {
 	for _, value := range values {
 		if value == target {
@@ -1749,10 +1671,6 @@ func retryableUpstreamStatus(statusCode int) bool {
 		statusCode == http.StatusForbidden ||
 		statusCode == http.StatusTooManyRequests ||
 		statusCode >= http.StatusInternalServerError
-}
-
-func authorizationFailureStatus(statusCode int) bool {
-	return statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden
 }
 
 func upstreamStatusErrorCode(statusCode int) string {
@@ -1873,18 +1791,9 @@ func (r *prefixedReadCloser) Close() error {
 }
 
 func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, body io.ReadCloser) (*http.Request, error) {
-	useCodexEndpoint := usesCodexResponsesEndpoint(r, selected)
-	upstreamPath := r.URL.Path
 	upstreamBaseURL := p.upstreamBaseURL
-	if useCodexEndpoint {
-		upstreamBaseURL = p.codexBaseURL
-		upstreamPath = "/responses"
-		var err error
-		body, err = normalizeCodexResponsesBody(body)
-		if err != nil {
-			return nil, err
-		}
-	} else if selectedBaseURL := strings.TrimRight(strings.TrimSpace(selected.BaseURL), "/"); selectedBaseURL != "" {
+	upstreamPath := r.URL.Path
+	if selectedBaseURL := strings.TrimRight(strings.TrimSpace(selected.BaseURL), "/"); selectedBaseURL != "" {
 		upstreamBaseURL, upstreamPath = upstreamURLBaseAndPath(selectedBaseURL, upstreamPath)
 	}
 	upstreamURL, err := url.Parse(upstreamBaseURL + upstreamPath)
@@ -1899,62 +1808,12 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, selected SelectedAccount, bo
 	copyRequestHeaders(req.Header, r.Header)
 	req.Header.Set("X-Request-ID", gatewayCorrelationID(r))
 	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
-	if useCodexEndpoint {
-		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
-		req.Header.Set("Accept", "text/event-stream")
-		req.Header.Set("OpenAI-Beta", "responses=experimental")
-		req.Header.Set("originator", provider.DefaultCodexFingerprintOriginator)
-		req.Header.Set("User-Agent", defaultCodexUserAgent)
-		req.Header.Set("Version", provider.DefaultCodexFingerprintVersion)
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	// Apply fingerprint profile overrides (User-Agent and custom headers)
-	if strings.TrimSpace(selected.FingerprintUA) != "" {
-		req.Header.Set("User-Agent", strings.TrimSpace(selected.FingerprintUA))
-	}
-	for key, value := range selected.FingerprintHeaders {
-		req.Header.Set(key, value)
-	}
-	if strings.TrimSpace(selected.FingerprintTLS) != "" {
-		req = req.WithContext(contextWithTLSFingerprint(req.Context(), selected.FingerprintTLS))
-	}
 
 	return req, nil
 }
 
-func usesCodexResponsesEndpoint(r *http.Request, selected SelectedAccount) bool {
-	return r != nil &&
-		selected.AccountType == provider.AccountTypeCodexOAuth &&
-		r.Method == http.MethodPost &&
-		r.URL.Path == "/v1/responses" &&
-		strings.TrimSpace(selected.ChatGPTAccountID) != ""
-}
-
-func shouldStreamUpstreamResponse(r *http.Request, selected SelectedAccount, resp *http.Response) bool {
-	if resp == nil {
-		return false
-	}
-	if strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
-		return true
-	}
-	return resp.StatusCode >= http.StatusOK &&
-		resp.StatusCode < http.StatusMultipleChoices &&
-		usesCodexResponsesEndpoint(r, selected)
-}
-
-func shouldStreamUpstreamResponseForClient(r *http.Request, selected SelectedAccount, resp *http.Response, clientStream bool) bool {
-	if usesCodexResponsesEndpoint(r, selected) && !clientStream {
-		return false
-	}
-	return shouldStreamUpstreamResponse(r, selected, resp)
-}
-
-func shouldAggregateOAuthResponses(r *http.Request, selected SelectedAccount, resp *http.Response, clientStream bool) bool {
-	if clientStream || !usesCodexResponsesEndpoint(r, selected) || resp == nil {
-		return false
-	}
-	return resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
+func shouldStreamUpstreamResponse(resp *http.Response) bool {
+	return resp != nil && strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream")
 }
 
 func upstreamURLBaseAndPath(baseURL, routePath string) (string, string) {
@@ -1964,45 +1823,6 @@ func upstreamURLBaseAndPath(baseURL, routePath string) (string, string) {
 		return strings.TrimSuffix(baseURL, "/v1"), routePath
 	}
 	return baseURL, routePath
-}
-
-func normalizeCodexResponsesBody(body io.ReadCloser) (io.ReadCloser, error) {
-	if body == nil {
-		return nil, nil
-	}
-	raw, err := io.ReadAll(body)
-	if closeErr := body.Close(); err == nil && closeErr != nil {
-		err = closeErr
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return io.NopCloser(bytes.NewReader(raw)), nil
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return io.NopCloser(bytes.NewReader(raw)), nil
-	}
-	payload["stream"] = true
-	payload["store"] = false
-	if instructions, ok := payload["instructions"].(string); !ok || strings.TrimSpace(instructions) == "" {
-		payload["instructions"] = defaultCodexInstructions
-	}
-	if input, ok := payload["input"].(string); ok {
-		payload["input"] = []any{
-			map[string]any{
-				"type":    "message",
-				"role":    "user",
-				"content": input,
-			},
-		}
-	}
-	normalized, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return io.NopCloser(bytes.NewReader(normalized)), nil
 }
 
 var (

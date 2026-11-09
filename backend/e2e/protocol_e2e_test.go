@@ -23,7 +23,7 @@ func TestGatewayNormalizesRetryableUpstreamStatusLogs(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.scenario, func(t *testing.T) {
 			fixture := newProtocolFixture(t)
-			profileID := fixture.createFingerprintProfile(test.scenario, test.scenario)
+			profileID := test.scenario
 			accountIDs := make([]int64, 0, 5)
 			for index := 0; index < 5; index++ {
 				accountIDs = append(accountIDs, fixture.createAccount(test.scenario+"-account-"+int64String(int64(index)), index, profileID))
@@ -76,7 +76,7 @@ func TestGatewayHandlesUpstreamContentTypeAndUsageVariants(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.scenario, func(t *testing.T) {
 			fixture := newProtocolFixture(t)
-			profileID := fixture.createFingerprintProfile(test.scenario, test.scenario)
+			profileID := test.scenario
 			accountID := fixture.createAccount(test.scenario+"-account", 0, profileID)
 			_, keyID, secret := fixture.createPoolAndKey(test.scenario, []int64{accountID})
 			sessionID := "e2e-" + test.scenario + "-" + fixture.suffix
@@ -126,7 +126,7 @@ func TestGatewayHandlesResponsesStreamUsageVariants(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.scenario, func(t *testing.T) {
 			fixture := newProtocolFixture(t)
-			profileID := fixture.createFingerprintProfile("responses "+test.scenario, test.scenario)
+			profileID := test.scenario
 			accountID := fixture.createAccount("responses-"+test.scenario+"-account", 0, profileID)
 			_, keyID, secret := fixture.createPoolAndKey("responses-"+test.scenario, []int64{accountID})
 			sessionID := "e2e-responses-" + test.scenario + "-" + fixture.suffix
@@ -155,9 +155,9 @@ func TestGatewayHandlesResponsesStreamUsageVariants(t *testing.T) {
 
 func TestGatewayFallsBackWhenUpstreamDisconnectsBeforeHeaders(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	disconnectProfileID := fixture.createFingerprintProfile("disconnect before headers", "disconnect-before-headers")
+	disconnectProfileID := "disconnect-before-headers"
 	failedAccountID := fixture.createAccount("disconnect-before-account", 0, disconnectProfileID)
-	happyAccountID := fixture.createAccount("disconnect-fallback-account", 1, 0)
+	happyAccountID := fixture.createAccount("disconnect-fallback-account", 1, "")
 	_, keyID, secret := fixture.createPoolAndKey("disconnect-before", []int64{failedAccountID, happyAccountID})
 	fixture.resetMock()
 	sessionID := "e2e-disconnect-before-" + fixture.suffix
@@ -183,7 +183,7 @@ func TestGatewayFallsBackWhenUpstreamDisconnectsBeforeHeaders(t *testing.T) {
 
 func TestGatewayFallsBackAfterOnePreStreamServiceUnavailable(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	retryProfileID := fixture.createFingerprintProfile("service unavailable once", "status-503-once")
+	retryProfileID := "status-503-once"
 	failedAccountID := fixture.createAccount("status-once-account", 0, retryProfileID)
 	happyAccountID := fixture.createAccount("status-once-fallback-account", 1, retryProfileID)
 	_, keyID, secret := fixture.createPoolAndKey("status-once", []int64{failedAccountID, happyAccountID})
@@ -211,9 +211,9 @@ func TestGatewayFallsBackAfterOnePreStreamServiceUnavailable(t *testing.T) {
 
 func TestGatewayDoesNotRetryAfterFirstStreamEvent(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	disconnectProfileID := fixture.createFingerprintProfile("disconnect after event", "disconnect-after-first-event")
+	disconnectProfileID := "disconnect-after-first-event"
 	failedAccountID := fixture.createAccount("disconnect-after-account", 0, disconnectProfileID)
-	happyAccountID := fixture.createAccount("disconnect-unused-account", 1, 0)
+	happyAccountID := fixture.createAccount("disconnect-unused-account", 1, "")
 	_, keyID, secret := fixture.createPoolAndKey("disconnect-after", []int64{failedAccountID, happyAccountID})
 	fixture.resetMock()
 	sessionID := "e2e-disconnect-after-" + fixture.suffix
@@ -239,7 +239,7 @@ func TestGatewayDoesNotRetryAfterFirstStreamEvent(t *testing.T) {
 
 func TestGatewayDoesNotRetryWhenStreamEndsWithoutCompletion(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	missingProfileID := fixture.createFingerprintProfile("missing completion", "missing-completion")
+	missingProfileID := "missing-completion"
 	accountID := fixture.createAccount("missing-completion-account", 0, missingProfileID)
 	_, keyID, secret := fixture.createPoolAndKey("missing-completion", []int64{accountID})
 	fixture.resetMock()
@@ -269,8 +269,8 @@ func TestGatewayDoesNotRetryWhenStreamEndsWithoutCompletion(t *testing.T) {
 
 func TestGatewayStickySessionUsesSameAccountTwice(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	firstAccountID := fixture.createAccount("sticky-first-account", 0, 0)
-	secondAccountID := fixture.createAccount("sticky-second-account", 0, 0)
+	firstAccountID := fixture.createAccount("sticky-first-account", 0, "")
+	secondAccountID := fixture.createAccount("sticky-second-account", 0, "")
 	poolID, keyID, secret := fixture.createPoolAndKey("sticky", []int64{firstAccountID, secondAccountID})
 	sessionID := "e2e-sticky-" + fixture.suffix
 	request := map[string]any{
@@ -308,7 +308,7 @@ func TestGatewayStickySessionUsesSameAccountTwice(t *testing.T) {
 
 func TestGatewayEnforcesPerKeyRequestLimitBeforeUpstream(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	accountID := fixture.createAccount("rate-limit-account", 0, 0)
+	accountID := fixture.createAccount("rate-limit-account", 0, "")
 	_, keyID, secret := fixture.createPoolAndKey("rate-limit", []int64{accountID})
 	mustJSON(t, fixture.client, http.MethodPut, fixture.env.baseURL, "/api/admin/keys/"+int64String(keyID)+"/limits", "key_limits", nil, map[string]int{
 		"requestsPerMinute": 1,
@@ -348,7 +348,7 @@ func TestGatewayEnforcesPerKeyRequestLimitBeforeUpstream(t *testing.T) {
 
 func TestGatewayPropagatesCancellationWhileUpstreamWaitsForHeaders(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	timeoutProfileID := fixture.createFingerprintProfile("timeout before headers", "timeout-before-headers")
+	timeoutProfileID := "timeout-before-headers"
 	accountID := fixture.createAccount("timeout-account", 0, timeoutProfileID)
 	_, keyID, secret := fixture.createPoolAndKey("timeout-cancel", []int64{accountID})
 	fixture.resetMock()

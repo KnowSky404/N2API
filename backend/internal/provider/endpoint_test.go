@@ -26,7 +26,7 @@ func TestEndpointAwareSelectionSkipsExplicitlyUnsupportedModelEndpoint(t *testin
 		Enabled:   true,
 		Metadata:  EndpointCapabilityMetadata(EndpointResponses, EndpointCapabilitySupported),
 	}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelAndEndpoint(context.Background(), "gpt-5", EndpointResponses)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestEndpointAwareSelectionReturnsEndpointUnavailableWhenAllModelsRejectEndp
 			Metadata:  EndpointCapabilityMetadata(EndpointChatCompletions, EndpointCapabilityUnsupported),
 		}}
 	}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	_, err := service.SelectAccountForModelAndEndpoint(context.Background(), "gpt-5", EndpointChatCompletions)
 	if !errors.Is(err, ErrEndpointUnavailable) {
@@ -114,7 +114,7 @@ func TestEndpointAwareSelectionUsesSupportedFallbackPool(t *testing.T) {
 		Enabled:   true,
 		Metadata:  EndpointCapabilityMetadata(EndpointResponses, EndpointCapabilitySupported),
 	}}
-	service := newConfiguredService(repo, fakeOAuthClient{})
+	service := newConfiguredService(repo, fakeProbeClient{})
 
 	selected, err := service.SelectAccountForModelInRoutingPoolChainAndEndpoint(context.Background(), 1, "gpt-5", EndpointResponses)
 	if err != nil {

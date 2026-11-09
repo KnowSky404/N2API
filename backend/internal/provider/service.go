@@ -1,15 +1,8 @@
 package provider
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"crypto/tls"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,27 +16,12 @@ import (
 
 	"github.com/KnowSky404/N2API/backend/internal/secret"
 	"github.com/KnowSky404/N2API/backend/internal/systemevent"
-	utls "github.com/refraction-networking/utls"
 )
 
 const (
-	defaultStateTTL                  = 10 * time.Minute
-	defaultRefreshWindow             = 2 * time.Minute
-	defaultCircuitOpen               = 5 * time.Minute
-	defaultManualPause               = 5 * time.Minute
-	maxManualPause                   = 24 * time.Hour
-	defaultOAuthModelCatalogCacheTTL = 6 * time.Hour
-	maxOAuthModelCatalogCacheEntries = 32
-	maxOAuthModelCatalogFlights      = 8
-
-	refreshFailureCircuitThreshold = 3
-
-	defaultOpenAIOAuthClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
-	defaultOpenAIOAuthRedirectURL   = "http://localhost:1455/auth/callback"
-	defaultOpenAIOAuthAuthURL       = "https://auth.openai.com/oauth/authorize"
-	defaultOpenAIOAuthTokenURL      = "https://auth.openai.com/oauth/token"
-	defaultOpenAIOAuthScopes        = "openid profile email offline_access"
-	defaultOpenAIOAuthRefreshScopes = "openid profile email"
+	defaultCircuitOpen = 5 * time.Minute
+	defaultManualPause = 5 * time.Minute
+	maxManualPause     = 24 * time.Hour
 )
 
 func withProviderEventIntent(ctx context.Context, intent systemevent.EventIntent) context.Context {
@@ -76,45 +54,6 @@ func providerAuditIntent(action systemevent.Action, id int64, name string) syste
 	}
 }
 
-func oauthRefreshIntent(account Account, trigger RefreshTrigger, succeeded bool, circuitOpenUntil *time.Time) systemevent.EventIntent {
-	action := systemevent.ActionOAuthRefreshAutomaticFailed
-	severity := systemevent.SeverityWarning
-	outcome := systemevent.OutcomeFailure
-	if trigger == RefreshTriggerManual {
-		action = systemevent.ActionOAuthRefreshManualFailed
-	} else if !succeeded && trigger == RefreshTriggerModelTest {
-		action = systemevent.ActionOAuthRefreshDiagnosticFailed
-	}
-	if succeeded {
-		severity = systemevent.SeverityInfo
-		outcome = systemevent.OutcomeSuccess
-		if trigger == RefreshTriggerManual {
-			action = systemevent.ActionOAuthRefreshManualSucceeded
-		} else {
-			action = systemevent.ActionOAuthRefreshAutomaticSucceeded
-		}
-	}
-	metadata := map[string]any{
-		"trigger":       string(trigger),
-		"failure_count": account.FailureCount,
-	}
-	if account.AccessTokenExpiresAt != nil {
-		metadata["expiry_at"] = account.AccessTokenExpiresAt.UTC()
-	}
-	if circuitOpenUntil != nil {
-		metadata["circuit_open_until"] = circuitOpenUntil.UTC()
-	}
-	return systemevent.EventIntent{
-		Category:  systemevent.CategoryOAuth,
-		Severity:  severity,
-		Action:    action,
-		Outcome:   outcome,
-		Target:    providerAccountTarget(account.ID, accountDisplayName(account)),
-		ErrorCode: map[bool]string{true: "", false: "oauth_refresh_failed"}[succeeded],
-		Metadata:  metadata,
-	}
-}
-
 func runtimeAccountIntent(action systemevent.Action, id int64, status string) systemevent.EventIntent {
 	severity := systemevent.SeverityWarning
 	outcome := systemevent.OutcomeFailure
@@ -132,38 +71,10 @@ func runtimeAccountIntent(action systemevent.Action, id int64, status string) sy
 	}
 }
 
-type RefreshTrigger string
-
-const (
-	RefreshTriggerManual         RefreshTrigger = "manual"
-	RefreshTriggerGatewayRequest RefreshTrigger = "gateway_request"
-	RefreshTriggerAccountTest    RefreshTrigger = "account_test"
-	RefreshTriggerModelTest      RefreshTrigger = "model_test"
-	RefreshTriggerModelSync      RefreshTrigger = "model_sync"
-	RefreshTriggerStatusProbe    RefreshTrigger = "status_probe"
-)
-
 const (
 	AccountTypeCodexOAuth  = "codex_oauth"
 	AccountTypeAPIUpstream = "api_upstream"
 )
-
-const (
-	DefaultCodexFingerprintSystemKey   = "codex_cli_default"
-	DefaultCodexFingerprintName        = "Default Codex CLI"
-	DefaultCodexFingerprintDescription = "System-managed Codex TUI outbound identity for OAuth accounts."
-	DefaultCodexFingerprintUserAgent   = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
-	DefaultCodexFingerprintOriginator  = "codex-tui"
-	DefaultCodexFingerprintVersion     = "0.135.0"
-	DefaultCodexFingerprintTLS         = ""
-)
-
-func DefaultCodexFingerprintHeaders() map[string]string {
-	return map[string]string{
-		"Originator": DefaultCodexFingerprintOriginator,
-		"Version":    DefaultCodexFingerprintVersion,
-	}
-}
 
 const (
 	RoutingPoolErrorDisabled    = "routing_pool_disabled"
@@ -221,31 +132,18 @@ var (
 	ErrRoutingPoolCycle       = errors.New("routing pool fallback cycle")
 	ErrRoutingPoolExhausted   = errors.New("routing pool fallback chain exhausted")
 	ErrEndpointUnavailable    = errors.New("provider endpoint unavailable")
-	ErrOAuthModelCatalogBusy  = errors.New("oauth model catalog refresh busy")
-	ErrOAuthModelCatalogStale = errors.New("oauth model catalog refresh superseded")
 )
 
 type Config struct {
-	Provider                  string
-	ClientID                  string
-	ClientSecret              string
-	RedirectURL               string
-	AuthURL                   string
-	TokenURL                  string
-	APIBaseURL                string
-	CodexResponsesBaseURL     string
-	ProxyURL                  string
-	ProbeChatGPTAccountID     string
-	Secret                    string
-	EncryptionKeyring         *secret.Keyring
-	StateTTL                  time.Duration
-	RefreshWindow             time.Duration
-	OAuthModelCatalogCacheTTL time.Duration
-	CodeVerifier              string
-	AllowHTTPAPIUpstreams     bool
-	AccountTestLogger         AccountTestRequestLogger
-	RequestLogObserver        RequestLogWriteObserver
-	Metrics                   MetricsObserver
+	Provider              string
+	APIBaseURL            string
+	ProxyURL              string
+	Secret                string
+	EncryptionKeyring     *secret.Keyring
+	AllowHTTPAPIUpstreams bool
+	AccountTestLogger     AccountTestRequestLogger
+	RequestLogObserver    RequestLogWriteObserver
+	Metrics               MetricsObserver
 }
 
 type MetricsObserver interface {
@@ -259,26 +157,6 @@ type Status struct {
 	DisplayName          string     `json:"displayName"`
 	AccessTokenExpiresAt *time.Time `json:"accessTokenExpiresAt"`
 	LastRefreshAt        *time.Time `json:"lastRefreshAt"`
-}
-
-type ConnectResult struct {
-	AuthorizationURL string
-}
-
-type Fingerprint struct {
-	Value     string
-	UserAgent string
-	IP        string
-}
-
-type ConnectOptions struct {
-	RedirectAfter        string
-	Name                 string
-	Priority             int
-	Enabled              *bool
-	TargetAccountID      int64
-	FingerprintProfileID *int64
-	Fingerprint          Fingerprint
 }
 
 type OAuthState struct {
@@ -332,13 +210,13 @@ type Account struct {
 	Metadata              map[string]string `json:"metadata"`
 	Status                string            `json:"status"`
 	StatusReason          string            `json:"statusReason"`
-	FingerprintHash       string            `json:"fingerprintHash"`
+	FingerprintHash       string            `json:"-"`
 	UserAgentHash         string            `json:"userAgentHash"`
 	IPHash                string            `json:"ipHash"`
 	FailureCount          int               `json:"failureCount"`
 	CircuitOpenUntil      *time.Time        `json:"circuitOpenUntil"`
 	RateLimitedUntil      *time.Time        `json:"rateLimitedUntil"`
-	FingerprintProfileID  *int64            `json:"fingerprintProfileId"`
+	FingerprintProfileID  *int64            `json:"-"`
 	LastRefreshError      string            `json:"lastRefreshError"`
 	LastRefreshErrorAt    *time.Time        `json:"lastRefreshErrorAt"`
 	CreatedAt             time.Time         `json:"createdAt"`
@@ -455,20 +333,6 @@ type AccountModelSyncSummary struct {
 	SkippedManual int `json:"skippedManual"`
 }
 
-// OAuthModelCatalogStatus reports the latest account-scoped catalog lifecycle
-// state. Nil timestamps and durations mean that the corresponding observation
-// has not been recorded for the current credential/configuration generation.
-type OAuthModelCatalogStatus struct {
-	LastAttemptAt   *time.Time `json:"lastAttemptAt,omitempty"`
-	LastSuccessAt   *time.Time `json:"lastSuccessAt,omitempty"`
-	LastFailureAt   *time.Time `json:"lastFailureAt,omitempty"`
-	LastError       string     `json:"lastError,omitempty"`
-	Source          string     `json:"source,omitempty"`
-	CacheHit        *bool      `json:"cacheHit,omitempty"`
-	UpstreamFetchMS *int64     `json:"upstreamFetchMs,omitempty"`
-	LocalApplyMS    *int64     `json:"localApplyMs,omitempty"`
-}
-
 type APIUpstreamInput struct {
 	Name                 string   `json:"name"`
 	BaseURL              string   `json:"baseUrl"`
@@ -477,7 +341,7 @@ type APIUpstreamInput struct {
 	Enabled              *bool    `json:"enabled"`
 	Priority             int      `json:"priority"`
 	LoadFactor           int      `json:"loadFactor"`
-	FingerprintProfileID *int64   `json:"fingerprintProfileId"`
+	FingerprintProfileID *int64   `json:"-"`
 	Models               []string `json:"models"`
 }
 
@@ -510,16 +374,12 @@ type SelectedAccount struct {
 	AuthorizationToken       string
 	BaseURL                  string
 	ProxyURL                 string
-	ChatGPTAccountID         string
 	MaxConcurrentRequests    int
 	RoutingPoolID            int64
 	RoutingPoolName          string
 	RoutingPoolFallbackDepth int
 	RoutingPoolFallbackChain string
 	RoutingPoolError         string
-	FingerprintUA            string
-	FingerprintTLS           string
-	FingerprintHeaders       map[string]string
 }
 
 type SelectionPreview struct {
@@ -533,9 +393,6 @@ type SelectionPreview struct {
 	RoutingPoolFallbackDepth int    `json:"routingPoolFallbackDepth,omitempty"`
 	RoutingPoolFallbackChain string `json:"routingPoolFallbackChain,omitempty"`
 	RoutingPoolError         string
-	FingerprintUA            string
-	FingerprintTLS           string               `json:"fingerprintTLS,omitempty"`
-	FingerprintHeaders       map[string]string    `json:"fingerprintHeaders,omitempty"`
 	Candidates               []SelectionCandidate `json:"candidates"`
 }
 
@@ -559,57 +416,15 @@ type SelectionCandidate struct {
 	EndpointCapability  string     `json:"endpointCapability,omitempty"`
 }
 
-type TokenResponse struct {
-	AccessToken  string
-	RefreshToken string
-	IDToken      string
-	ExpiresIn    int
-	Subject      string
-	DisplayName  string
-	AccountID    string
-	Email        string
-	PlanType     string
-	ClientID     string
-}
-
-type idTokenClaims struct {
-	Subject    string            `json:"sub"`
-	Email      string            `json:"email"`
-	OpenAIAuth *openAIAuthClaims `json:"https://api.openai.com/auth"`
-}
-
-type openAIAuthClaims struct {
-	ChatGPTAccountID string              `json:"chatgpt_account_id"`
-	ChatGPTUserID    string              `json:"chatgpt_user_id"`
-	ChatGPTPlanType  string              `json:"chatgpt_plan_type"`
-	UserID           string              `json:"user_id"`
-	POID             string              `json:"poid"`
-	Organizations    []organizationClaim `json:"organizations"`
-}
-
-type organizationClaim struct {
-	ID        string `json:"id"`
-	Role      string `json:"role"`
-	Title     string `json:"title"`
-	IsDefault bool   `json:"is_default"`
-}
-
 type Repository interface {
 	ListAccounts(ctx context.Context, provider string) ([]Account, error)
 	HasEnabledAccounts(ctx context.Context, provider string) (bool, error)
-	FindAccount(ctx context.Context, provider string) (Account, error)
 	FindAccountByID(ctx context.Context, provider string, id int64) (Account, error)
-	FindAccountByIdentity(ctx context.Context, provider string, identities AccountIdentities) (Account, error)
 	SaveAccount(ctx context.Context, account Account) (Account, error)
-	UpdateOAuthCredential(ctx context.Context, provider string, accountID int64, credential AccountCredential) error
 	UpdateAccount(ctx context.Context, provider string, id int64, update AccountUpdate) (Account, error)
 	DeleteAccount(ctx context.Context, provider string, id int64) error
-	DeleteAccounts(ctx context.Context, provider string) error
-	EnsureDefaultCodexFingerprintProfile(ctx context.Context) (int64, error)
-	FindFingerprintProfileByID(ctx context.Context, id int64) (FingerprintProfileData, error)
 	MarkAccountUsed(ctx context.Context, provider string, id int64, usedAt time.Time) error
 	MarkAccountError(ctx context.Context, provider string, id int64, message string, at time.Time) error
-	RecordRefreshFailure(ctx context.Context, provider string, id int64, message string, at time.Time, openUntil *time.Time) error
 	RecordAccountStatus(ctx context.Context, provider string, id int64, status, reason string, at time.Time, rateLimitedUntil, circuitOpenUntil *time.Time) error
 	RecordAccountTestResult(ctx context.Context, provider string, id int64, status, message string, at time.Time) error
 	ListAccountTestResults(ctx context.Context, provider string, accountID int64, limit int) ([]AccountTestResult, error)
@@ -618,7 +433,6 @@ type Repository interface {
 	RecordAccountModelTestResult(ctx context.Context, provider string, result AccountModelTestResult) error
 	ReplaceAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput) ([]AccountModel, error)
 	SyncAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
-	SyncOAuthAccountModels(ctx context.Context, provider string, accountID int64, models []AccountModelInput, seenAt time.Time) ([]AccountModel, AccountModelSyncSummary, error)
 	ListExposedModelsForRoutingPools(ctx context.Context, provider string, poolIDs []int64) ([]ExposedModel, error)
 	ListEligibleAccountsForModel(ctx context.Context, provider string, model string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 	FindRoutingPool(ctx context.Context, poolID int64) (RoutingPool, error)
@@ -629,8 +443,6 @@ type Repository interface {
 	UpsertSessionBinding(ctx context.Context, provider string, model string, sessionID string, accountID int64) error
 	FindSessionBindingInRoutingPool(ctx context.Context, provider string, routingPoolID int64, model string, sessionID string) (SessionBinding, error)
 	UpsertSessionBindingInRoutingPool(ctx context.Context, provider string, routingPoolID int64, model string, sessionID string, accountID int64) error
-	CreateState(ctx context.Context, state OAuthState) error
-	ClaimState(ctx context.Context, provider, stateHash string, now time.Time) (OAuthState, error)
 }
 
 // EndpointAwareRepository is optional so older repository fakes and external
@@ -642,20 +454,11 @@ type EndpointAwareRepository interface {
 	ListAccountsForRoutingPoolAndEndpoint(ctx context.Context, provider string, poolID int64, model, endpoint string, excludedAccountIDs []int64, now time.Time) ([]Account, error)
 }
 
-type oauthRefreshFailureEventRecorder interface {
-	RecordOAuthRefreshFailureEvent(ctx context.Context, provider string, accountID int64) error
-}
-
 type AccountIdentities struct {
 	ChatGPTAccountID  string
 	ChatGPTUserID     string
 	Email             string
 	AccessTokenSHA256 string
-}
-
-type OAuthClient interface {
-	ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error)
-	RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error)
 }
 
 type accountStatusProber interface {
@@ -679,9 +482,7 @@ type modelProbeResult struct {
 }
 
 type HTTPClient struct {
-	client                   *http.Client
-	modelProbeTLSConfig      *utls.Config
-	modelProbeProxyTLSConfig *tls.Config
+	client *http.Client
 }
 
 type AccountTransportInvalidator interface {
@@ -690,26 +491,17 @@ type AccountTransportInvalidator interface {
 }
 
 type Service struct {
-	repo                         Repository
-	client                       OAuthClient
-	prober                       accountStatusProber
-	modelProber                  accountModelProber
-	accountTestRequestLogger     AccountTestRequestLogger
-	requestLogWriteObserver      RequestLogWriteObserver
-	metrics                      MetricsObserver
-	cfg                          Config
-	encryptionKeyring            *secret.Keyring
-	refreshMu                    sync.Mutex
-	refreshLocks                 map[int64]*sync.Mutex
-	oauthModelCatalogMu          sync.Mutex
-	oauthModelCatalogCache       map[oauthModelCatalogCacheKey]oauthModelCatalogCacheEntry
-	oauthModelCatalogFlights     map[oauthModelCatalogCacheKey]*oauthModelCatalogFlight
-	oauthModelCatalogStatus      map[int64]OAuthModelCatalogStatus
-	oauthModelCatalogGenerations map[int64]uint64
-	oauthModelCatalogNow         func() time.Time
-	httpClient                   *HTTPClient
-	transportInvalidatorMu       sync.RWMutex
-	transportInvalidator         AccountTransportInvalidator
+	repo                     Repository
+	prober                   accountStatusProber
+	modelProber              accountModelProber
+	accountTestRequestLogger AccountTestRequestLogger
+	requestLogWriteObserver  RequestLogWriteObserver
+	metrics                  MetricsObserver
+	cfg                      Config
+	encryptionKeyring        *secret.Keyring
+	httpClient               *HTTPClient
+	transportInvalidatorMu   sync.RWMutex
+	transportInvalidator     AccountTransportInvalidator
 }
 
 type RequestLogWriteObserver interface {
@@ -723,83 +515,25 @@ func NewHTTPClient(client *http.Client) *HTTPClient {
 	return &HTTPClient{client: client}
 }
 
-func (c *HTTPClient) ExchangeCode(ctx context.Context, cfg Config, code string) (TokenResponse, error) {
-	values := url.Values{}
-	values.Set("grant_type", "authorization_code")
-	values.Set("code", code)
-	values.Set("client_id", cfg.ClientID)
-	if strings.TrimSpace(cfg.ClientSecret) != "" {
-		values.Set("client_secret", cfg.ClientSecret)
-	}
-	values.Set("redirect_uri", cfg.RedirectURL)
-	if strings.TrimSpace(cfg.CodeVerifier) != "" {
-		values.Set("code_verifier", cfg.CodeVerifier)
-	}
-	return c.postToken(ctx, cfg.TokenURL, values, cfg.ProxyURL)
-}
-
-func (c *HTTPClient) RefreshToken(ctx context.Context, cfg Config, refreshToken string) (TokenResponse, error) {
-	values := url.Values{}
-	values.Set("grant_type", "refresh_token")
-	values.Set("refresh_token", refreshToken)
-	values.Set("client_id", cfg.ClientID)
-	values.Set("scope", defaultOpenAIOAuthRefreshScopes)
-	if strings.TrimSpace(cfg.ClientSecret) != "" {
-		values.Set("client_secret", cfg.ClientSecret)
-	}
-	return c.postToken(ctx, cfg.TokenURL, values, cfg.ProxyURL)
-}
-
-func NewService(repo Repository, client OAuthClient, cfg Config) *Service {
+func NewService(repo Repository, client any, cfg Config) *Service {
 	if cfg.Provider == "" {
 		cfg.Provider = "openai"
-	}
-	if cfg.ClientID == "" {
-		cfg.ClientID = defaultOpenAIOAuthClientID
-	}
-	if cfg.RedirectURL == "" {
-		cfg.RedirectURL = defaultOpenAIOAuthRedirectURL
-	}
-	if cfg.AuthURL == "" {
-		cfg.AuthURL = defaultOpenAIOAuthAuthURL
-	}
-	if cfg.TokenURL == "" {
-		cfg.TokenURL = defaultOpenAIOAuthTokenURL
 	}
 	if cfg.APIBaseURL == "" {
 		cfg.APIBaseURL = "https://api.openai.com"
 	}
-	if cfg.CodexResponsesBaseURL == "" {
-		cfg.CodexResponsesBaseURL = "https://chatgpt.com/backend-api/codex"
-	}
-	if cfg.StateTTL <= 0 {
-		cfg.StateTTL = defaultStateTTL
-	}
-	if cfg.RefreshWindow <= 0 {
-		cfg.RefreshWindow = defaultRefreshWindow
-	}
-	if cfg.OAuthModelCatalogCacheTTL <= 0 {
-		cfg.OAuthModelCatalogCacheTTL = defaultOAuthModelCatalogCacheTTL
-	}
 	prober, _ := client.(accountStatusProber)
 	httpClient := NewHTTPClient(nil)
 	return &Service{
-		repo:                         repo,
-		client:                       client,
-		prober:                       prober,
-		modelProber:                  httpClient,
-		accountTestRequestLogger:     cfg.AccountTestLogger,
-		requestLogWriteObserver:      cfg.RequestLogObserver,
-		metrics:                      cfg.Metrics,
-		cfg:                          cfg,
-		encryptionKeyring:            cfg.EncryptionKeyring,
-		httpClient:                   httpClient,
-		refreshLocks:                 make(map[int64]*sync.Mutex),
-		oauthModelCatalogCache:       make(map[oauthModelCatalogCacheKey]oauthModelCatalogCacheEntry),
-		oauthModelCatalogFlights:     make(map[oauthModelCatalogCacheKey]*oauthModelCatalogFlight),
-		oauthModelCatalogStatus:      make(map[int64]OAuthModelCatalogStatus),
-		oauthModelCatalogGenerations: make(map[int64]uint64),
-		oauthModelCatalogNow:         time.Now,
+		repo:                     repo,
+		prober:                   prober,
+		modelProber:              httpClient,
+		accountTestRequestLogger: cfg.AccountTestLogger,
+		requestLogWriteObserver:  cfg.RequestLogObserver,
+		metrics:                  cfg.Metrics,
+		cfg:                      cfg,
+		encryptionKeyring:        cfg.EncryptionKeyring,
+		httpClient:               httpClient,
 	}
 }
 
@@ -818,102 +552,21 @@ func (s *Service) invalidateAccountTransport(accountID int64) {
 	}
 }
 
-func (s *Service) invalidateAllAccountTransports() {
-	s.transportInvalidatorMu.RLock()
-	invalidator := s.transportInvalidator
-	s.transportInvalidatorMu.RUnlock()
-	if invalidator != nil {
-		invalidator.InvalidateAllAccountTransports()
-	}
-}
-
-func (s *Service) invalidateOAuthModelCatalog(accountID int64) {
-	if s == nil || accountID <= 0 {
-		return
-	}
-	s.oauthModelCatalogMu.Lock()
-	if s.oauthModelCatalogGenerations == nil {
-		s.oauthModelCatalogGenerations = make(map[int64]uint64)
-	}
-	s.oauthModelCatalogGenerations[accountID]++
-	for key := range s.oauthModelCatalogCache {
-		if key.accountID == accountID {
-			delete(s.oauthModelCatalogCache, key)
-		}
-	}
-	if s.oauthModelCatalogStatus != nil {
-		delete(s.oauthModelCatalogStatus, accountID)
-	}
-	s.oauthModelCatalogMu.Unlock()
-}
-
-func (s *Service) invalidateAllOAuthModelCatalogs() {
-	if s == nil {
-		return
-	}
-	s.oauthModelCatalogMu.Lock()
-	if s.oauthModelCatalogGenerations == nil {
-		s.oauthModelCatalogGenerations = make(map[int64]uint64)
-	}
-	accountIDs := make(map[int64]struct{}, len(s.oauthModelCatalogGenerations)+len(s.oauthModelCatalogCache)+len(s.oauthModelCatalogFlights))
-	for accountID := range s.oauthModelCatalogGenerations {
-		accountIDs[accountID] = struct{}{}
-	}
-	for key := range s.oauthModelCatalogCache {
-		accountIDs[key.accountID] = struct{}{}
-	}
-	for key := range s.oauthModelCatalogFlights {
-		accountIDs[key.accountID] = struct{}{}
-	}
-	for accountID := range accountIDs {
-		s.oauthModelCatalogGenerations[accountID]++
-	}
-	s.oauthModelCatalogCache = make(map[oauthModelCatalogCacheKey]oauthModelCatalogCacheEntry)
-	s.oauthModelCatalogStatus = make(map[int64]OAuthModelCatalogStatus)
-	s.oauthModelCatalogMu.Unlock()
-}
-
 func (c *HTTPClient) ProbeAccountStatus(ctx context.Context, cfg Config, accessToken string) (probeResult, error) {
-	chatGPTAccountID := strings.TrimSpace(cfg.ProbeChatGPTAccountID)
-	if chatGPTAccountID != "" {
-		codexBaseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
-		if codexBaseURL == "" {
-			codexBaseURL = "https://chatgpt.com/backend-api/codex"
-		}
-		return c.probeURL(ctx, codexBaseURL+"/responses", accessToken, cfg.ProxyURL, func(req *http.Request) {
-			req.Header.Set("chatgpt-account-id", chatGPTAccountID)
-			req.Header.Set("Accept", "text/event-stream")
-			req.Header.Set("OpenAI-Beta", "responses=experimental")
-			req.Header.Set("originator", DefaultCodexFingerprintOriginator)
-			req.Header.Set("User-Agent", DefaultCodexFingerprintUserAgent)
-			req.Header.Set("Version", DefaultCodexFingerprintVersion)
-			req.Header.Set("Content-Type", "application/json")
-		})
-	}
-
 	apiBaseURL := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
 	if apiBaseURL == "" {
 		apiBaseURL = "https://api.openai.com"
 	}
-	return c.probeURL(ctx, apiBaseURL+"/v1/models", accessToken, cfg.ProxyURL, nil)
+	return c.probeURL(ctx, upstreamModelsURL(apiBaseURL), accessToken, cfg.ProxyURL)
 }
 
-func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken, proxyURL string, decorate func(*http.Request)) (probeResult, error) {
-	var body io.Reader
-	method := http.MethodGet
-	if strings.HasSuffix(targetURL, "/responses") {
-		method = http.MethodPost
-		body = strings.NewReader(`{"model":"gpt-5.4-mini","instructions":"You are Codex, a coding agent.","input":[{"type":"message","role":"user","content":"n2api account status probe"}],"stream":true,"store":false}`)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
+func (c *HTTPClient) probeURL(ctx context.Context, targetURL, accessToken, proxyURL string) (probeResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
 		return probeResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
-	if decorate != nil {
-		decorate(req)
-	}
 
 	resp, err := c.clientForProxy(proxyURL).Do(req)
 	if err != nil {
@@ -934,34 +587,8 @@ func (c *HTTPClient) ProbeAccountModel(ctx context.Context, cfg Config, selected
 	model = strings.TrimSpace(model)
 	var targetURL string
 	var payload any
-	if selected.AccountType == AccountTypeCodexOAuth {
-		baseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
-		if baseURL == "" {
-			baseURL = "https://chatgpt.com/backend-api/codex"
-		}
-		targetURL = baseURL + "/responses"
-		payload = map[string]any{
-			"model":        model,
-			"instructions": "You are Codex, a coding agent.",
-			"input": []map[string]string{{
-				"type":    "message",
-				"role":    "user",
-				"content": "Reply with OK only.",
-			}},
-			"stream": true,
-			"store":  false,
-		}
-	} else {
-		targetURL = upstreamChatCompletionsURL(selected.BaseURL)
-		payload = map[string]any{
-			"model": model,
-			"messages": []map[string]string{{
-				"role":    "user",
-				"content": "Reply with OK only.",
-			}},
-			"stream": false,
-		}
-	}
+	targetURL = upstreamChatCompletionsURL(selected.BaseURL)
+	payload = map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": "Reply with OK only."}}, "stream": false}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -971,43 +598,10 @@ func (c *HTTPClient) ProbeAccountModel(ctx context.Context, cfg Config, selected
 	if err != nil {
 		return modelProbeResult{errorCode: "network_error", message: "could not create model probe request"}
 	}
-	for key, value := range selected.FingerprintHeaders {
-		if strings.EqualFold(key, "Authorization") || strings.EqualFold(key, "Host") {
-			continue
-		}
-		req.Header.Set(key, value)
-	}
-	if strings.TrimSpace(selected.FingerprintUA) != "" {
-		req.Header.Set("User-Agent", strings.TrimSpace(selected.FingerprintUA))
-	}
 	req.Header.Set("Authorization", "Bearer "+selected.AuthorizationToken)
 	req.Header.Set("Content-Type", "application/json")
-	if selected.AccountType == AccountTypeCodexOAuth {
-		req.Header.Set("Accept", "text/event-stream")
-		req.Header.Set("chatgpt-account-id", strings.TrimSpace(selected.ChatGPTAccountID))
-		req.Header.Set("OpenAI-Beta", "responses=experimental")
-		req.Header.Set("originator", DefaultCodexFingerprintOriginator)
-		req.Header.Set("Version", DefaultCodexFingerprintVersion)
-		if strings.TrimSpace(selected.FingerprintUA) == "" {
-			req.Header.Set("User-Agent", DefaultCodexFingerprintUserAgent)
-		}
-	} else {
-		req.Header.Set("Accept", "application/json")
-	}
+	req.Header.Set("Accept", "application/json")
 	probeClient := c.clientForProxy(selected.ProxyURL)
-	if strings.TrimSpace(selected.FingerprintTLS) != "" {
-		cloned := *probeClient
-		transport := newModelProbeTLSFingerprintTransport(probeClient.Transport, selected.ProxyURL).(*modelProbeTLSFingerprintTransport)
-		if c.modelProbeTLSConfig != nil {
-			transport.tlsConfig = c.modelProbeTLSConfig.Clone()
-		}
-		if c.modelProbeProxyTLSConfig != nil {
-			transport.proxyTLSConfig = c.modelProbeProxyTLSConfig.Clone()
-		}
-		cloned.Transport = transport
-		probeClient = &cloned
-		req = req.WithContext(contextWithModelProbeTLSFingerprint(req.Context(), selected.FingerprintTLS))
-	}
 
 	resp, err := probeClient.Do(req)
 	if err != nil {
@@ -1026,14 +620,6 @@ func (c *HTTPClient) ProbeAccountModel(ctx context.Context, cfg Config, selected
 		}
 	}
 
-	if selected.AccountType == AccountTypeCodexOAuth {
-		result := consumeResponsesSSE(resp.Body)
-		if result.errorCode != "" && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return modelProbeResult{statusCode: resp.StatusCode, errorCode: "timeout", message: "model test timed out"}
-		}
-		result.statusCode = resp.StatusCode
-		return result
-	}
 	raw, tooLarge, err := readBoundedBody(resp.Body, maxModelProbeBody)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -1056,98 +642,6 @@ func upstreamChatCompletionsURL(baseURL string) string {
 		return trimmed + "/chat/completions"
 	}
 	return trimmed + "/v1/chat/completions"
-}
-
-func consumeResponsesSSE(body io.Reader) modelProbeResult {
-	limited := &io.LimitedReader{R: body, N: maxModelProbeBody + 1}
-	scanner := bufio.NewScanner(limited)
-	scanner.Buffer(make([]byte, 64<<10), maxModelProbeBody)
-	eventType := ""
-	data := bytes.Buffer{}
-	processEvent := func() (modelProbeResult, bool) {
-		event := strings.TrimSpace(eventType)
-		raw := bytes.TrimSpace(data.Bytes())
-		if event == "" && len(raw) == 0 {
-			return modelProbeResult{}, false
-		}
-		var payload struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-			Error   *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-			Response *struct {
-				Error *struct {
-					Message string `json:"message"`
-				} `json:"error"`
-			} `json:"response"`
-		}
-		if len(raw) == 0 || json.Unmarshal(raw, &payload) != nil {
-			switch event {
-			case "response.completed", "response.failed", "response.incomplete", "error":
-				return modelProbeResult{errorCode: "invalid_response", message: "upstream returned malformed terminal event"}, true
-			default:
-				return modelProbeResult{}, false
-			}
-		}
-		kind := strings.TrimSpace(payload.Type)
-		if kind == "" {
-			kind = event
-		}
-		message := strings.TrimSpace(payload.Message)
-		if payload.Error != nil && strings.TrimSpace(payload.Error.Message) != "" {
-			message = payload.Error.Message
-		}
-		if payload.Response != nil && payload.Response.Error != nil && strings.TrimSpace(payload.Response.Error.Message) != "" {
-			message = payload.Response.Error.Message
-		}
-		message = sanitizeDiagnosticMessage(message)
-		switch kind {
-		case "response.completed":
-			return modelProbeResult{}, true
-		case "response.failed", "error":
-			if message == "" {
-				message = "upstream response failed"
-			}
-			return modelProbeResult{errorCode: "upstream_error", message: message}, true
-		case "response.incomplete":
-			if message == "" {
-				message = "upstream response was incomplete"
-			}
-			return modelProbeResult{errorCode: "invalid_response", message: message}, true
-		default:
-			return modelProbeResult{}, false
-		}
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			if result, terminal := processEvent(); terminal {
-				return result
-			}
-			eventType = ""
-			data.Reset()
-			continue
-		}
-		if strings.HasPrefix(line, "event:") {
-			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			if data.Len() > 0 {
-				data.WriteByte('\n')
-			}
-			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		}
-	}
-	if result, terminal := processEvent(); terminal {
-		return result
-	}
-	if scanner.Err() != nil || limited.N <= 0 {
-		return modelProbeResult{errorCode: "invalid_response", message: "upstream response exceeded the size limit"}
-	}
-	return modelProbeResult{errorCode: "invalid_response", message: "upstream stream ended before response.completed"}
 }
 
 func readBoundedBody(body io.Reader, limit int64) ([]byte, bool, error) {
@@ -1218,9 +712,6 @@ func redactModelProbeSecrets(message string, selected SelectedAccount) string {
 			secrets = append(secrets, password)
 		}
 	}
-	for _, value := range selected.FingerprintHeaders {
-		secrets = append(secrets, strings.TrimSpace(value))
-	}
 	for _, value := range secrets {
 		if len(value) >= 4 {
 			message = strings.ReplaceAll(message, value, "[redacted]")
@@ -1248,52 +739,6 @@ func readErrorMessage(body io.Reader, statusCode int) string {
 	return strings.TrimSpace(string(raw))
 }
 
-func (c *HTTPClient) postToken(ctx context.Context, tokenURL string, values url.Values, proxyURL string) (TokenResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
-	if err != nil {
-		return TokenResponse{}, fmt.Errorf("create oauth token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.clientForProxy(proxyURL).Do(req)
-	if err != nil {
-		return TokenResponse{}, fmt.Errorf("send oauth token request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return TokenResponse{}, fmt.Errorf("oauth token endpoint returned status %d", resp.StatusCode)
-	}
-
-	var payload struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		IDToken      string `json:"id_token"`
-		ExpiresIn    int    `json:"expires_in"`
-		Subject      string `json:"subject"`
-		DisplayName  string `json:"display_name"`
-		AccountID    string `json:"account_id"`
-		Email        string `json:"email"`
-		PlanType     string `json:"plan_type"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
-		return TokenResponse{}, fmt.Errorf("decode oauth token response: %w", err)
-	}
-	return TokenResponse{
-		AccessToken:  payload.AccessToken,
-		RefreshToken: payload.RefreshToken,
-		IDToken:      payload.IDToken,
-		ExpiresIn:    payload.ExpiresIn,
-		Subject:      payload.Subject,
-		DisplayName:  payload.DisplayName,
-		AccountID:    payload.AccountID,
-		Email:        payload.Email,
-		PlanType:     payload.PlanType,
-	}, nil
-}
-
 func (c *HTTPClient) clientForProxy(proxyURL string) *http.Client {
 	proxyURL = strings.TrimSpace(proxyURL)
 	if proxyURL == "" {
@@ -1315,11 +760,7 @@ func (c *HTTPClient) clientForProxy(proxyURL string) *http.Client {
 }
 
 func (s *Service) Configured() bool {
-	return strings.TrimSpace(s.cfg.ClientID) != "" &&
-		strings.TrimSpace(s.cfg.RedirectURL) != "" &&
-		strings.TrimSpace(s.cfg.AuthURL) != "" &&
-		strings.TrimSpace(s.cfg.TokenURL) != "" &&
-		(s.encryptionKeyring != nil || strings.TrimSpace(s.cfg.Secret) != "")
+	return s.encryptionKeyring != nil || strings.TrimSpace(s.cfg.Secret) != ""
 }
 
 func (s *Service) encryptString(kind secret.SecretKind, value string) (string, error) {
@@ -1350,147 +791,16 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		Configured: s.Configured(),
 	}
 
-	account, err := s.repo.FindAccount(ctx, s.cfg.Provider)
+	accounts, err := s.ListAccounts(ctx)
 	if err != nil {
-		if errors.Is(err, ErrNotConnected) {
-			return status, nil
-		}
 		return Status{}, err
 	}
+	if len(accounts) > 0 {
+		status.Connected = true
+		status.DisplayName = accountDisplayName(accounts[0])
+	}
 
-	status.Connected = true
-	status.DisplayName = account.DisplayName
-	status.AccessTokenExpiresAt = account.AccessTokenExpiresAt
-	status.LastRefreshAt = account.LastRefreshAt
 	return status, nil
-}
-
-func (s *Service) StartConnect(ctx context.Context, options ConnectOptions) (ConnectResult, error) {
-	if !s.Configured() {
-		return ConnectResult{}, ErrNotConfigured
-	}
-	if strings.TrimSpace(options.RedirectAfter) == "" {
-		options.RedirectAfter = "/"
-	}
-	if options.FingerprintProfileID != nil {
-		if *options.FingerprintProfileID <= 0 {
-			return ConnectResult{}, ErrInvalidInput
-		}
-		if _, err := s.repo.FindFingerprintProfileByID(ctx, *options.FingerprintProfileID); err != nil {
-			return ConnectResult{}, ErrInvalidInput
-		}
-	} else {
-		defaultID, err := s.repo.EnsureDefaultCodexFingerprintProfile(ctx)
-		if err != nil {
-			return ConnectResult{}, fmt.Errorf("ensure default fingerprint profile: %w", err)
-		}
-		options.FingerprintProfileID = &defaultID
-	}
-
-	state, err := secret.GenerateToken("oauth_state")
-	if err != nil {
-		return ConnectResult{}, fmt.Errorf("generate oauth state: %w", err)
-	}
-	codeVerifier, err := generateCodeVerifier()
-	if err != nil {
-		return ConnectResult{}, fmt.Errorf("generate code verifier: %w", err)
-	}
-	codeChallenge := codeChallengeS256(codeVerifier)
-	encryptedCodeVerifier, err := s.encryptString(secret.SecretKindOAuthCodeVerifier, codeVerifier)
-	if err != nil {
-		return ConnectResult{}, fmt.Errorf("encrypt code verifier: %w", err)
-	}
-
-	connectCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
-		Category: systemevent.CategoryOAuth,
-		Severity: systemevent.SeverityInfo,
-		Action:   systemevent.ActionOAuthConnectStarted,
-		Outcome:  systemevent.OutcomeSuccess,
-		Target:   systemevent.Target{Type: "oauth_connection", ID: s.cfg.Provider, Name: s.cfg.Provider},
-	})
-	if err := s.repo.CreateState(connectCtx, OAuthState{
-		Provider:                    s.cfg.Provider,
-		StateHash:                   secret.HashAPIKey(state),
-		RedirectAfter:               options.RedirectAfter,
-		ExpiresAt:                   time.Now().Add(s.cfg.StateTTL),
-		CodeVerifier:                codeVerifier,
-		EncryptedCodeVerifier:       encryptedCodeVerifier,
-		CodeVerifierHash:            secret.HashAPIKey(codeVerifier),
-		ClientID:                    s.cfg.ClientID,
-		TargetAccountID:             options.TargetAccountID,
-		PendingAccountName:          strings.TrimSpace(options.Name),
-		PendingPriority:             options.Priority,
-		PendingEnabled:              options.Enabled,
-		PendingFingerprintProfileID: options.FingerprintProfileID,
-		FingerprintHash:             hashOptional(options.Fingerprint.Value),
-		UserAgentHash:               hashOptional(options.Fingerprint.UserAgent),
-		IPHash:                      hashOptional(options.Fingerprint.IP),
-	}); err != nil {
-		return ConnectResult{}, err
-	}
-
-	authURL, err := url.Parse(s.cfg.AuthURL)
-	if err != nil {
-		return ConnectResult{}, fmt.Errorf("parse oauth authorization url: %w", err)
-	}
-	query := authURL.Query()
-	query.Set("response_type", "code")
-	query.Set("client_id", s.cfg.ClientID)
-	query.Set("redirect_uri", s.cfg.RedirectURL)
-	query.Set("scope", defaultOpenAIOAuthScopes)
-	query.Set("state", state)
-	query.Set("code_challenge", codeChallenge)
-	query.Set("code_challenge_method", "S256")
-	query.Set("id_token_add_organizations", "true")
-	query.Set("codex_cli_simplified_flow", "true")
-	authURL.RawQuery = query.Encode()
-
-	return ConnectResult{AuthorizationURL: authURL.String()}, nil
-}
-
-func (s *Service) CompleteCallback(ctx context.Context, code, state string) (Account, error) {
-	code = strings.TrimSpace(code)
-	state = strings.TrimSpace(state)
-	if code == "" || state == "" {
-		return Account{}, ErrInvalidState
-	}
-	if !s.Configured() {
-		return Account{}, ErrNotConfigured
-	}
-
-	stateHash := secret.HashAPIKey(state)
-	claimed, err := s.repo.ClaimState(ctx, s.cfg.Provider, stateHash, time.Now())
-	if err != nil {
-		if errors.Is(err, ErrInvalidState) {
-			return Account{}, ErrInvalidState
-		}
-		return Account{}, err
-	}
-	codeVerifier := strings.TrimSpace(claimed.CodeVerifier)
-	if codeVerifier == "" {
-		codeVerifier, err = s.decryptString(secret.SecretKindOAuthCodeVerifier, claimed.EncryptedCodeVerifier)
-		if err != nil {
-			return Account{}, ErrInvalidState
-		}
-	}
-	if strings.TrimSpace(claimed.CodeVerifierHash) != "" && secret.HashAPIKey(codeVerifier) != claimed.CodeVerifierHash {
-		return Account{}, ErrInvalidState
-	}
-
-	exchangeCfg := s.cfg
-	exchangeCfg.CodeVerifier = codeVerifier
-	if strings.TrimSpace(claimed.ClientID) != "" {
-		exchangeCfg.ClientID = claimed.ClientID
-	}
-	tokens, err := s.client.ExchangeCode(ctx, exchangeCfg, code)
-	if err != nil {
-		return Account{}, err
-	}
-	account, err := s.storeCallbackTokenResponse(ctx, tokens, claimed)
-	if err != nil {
-		return Account{}, err
-	}
-	return account, nil
 }
 
 func (s *Service) ListAccounts(ctx context.Context) ([]Account, error) {
@@ -1498,17 +808,34 @@ func (s *Service) ListAccounts(ctx context.Context) ([]Account, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := range accounts {
-		accounts[i] = s.withProxySummary(accounts[i])
+	filtered := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.AccountType == AccountTypeAPIUpstream {
+			filtered = append(filtered, s.withProxySummary(account))
+		}
 	}
-	return accounts, nil
+	return filtered, nil
+}
+
+func (s *Service) findAPIAccount(ctx context.Context, id int64) (Account, error) {
+	if id <= 0 {
+		return Account{}, ErrInvalidInput
+	}
+	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
+	if err != nil {
+		return Account{}, err
+	}
+	if account.AccountType != AccountTypeAPIUpstream {
+		return Account{}, ErrNotConnected
+	}
+	return account, nil
 }
 
 func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpdate) (Account, error) {
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
-	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil && update.ProxyURL == nil && !update.FingerprintProfileIDSet {
+	if update.Enabled == nil && update.Priority == nil && update.LoadFactor == nil && update.MaxConcurrentRequests == nil && !update.ClearStatus && update.Name == nil && update.APIUpstreamBaseURL == nil && update.APIUpstreamAPIKey == nil && update.ProxyURL == nil {
 		return Account{}, ErrInvalidInput
 	}
 	if update.Priority != nil && *update.Priority < 0 {
@@ -1527,25 +854,11 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 		}
 		update.Name = &name
 	}
-	if update.FingerprintProfileIDSet && update.FingerprintProfileID != nil {
-		if *update.FingerprintProfileID <= 0 {
-			return Account{}, ErrInvalidInput
-		}
-		if _, err := s.repo.FindFingerprintProfileByID(ctx, *update.FingerprintProfileID); err != nil {
-			return Account{}, ErrInvalidInput
-		}
-	}
 	baseURLChanged := update.APIUpstreamBaseURL != nil
 	apiKeyChanged := update.APIUpstreamAPIKey != nil
 	proxyChanged := update.ProxyURL != nil
-	if baseURLChanged || apiKeyChanged {
-		account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
-		if err != nil {
-			return Account{}, err
-		}
-		if account.AccountType != AccountTypeAPIUpstream {
-			return Account{}, ErrInvalidInput
-		}
+	if _, err := s.findAPIAccount(ctx, id); err != nil {
+		return Account{}, err
 	}
 	if update.APIUpstreamBaseURL != nil {
 		baseURL := normalizeOpenAICompatibleBaseURL(*update.APIUpstreamBaseURL)
@@ -1611,9 +924,6 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if proxyChanged {
 		changed = append(changed, "proxy_url")
 	}
-	if update.FingerprintProfileIDSet {
-		changed = append(changed, "fingerprint_profile_id")
-	}
 	intent.Metadata = map[string]any{
 		"changed_fields":  changed,
 		"api_key_changed": apiKeyChanged,
@@ -1622,10 +932,6 @@ func (s *Service) UpdateAccount(ctx context.Context, id int64, update AccountUpd
 	if parent, ok := systemevent.IntentFromContext(ctx); ok && parent.Action == systemevent.ActionProviderAccountStatusReset {
 		intent = parent
 	}
-	// Advance the catalog generation before mutating the account so an
-	// in-flight request cannot apply a response fetched with the old
-	// credential, endpoint, proxy, or account configuration.
-	s.invalidateOAuthModelCatalog(id)
 	account, err := s.repo.UpdateAccount(withProviderEventIntent(ctx, intent), s.cfg.Provider, id, update)
 	if err != nil {
 		return Account{}, err
@@ -1662,14 +968,6 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	if err != nil {
 		return Account{}, err
 	}
-	if input.FingerprintProfileID != nil {
-		if *input.FingerprintProfileID <= 0 {
-			return Account{}, ErrInvalidInput
-		}
-		if _, err := s.repo.FindFingerprintProfileByID(ctx, *input.FingerprintProfileID); err != nil {
-			return Account{}, ErrInvalidInput
-		}
-	}
 	encryptedProxyURL := ""
 	if proxyURL != "" {
 		encryptedProxyURL, err = s.encryptString(secret.SecretKindProviderProxyURL, proxyURL)
@@ -1683,15 +981,15 @@ func (s *Service) CreateAPIUpstreamAccount(ctx context.Context, input APIUpstrea
 	}
 	createCtx := withProviderEventIntent(ctx, providerAuditIntent(systemevent.ActionProviderAccountCreated, 0, name))
 	account, err := s.repo.SaveAccount(createCtx, Account{
-		Provider:             s.cfg.Provider,
-		AccountType:          AccountTypeAPIUpstream,
-		Name:                 name,
-		DisplayName:          name,
-		Enabled:              enabled,
-		Priority:             input.Priority,
-		LoadFactor:           normalizedLoadFactor(input.LoadFactor),
-		Status:               AccountStatusActive,
-		FingerprintProfileID: input.FingerprintProfileID,
+		Provider:    s.cfg.Provider,
+		AccountType: AccountTypeAPIUpstream,
+		Name:        name,
+		DisplayName: name,
+		Enabled:     enabled,
+		Priority:    input.Priority,
+		LoadFactor:  normalizedLoadFactor(input.LoadFactor),
+		Status:      AccountStatusActive,
+
 		Credential: AccountCredential{
 			CredentialType:    CredentialTypeAPIKey,
 			EncryptedAPIKey:   encryptedAPIKey,
@@ -1730,31 +1028,14 @@ func normalizeOpenAICompatibleBaseURL(value string) string {
 }
 
 func (s *Service) DisconnectAccount(ctx context.Context, id int64) error {
-	if id <= 0 {
-		return ErrInvalidInput
+	if _, err := s.findAPIAccount(ctx, id); err != nil {
+		return err
 	}
 	ctx = withProviderEventIntent(ctx, providerAuditIntent(systemevent.ActionProviderAccountDisconnected, id, ""))
-	s.invalidateOAuthModelCatalog(id)
 	if err := s.repo.DeleteAccount(ctx, s.cfg.Provider, id); err != nil {
 		return err
 	}
 	s.invalidateAccountTransport(id)
-	return nil
-}
-
-func (s *Service) Disconnect(ctx context.Context) error {
-	ctx = withProviderEventIntent(ctx, systemevent.EventIntent{
-		Category: systemevent.CategoryAudit,
-		Severity: systemevent.SeverityInfo,
-		Action:   systemevent.ActionProviderAccountDisconnectAll,
-		Outcome:  systemevent.OutcomeSuccess,
-		Target:   systemevent.Target{Type: "provider", ID: s.cfg.Provider, Name: s.cfg.Provider},
-	})
-	s.invalidateAllOAuthModelCatalogs()
-	if err := s.repo.DeleteAccounts(ctx, s.cfg.Provider); err != nil {
-		return err
-	}
-	s.invalidateAllAccountTransports()
 	return nil
 }
 
@@ -1790,8 +1071,8 @@ func normalizeAccountModelInputs(inputs []AccountModelInput) ([]AccountModelInpu
 }
 
 func (s *Service) ListAccountModels(ctx context.Context, accountID int64) ([]AccountModel, error) {
-	if accountID <= 0 {
-		return nil, ErrInvalidInput
+	if _, err := s.findAPIAccount(ctx, accountID); err != nil {
+		return nil, err
 	}
 	return s.repo.ListAccountModels(ctx, s.cfg.Provider, accountID)
 }
@@ -1809,6 +1090,23 @@ func (s *Service) ListAccountModelsForAccounts(ctx context.Context, accountIDs [
 		seen[accountID] = struct{}{}
 		unique = append(unique, accountID)
 	}
+	if len(unique) > 0 {
+		accounts, err := s.repo.ListAccounts(ctx, s.cfg.Provider)
+		if err != nil {
+			return nil, err
+		}
+		allowed := make(map[int64]bool, len(accounts))
+		for _, account := range accounts {
+			if account.AccountType == AccountTypeAPIUpstream {
+				allowed[account.ID] = true
+			}
+		}
+		for _, id := range unique {
+			if !allowed[id] {
+				return nil, ErrNotConnected
+			}
+		}
+	}
 	return s.repo.ListAccountModelsForAccounts(ctx, s.cfg.Provider, unique)
 }
 
@@ -1817,7 +1115,7 @@ func (s *Service) TestAccountModel(ctx context.Context, accountID int64, model s
 	if accountID <= 0 || model == "" || len(model) > maxModelNameLen {
 		return AccountModelTestResult{}, ErrInvalidInput
 	}
-	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
+	account, err := s.findAPIAccount(ctx, accountID)
 	if err != nil {
 		return AccountModelTestResult{}, err
 	}
@@ -1836,7 +1134,7 @@ func (s *Service) TestAccountModel(ctx context.Context, accountID int64, model s
 		return AccountModelTestResult{}, ErrNotConnected
 	}
 
-	selected, err := s.selectedAccountForDiagnostic(ctx, account)
+	selected, err := s.selectedAccount(ctx, account)
 	if err != nil {
 		return AccountModelTestResult{}, err
 	}
@@ -1887,8 +1185,8 @@ func (s *Service) TestAccountModel(ctx context.Context, accountID int64, model s
 }
 
 func (s *Service) ReplaceAccountModels(ctx context.Context, accountID int64, models []AccountModelInput) ([]AccountModel, error) {
-	if accountID <= 0 {
-		return nil, ErrInvalidInput
+	if _, err := s.findAPIAccount(ctx, accountID); err != nil {
+		return nil, err
 	}
 	normalized, err := normalizeAccountModelInputs(models)
 	if err != nil {
@@ -1911,14 +1209,11 @@ func (s *Service) SyncUpstreamAccountModels(ctx context.Context, accountID int64
 	if accountID <= 0 {
 		return nil, AccountModelSyncSummary{}, ErrInvalidInput
 	}
-	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
+	account, err := s.findAPIAccount(ctx, accountID)
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
 	}
-	if account.AccountType != AccountTypeAPIUpstream {
-		return nil, AccountModelSyncSummary{}, ErrInvalidInput
-	}
-	selected, err := s.selectedAccountForModelSync(ctx, account)
+	selected, err := s.selectedAccount(ctx, account)
 	if err != nil {
 		return nil, AccountModelSyncSummary{}, err
 	}
@@ -2045,65 +1340,17 @@ func isEndpointPermissionError(message string) bool {
 		(strings.Contains(lower, "insufficient permissions") && strings.Contains(lower, "scope"))
 }
 
-func (s *Service) RefreshAccount(ctx context.Context, id int64) (Account, error) {
-	if id <= 0 {
-		return Account{}, ErrInvalidInput
-	}
-	refreshOutcome := "failure"
-	defer func() { s.observeProviderRefresh("manual", refreshOutcome) }()
-	unlock := s.lockAccountRefresh(id)
-	defer unlock()
-
-	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
-	if err != nil {
-		return Account{}, err
-	}
-	if strings.TrimSpace(account.AccountType) == AccountTypeAPIUpstream {
-		refreshOutcome = "skipped"
-		return Account{}, ErrInvalidInput
-	}
-	refreshToken, err := s.decryptString(secret.SecretKindOAuthRefreshToken, account.EncryptedRefreshToken)
-	if err != nil {
-		return Account{}, err
-	}
-	refreshCfg := s.cfg
-	refreshCfg.ProxyURL, err = s.accountProxyURL(account)
-	if err != nil {
-		return Account{}, err
-	}
-	tokens, err := s.client.RefreshToken(ctx, refreshCfg, refreshToken)
-	if err != nil {
-		now := time.Now()
-		var openUntil *time.Time
-		if account.FailureCount+1 >= refreshFailureCircuitThreshold {
-			until := now.Add(defaultCircuitOpen)
-			openUntil = &until
-		}
-		failureCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, RefreshTriggerManual, false, openUntil))
-		if markErr := s.repo.RecordRefreshFailure(failureCtx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
-			return Account{}, markErr
-		}
-		return Account{}, err
-	}
-	refreshed, err := s.storeTokenResponse(ctx, tokens, &account, RefreshTriggerManual)
-	if err != nil {
-		return Account{}, err
-	}
-	refreshOutcome = "success"
-	return s.probeLatestAccountStatus(ctx, refreshed, tokens.AccessToken)
-}
-
 func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	if id <= 0 {
 		return Account{}, ErrInvalidInput
 	}
 
-	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
+	account, err := s.findAPIAccount(ctx, id)
 	if err != nil {
 		return Account{}, err
 	}
 
-	selected, err := s.selectedAccountForAccountTest(ctx, account)
+	selected, err := s.selectedAccount(ctx, account)
 	if err != nil {
 		now := time.Now()
 		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, err.Error(), now); markErr != nil {
@@ -2119,12 +1366,7 @@ func (s *Service) TestAccount(ctx context.Context, id int64) (Account, error) {
 	}
 
 	cfg := s.cfg
-	if selected.AccountType == AccountTypeAPIUpstream {
-		cfg.APIBaseURL = selected.BaseURL
-		cfg.ProbeChatGPTAccountID = ""
-	} else {
-		cfg.ProbeChatGPTAccountID = strings.TrimSpace(selected.ChatGPTAccountID)
-	}
+	cfg.APIBaseURL = selected.BaseURL
 	cfg.ProxyURL = selected.ProxyURL
 
 	startedAt := time.Now()
@@ -2227,35 +1469,6 @@ func (s *Service) logAccountTestRequest(ctx context.Context, selected SelectedAc
 	}
 }
 
-func accountStatusTestRoute(cfg Config) string {
-	if strings.TrimSpace(cfg.ProbeChatGPTAccountID) != "" {
-		baseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
-		if baseURL == "" {
-			baseURL = "https://chatgpt.com/backend-api/codex"
-		}
-		return requestRoutePath(baseURL+"/responses", "/responses")
-	}
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
-	}
-	return requestRoutePath(baseURL+"/v1/models", "/v1/models")
-}
-
-func accountStatusTestMethod(cfg Config) string {
-	if strings.TrimSpace(cfg.ProbeChatGPTAccountID) != "" {
-		return http.MethodPost
-	}
-	return http.MethodGet
-}
-
-func accountStatusTestModel(cfg Config) string {
-	if strings.TrimSpace(cfg.ProbeChatGPTAccountID) != "" {
-		return "gpt-5.4-mini"
-	}
-	return ""
-}
-
 func accountStatusTestError(result probeResult, probeErr error) string {
 	if probeErr != nil {
 		if errors.Is(probeErr, context.DeadlineExceeded) {
@@ -2274,17 +1487,6 @@ func accountStatusTestError(result probeResult, probeErr error) string {
 	default:
 		return "upstream_error"
 	}
-}
-
-func accountModelTestRoute(cfg Config, selected SelectedAccount) string {
-	if selected.AccountType == AccountTypeCodexOAuth {
-		baseURL := strings.TrimRight(strings.TrimSpace(cfg.CodexResponsesBaseURL), "/")
-		if baseURL == "" {
-			baseURL = "https://chatgpt.com/backend-api/codex"
-		}
-		return requestRoutePath(baseURL+"/responses", "/responses")
-	}
-	return requestRoutePath(upstreamChatCompletionsURL(selected.BaseURL), "/v1/chat/completions")
 }
 
 func requestRoutePath(rawURL, fallback string) string {
@@ -2327,7 +1529,7 @@ func (s *Service) ListAccountTestResults(ctx context.Context, id int64, limit in
 	if id <= 0 {
 		return nil, ErrInvalidInput
 	}
-	if _, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id); err != nil {
+	if _, err := s.findAPIAccount(ctx, id); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
@@ -2349,7 +1551,7 @@ func (s *Service) PauseAccountScheduling(ctx context.Context, id int64, duration
 	if duration > maxManualPause {
 		return Account{}, ErrInvalidInput
 	}
-	if _, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, id); err != nil {
+	if _, err := s.findAPIAccount(ctx, id); err != nil {
 		return Account{}, err
 	}
 	now := time.Now()
@@ -2358,226 +1560,24 @@ func (s *Service) PauseAccountScheduling(ctx context.Context, id int64, duration
 	if err := s.repo.RecordAccountStatus(pauseCtx, s.cfg.Provider, id, AccountStatusCircuitOpen, "manually paused", now, nil, &until); err != nil {
 		return Account{}, err
 	}
-	return s.repo.FindAccountByID(ctx, s.cfg.Provider, id)
-}
-
-func (s *Service) probeLatestAccountStatus(ctx context.Context, account Account, accessToken string) (Account, error) {
-	if s.prober == nil || strings.TrimSpace(accessToken) == "" {
-		return account, nil
-	}
-	cfg := s.cfg
-	cfg.ProbeChatGPTAccountID = strings.TrimSpace(account.Metadata["chatgpt_account_id"])
-	proxyURL, err := s.accountProxyURL(account)
-	if err != nil {
-		return account, nil
-	}
-	cfg.ProxyURL = proxyURL
-	result, err := s.prober.ProbeAccountStatus(ctx, cfg, accessToken)
-	if err != nil {
-		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, err.Error(), time.Now()); markErr != nil {
-			return Account{}, markErr
-		}
-		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
-	}
-	if !isSuccessfulAccountStatus(result.statusCode) {
-		message := strings.TrimSpace(result.message)
-		if message == "" {
-			message = http.StatusText(result.statusCode)
-		}
-		if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusFailed, message, time.Now()); markErr != nil {
-			return Account{}, markErr
-		}
-		if err := s.RecordAccountFailure(ctx, account.ID, result.statusCode, result.retryAfter, result.message); err != nil {
-			return Account{}, err
-		}
-		return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
-	}
-	if markErr := s.recordAccountTestResult(ctx, account, AccountTestStatusPassed, "", time.Now()); markErr != nil {
-		return Account{}, markErr
-	}
-	if err := s.RecordAccountRecovered(ctx, account.ID); err != nil {
-		return Account{}, err
-	}
-	return s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
+	return s.findAPIAccount(ctx, id)
 }
 
 func isSuccessfulAccountStatus(statusCode int) bool {
 	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
 }
 
-func (s *Service) AccessToken(ctx context.Context) (string, error) {
-	selected, err := s.SelectAccountForModel(ctx, "")
-	if err != nil {
-		return "", err
-	}
-	return selected.AuthorizationToken, nil
-}
-
-func (s *Service) AccessTokenForAccount(ctx context.Context, account Account) (string, error) {
-	return s.accessTokenForAccount(ctx, account, RefreshTriggerGatewayRequest, true)
-}
-
-func (s *Service) RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (accessToken string, retry bool, failureRecorded bool, err error) {
-	if accountID <= 0 || rejectedAccessToken == "" {
-		return "", false, false, ErrInvalidInput
-	}
-	refreshOutcome := "skipped"
-	defer func() { s.observeProviderRefresh("rejected_token", refreshOutcome) }()
-	if statusCode != http.StatusUnauthorized && statusCode != http.StatusForbidden {
-		return "", false, false, nil
-	}
-	if statusCode == http.StatusForbidden && isEndpointPermissionError(message) {
-		return "", false, false, nil
-	}
-
-	unlock := s.lockAccountRefresh(accountID)
-	defer unlock()
-
-	account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, accountID)
-	if err != nil {
-		refreshOutcome = "failure"
-		return "", false, false, err
-	}
-	account = normalizeAccountCredentialFields(account)
-	accountType := strings.TrimSpace(account.AccountType)
-	if accountType == "" {
-		accountType = AccountTypeCodexOAuth
-	}
-	if accountType != AccountTypeCodexOAuth {
-		return "", false, false, nil
-	}
-
-	currentAccessToken, err := s.decryptString(secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
-	if err != nil {
-		refreshOutcome = "failure"
-		return "", true, false, err
-	}
-	if subtle.ConstantTimeCompare([]byte(currentAccessToken), []byte(rejectedAccessToken)) != 1 {
-		return currentAccessToken, true, false, nil
-	}
-
-	accessToken, failureRecorded, err = s.refreshAccessTokenLocked(ctx, account, RefreshTriggerGatewayRequest, true)
-	if err != nil {
-		refreshOutcome = "failure"
-	} else {
-		refreshOutcome = "success"
-	}
-	return accessToken, true, failureRecorded, err
-}
-
-func (s *Service) accessTokenForAccount(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, error) {
-	account = normalizeAccountCredentialFields(account)
-	if account.AccessTokenExpiresAt == nil || account.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
-		return s.decryptString(secret.SecretKindOAuthAccessToken, account.EncryptedAccessToken)
-	}
-	refreshOutcome := "failure"
-	defer func() { s.observeProviderRefresh("automatic", refreshOutcome) }()
-
-	if account.ID > 0 {
-		unlock := s.lockAccountRefresh(account.ID)
-		defer unlock()
-
-		latest, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, account.ID)
-		if err != nil {
-			return "", err
-		}
-		latest = normalizeAccountCredentialFields(latest)
-		if latest.AccessTokenExpiresAt == nil || latest.AccessTokenExpiresAt.After(time.Now().Add(s.cfg.RefreshWindow)) {
-			refreshOutcome = "skipped"
-			return s.decryptString(secret.SecretKindOAuthAccessToken, latest.EncryptedAccessToken)
-		}
-		account = latest
-	}
-
-	accessToken, _, err := s.refreshAccessTokenLocked(ctx, account, trigger, recordRefreshFailure)
-	if err == nil {
-		refreshOutcome = "success"
-	}
-	return accessToken, err
-}
-
-func (s *Service) observeProviderRefresh(mode, outcome string) {
-	if s != nil && s.metrics != nil {
-		s.metrics.ObserveProviderRefresh(mode, outcome)
-	}
-}
-
-func (s *Service) refreshAccessTokenLocked(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (string, bool, error) {
-	account = normalizeAccountCredentialFields(account)
-	refreshToken, err := s.decryptString(secret.SecretKindOAuthRefreshToken, account.EncryptedRefreshToken)
-	if err != nil {
-		return "", false, err
-	}
-	refreshCfg := s.cfg
-	refreshCfg.ProxyURL, err = s.accountProxyURL(account)
-	if err != nil {
-		return "", false, err
-	}
-	tokens, err := s.client.RefreshToken(ctx, refreshCfg, refreshToken)
-	if err != nil {
-		if recordRefreshFailure && account.ID > 0 {
-			now := time.Now()
-			var openUntil *time.Time
-			if account.FailureCount+1 >= refreshFailureCircuitThreshold {
-				until := now.Add(defaultCircuitOpen)
-				openUntil = &until
-			}
-			failureCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, false, openUntil))
-			if markErr := s.repo.RecordRefreshFailure(failureCtx, s.cfg.Provider, account.ID, err.Error(), now, openUntil); markErr != nil {
-				return "", false, markErr
-			}
-			return "", true, err
-		} else if account.ID > 0 {
-			failureCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, false, nil))
-			if recorder, ok := s.repo.(oauthRefreshFailureEventRecorder); ok {
-				if recordErr := recorder.RecordOAuthRefreshFailureEvent(failureCtx, s.cfg.Provider, account.ID); recordErr != nil {
-					return "", false, recordErr
-				}
-			}
-		}
-		return "", false, err
-	}
-	var refreshed Account
-	if recordRefreshFailure {
-		refreshed, err = s.storeTokenResponse(ctx, tokens, &account, trigger)
-	} else {
-		refreshed, err = s.storeTokenResponseForDiagnostic(ctx, tokens, &account, trigger)
-	}
-	if err != nil {
-		return "", false, err
-	}
-	accessToken, err := s.decryptString(secret.SecretKindOAuthAccessToken, refreshed.EncryptedAccessToken)
-	return accessToken, false, err
-}
-
 func (s *Service) selectedAccount(ctx context.Context, account Account) (SelectedAccount, error) {
-	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerGatewayRequest, true)
-}
-
-func (s *Service) selectedAccountForAccountTest(ctx context.Context, account Account) (SelectedAccount, error) {
-	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerAccountTest, true)
-}
-
-func (s *Service) selectedAccountForModelSync(ctx context.Context, account Account) (SelectedAccount, error) {
-	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerModelSync, true)
-}
-
-func (s *Service) selectedAccountForDiagnostic(ctx context.Context, account Account) (SelectedAccount, error) {
-	return s.selectedAccountWithRefreshFailureRecording(ctx, account, RefreshTriggerModelTest, false)
-}
-
-func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context, account Account, trigger RefreshTrigger, recordRefreshFailure bool) (SelectedAccount, error) {
 	account = normalizeAccountCredentialFields(account)
 	accountType := strings.TrimSpace(account.AccountType)
-	if accountType == "" {
-		accountType = AccountTypeCodexOAuth
+	if accountType != AccountTypeAPIUpstream {
+		return SelectedAccount{}, ErrNotConnected
 	}
 	selected := SelectedAccount{
 		AccountID:             account.ID,
 		Provider:              valueOrDefault(strings.TrimSpace(account.Provider), s.cfg.Provider),
 		AccountType:           accountType,
 		DisplayName:           accountDisplayName(account),
-		ChatGPTAccountID:      strings.TrimSpace(account.Metadata["chatgpt_account_id"]),
 		MaxConcurrentRequests: account.MaxConcurrentRequests,
 	}
 	if strings.TrimSpace(account.Credential.EncryptedProxyURL) != "" {
@@ -2588,13 +1588,6 @@ func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context
 		selected.ProxyURL = strings.TrimSpace(proxyURL)
 	}
 	switch accountType {
-	case AccountTypeCodexOAuth:
-		token, err := s.accessTokenForAccount(ctx, account, trigger, recordRefreshFailure)
-		if err != nil {
-			return SelectedAccount{}, err
-		}
-		selected.AuthorizationToken = token
-		selected.BaseURL = strings.TrimRight(strings.TrimSpace(s.cfg.APIBaseURL), "/")
 	case AccountTypeAPIUpstream:
 		token, err := s.decryptString(secret.SecretKindProviderAPIKey, account.Credential.EncryptedAPIKey)
 		if err != nil {
@@ -2612,21 +1605,6 @@ func (s *Service) selectedAccountWithRefreshFailureRecording(ctx context.Context
 		selected.BaseURL = baseURL
 	default:
 		return SelectedAccount{}, fmt.Errorf("unsupported account type %q", accountType)
-	}
-
-	if account.FingerprintProfileID != nil && *account.FingerprintProfileID > 0 {
-		fp, fpErr := s.repo.FindFingerprintProfileByID(ctx, *account.FingerprintProfileID)
-		if fpErr == nil {
-			if strings.TrimSpace(fp.UserAgent) != "" {
-				selected.FingerprintUA = strings.TrimSpace(fp.UserAgent)
-			}
-			if strings.TrimSpace(fp.TLSFingerprint) != "" {
-				selected.FingerprintTLS = strings.TrimSpace(fp.TLSFingerprint)
-			}
-			if len(fp.Headers) > 0 {
-				selected.FingerprintHeaders = fp.Headers
-			}
-		}
 	}
 
 	return selected, nil
@@ -2647,18 +1625,6 @@ func (s *Service) withProxySummary(account Account) Account {
 	}
 	account.ProxyURLSummary = proxyURLSummary(proxyURL)
 	return account
-}
-
-func (s *Service) accountProxyURL(account Account) (string, error) {
-	account = normalizeAccountCredentialFields(account)
-	if strings.TrimSpace(account.Credential.EncryptedProxyURL) == "" {
-		return "", nil
-	}
-	proxyURL, err := s.decryptString(secret.SecretKindProviderProxyURL, account.Credential.EncryptedProxyURL)
-	if err != nil {
-		return "", fmt.Errorf("decrypt account proxy: %w", err)
-	}
-	return strings.TrimSpace(proxyURL), nil
 }
 
 func normalizeProxyURL(value string) (string, error) {
@@ -2938,6 +1904,13 @@ func (s *Service) listAccountsForRoutingPoolAndEndpoint(ctx context.Context, rou
 }
 
 func (s *Service) filterAccountsByEndpoint(ctx context.Context, model, endpoint string, accounts []Account) ([]Account, error) {
+	filteredAccounts := make([]Account, 0, len(accounts))
+	for _, account := range accounts {
+		if account.AccountType == AccountTypeAPIUpstream {
+			filteredAccounts = append(filteredAccounts, account)
+		}
+	}
+	accounts = filteredAccounts
 	if strings.TrimSpace(model) == "" || strings.TrimSpace(endpoint) == "" || len(accounts) == 0 {
 		return accounts, nil
 	}
@@ -2975,197 +1948,10 @@ func normalizedExcludedAccountIDs(ids []int64) []int64 {
 	return excluded
 }
 
-func (s *Service) lockAccountRefresh(accountID int64) func() {
-	s.refreshMu.Lock()
-	lock := s.refreshLocks[accountID]
-	if lock == nil {
-		lock = &sync.Mutex{}
-		s.refreshLocks[accountID] = lock
-	}
-	s.refreshMu.Unlock()
-
-	lock.Lock()
-	return lock.Unlock
-}
-
-func (s *Service) storeTokenResponse(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger) (Account, error) {
-	return s.storeTokenResponseWithMode(ctx, tokens, previous, trigger, previous != nil)
-}
-
-func (s *Service) storeTokenResponseForDiagnostic(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger) (Account, error) {
-	return s.storeTokenResponseWithMode(ctx, tokens, previous, trigger, true)
-}
-
-func (s *Service) storeTokenResponseWithMode(ctx context.Context, tokens TokenResponse, previous *Account, trigger RefreshTrigger, credentialOnly bool) (Account, error) {
-	if strings.TrimSpace(tokens.AccessToken) == "" {
-		return Account{}, errors.New("oauth token response missing access token")
-	}
-	tokens = enrichTokenResponseFromIDToken(tokens)
-
-	refreshToken := tokens.RefreshToken
-	subject := tokens.Subject
-	displayName := tokens.DisplayName
-	if strings.TrimSpace(subject) == "" {
-		subject = tokens.AccountID
-	}
-	if strings.TrimSpace(displayName) == "" {
-		displayName = valueOrDefault(tokens.Email, tokens.AccountID)
-	}
-	if previous != nil {
-		subject = previous.Subject
-		displayName = valueOrDefault(displayName, previous.DisplayName)
-		if refreshToken == "" {
-			var err error
-			refreshToken, err = s.decryptString(secret.SecretKindOAuthRefreshToken, previous.EncryptedRefreshToken)
-			if err != nil {
-				return Account{}, err
-			}
-		}
-	}
-	if strings.TrimSpace(subject) == "" {
-		generatedSubject, err := secret.GenerateToken("local_acct")
-		if err != nil {
-			return Account{}, fmt.Errorf("generate local account subject: %w", err)
-		}
-		subject = generatedSubject
-	}
-	if strings.TrimSpace(refreshToken) == "" {
-		return Account{}, errors.New("oauth token response missing refresh token")
-	}
-
-	encryptedAccessToken, err := s.encryptString(secret.SecretKindOAuthAccessToken, tokens.AccessToken)
-	if err != nil {
-		return Account{}, fmt.Errorf("encrypt access token: %w", err)
-	}
-	encryptedRefreshToken, err := s.encryptString(secret.SecretKindOAuthRefreshToken, refreshToken)
-	if err != nil {
-		return Account{}, fmt.Errorf("encrypt refresh token: %w", err)
-	}
-	var encryptedIDToken string
-	if strings.TrimSpace(tokens.IDToken) != "" {
-		encryptedIDToken, err = s.encryptString(secret.SecretKindOAuthIDToken, tokens.IDToken)
-		if err != nil {
-			return Account{}, fmt.Errorf("encrypt id token: %w", err)
-		}
-	} else if previous != nil {
-		encryptedIDToken = previous.EncryptedIDToken
-	}
-
-	var expiresAt *time.Time
-	if tokens.ExpiresIn > 0 {
-		expiry := time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
-		expiresAt = &expiry
-	}
-	var lastRefreshAt *time.Time
-	if previous != nil {
-		now := time.Now()
-		lastRefreshAt = &now
-	}
-
-	account := Account{
-		ID:          previousID(previous),
-		Provider:    s.cfg.Provider,
-		AccountType: AccountTypeCodexOAuth,
-		Subject:     subject,
-		DisplayName: displayName,
-		Credential: AccountCredential{
-			CredentialType:        CredentialTypeOAuthToken,
-			EncryptedAccessToken:  encryptedAccessToken,
-			EncryptedRefreshToken: encryptedRefreshToken,
-			EncryptedIDToken:      encryptedIDToken,
-			AccessTokenExpiresAt:  expiresAt,
-			LastRefreshAt:         lastRefreshAt,
-			Metadata:              tokenMetadata(tokens, previous),
-		},
-		EncryptedAccessToken:  encryptedAccessToken,
-		EncryptedRefreshToken: encryptedRefreshToken,
-		EncryptedIDToken:      encryptedIDToken,
-		AccessTokenExpiresAt:  expiresAt,
-		LastRefreshAt:         lastRefreshAt,
-		Enabled:               previousEnabled(previous),
-		Priority:              previousPriority(previous),
-		Name:                  previousName(previous),
-		Status:                AccountStatusActive,
-		FingerprintHash:       previousFingerprintHash(previous),
-		UserAgentHash:         previousUserAgentHash(previous),
-		IPHash:                previousIPHash(previous),
-		FailureCount:          0,
-		CircuitOpenUntil:      nil,
-		LastRefreshError:      "",
-		LastRefreshErrorAt:    nil,
-		Metadata:              tokenMetadata(tokens, previous),
-	}
-	if credentialOnly {
-		if previous == nil || previous.ID <= 0 {
-			return Account{}, ErrInvalidInput
-		}
-		s.invalidateOAuthModelCatalog(previous.ID)
-		refreshCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, true, nil))
-		if err := s.repo.UpdateOAuthCredential(refreshCtx, s.cfg.Provider, previous.ID, account.Credential); err != nil {
-			return Account{}, err
-		}
-		return s.repo.FindAccountByID(ctx, s.cfg.Provider, previous.ID)
-	}
-	if account.ID > 0 {
-		s.invalidateOAuthModelCatalog(account.ID)
-	}
-	refreshCtx := withProviderEventIntent(ctx, oauthRefreshIntent(account, trigger, true, nil))
-	saved, err := s.repo.SaveAccount(refreshCtx, account)
-	if err != nil {
-		return Account{}, err
-	}
-	if saved.ID != account.ID {
-		s.invalidateOAuthModelCatalog(saved.ID)
-	}
-	return saved, nil
-}
-
-func (s *Service) storeCallbackTokenResponse(ctx context.Context, tokens TokenResponse, state OAuthState) (Account, error) {
-	tokens = enrichTokenResponseFromIDToken(tokens)
-	identities := identitiesFromTokenResponse(tokens)
-
-	var previous *Account
-	if state.TargetAccountID > 0 {
-		account, err := s.repo.FindAccountByID(ctx, s.cfg.Provider, state.TargetAccountID)
-		if err != nil {
-			return Account{}, err
-		}
-		previous = &account
-	} else {
-		account, err := s.repo.FindAccountByIdentity(ctx, s.cfg.Provider, identities)
-		if err == nil {
-			previous = &account
-		} else if !errors.Is(err, ErrNotConnected) {
-			return Account{}, err
-		}
-	}
-
-	account, err := s.accountFromTokenResponse(tokens, previous)
-	if err != nil {
-		return Account{}, err
-	}
-	applyOAuthStateToAccount(&account, state, previous)
-	if account.ID > 0 {
-		s.invalidateOAuthModelCatalog(account.ID)
-	}
-	callbackCtx := withProviderEventIntent(ctx, systemevent.EventIntent{
-		Category: systemevent.CategoryOAuth,
-		Severity: systemevent.SeverityInfo,
-		Action:   systemevent.ActionOAuthCallbackCompleted,
-		Outcome:  systemevent.OutcomeSuccess,
-		Target:   providerAccountTarget(account.ID, accountDisplayName(account)),
-	})
-	saved, err := s.repo.SaveAccount(callbackCtx, account)
-	if err != nil {
-		return Account{}, err
-	}
-	if saved.ID != account.ID {
-		s.invalidateOAuthModelCatalog(saved.ID)
-	}
-	return saved, nil
-}
-
 func AccountSchedulable(account Account, now time.Time) bool {
+	if account.AccountType != AccountTypeAPIUpstream {
+		return false
+	}
 	if !account.Enabled {
 		return false
 	}
@@ -3194,6 +1980,9 @@ func AccountSchedulable(account Account, now time.Time) bool {
 }
 
 func accountUnschedulableReason(account Account, now time.Time) string {
+	if account.AccountType != AccountTypeAPIUpstream {
+		return "unsupported account type"
+	}
 	if !account.Enabled {
 		return "account disabled"
 	}
@@ -3241,231 +2030,6 @@ func retryAfterTime(value string, now time.Time, fallback time.Duration) time.Ti
 	return now.Add(fallback)
 }
 
-func identitiesFromTokenResponse(tokens TokenResponse) AccountIdentities {
-	tokens = enrichTokenResponseFromIDToken(tokens)
-	return AccountIdentities{
-		ChatGPTAccountID: strings.TrimSpace(tokens.AccountID),
-		Email:            strings.ToLower(strings.TrimSpace(tokens.Email)),
-	}
-}
-
-func applyOAuthStateToAccount(account *Account, state OAuthState, previous *Account) {
-	if previous != nil {
-		account.Name = previous.Name
-		account.Priority = previous.Priority
-		account.Enabled = previous.Enabled
-		account.FingerprintHash = previous.FingerprintHash
-		account.UserAgentHash = previous.UserAgentHash
-		account.IPHash = previous.IPHash
-		account.FingerprintProfileID = previous.FingerprintProfileID
-	}
-	if strings.TrimSpace(state.PendingAccountName) != "" && (previous == nil || state.TargetAccountID > 0) {
-		account.Name = strings.TrimSpace(state.PendingAccountName)
-	}
-	if state.PendingPriority > 0 && (previous == nil || state.TargetAccountID > 0) {
-		account.Priority = state.PendingPriority
-	}
-	if state.PendingEnabled != nil && (previous == nil || state.TargetAccountID > 0) {
-		account.Enabled = *state.PendingEnabled
-	}
-	if state.PendingFingerprintProfileID != nil && (previous == nil || state.TargetAccountID > 0) {
-		account.FingerprintProfileID = state.PendingFingerprintProfileID
-	}
-	if previous == nil && account.Priority == 0 {
-		account.Priority = 100
-	}
-	if previous == nil && account.Name == "" {
-		account.Name = firstNonEmpty(account.DisplayName, account.Subject)
-	}
-	if state.FingerprintHash != "" {
-		account.FingerprintHash = state.FingerprintHash
-	}
-	if state.UserAgentHash != "" {
-		account.UserAgentHash = state.UserAgentHash
-	}
-	if state.IPHash != "" {
-		account.IPHash = state.IPHash
-	}
-	account.Status = AccountStatusActive
-	account.StatusReason = ""
-	account.FailureCount = 0
-	account.CircuitOpenUntil = nil
-	account.LastRefreshError = ""
-	account.LastRefreshErrorAt = nil
-}
-
-func (s *Service) accountFromTokenResponse(tokens TokenResponse, previous *Account) (Account, error) {
-	if strings.TrimSpace(tokens.AccessToken) == "" {
-		return Account{}, errors.New("oauth token response missing access token")
-	}
-	tokens = enrichTokenResponseFromIDToken(tokens)
-
-	refreshToken := tokens.RefreshToken
-	subject := tokens.Subject
-	displayName := tokens.DisplayName
-	if strings.TrimSpace(subject) == "" {
-		subject = firstNonEmpty(tokens.AccountID, tokens.Email)
-	}
-	if strings.TrimSpace(displayName) == "" {
-		displayName = firstNonEmpty(tokens.Email, tokens.AccountID, subject)
-	}
-	if previous != nil {
-		subject = previous.Subject
-		displayName = valueOrDefault(displayName, previous.DisplayName)
-		if refreshToken == "" {
-			var err error
-			refreshToken, err = s.decryptString(secret.SecretKindOAuthRefreshToken, previous.EncryptedRefreshToken)
-			if err != nil {
-				return Account{}, err
-			}
-		}
-	}
-	if strings.TrimSpace(subject) == "" {
-		generatedSubject, err := secret.GenerateToken("local_acct")
-		if err != nil {
-			return Account{}, fmt.Errorf("generate local account subject: %w", err)
-		}
-		subject = generatedSubject
-	}
-	if strings.TrimSpace(refreshToken) == "" {
-		return Account{}, errors.New("oauth token response missing refresh token")
-	}
-
-	encryptedAccessToken, err := s.encryptString(secret.SecretKindOAuthAccessToken, tokens.AccessToken)
-	if err != nil {
-		return Account{}, fmt.Errorf("encrypt access token: %w", err)
-	}
-	encryptedRefreshToken, err := s.encryptString(secret.SecretKindOAuthRefreshToken, refreshToken)
-	if err != nil {
-		return Account{}, fmt.Errorf("encrypt refresh token: %w", err)
-	}
-	var encryptedIDToken string
-	if strings.TrimSpace(tokens.IDToken) != "" {
-		encryptedIDToken, err = s.encryptString(secret.SecretKindOAuthIDToken, tokens.IDToken)
-		if err != nil {
-			return Account{}, fmt.Errorf("encrypt id token: %w", err)
-		}
-	} else if previous != nil {
-		encryptedIDToken = previous.EncryptedIDToken
-	}
-
-	var expiresAt *time.Time
-	if tokens.ExpiresIn > 0 {
-		expiry := time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
-		expiresAt = &expiry
-	}
-	var lastRefreshAt *time.Time
-	if previous != nil {
-		now := time.Now()
-		lastRefreshAt = &now
-	}
-
-	return Account{
-		ID:          previousID(previous),
-		Provider:    s.cfg.Provider,
-		AccountType: AccountTypeCodexOAuth,
-		Subject:     subject,
-		Name:        previousName(previous),
-		DisplayName: displayName,
-		Credential: AccountCredential{
-			CredentialType:        CredentialTypeOAuthToken,
-			EncryptedAccessToken:  encryptedAccessToken,
-			EncryptedRefreshToken: encryptedRefreshToken,
-			EncryptedIDToken:      encryptedIDToken,
-			AccessTokenExpiresAt:  expiresAt,
-			LastRefreshAt:         lastRefreshAt,
-			Metadata:              tokenMetadata(tokens, previous),
-		},
-		EncryptedAccessToken:  encryptedAccessToken,
-		EncryptedRefreshToken: encryptedRefreshToken,
-		EncryptedIDToken:      encryptedIDToken,
-		AccessTokenExpiresAt:  expiresAt,
-		LastRefreshAt:         lastRefreshAt,
-		Enabled:               previousEnabled(previous),
-		Priority:              previousPriority(previous),
-		Status:                AccountStatusActive,
-		Metadata:              tokenMetadata(tokens, previous),
-	}, nil
-}
-
-func generateCodeVerifier() (string, error) {
-	raw := make([]byte, 64)
-	if _, err := rand.Read(raw); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw), nil
-}
-
-func codeChallengeS256(verifier string) string {
-	sum := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-func tokenMetadata(tokens TokenResponse, previous *Account) map[string]string {
-	metadata := map[string]string{}
-	if previous != nil {
-		for key, value := range previous.Metadata {
-			if strings.TrimSpace(value) != "" {
-				metadata[key] = value
-			}
-		}
-	}
-	setMetadata(metadata, "account_id", tokens.AccountID)
-	setMetadata(metadata, "chatgpt_account_id", tokens.AccountID)
-	setMetadata(metadata, "email", tokens.Email)
-	setMetadata(metadata, "plan_type", tokens.PlanType)
-	setMetadata(metadata, "client_id", tokens.ClientID)
-	setMetadata(metadata, "access_token_sha256", sha256Hex(tokens.AccessToken))
-	return metadata
-}
-
-func setMetadata(metadata map[string]string, key, value string) {
-	if strings.TrimSpace(value) != "" {
-		metadata[key] = strings.TrimSpace(value)
-	}
-}
-
-func enrichTokenResponseFromIDToken(tokens TokenResponse) TokenResponse {
-	claims, err := decodeIDTokenClaims(tokens.IDToken)
-	if err != nil {
-		return tokens
-	}
-	if strings.TrimSpace(tokens.Subject) == "" {
-		tokens.Subject = claims.Subject
-	}
-	if strings.TrimSpace(tokens.Email) == "" {
-		tokens.Email = claims.Email
-	}
-	if claims.OpenAIAuth != nil {
-		if strings.TrimSpace(tokens.AccountID) == "" {
-			tokens.AccountID = claims.OpenAIAuth.ChatGPTAccountID
-		}
-		if strings.TrimSpace(tokens.PlanType) == "" {
-			tokens.PlanType = claims.OpenAIAuth.ChatGPTPlanType
-		}
-	}
-	return tokens
-}
-
-func decodeIDTokenClaims(idToken string) (idTokenClaims, error) {
-	parts := strings.Split(idToken, ".")
-	if len(parts) != 3 {
-		return idTokenClaims{}, errors.New("invalid id token format")
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		payload, err = base64.URLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return idTokenClaims{}, err
-		}
-	}
-	var claims idTokenClaims
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return idTokenClaims{}, err
-	}
-	return claims, nil
-}
-
 func valueOrDefault(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
@@ -3480,83 +2044,19 @@ func normalizedLoadFactor(value int) int {
 	return value
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+func accountStatusTestRoute(cfg Config) string {
+	return requestRoutePath(upstreamModelsURL(cfg.APIBaseURL), "/v1/models")
+}
+func accountStatusTestMethod(cfg Config) string { return http.MethodGet }
+func accountStatusTestModel(cfg Config) string  { return "" }
+func accountModelTestRoute(cfg Config, selected SelectedAccount) string {
+	return requestRoutePath(upstreamChatCompletionsURL(selected.BaseURL), "/v1/chat/completions")
 }
 
-func hashOptional(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
+func upstreamModelsURL(baseURL string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(trimmed, "/v1") {
+		return trimmed + "/models"
 	}
-	return secret.HashAPIKey(strings.TrimSpace(value))
-}
-
-func sha256Hex(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
-}
-
-func previousID(previous *Account) int64 {
-	if previous == nil {
-		return 0
-	}
-	return previous.ID
-}
-
-func previousEnabled(previous *Account) bool {
-	if previous == nil {
-		return true
-	}
-	return previous.Enabled
-}
-
-func previousPriority(previous *Account) int {
-	if previous == nil {
-		return 100
-	}
-	return previous.Priority
-}
-
-func previousName(previous *Account) string {
-	if previous == nil {
-		return ""
-	}
-	return previous.Name
-}
-
-func previousFingerprintHash(previous *Account) string {
-	if previous == nil {
-		return ""
-	}
-	return previous.FingerprintHash
-}
-
-func previousUserAgentHash(previous *Account) string {
-	if previous == nil {
-		return ""
-	}
-	return previous.UserAgentHash
-}
-
-func previousIPHash(previous *Account) string {
-	if previous == nil {
-		return ""
-	}
-	return previous.IPHash
-}
-
-// FingerprintProfileData is the subset of a fingerprint profile needed for outbound requests.
-type FingerprintProfileData struct {
-	UserAgent      string
-	TLSFingerprint string
-	Headers        map[string]string
+	return trimmed + "/v1/models"
 }

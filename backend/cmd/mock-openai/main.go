@@ -161,6 +161,17 @@ func newDiagnosticState() *diagnosticState {
 }
 
 func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Scenario paths let API-only fixtures choose failures without header profiles.
+	if tail, ok := strings.CutPrefix(r.URL.Path, "/__scenario/"); ok {
+		scenario, path, found := strings.Cut(tail, "/")
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		r = r.Clone(r.Context())
+		r.URL.Path = "/" + path
+		r.Header.Set(scenarioHeader, scenario)
+	}
 	if h.serveControl(w, r) {
 		return
 	}

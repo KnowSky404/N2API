@@ -5,9 +5,7 @@ globalThis.$state = (value) => value;
 
 const {
   apiKeys,
-  completeProviderCallback,
   deleteRevokedKey,
-  providerOAuth,
   revokeKey,
   saveAccountModels,
   session,
@@ -26,16 +24,11 @@ function authenticate() {
 
 beforeEach(() => {
   authenticate();
-  providerOAuth.callbackUrl = 'http://localhost/callback?code=test&state=test';
   apiKeys.items = [{ id: 7, name: 'test-key', revokedAt: null }];
   globalThis.fetch = async () => Response.json({ error: 'unauthorized' }, { status: 401 });
 });
 
 test('provider mutations return false when a protected request clears the session', async () => {
-  assert.equal(await completeProviderCallback(), false);
-  assert.equal(session.authenticated, false);
-
-  authenticate();
   assert.equal(await updateProviderAccount({ id: 3 }, { name: 'updated' }), false);
   assert.equal(session.authenticated, false);
 

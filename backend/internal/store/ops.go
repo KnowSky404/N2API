@@ -335,6 +335,7 @@ func (r *AdminRepository) GetOpsAccountHealth(ctx context.Context, since time.Ti
 			COALESCE(SUM(CASE WHEN last_test_at IS NULL THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN last_test_at >= $1 AND last_test_status = 'failed' THEN 1 ELSE 0 END), 0)
 		FROM provider_accounts
+		WHERE account_type = 'api_upstream'
 	`, since, now)
 	if err := row.Scan(
 		&health.TotalAccounts,

@@ -2148,52 +2148,6 @@ func TestDefaultModelRejectsInvalidStoredSettings(t *testing.T) {
 	}
 }
 
-func TestFingerprintProfileInputNormalizesValidProfile(t *testing.T) {
-	repo := newMemoryRepo()
-	service := NewService(repo, Config{SessionTTL: time.Hour})
-
-	created, err := service.CreateFingerprintProfile(context.Background(), FingerprintProfileInput{
-		Name:           "  Chrome desktop  ",
-		Description:    " browser profile ",
-		UserAgent:      "  Mozilla/5.0  ",
-		TLSFingerprint: "HelloChrome",
-		Headers: map[string]string{
-			" x-client-version ": "  desktop  ",
-		},
-		Enabled: true,
-	})
-	if err != nil {
-		t.Fatalf("CreateFingerprintProfile returned error: %v", err)
-	}
-	if created.Name != "Chrome desktop" || created.Description != "browser profile" || created.UserAgent != "Mozilla/5.0" || created.TLSFingerprint != "chrome" || created.Headers["X-Client-Version"] != "desktop" {
-		t.Fatalf("created profile = %+v, want normalized fields", created)
-	}
-	if repo.lastFingerprintInput.Name != created.Name || repo.lastFingerprintInput.TLSFingerprint != "chrome" || repo.lastFingerprintInput.Headers["X-Client-Version"] != "desktop" {
-		t.Fatalf("repo input = %+v, want normalized profile input", repo.lastFingerprintInput)
-	}
-}
-
-func TestFingerprintProfileInputRejectsInvalidTLSFingerprint(t *testing.T) {
-	service := NewService(newMemoryRepo(), Config{SessionTTL: time.Hour})
-
-	if _, err := service.CreateFingerprintProfile(context.Background(), FingerprintProfileInput{Name: "bad", TLSFingerprint: "netscape"}); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("CreateFingerprintProfile error = %v, want ErrInvalidInput", err)
-	}
-}
-
-func TestFingerprintProfileInputRejectsInvalidHeaders(t *testing.T) {
-	service := NewService(newMemoryRepo(), Config{SessionTTL: time.Hour})
-
-	for _, input := range []FingerprintProfileInput{
-		{Name: "bad header name", Headers: map[string]string{"Bad Header": "value"}},
-		{Name: "bad header value", Headers: map[string]string{"X-Test": "line\r\nbreak"}},
-	} {
-		if _, err := service.UpdateFingerprintProfile(context.Background(), 7, input); !errors.Is(err, ErrInvalidInput) {
-			t.Fatalf("UpdateFingerprintProfile(%q) error = %v, want ErrInvalidInput", input.Name, err)
-		}
-	}
-}
-
 func buildModelNames(count int) []string {
 	names := make([]string, 0, count)
 	for i := range count {
@@ -2252,8 +2206,6 @@ type memoryRepo struct {
 	lastOpsAccountTestsLimit       int
 	opsCostBreakdown               OpsCostBreakdown
 	lastOpsCostSince               time.Time
-	lastFingerprintInput           FingerprintProfileInput
-	lastFingerprintUpdateID        int64
 }
 
 type memorySession struct {
@@ -2987,25 +2939,6 @@ func (r *memoryRepo) ListOpsAccountTests(_ context.Context, since time.Time, lim
 func (r *memoryRepo) GetOpsCostBreakdown(_ context.Context, since time.Time) (OpsCostBreakdown, error) {
 	r.lastOpsCostSince = since
 	return r.opsCostBreakdown, nil
-}
-
-func (r *memoryRepo) ListFingerprintProfiles(_ context.Context) ([]FingerprintProfile, error) {
-	return nil, nil
-}
-
-func (r *memoryRepo) CreateFingerprintProfile(_ context.Context, input FingerprintProfileInput) (FingerprintProfile, error) {
-	r.lastFingerprintInput = input
-	return FingerprintProfile{ID: 1, Name: input.Name, Description: input.Description, UserAgent: input.UserAgent, TLSFingerprint: input.TLSFingerprint, Headers: input.Headers, Enabled: input.Enabled}, nil
-}
-
-func (r *memoryRepo) UpdateFingerprintProfile(_ context.Context, id int64, input FingerprintProfileInput) (FingerprintProfile, error) {
-	r.lastFingerprintUpdateID = id
-	r.lastFingerprintInput = input
-	return FingerprintProfile{ID: id, Name: input.Name, Description: input.Description, UserAgent: input.UserAgent, TLSFingerprint: input.TLSFingerprint, Headers: input.Headers, Enabled: input.Enabled}, nil
-}
-
-func (r *memoryRepo) DeleteFingerprintProfile(_ context.Context, _ int64) error {
-	return nil
 }
 
 func (r *memoryRepo) ListErrorPassthroughRules(_ context.Context) ([]ErrorPassthroughRule, error) {

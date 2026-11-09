@@ -3,88 +3,14 @@ package gateway
 import (
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"testing"
 )
 
-func TestSelectedAccountTransportMatrix(t *testing.T) {
-	proxy := NewProxy(nil, nil, Config{})
-	t.Cleanup(proxy.Close)
-
-	tests := []struct {
-		name            string
-		accountID       int64
-		proxyURL        string
-		fingerprint     string
-		wantFingerprint string
-		wantProxy       bool
-	}{
-		{name: "direct without fingerprint", accountID: 1},
-		{name: "direct with fingerprint", accountID: 2, fingerprint: "chrome", wantFingerprint: "chrome"},
-		{name: "proxy without fingerprint", accountID: 3, proxyURL: "http://proxy.example.test:8080", wantProxy: true},
-		{name: "proxy with fingerprint", accountID: 4, proxyURL: "http://proxy.example.test:8080", fingerprint: "chrome", wantFingerprint: "chrome", wantProxy: true},
-	}
-
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			selected := SelectedAccount{
-				AccountID:          testCase.accountID,
-				AuthorizationToken: "upstream-token",
-				BaseURL:            "https://upstream.example.test",
-				ProxyURL:           testCase.proxyURL,
-				FingerprintTLS:     testCase.fingerprint,
-			}
-			incoming := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_test", nil)
-			upstreamRequest, err := proxy.newUpstreamRequest(incoming, selected, nil)
-			if err != nil {
-				t.Fatalf("newUpstreamRequest returned error: %v", err)
-			}
-			client, err := proxy.clientForSelectedAccount(selected)
-			if err != nil {
-				t.Fatalf("clientForSelectedAccount returned error: %v", err)
-			}
-
-			if got := tlsFingerprintFromContext(upstreamRequest.Context()); got != testCase.wantFingerprint {
-				t.Fatalf("request fingerprint = %q, want %q", got, testCase.wantFingerprint)
-			}
-			transport, ok := client.Transport.(*selectedAccountTransport)
-			if !ok {
-				t.Fatalf("transport type = %T, want *selectedAccountTransport", client.Transport)
-			}
-			if got := transport.fingerprint != nil; got != (testCase.wantFingerprint != "") {
-				t.Fatalf("fingerprint transport configured = %v, want %v", got, testCase.wantFingerprint != "")
-			}
-			key := mustTransportKey(t, selected)
-			if got := key.proxyScheme != ""; got != testCase.wantProxy {
-				t.Fatalf("account proxy key configured = %v, want %v", got, testCase.wantProxy)
-			}
-			if testCase.wantProxy {
-				if transport.standard.Proxy == nil {
-					t.Fatal("standard transport has no proxy resolver for configured account proxy")
-				}
-				configuredProxy, err := transport.standard.Proxy(upstreamRequest)
-				if err != nil {
-					t.Fatalf("resolve standard transport proxy: %v", err)
-				}
-				if configuredProxy == nil || configuredProxy.String() != testCase.proxyURL {
-					t.Fatalf("standard transport proxy = %q, want %q", configuredProxy, testCase.proxyURL)
-				}
-			}
-			if transport.fingerprint == nil {
-				return
-			}
-			if transport.fingerprint.Proxy != nil || transport.fingerprint.DialTLSContext == nil {
-				t.Fatalf("fingerprint transport proxy/dialer configured = %v/%v, want false/true", transport.fingerprint.Proxy != nil, transport.fingerprint.DialTLSContext != nil)
-			}
-		})
-	}
-}
-
 func TestTransportRegistrySequentialReuse(t *testing.T) {
 	registry := newTransportRegistry(http.DefaultClient, upstreamTimeouts{}, 4)
 	t.Cleanup(registry.Close)
-	selected := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy.example.test:8080", FingerprintTLS: "chrome"}
+	selected := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy.example.test:8080"}
 
 	first, err := registry.ClientFor(selected)
 	if err != nil {
@@ -105,7 +31,7 @@ func TestTransportRegistrySequentialReuse(t *testing.T) {
 func TestTransportRegistryConcurrentDedupe(t *testing.T) {
 	registry := newTransportRegistry(http.DefaultClient, upstreamTimeouts{}, 4)
 	t.Cleanup(registry.Close)
-	selected := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy.example.test:8080", FingerprintTLS: "chrome"}
+	selected := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy.example.test:8080"}
 
 	const callers = 32
 	clients := make(chan *http.Client, callers)
@@ -148,9 +74,9 @@ func TestTransportRegistryConcurrentDedupe(t *testing.T) {
 func TestTransportRegistryCapacityEvictsLeastRecentlyUsed(t *testing.T) {
 	registry := newTransportRegistry(http.DefaultClient, upstreamTimeouts{}, 2)
 	t.Cleanup(registry.Close)
-	first := SelectedAccount{AccountID: 1, FingerprintTLS: "chrome"}
-	second := SelectedAccount{AccountID: 2, FingerprintTLS: "firefox"}
-	third := SelectedAccount{AccountID: 3, FingerprintTLS: "safari"}
+	first := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy1.example:8080"}
+	second := SelectedAccount{AccountID: 2, ProxyURL: "http://proxy2.example:8080"}
+	third := SelectedAccount{AccountID: 3, ProxyURL: "http://proxy3.example:8080"}
 
 	firstClient := mustRegistryClient(t, registry, first)
 	secondClient := mustRegistryClient(t, registry, second)
@@ -179,8 +105,8 @@ func TestTransportRegistryCapacityEvictsLeastRecentlyUsed(t *testing.T) {
 func TestTransportRegistryAccountConfigChangeReplacesBinding(t *testing.T) {
 	registry := newTransportRegistry(http.DefaultClient, upstreamTimeouts{}, 4)
 	t.Cleanup(registry.Close)
-	before := SelectedAccount{AccountID: 7, ProxyURL: "http://proxy-a.example.test:8080", FingerprintTLS: "chrome"}
-	after := SelectedAccount{AccountID: 7, ProxyURL: "https://proxy-b.example.test:8443", FingerprintTLS: "firefox"}
+	before := SelectedAccount{AccountID: 7, ProxyURL: "http://proxy-a.example.test:8080"}
+	after := SelectedAccount{AccountID: 7, ProxyURL: "https://proxy-b.example.test:8443"}
 
 	beforeClient := mustRegistryClient(t, registry, before)
 	afterClient := mustRegistryClient(t, registry, after)
@@ -200,7 +126,7 @@ func TestTransportRegistryAccountConfigChangeReplacesBinding(t *testing.T) {
 func TestProxyTransportInvalidationPreservesSharedEntryUntilLastAccount(t *testing.T) {
 	proxy := NewProxy(nil, nil, Config{})
 	t.Cleanup(proxy.Close)
-	first := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy.example.test:8080", FingerprintTLS: "chrome"}
+	first := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy.example.test:8080"}
 	second := first
 	second.AccountID = 2
 
@@ -234,7 +160,7 @@ func TestProxyTransportInvalidationPreservesSharedEntryUntilLastAccount(t *testi
 func TestProxyTransportInvalidationAllAllowsRecreation(t *testing.T) {
 	proxy := NewProxy(nil, nil, Config{})
 	t.Cleanup(proxy.Close)
-	selected := SelectedAccount{AccountID: 1, FingerprintTLS: "chrome"}
+	selected := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy1.example:8080"}
 	original, err := proxy.clientForSelectedAccount(selected)
 	if err != nil {
 		t.Fatalf("clientForSelectedAccount returned error: %v", err)
@@ -255,7 +181,7 @@ func TestProxyTransportInvalidationAllAllowsRecreation(t *testing.T) {
 
 func TestProxyTransportShutdownClosesRegistry(t *testing.T) {
 	proxy := NewProxy(nil, nil, Config{})
-	selected := SelectedAccount{AccountID: 1, FingerprintTLS: "chrome"}
+	selected := SelectedAccount{AccountID: 1, ProxyURL: "http://proxy1.example:8080"}
 	if _, err := proxy.clientForSelectedAccount(selected); err != nil {
 		t.Fatalf("clientForSelectedAccount returned error: %v", err)
 	}
@@ -275,7 +201,6 @@ func TestTransportRegistryRejectsUnsupportedConfiguration(t *testing.T) {
 	t.Cleanup(registry.Close)
 	tests := []SelectedAccount{
 		{AccountID: 1, ProxyURL: "socks5://proxy.example.test:1080"},
-		{AccountID: 2, FingerprintTLS: "unknown-client-hello"},
 	}
 	for _, selected := range tests {
 		if _, err := registry.ClientFor(selected); err == nil {

@@ -16,7 +16,6 @@ const (
 	attemptTypeGatewayRejection     = "gateway_rejection"
 	attemptTypeUpstreamHTTP         = "upstream_http"
 	attemptTypeUpstreamTransport    = "upstream_transport"
-	attemptTypeAuthRefreshRetry     = "auth_refresh_retry"
 )
 
 type requestDiagnostics struct {

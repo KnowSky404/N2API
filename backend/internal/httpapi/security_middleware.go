@@ -7,10 +7,9 @@ import (
 )
 
 const (
-	browserAppContentSecurityPolicy   = "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
-	browserDataContentSecurityPolicy  = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-	browserOAuthContentSecurityPolicy = browserDataContentSecurityPolicy + "; style-src 'unsafe-inline'"
-	browserPermissionsPolicy          = "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+	browserAppContentSecurityPolicy  = "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+	browserDataContentSecurityPolicy = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+	browserPermissionsPolicy         = "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
 )
 
 func withBrowserSecurity(next http.Handler) http.Handler {
@@ -127,7 +126,7 @@ func sensitiveBrowserResponsePath(path string) bool {
 
 func browserContentSecurityPolicy(path string) string {
 	if strings.HasPrefix(path, "/oauth/") {
-		return browserOAuthContentSecurityPolicy
+		return browserDataContentSecurityPolicy
 	}
 	if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/v1/") {
 		return browserDataContentSecurityPolicy

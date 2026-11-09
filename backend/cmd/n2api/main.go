@@ -94,16 +94,12 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 		AuthorizationToken:       selected.AuthorizationToken,
 		BaseURL:                  selected.BaseURL,
 		ProxyURL:                 selected.ProxyURL,
-		ChatGPTAccountID:         selected.ChatGPTAccountID,
 		MaxConcurrentRequests:    selected.MaxConcurrentRequests,
 		RoutingPoolID:            selected.RoutingPoolID,
 		RoutingPoolName:          selected.RoutingPoolName,
 		RoutingPoolFallbackDepth: selected.RoutingPoolFallbackDepth,
 		RoutingPoolFallbackChain: selected.RoutingPoolFallbackChain,
 		RoutingPoolError:         selected.RoutingPoolError,
-		FingerprintUA:            selected.FingerprintUA,
-		FingerprintTLS:           selected.FingerprintTLS,
-		FingerprintHeaders:       selected.FingerprintHeaders,
 	}
 	if err != nil {
 		return mapped, err
@@ -113,10 +109,6 @@ func selectedGatewayAccount(selected provider.SelectedAccount, err error) (gatew
 
 func (p gatewayAccountProvider) RecordAccountFailure(ctx context.Context, accountID int64, statusCode int, retryAfter, message string) error {
 	return p.service.RecordAccountFailure(ctx, accountID, statusCode, retryAfter, message)
-}
-
-func (p gatewayAccountProvider) RefreshAccountAuthorization(ctx context.Context, accountID int64, rejectedAccessToken string, statusCode int, message string) (string, bool, bool, error) {
-	return p.service.RefreshAccountAuthorization(ctx, accountID, rejectedAccessToken, statusCode, message)
 }
 
 func (p gatewayAccountProvider) RecordAccountUsed(ctx context.Context, accountID int64) error {
@@ -437,11 +429,6 @@ func runServer() int {
 	responseAffinityRepo := store.NewResponseAffinityRepository(pool, cfg.EncryptionSecret)
 	providerService := provider.NewService(providerRepo, provider.NewHTTPClient(http.DefaultClient), provider.Config{
 		Provider:              "openai",
-		ClientID:              cfg.OpenAIOAuthClientID,
-		ClientSecret:          cfg.OpenAIOAuthSecret,
-		RedirectURL:           cfg.OpenAIOAuthRedirectURL,
-		AuthURL:               cfg.OpenAIOAuthAuthURL,
-		TokenURL:              cfg.OpenAIOAuthTokenURL,
 		APIBaseURL:            cfg.OpenAIAPIBaseURL,
 		Secret:                cfg.EncryptionSecret,
 		EncryptionKeyring:     cfg.EncryptionKeyring,

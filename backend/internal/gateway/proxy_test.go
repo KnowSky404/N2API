@@ -2761,9 +2761,8 @@ func TestProxyRoutesAPIUpstreamResponsesCreateWithoutCodexTransform(t *testing.T
 		BaseURL:            apiUpstream.URL,
 	}}}
 	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, accounts, Config{
-		UpstreamBaseURL:       defaultUpstream.URL,
-		CodexResponsesBaseURL: "http://codex.invalid",
-		ModelProvider:         fakeModelProvider{defaultModel: "gpt-5"},
+		UpstreamBaseURL: defaultUpstream.URL,
+		ModelProvider:   fakeModelProvider{defaultModel: "gpt-5"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hi","stream":false}`))
 	req.Header.Set("Authorization", "Bearer n2api_client_secret")
@@ -2786,201 +2785,6 @@ func TestProxyRoutesAPIUpstreamResponsesCreateWithoutCodexTransform(t *testing.T
 	}
 	if gotBody["stream"] != false || gotBody["store"] != nil {
 		t.Fatalf("body = %+v, want original API upstream body without codex normalization", gotBody)
-	}
-}
-
-func TestProxyForwardsOAuthResponsesCreateToCodexEndpoint(t *testing.T) {
-	var gotPath string
-	var gotAuthorization string
-	var gotChatGPTAccountID string
-	var gotOpenAIBeta string
-	var gotOriginator string
-	var gotUserAgent string
-	var gotVersion string
-	var gotHost string
-	var gotBody map[string]any
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotAuthorization = r.Header.Get("Authorization")
-		gotChatGPTAccountID = r.Header.Get("chatgpt-account-id")
-		gotOpenAIBeta = r.Header.Get("OpenAI-Beta")
-		gotOriginator = r.Header.Get("originator")
-		gotUserAgent = r.Header.Get("User-Agent")
-		gotVersion = r.Header.Get("Version")
-		gotHost = r.Host
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("ReadAll returned error: %v", err)
-		}
-		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("Unmarshal body returned error: %v; body=%s", err, string(body))
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\"}\n\n"))
-		_, _ = w.Write([]byte("event: response.completed\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_oauth\",\"status\":\"completed\",\"output\":[]}}\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-	}))
-	defer upstream.Close()
-	proxy := NewProxy(&fakeAPIKeyAuthenticator{}, &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
-		AccountID:          1,
-		AccountType:        provider.AccountTypeCodexOAuth,
-		AuthorizationToken: "upstream-token",
-		ChatGPTAccountID:   "acct_chatgpt",
-	}}}, Config{
-		UpstreamBaseURL:       "https://api.example.test",
-		CodexResponsesBaseURL: upstream.URL + "/backend-api/codex",
-	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4-mini","input":"hi"}`))
-	req.Header.Set("Authorization", "Bearer n2api_client_secret")
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	proxy.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
-	}
-	if gotPath != "/backend-api/codex/responses" {
-		t.Fatalf("path = %q, want Codex responses endpoint", gotPath)
-	}
-	if gotAuthorization != "Bearer upstream-token" {
-		t.Fatalf("Authorization = %q", gotAuthorization)
-	}
-	if gotChatGPTAccountID != "acct_chatgpt" {
-		t.Fatalf("chatgpt-account-id = %q", gotChatGPTAccountID)
-	}
-	if gotOpenAIBeta != "responses=experimental" {
-		t.Fatalf("OpenAI-Beta = %q", gotOpenAIBeta)
-	}
-	if gotOriginator != provider.DefaultCodexFingerprintOriginator {
-		t.Fatalf("originator = %q", gotOriginator)
-	}
-	if gotUserAgent != provider.DefaultCodexFingerprintUserAgent {
-		t.Fatalf("User-Agent = %q, want %q", gotUserAgent, provider.DefaultCodexFingerprintUserAgent)
-	}
-	if gotVersion != provider.DefaultCodexFingerprintVersion {
-		t.Fatalf("Version = %q, want %q", gotVersion, provider.DefaultCodexFingerprintVersion)
-	}
-	if gotHost != strings.TrimPrefix(upstream.URL, "http://") {
-		t.Fatalf("Host = %q, want configured upstream host", gotHost)
-	}
-	if gotBody["stream"] != true {
-		t.Fatalf("stream = %#v, want true", gotBody["stream"])
-	}
-	if gotBody["store"] != false {
-		t.Fatalf("store = %#v, want false", gotBody["store"])
-	}
-	if strings.TrimSpace(gotBody["instructions"].(string)) == "" {
-		t.Fatalf("instructions = %#v, want non-empty string", gotBody["instructions"])
-	}
-	input, ok := gotBody["input"].([]any)
-	if !ok || len(input) != 1 {
-		t.Fatalf("input = %#v, want one message", gotBody["input"])
-	}
-	message, ok := input[0].(map[string]any)
-	if !ok || message["type"] != "message" || message["role"] != "user" || message["content"] != "hi" {
-		t.Fatalf("input message = %#v", input[0])
-	}
-}
-
-func TestProxyTreatsSuccessfulOAuthResponsesAsSSEWithoutUpstreamSSEHeader(t *testing.T) {
-	const stream = "event: response.output_text.delta\n" +
-		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\n" +
-		"event: response.completed\n" +
-		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.4-mini\",\"usage\":{\"input_tokens\":11,\"output_tokens\":2,\"total_tokens\":13,\"input_tokens_details\":{\"cached_tokens\":3},\"output_tokens_details\":{\"reasoning_tokens\":1}}}}\n\n"
-	logger := &fakeRequestLogger{}
-	pricer := &fakeUsagePricer{estimate: UsageCostEstimate{
-		Matched:      true,
-		CostMicrousd: 14,
-		Snapshot: map[string]any{
-			"matched": true,
-			"model":   "gpt-5.4-mini",
-		},
-	}}
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
-			Body:       io.NopCloser(strings.NewReader(stream)),
-			Request:    r,
-		}, nil
-	})}
-	proxy := NewProxyWithClient(
-		&fakeAPIKeyAuthenticator{},
-		&fakeSelectedAccountProvider{accounts: []SelectedAccount{{
-			AccountID:          14,
-			AccountType:        provider.AccountTypeCodexOAuth,
-			AuthorizationToken: "oauth-access-token",
-			ChatGPTAccountID:   "acct_chatgpt",
-			DisplayName:        "free0",
-		}}},
-		Config{
-			CodexResponsesBaseURL: "https://chatgpt.example.test/backend-api/codex",
-			Logger:                logger,
-			UsagePricer:           pricer,
-		},
-		client,
-	)
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.4-mini","input":"hi","stream":true}`))
-	req.Header.Set("Authorization", "Bearer n2api_client_secret")
-	req.Header.Set("Content-Type", "application/json")
-	recorder := &flushRecordingResponseWriter{}
-
-	proxy.ServeHTTP(recorder, req)
-
-	if recorder.status != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.status, recorder.body.String())
-	}
-	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
-		t.Fatalf("Content-Type = %q, want text/event-stream", got)
-	}
-	if recorder.body.String() != stream {
-		t.Fatalf("stream body = %q, want exact upstream bytes", recorder.body.String())
-	}
-	if recorder.flushes == 0 {
-		t.Fatal("flushes = 0, want streamed chunks to flush")
-	}
-	if len(logger.entries) != 1 {
-		t.Fatalf("logged entries = %d, want 1", len(logger.entries))
-	}
-	entry := logger.entries[0]
-	if entry.UsageSource != "stream" || entry.InputTokens != 11 || entry.OutputTokens != 2 || entry.TotalTokens != 13 || entry.CachedInputTokens != 3 || entry.ReasoningTokens != 1 {
-		t.Fatalf("logged usage = %+v, want parsed Codex stream usage", entry)
-	}
-	if pricer.usage != (Usage{Model: "gpt-5.4-mini", InputTokens: 11, OutputTokens: 2, TotalTokens: 13, CachedInputTokens: 3, ReasoningTokens: 1, Source: "stream"}) {
-		t.Fatalf("priced usage = %+v, want parsed Codex stream usage", pricer.usage)
-	}
-	if entry.EstimatedCostMicrousd != 14 || entry.PricingSnapshot["matched"] != true || entry.PricingSnapshot["model"] != "gpt-5.4-mini" {
-		t.Fatalf("logged pricing = %d/%+v, want matched Codex stream pricing", entry.EstimatedCostMicrousd, entry.PricingSnapshot)
-	}
-}
-
-func TestShouldStreamUpstreamResponseDoesNotRelabelErrorsOrAPIUpstreams(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	oauth := SelectedAccount{
-		AccountType:      provider.AccountTypeCodexOAuth,
-		ChatGPTAccountID: "acct_chatgpt",
-	}
-	plainSuccess := &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
-	}
-	plainError := &http.Response{
-		StatusCode: http.StatusBadRequest,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-	}
-	apiUpstream := SelectedAccount{AccountType: provider.AccountTypeAPIUpstream}
-
-	if !shouldStreamUpstreamResponse(req, oauth, plainSuccess) {
-		t.Fatal("successful Codex OAuth response should stream")
-	}
-	if shouldStreamUpstreamResponse(req, oauth, plainError) {
-		t.Fatal("Codex OAuth error response should keep its error content type")
-	}
-	if shouldStreamUpstreamResponse(req, apiUpstream, plainSuccess) {
-		t.Fatal("plain API upstream response should not be relabeled as SSE")
 	}
 }
 
@@ -4870,202 +4674,6 @@ func TestProxyRecordsExpiredAccountOnUnauthorizedAndRetriesAnotherAccount(t *tes
 	}
 }
 
-func TestProxyRefreshesRejectedOAuthTokenAndRetriesSameAccountOnce(t *testing.T) {
-	transportCalls := 0
-	authorizations := []string{}
-	logger := &fakeRequestLogger{}
-	tokens := &fakeSelectedAccountProvider{
-		accounts:                    []SelectedAccount{{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"}},
-		refreshedAuthorizationToken: "new-token",
-		refreshAuthorizationRetry:   true,
-	}
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		transportCalls++
-		authorizations = append(authorizations, r.Header.Get("Authorization"))
-		if transportCalls == 1 {
-			return &http.Response{
-				StatusCode: http.StatusUnauthorized,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
-				Request:    r,
-			}, nil
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-			Request:    r,
-		}, nil
-	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test", Logger: logger}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
-	req.Header.Set("Authorization", "Bearer n2api_client_secret")
-	recorder := httptest.NewRecorder()
-
-	proxy.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if !slices.Equal(authorizations, []string{"Bearer old-token", "Bearer new-token"}) {
-		t.Fatalf("upstream authorizations = %+v", authorizations)
-	}
-	if tokens.calls != 1 || len(tokens.authorizationRefreshes) != 1 || len(tokens.failures) != 0 {
-		t.Fatalf("selection/refresh/failures = %d/%+v/%+v", tokens.calls, tokens.authorizationRefreshes, tokens.failures)
-	}
-	refresh := tokens.authorizationRefreshes[0]
-	if refresh.accountID != 1 || refresh.rejectedAccessToken != "old-token" || refresh.statusCode != http.StatusUnauthorized {
-		t.Fatalf("authorization refresh = %+v", refresh)
-	}
-	if !slices.Equal(tokens.used, []int64{1}) || !slices.Equal(tokens.recovered, []int64{1}) {
-		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1]/[1]", tokens.used, tokens.recovered)
-	}
-	if len(logger.entries) != 1 || len(logger.entries[0].Attempts) != 4 {
-		t.Fatalf("request diagnostics = %+v, want selection, unauthorized, refresh, success", logger.entries)
-	}
-	attempts := logger.entries[0].Attempts
-	if attempts[0].Type != attemptTypeSelection || attempts[1].Type != attemptTypeUpstreamHTTP || attempts[1].HTTPStatus != http.StatusUnauthorized || attempts[1].Error != "upstream_unauthorized" || attempts[2].Type != attemptTypeAuthRefreshRetry || attempts[2].Error != "" || attempts[3].Type != attemptTypeUpstreamHTTP || attempts[3].HTTPStatus != http.StatusOK {
-		t.Fatalf("OAuth retry timeline = %+v", attempts)
-	}
-}
-
-func TestProxyFallsBackAfterRefreshedOAuthTokenIsStillUnauthorized(t *testing.T) {
-	transportCalls := 0
-	tokens := &fakeSelectedAccountProvider{
-		accounts: []SelectedAccount{
-			{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"},
-			{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "fallback-token"},
-		},
-		refreshedAuthorizationToken: "new-token",
-		refreshAuthorizationRetry:   true,
-	}
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		transportCalls++
-		if transportCalls <= 2 {
-			return &http.Response{
-				StatusCode: http.StatusUnauthorized,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
-				Request:    r,
-			}, nil
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer fallback-token" {
-			t.Fatalf("fallback authorization = %q", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-			Request:    r,
-		}, nil
-	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
-	req.Header.Set("Authorization", "Bearer n2api_client_secret")
-	recorder := httptest.NewRecorder()
-
-	proxy.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if transportCalls != 3 || len(tokens.authorizationRefreshes) != 1 || len(tokens.failures) != 1 {
-		t.Fatalf("transport/refresh/failures = %d/%+v/%+v", transportCalls, tokens.authorizationRefreshes, tokens.failures)
-	}
-	if len(tokens.exclusions) != 2 || !slices.Equal(tokens.exclusions[1], []int64{1}) {
-		t.Fatalf("selection exclusions = %+v, want failed OAuth account excluded", tokens.exclusions)
-	}
-	if !slices.Equal(tokens.used, []int64{1, 2}) || !slices.Equal(tokens.recovered, []int64{2}) {
-		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1 2]/[2]", tokens.used, tokens.recovered)
-	}
-}
-
-func TestProxyRecordsAccountFailureWhenOAuthAuthorizationRefreshFailsBeforeRecording(t *testing.T) {
-	transportCalls := 0
-	tokens := &fakeSelectedAccountProvider{
-		accounts: []SelectedAccount{
-			{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"},
-			{AccountID: 2, AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "fallback-token"},
-		},
-		refreshAuthorizationRetry: true,
-		refreshAuthorizationErr:   errors.New("refresh failed"),
-	}
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		transportCalls++
-		if transportCalls == 1 {
-			return &http.Response{
-				StatusCode: http.StatusUnauthorized,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
-				Request:    r,
-			}, nil
-		}
-		if got := r.Header.Get("Authorization"); got != "Bearer fallback-token" {
-			t.Fatalf("fallback authorization = %q", got)
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-			Request:    r,
-		}, nil
-	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
-	req.Header.Set("Authorization", "Bearer n2api_client_secret")
-	recorder := httptest.NewRecorder()
-
-	proxy.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if transportCalls != 2 || len(tokens.authorizationRefreshes) != 1 {
-		t.Fatalf("transport/refresh = %d/%+v, want 2/1", transportCalls, tokens.authorizationRefreshes)
-	}
-	if len(tokens.failures) != 1 || tokens.failures[0].accountID != 1 || tokens.failures[0].statusCode != http.StatusUnauthorized {
-		t.Fatalf("gateway account failures = %+v, want rejected authorization recorded", tokens.failures)
-	}
-	if len(tokens.exclusions) != 2 || !slices.Equal(tokens.exclusions[1], []int64{1}) {
-		t.Fatalf("selection exclusions = %+v, want failed OAuth account excluded", tokens.exclusions)
-	}
-}
-
-func TestProxyDoesNotDuplicatePersistedOAuthAuthorizationRefreshFailure(t *testing.T) {
-	tokens := &fakeSelectedAccountProvider{
-		accounts: []SelectedAccount{
-			{AccountID: 1, AccountType: provider.AccountTypeCodexOAuth, AuthorizationToken: "old-token"},
-		},
-		refreshAuthorizationRetry: true,
-		refreshFailureRecorded:    true,
-		refreshAuthorizationErr:   errors.New("refresh rejected"),
-	}
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusUnauthorized,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid access token"}}`)),
-			Request:    r,
-		}, nil
-	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_123", nil)
-	req.Header.Set("Authorization", "Bearer n2api_client_secret")
-	recorder := httptest.NewRecorder()
-
-	proxy.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d body=%s, want 503", recorder.Code, recorder.Body.String())
-	}
-	if len(tokens.authorizationRefreshes) != 1 {
-		t.Fatalf("authorization refreshes = %+v, want one", tokens.authorizationRefreshes)
-	}
-	if len(tokens.failures) != 0 {
-		t.Fatalf("gateway account failures = %+v, want provider record preserved without duplication", tokens.failures)
-	}
-}
-
 func TestProxyRecordsCircuitOpenOnUpstreamServerErrorAndReturnsFinalError(t *testing.T) {
 	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{AccountID: 1, AuthorizationToken: "bad-token"}, {AccountID: 1, AuthorizationToken: "same-account-token"}}}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -5511,50 +5119,6 @@ func TestProxyDoesNotRetryAfterStreamingBegins(t *testing.T) {
 	}
 }
 
-func TestProxyAppliesSelectedAccountFingerprintHeaders(t *testing.T) {
-	var gotUserAgent string
-	var gotHeader string
-	var gotTLS string
-	tokens := &fakeSelectedAccountProvider{accounts: []SelectedAccount{{
-		AccountID:          1,
-		AuthorizationToken: "upstream-token",
-		FingerprintUA:      "N2API-Fingerprint/1.0",
-		FingerprintTLS:     "chrome",
-		FingerprintHeaders: map[string]string{"X-Fingerprint-Test": "enabled"},
-	}}}
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		gotUserAgent = r.Header.Get("User-Agent")
-		gotHeader = r.Header.Get("X-Fingerprint-Test")
-		gotTLS = tlsFingerprintFromContext(r.Context())
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-			Request:    r,
-		}, nil
-	})}
-	proxy := NewProxyWithClient(&fakeAPIKeyAuthenticator{}, tokens, Config{UpstreamBaseURL: "https://upstream.example.test"}, client)
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5","messages":[]}`))
-	req.Header.Set("Authorization", "Bearer n2api_client_secret")
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	proxy.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s, want 200", recorder.Code, recorder.Body.String())
-	}
-	if gotUserAgent != "N2API-Fingerprint/1.0" {
-		t.Fatalf("User-Agent = %q, want fingerprint override", gotUserAgent)
-	}
-	if gotHeader != "enabled" {
-		t.Fatalf("X-Fingerprint-Test = %q, want fingerprint custom header", gotHeader)
-	}
-	if gotTLS != "chrome" {
-		t.Fatalf("TLS fingerprint = %q, want chrome", gotTLS)
-	}
-}
-
 func TestProxyPassesThroughMatchingRetryableUpstreamError(t *testing.T) {
 	transportCalls := 0
 	rules := &fakeErrorPassthroughRuleProvider{rules: []admin.ErrorPassthroughRule{{
@@ -5604,5 +5168,37 @@ func TestProxyPassesThroughMatchingRetryableUpstreamError(t *testing.T) {
 	}
 	if !slices.Equal(tokens.used, []int64{1}) || len(tokens.recovered) != 0 {
 		t.Fatalf("account attempts/recoveries = %+v/%+v, want [1]/none", tokens.used, tokens.recovered)
+	}
+}
+
+func TestShouldStreamUpstreamResponseUsesContentType(t *testing.T) {
+	for _, contentType := range []string{"application/json", "text/plain", ""} {
+		if shouldStreamUpstreamResponse(&http.Response{Header: http.Header{"Content-Type": {contentType}}}) {
+			t.Fatalf("unexpected SSE for %q", contentType)
+		}
+	}
+	if !shouldStreamUpstreamResponse(&http.Response{Header: http.Header{"Content-Type": {"text/event-stream; charset=utf-8"}}}) {
+		t.Fatal("SSE should stream")
+	}
+}
+func TestAPIUpstreamDoesNotSynthesizeClientIdentity(t *testing.T) {
+	p := NewProxy(nil, nil, Config{})
+	defer p.Close()
+	incoming := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"test","input":"hello","stream":false}`))
+	req, err := p.newUpstreamRequest(incoming, SelectedAccount{AccountType: provider.AccountTypeAPIUpstream, AuthorizationToken: "api-key", BaseURL: "https://upstream.example/v1"}, incoming.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"Originator", "Version", "Chatgpt-Account-Id", "Openai-Beta", "User-Agent"} {
+		if got := req.Header.Get(key); got != "" {
+			t.Errorf("synthesized %s = %q", key, got)
+		}
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil || !strings.Contains(string(body), `"stream":false`) {
+		t.Fatalf("API body changed: %s (%v)", body, err)
+	}
+	if req.URL.String() != "https://upstream.example/v1/responses" || req.Header.Get("Authorization") != "Bearer api-key" {
+		t.Fatalf("wrong target/auth: %s", req.URL)
 	}
 }

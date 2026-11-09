@@ -482,3 +482,11 @@ func (w *flushRecorder) Flush() {
 	w.flushes++
 	w.ResponseRecorder.Flush()
 }
+
+func TestScenarioPath(t *testing.T) {
+	handler := newMockHandler()
+	response := performRequest(t, handler, http.MethodPost, "/__scenario/status-503/v1/chat/completions", `{"model":"mock","messages":[]}`, "")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("scenario status = %d: %s", response.Code, response.Body.String())
+	}
+}

@@ -5,8 +5,7 @@
 </div>
 
 N2API is a personal AI API/account gateway for self-hosted use. It provides a
-single OpenAI-compatible entry point for Codex/OpenAI OAuth accounts and
-API-key-compatible upstreams, with a compact administration interface for
+single OpenAI-compatible entry point for API-key-compatible upstreams, with a compact administration interface for
 accounts, routing, client keys, and request logs.
 
 N2API is inspired by sub2api's practical workflow, but it is a new
@@ -15,7 +14,7 @@ operations.
 
 ## Features
 
-- Codex/OpenAI OAuth and API-key upstream accounts.
+- API-key upstream accounts.
 - OpenAI-compatible `/v1/models`, `/v1/responses`, and
   `/v1/chat/completions` routes.
 - Routing pools, model policies, fallback chains, and sticky sessions.
@@ -66,17 +65,17 @@ Compose details for diagnosis and owner-controlled fallback.
 
 ## Basic Setup
 
-1. Add a Codex/OpenAI OAuth account or API-key upstream on **Provider
-   accounts**.
+1. Add an API-key upstream on **Provider accounts**.
 2. Test the account and enable the models it can serve.
 3. Create a routing pool and add the provider account to it.
 4. Create a client key on **API Keys** and bind it to the routing pool.
 5. Use `http://localhost:3000/v1` as the OpenAI-compatible base URL and the
    client key as the bearer token.
 
-The OAuth flow returns an authorization link. Complete the provider login in
-your browser, then paste the resulting callback URL into N2API to finish the
-connection.
+OAuth upstreams and fingerprint simulation have been removed. Existing OAuth
+accounts remain archived in the database and must be replaced with API-key
+upstreams in routing pools. Downstream Codex CLI clients remain supported via
+API keys. See the [upgrade scope](docs/specs/2026-11-09-api-key-only-upstreams.md).
 
 ## Documentation
 

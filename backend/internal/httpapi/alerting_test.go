@@ -81,7 +81,7 @@ func TestAlertingAdminRoutesRequireAuthentication(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/api/admin/alert-actions/7/test", strings.NewReader(`{"expectedUpdatedAt":"2026-07-21T12:00:00Z"}`)),
 		httptest.NewRequest(http.MethodGet, "/api/admin/alert-rules", nil),
 		httptest.NewRequest(http.MethodGet, "/api/admin/alert-rule-templates", nil),
-		httptest.NewRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", strings.NewReader(`{"actionId":7}`)),
+		httptest.NewRequest(http.MethodPost, "/api/admin/alert-rule-templates/request-log-retention-failed-v1/install", strings.NewReader(`{"actionId":7}`)),
 	} {
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, request)
@@ -92,7 +92,7 @@ func TestAlertingAdminRoutesRequireAuthentication(t *testing.T) {
 }
 
 func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
-	service := &fakeAlertingAdminService{rule: alerting.Rule{ID: 9, TemplateKey: alerting.OAuthRefreshRepeatedTemplateKey, ActionID: 7}}
+	service := &fakeAlertingAdminService{rule: alerting.Rule{ID: 9, TemplateKey: alerting.RequestLogRetentionFailedTemplateKey, ActionID: 7}}
 	server := NewServer(config.Config{}, staticHealth{}, newFakeAdminService(), nil, service)
 
 	response := httptest.NewRecorder()
@@ -103,15 +103,15 @@ func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
 	var catalog struct {
 		Templates []alerting.RuleTemplate `json:"templates"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 10 ||
-		catalog.Templates[0].Key != alerting.OAuthRefreshRepeatedTemplateKey || catalog.Templates[1].Key != alerting.RequestLogRetentionFailedTemplateKey ||
-		catalog.Templates[2].Key != alerting.ProviderAutoTestFailedTemplateKey || catalog.Templates[3].Key != alerting.ProviderAccountExpiredTemplateKey ||
-		catalog.Templates[4].Key != alerting.ProviderAccountCircuitOpenTemplateKey || catalog.Templates[5].Key != alerting.APIKeyBudget80PercentTemplateKey ||
-		catalog.Templates[6].Key != alerting.APIKeyBudget100PercentTemplateKey || catalog.Templates[7].Key != alerting.RoutingPoolExhaustedTemplateKey ||
-		catalog.Templates[8].Key != alerting.APIKeyPurgeFailedTemplateKey || catalog.Templates[9].Key != alerting.SystemEventRetentionFailedTemplateKey {
+	if err := json.NewDecoder(response.Body).Decode(&catalog); err != nil || len(catalog.Templates) != 9 ||
+		catalog.Templates[0].Key != alerting.RequestLogRetentionFailedTemplateKey ||
+		catalog.Templates[1].Key != alerting.ProviderAutoTestFailedTemplateKey || catalog.Templates[2].Key != alerting.ProviderAccountExpiredTemplateKey ||
+		catalog.Templates[3].Key != alerting.ProviderAccountCircuitOpenTemplateKey || catalog.Templates[4].Key != alerting.APIKeyBudget80PercentTemplateKey ||
+		catalog.Templates[5].Key != alerting.APIKeyBudget100PercentTemplateKey || catalog.Templates[6].Key != alerting.RoutingPoolExhaustedTemplateKey ||
+		catalog.Templates[7].Key != alerting.APIKeyPurgeFailedTemplateKey || catalog.Templates[8].Key != alerting.SystemEventRetentionFailedTemplateKey {
 		t.Fatalf("catalog=%+v err=%v", catalog, err)
 	}
-	apiKeyPurgeTemplate := catalog.Templates[8]
+	apiKeyPurgeTemplate := catalog.Templates[7]
 	if apiKeyPurgeTemplate.Name != "API key purge failures" || apiKeyPurgeTemplate.Enabled ||
 		apiKeyPurgeTemplate.Category != systemevent.CategoryScheduler || apiKeyPurgeTemplate.Severity != systemevent.SeverityError ||
 		apiKeyPurgeTemplate.EventAction != systemevent.ActionSchedulerAPIKeyPurgeFailed || apiKeyPurgeTemplate.RecoveryAction != systemevent.ActionSchedulerAPIKeyPurgeCompleted ||
@@ -119,7 +119,7 @@ func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
 		apiKeyPurgeTemplate.DeduplicationScope != alerting.DeduplicationScopeTarget || !apiKeyPurgeTemplate.NotifyRecovery {
 		t.Fatalf("API key purge template=%+v", apiKeyPurgeTemplate)
 	}
-	systemEventRetentionTemplate := catalog.Templates[9]
+	systemEventRetentionTemplate := catalog.Templates[8]
 	if systemEventRetentionTemplate.Name != "System event retention failures" || systemEventRetentionTemplate.Enabled ||
 		systemEventRetentionTemplate.Category != systemevent.CategoryScheduler || systemEventRetentionTemplate.Severity != "" ||
 		systemEventRetentionTemplate.EventAction != systemevent.ActionSchedulerEventRetentionFailed || systemEventRetentionTemplate.RecoveryAction != systemevent.ActionSchedulerEventRetentionCompleted ||
@@ -137,16 +137,16 @@ func TestAlertRuleTemplateCatalogAndInstallRoutes(t *testing.T) {
 		t.Fatalf("created install status=%d body=%s service=%+v", response.Code, response.Body.String(), service)
 	}
 
-	service.rule.TemplateKey = alerting.OAuthRefreshRepeatedTemplateKey
+	service.rule.TemplateKey = alerting.RequestLogRetentionFailedTemplateKey
 	service.installCreated = false
 	response = httptest.NewRecorder()
-	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", `{"actionId":7}`))
+	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/request-log-retention-failed-v1/install", `{"actionId":7}`))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"created":false`) {
 		t.Fatalf("existing install status=%d body=%s", response.Code, response.Body.String())
 	}
 
 	response = httptest.NewRecorder()
-	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/oauth-refresh-repeated-v1/install", `{"actionId":7,"extra":true}`))
+	server.ServeHTTP(response, authenticatedAlertingRequest(http.MethodPost, "/api/admin/alert-rule-templates/request-log-retention-failed-v1/install", `{"actionId":7,"extra":true}`))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "bad_request") {
 		t.Fatalf("strict install status=%d body=%s", response.Code, response.Body.String())
 	}

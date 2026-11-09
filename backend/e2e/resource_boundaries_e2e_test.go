@@ -32,7 +32,7 @@ func TestGatewayRejectsKnownLengthAndChunkedOversizedBodies(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newProtocolFixture(t)
-			accountID := fixture.createAccount("oversized-request-account", 0, 0)
+			accountID := fixture.createAccount("oversized-request-account", 0, "")
 			_, keyID, secret := fixture.createPoolAndKey("oversized-request", []int64{accountID})
 			fixture.resetMock()
 
@@ -56,7 +56,7 @@ func TestGatewayRejectsKnownLengthAndChunkedOversizedBodies(t *testing.T) {
 
 func TestGatewayDoesNotReplayAcceptedBodyAboveReplayLimit(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	profileID := fixture.createFingerprintProfile("large body service unavailable", "status-503-once")
+	profileID := "status-503-once"
 	firstAccountID := fixture.createAccount("large-body-first", 0, profileID)
 	secondAccountID := fixture.createAccount("large-body-second", 1, profileID)
 	_, keyID, secret := fixture.createPoolAndKey("large-body", []int64{firstAccountID, secondAccountID})
@@ -84,7 +84,7 @@ func TestGatewayDoesNotReplayAcceptedBodyAboveReplayLimit(t *testing.T) {
 
 func TestGatewayTimesOutSlowUploadAndReleasesAdmissionSlots(t *testing.T) {
 	fixture := newProtocolFixture(t)
-	accountID := fixture.createAccount("slow-upload-account", 0, 0)
+	accountID := fixture.createAccount("slow-upload-account", 0, "")
 	_, keyID, secret := fixture.createPoolAndKey("slow-upload", []int64{accountID})
 	fixture.resetMock()
 
@@ -131,7 +131,7 @@ func TestGatewayTimesOutSlowUploadAndReleasesAdmissionSlots(t *testing.T) {
 func TestGatewayBoundsUpstreamHeadersBodiesAndStreams(t *testing.T) {
 	t.Run("response header timeout", func(t *testing.T) {
 		fixture := newProtocolFixture(t)
-		profileID := fixture.createFingerprintProfile("response header timeout", "timeout-before-headers")
+		profileID := "timeout-before-headers"
 		accountID := fixture.createAccount("response-header-timeout", 0, profileID)
 		_, keyID, secret := fixture.createPoolAndKey("response-header-timeout", []int64{accountID})
 		fixture.resetMock()
@@ -155,7 +155,7 @@ func TestGatewayBoundsUpstreamHeadersBodiesAndStreams(t *testing.T) {
 
 	t.Run("oversized JSON response", func(t *testing.T) {
 		fixture := newProtocolFixture(t)
-		profileID := fixture.createFingerprintProfile("oversized JSON response", "oversized-json-response")
+		profileID := "oversized-json-response"
 		accountID := fixture.createAccount("oversized-json-response", 0, profileID)
 		_, keyID, secret := fixture.createPoolAndKey("oversized-json-response", []int64{accountID})
 		fixture.resetMock()
@@ -175,7 +175,7 @@ func TestGatewayBoundsUpstreamHeadersBodiesAndStreams(t *testing.T) {
 
 	t.Run("stalled SSE", func(t *testing.T) {
 		fixture := newProtocolFixture(t)
-		profileID := fixture.createFingerprintProfile("stalled SSE", "stalled-sse")
+		profileID := "stalled-sse"
 		accountID := fixture.createAccount("stalled-sse", 0, profileID)
 		_, keyID, secret := fixture.createPoolAndKey("stalled-sse", []int64{accountID})
 		fixture.resetMock()
@@ -195,7 +195,7 @@ func TestGatewayBoundsUpstreamHeadersBodiesAndStreams(t *testing.T) {
 
 	t.Run("periodic SSE", func(t *testing.T) {
 		fixture := newProtocolFixture(t)
-		profileID := fixture.createFingerprintProfile("periodic SSE", "periodic-sse")
+		profileID := "periodic-sse"
 		accountID := fixture.createAccount("periodic-sse", 0, profileID)
 		_, keyID, secret := fixture.createPoolAndKey("periodic-sse", []int64{accountID})
 		fixture.resetMock()
