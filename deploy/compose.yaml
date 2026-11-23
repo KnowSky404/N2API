@@ -36,7 +36,7 @@ services:
       start_period: 10s
 
   postgres:
-    image: postgres:18.6-alpine3.23@sha256:885cf05d376c7cf27afef02073e6bdac3841252537f16e244fd1c1e6a7c99fb1
+    image: postgres:19.0-alpine3.23@sha256:8b9e23fd0652e6857367455c41fd6624823995fa120a2f912222d29203ab1b6a
     restart: "no"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-n2api}
@@ -51,7 +51,7 @@ services:
       retries: 10
 
   postgres-backup:
-    image: postgres:18.6-alpine3.23@sha256:885cf05d376c7cf27afef02073e6bdac3841252537f16e244fd1c1e6a7c99fb1
+    image: postgres:19.0-alpine3.23@sha256:8b9e23fd0652e6857367455c41fd6624823995fa120a2f912222d29203ab1b6a
     restart: "no"
     entrypoint: ["/usr/local/bin/n2api-postgres-backup"]
     command: ["daemon"]
